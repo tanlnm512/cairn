@@ -12,6 +12,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Added
+- Rationale indexing: `cairn build` captures comments whose text begins
+  `NOTE:`, `WHY:`, or `HACK:` in every language with a mapped comment node
+  type and persists them in an additive `rationale` table, each record
+  attributed to the innermost enclosing callable or type whose span
+  contains the comment line (file-level otherwise; one record per comment
+  with continuation lines folded into the text; docstrings never produce
+  records, and `TODO:`/`FIXME:` markers are out of scope). The new
+  `cairn rationale` command (`--symbol`/`--file` targets, `--db`, `--json`)
+  prints records ordered by line with kind tags (`note`/`why`/`hack`); MCP
+  `explore` output adds a gated `Rationale` section when any matched symbol
+  has records and omits it otherwise, with the MCP tool count unchanged;
+  incremental reindex and `cairn update` delete and re-derive each affected
+  file's rationale rows together with its symbols, so removed markers never
+  linger.
+- Freshness hooks: `cairn update --diff-ref A..B` scopes changed-file
+  detection to a git ref range (range diff only — the untracked pass and
+  stat fallback are skipped, and both endpoints are pre-validated so a bad
+  ref is a clean error); `cairn hooks install/uninstall` manage a
+  post-commit hook (backgrounds a ranged update after every commit — the
+  previous commit resolves from the reflog, with an empty-tree range
+  fallback on a repo's first commit — plus `cairn validate-paths --mark`,
+  output discarded so the commit never waits) and a post-checkout hook
+  (branch switches only; file checkouts no-op); `cairn init --with-hooks`
+  installs both hooks opt-in and non-interactively. Hooks are never
+  overwritten when foreign and removed only when cairn-marked; in a
+  non-git workspace `hooks install` prints guidance and exits 1 while
+  `init --with-hooks` warns and init still succeeds — no partial hooks
+  either way.
+- `cairn communities` command: deterministic Louvain community detection over
+  structural edges, persisted to the `communities`/`symbol_communities`
+  derived tables with global and per-community hub symbols (`--top-k`,
+  default 10); a store with no structural edges reports "no communities
+  found". Requires the new `[graph-analytics]` extra (`pip install
+  'cairn[graph-analytics]'`) — without it the command exits with the install
+  hint and leaves the store untouched.
+- Dashboard `/communities` view: renders the partition with community sizes,
+  hub symbols, and member drill-down (nav under Explore, after Graph).
+- HTTP serving: `cairn serve --transport http` exposes the full MCP tool
+  registry over Streamable HTTP with bearer-key auth (`CAIRN_MCP_API_KEY`
+  env or `--api-key`, flag wins), loopback-default binding with keyless
+  operation restricted to loopback binds (a non-loopback bind without a key
+  refuses to start), Host-header transport security per bind class, an
+  unauthenticated `/healthz` probe, an optional `--stateless` mode for
+  load-balanced deployments, and a read-only default; ships with a slim
+  non-root Dockerfile (`CAIRN_HOME=/data` volume, HTTP entrypoint) and
+  deployment docs. Local stdio and SSE transports are unchanged.
+- Memory stance overlay: memories carry an optional stance (`preferred` /
+  `tentative` / `contested`, orthogonal to the lifecycle tiers);
+  `cairn memory record --stance preferred|tentative|contested` declares a
+  prior at record time, and the new `cairn memory reflect` recomputes
+  stances across the store from supersession and citation-verification
+  evidence — a memory superseded by a peer when the pair shares a symbol
+  ref that still verifies is contested and names that peer, a memory whose
+  refs-verified fraction dropped below its recorded baseline downgrades to
+  tentative, a memory whose every cited ref verifies is preferred, and the
+  evidence verdict overrides a declared prior on conflict while the prior
+  survives when evidence yields no verdict. Reflect touches stance
+  metadata only — never bodies, titles, tiers, or scores — and is
+  idempotent and deterministic on an unchanged store; stance renders
+  inline in `cairn memory search` / `list` output and MCP
+  `recall_memory` / `explore` output.
+- `cairn prs`: one read-only PR-triage command fusing GitHub state with the
+  local graph — a six-column open-PR list (number, title, branch, author,
+  CI state conservatively classified pass/fail/pending/none from
+  `statusCheckRollup`, review decision) sourced from the `gh` CLI over the
+  workspace's remote; `--impact PR|branch` resolves the PR's diff (fetched
+  via `gh pr diff`, never local git) against its base ref to changed
+  symbols with dependents (depth + resolution), listing unindexed and
+  deleted changed files explicitly and stating the local index's build age
+  (`Store: local index (built <age>|never)`) so impact against a stale
+  store is visible; `--conflicts` ranks open-PR pairs by shared-community
+  overlap of their touched symbols (largest overlap first, PR-number
+  tie-break), consuming the `communities`/`symbol_communities` tables
+  (never building them) and printing a `run cairn communities` hint
+  instead of failing when the tables are absent or empty; `--json` emits
+  the full report payload (`store`/`prs`/`impact`/`conflicts`) for agents.
+  Strictly read-only on both sides: the store opens read-only with no
+  freshness refresh, and gh runs only as a subprocess with pinned
+  list/view/diff argv (30 s timeout, no tokens read, logged, or passed) —
+  gh missing, unauthenticated, timing out, or erroring surfaces as one
+  actionable error with no partial table.
+
 ### Fixed
 - Full-codebase audit wave (2026-10-02): 141 defects and 3 systemic clusters
   fixed across the graph, parsers, memory/LLM, MCP server, dashboard, wiki,

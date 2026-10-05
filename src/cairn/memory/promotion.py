@@ -12,6 +12,7 @@ from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 from ..graph import BASE_STOP_WORDS, simple_tokenize
 from ..graph import note_contention
+from ..refs import extract_file_refs, extract_symbol_refs
 from . import store as store_mod
 from .scoring import DEFAULT_CRITIC_SCORE, apply_score, score_memory
 
@@ -29,6 +30,7 @@ def capture_memory(
     session_origin: Optional[str] = None,
     tags: Optional[List[str]] = None,
     supersedes_threshold: float = 0.85,
+    stance: Optional[str] = None,
 ) -> Dict:
     """Create, score, and store a new memory in one step.
 
@@ -38,6 +40,11 @@ def capture_memory(
     cosine similarity; if a match exceeds ``supersedes_threshold``, the new
     memory supersedes the old one (chains the version history and flips the
     old to ``memory_is_latest: false``). Returns ``superseded`` in the result.
+
+    ``stance`` is a record-time prior (store.STANCES; None = unset; invalid
+    values raise ``ValueError`` before anything is written). When the body
+    cites refs, ``memory_refs_baseline`` is seeded with the live
+    refs-verified fraction at capture time.
 
     The body AND title are redacted via :func:`strip_private_data` before
     scoring and storage, so secrets (API keys, bearer tokens, connection
@@ -75,9 +82,15 @@ def capture_memory(
             session_origin=session_origin,
             tags=tags,
             supersedes=supersedes_chain or None,
+            stance=stance,
         )
         signals = score_memory(concept, conn, bundle)
         apply_score(concept, signals)
+        body_refs = extract_file_refs(concept.body or "") + extract_symbol_refs(
+            concept.body or ""
+        )
+        if body_refs:
+            concept.extensions["memory_refs_baseline"] = signals["graph_verification"]
         tier = store_mod.tier_for_score(signals["score"])
         if _is_session_bookkeeping(title, body):
             tier = "raw"

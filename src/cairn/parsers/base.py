@@ -67,6 +67,13 @@ class Import:
 
 
 @dataclass
+class RationaleRecord:
+    line: int
+    kind: str  # note|why|hack
+    text: str
+
+
+@dataclass
 class ParsedFile:
     path: str
     language: str
@@ -75,6 +82,7 @@ class ParsedFile:
     symbols: List[Symbol] = field(default_factory=list)
     edges: List[Edge] = field(default_factory=list)
     imports: List[Import] = field(default_factory=list)
+    rationale: List[RationaleRecord] = field(default_factory=list)
 
 
 class BaseParser(abc.ABC):
@@ -100,7 +108,14 @@ class TreeSitterParserBase:
 
     Provides _node_text, _qualified_name, _child_of_type/_find_name (AST-shape
     helpers), and scope stack management (_scope, _callable_scope).
+
+    Subclasses provide `language` and `_visit`; the shared _walk relies on both.
     """
+
+    language: str = ""
+
+    def _visit(self, node, source: bytes, pf: "ParsedFile") -> None:
+        raise NotImplementedError
 
     def __init__(self):
         # Stack of enclosing type names; empty = top-level
@@ -166,6 +181,25 @@ class TreeSitterParserBase:
         if receiver_text[0].isupper():
             return receiver_text
         return None
+
+    def _walk(self, node, source: bytes, pf: "ParsedFile"):
+        for child in node.children:
+            if self._rationale_from_comment(child, source, pf):
+                continue
+            self._visit(child, source, pf)
+
+    def _rationale_from_comment(self, node, source: bytes, pf: "ParsedFile") -> bool:
+        """Consume a mapped comment node into pf.rationale; True when handled."""
+        # Function-level import: _rationale imports RationaleRecord from here.
+        from ._rationale import COMMENT_NODE_TYPES, extract_rationale
+
+        comment_types = COMMENT_NODE_TYPES.get(self.language)
+        if not comment_types or node.type not in comment_types:
+            return False
+        record = extract_rationale(node, source)
+        if record is not None:
+            pf.rationale.append(record)
+        return True
 
     # Max body chars captured per symbol. Large enough to hold a typical
     # method/function implementation; beyond this the embedding chunk would be

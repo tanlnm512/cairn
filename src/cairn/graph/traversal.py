@@ -166,7 +166,9 @@ def impact_analysis(
 ) -> dict:
     """Recursive caller traversal with cycle detection.
 
-    Visits each symbol at most once (keyed by symbol **id**, not name). Precise
+    Reports one row per reached symbol (keyed by symbol **id**, not name) at
+    its **shortest** seed distance: a symbol re-found at a strictly smaller
+    depth has its row relaxed and is re-expanded within the depth cap. Precise
     mode (default) only walks resolved edges; ``fuzzy=True`` also follows
     unresolved name-only edges. By default only **structural** edges
     (``calls``, ``extends``, ``implements``) are followed; pass
@@ -180,7 +182,7 @@ def impact_analysis(
     exact-name symbol matches, the closure is materialised, and no seed reaches
     another seed (cycle gate) -- the answer comes from
     :func:`dataflow.impact_from_closure` in one indexed statement instead of a
-    per-visited-symbol DFS. Index mode returns shortest-path depths,
+    per-visited-symbol DFS. Index mode returns the same shortest-path depths,
     (depth, symbol, file)-ordered rows, empty ``cycles``, and may be a superset
     of DFS coverage (unique-name hops; no per-node 200-caller cap) -- see that
     function's docstring. ``use_index=False`` forces the classic DFS (used by
@@ -234,7 +236,8 @@ def impact_analysis(
                         return closure_result
 
     allowed = None if include_service_edges else STRUCTURAL_EDGE_KINDS
-    visited: set[str] = set()   # globally visited symbol ids — prevents re-traversal
+    min_depth: dict[str, int] = {}    # reached symbol id -> shortest seed distance
+    rows_by_id: dict[str, dict] = {}  # reached symbol id -> its row in results
     on_path: set[str] = set()   # current DFS path symbol ids — cycle detection
     results: list[dict] = []
     cycles_seen: set[str] = set()
@@ -258,7 +261,32 @@ def impact_analysis(
             )
         return callers_memo[key]
 
+    def _record_caller(c, depth: int) -> None:
+        # Record caller ``c`` at ``depth`` -- new row, or a strictly closer
+        # depth relaxed in place -- then walk into it either way so back-edges
+        # still surface as cycles.
+        nonlocal truncated
+        cid = c["caller_id"]
+        row = rows_by_id.get(cid)
+        if row is None:
+            if len(results) >= limit:
+                truncated = True
+                return
+            row = {
+                "symbol": c["caller_name"],
+                "file": c["file_path"],
+                "repo": c["repo"],
+                "depth": depth,
+            }
+            results.append(row)
+            rows_by_id[cid] = row
+        elif depth < row["depth"]:
+            row["depth"] = depth
+        traverse(cid, c["caller_name"], depth + 1)
+
     def traverse(sym_id: str, sym_name: str, depth: int):
+        # ``depth`` is the row depth of sym_id's callers; sym_id itself sits at
+        # ``depth - 1``.
         nonlocal truncated
         if truncated:
             return
@@ -270,56 +298,36 @@ def impact_analysis(
                 cycles_seen.add(sym_id)
                 cycles.append({"symbol": sym_name, "depth": depth})
             return
-        if sym_id in visited:
-            return  # already fully explored via another path
-        visited.add(sym_id)
+        prev = min_depth.get(sym_id)
+        if prev is not None and prev <= depth - 1:
+            return  # already reached at an equal-or-shorter distance
+        min_depth[sym_id] = depth - 1
         on_path.add(sym_id)
-        callers = _callers(sym_id, sym_name)
-        for c in callers:
+        for c in _callers(sym_id, sym_name):
             # Filter to structural kinds unless the caller opted in to service
             # edges.
             if allowed is not None and c["edge_kind"] not in allowed:
                 continue
-            if len(results) >= limit:
-                truncated = True
+            _record_caller(c, depth)
+            if truncated:
                 break
-            results.append(
-                {
-                    "symbol": c["caller_name"],
-                    "file": c["file_path"],
-                    "repo": c["repo"],
-                    "depth": depth,
-                }
-            )
-            traverse(c["caller_id"], c["caller_name"], depth + 1)
         on_path.discard(sym_id)
 
     # Seed: the entry name may resolve to several symbols. Mark every matching
-    # id as visited/on-path so the traversal does not re-enter the seed.
+    # id as on-path so the traversal does not re-enter the seed.
     if seed_id is None:
         for seed in find_definition(conn, name, limit=limit):
-            visited.add(seed["id"])
             on_path.add(seed["id"])
         root_id = None
     else:
-        visited.add(seed_id)
         on_path.add(seed_id)
         root_id = seed_id
     for c in _callers(root_id, name):
         if allowed is not None and c["edge_kind"] not in allowed:
             continue
-        if len(results) >= limit:
-            truncated = True
+        _record_caller(c, 0)
+        if truncated:
             break
-        results.append(
-            {
-                "symbol": c["caller_name"],
-                "file": c["file_path"],
-                "repo": c["repo"],
-                "depth": 0,
-            }
-        )
-        traverse(c["caller_id"], c["caller_name"], 1)
 
     return {
         "impacted": results,

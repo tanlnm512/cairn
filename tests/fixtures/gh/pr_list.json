@@ -1,0 +1,44 @@
+[
+  {
+    "number": 42,
+    "title": "Cap traversal depth",
+    "headRefName": "fix/depth-cap",
+    "author": {
+      "login": "ada"
+    },
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "conclusion": "SUCCESS",
+        "status": "COMPLETED",
+        "name": "ci",
+        "workflowName": "ci"
+      }
+    ],
+    "reviewDecision": "APPROVED",
+    "isDraft": false,
+    "url": "https://github.com/example/example/pull/42"
+  },
+  {
+    "number": 43,
+    "title": "Add compass export",
+    "headRefName": "feat/export",
+    "author": {
+      "login": "linus"
+    },
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "conclusion": "FAILURE",
+        "status": "COMPLETED",
+        "name": "ci",
+        "workflowName": "ci"
+      }
+    ],
+    "reviewDecision": "REVIEW_REQUIRED",
+    "isDraft": false,
+    "url": "https://github.com/example/example/pull/43"
+  }
+]

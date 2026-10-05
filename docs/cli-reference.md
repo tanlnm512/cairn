@@ -11,9 +11,9 @@ are read at process start, not per call.
 
 | Command | Purpose |
 |---|---|
-| `cairn init` | interactive first-time setup (runs a build) |
+| `cairn init [--with-hooks]` | interactive first-time setup (runs a build); `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)) |
 | `cairn build [--lsp]` | full workspace rebuild (see [indexing.md](indexing.md)) |
-| `cairn update [--file <path>]` | incremental reindex (git-diff driven) |
+| `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
 | `cairn stats` | graph statistics |
 | `cairn checkpoint` | snapshot the store |
 | `cairn config` | show effective configuration (`--json` emits `cairn_home`/`workspace`/`db`/`knowledge` as one JSON document — read-only, registers nothing; the scripting/probe surface) |
@@ -30,6 +30,20 @@ are read at process start, not per call.
   changes.
 - Existing `exact` edges are never selected or downgraded.
 
+### `cairn update --diff-ref`
+
+- `--diff-ref A..B` scopes changed-file detection to the git ref range: the
+  changed set is exactly `git diff --name-only A..B` — the untracked-file
+  pass and the size/mtime fallback that flag-less mode uses are skipped, so
+  nothing outside the range is reindexed.
+- Both range endpoints are pre-validated with `git rev-parse -q --verify`;
+  an unresolvable ref exits with a clean error instead of a silent
+  zero-file update.
+- Flag-less `cairn update` is unchanged: worktree diff versus `HEAD` plus
+  untracked source files.
+- The cairn git hooks (see [below](#cairn-hooks)) call this form with the
+  committed or checked-out range.
+
 ## Query
 
 | Command | Purpose |
@@ -43,14 +57,18 @@ are read at process start, not per call.
 | `cairn impact <symbol>` | what breaks if changed (within-repo) |
 | `cairn blast` | reverse-dependency radius of a git diff |
 | `cairn map` | deterministic repository orientation map |
+| `cairn communities` | Louvain subsystem clusters over the symbol graph (requires the `[graph-analytics]` extra) |
 | `cairn grep <pattern>` | span-grouped search over indexed files |
+| `cairn rationale` | `NOTE:`/`WHY:`/`HACK:` marker-comment records for a symbol or file (see [below](#cairn-rationale)) |
 | `cairn deps <repo>` | cross-repo dependency map |
 | `cairn tree <path>` | file/module symbol tree |
 | `cairn ask "<question>"` | natural-language query across layers (`--all-repos` fans out across registered stores) |
 | `cairn federated-search "QUERY"` | cross-store semantic search with per-repo attribution (`--limit`, `--json`, `--shared-embed`) |
 | `cairn pack --task "<text>" --budget <N>` | one-shot token-budgeted context block (`--json`; drops lowest-centrality content first and reports counts) |
+| `cairn path --from <pattern> --to <pattern>` | shortest structural path between symbols (`--fuzzy` adds ambiguous/unresolved hops; `--max-depth` caps the walk; `--limit` caps printed paths; patterns are case-insensitive substrings of a symbol or qualified name) |
 | `cairn taint --from <pattern> --to <pattern>` | inter-procedural taint path trace (`--fuzzy` adds ambiguous/unresolved hops; `--max-depth` caps the walk) |
 | `cairn review` | review loop: `--base <ref>` context pack, `--pre-submit [--gate]` memory guard, `--capture-event <file>` comment capture |
+| `cairn prs` | open-PR triage over gh: six-column list (CI + review state), per-PR graph impact (`--impact PR\|BRANCH`), merge-order risk (`--conflicts`), `--json` payload — read-only on both sides (see [below](#cairn-prs)) |
 | `cairn context <file>` | compass + memory context for a file |
 
 ### `cairn blast`
@@ -73,6 +91,18 @@ are read at process start, not per call.
 - `--max-clusters`, `--max-hubs`, and `--max-hotspots` cap their arrays and
   every cap reports how many entries were dropped, including zero.
 
+### `cairn communities`
+
+- Computes deterministic Louvain communities over structural edge kinds only
+  and persists the partition plus per-community hubs to derived tables;
+  prints the community count, global hubs, and per-community hubs.
+- Requires the `[graph-analytics]` extra (`pip install
+  'cairn[graph-analytics]'`); without it the command exits 1 with that hint
+  and the store is untouched.
+- `--db` selects the store; `--top-k` caps the hub lists (default 10,
+  minimum 1).
+- A store with no structural edges prints "no communities found".
+
 ### `cairn grep <pattern>`
 
 - Searches indexed files and groups hits by their innermost enclosing symbol;
@@ -82,6 +112,67 @@ are read at process start, not per call.
   <path-prefix>` restricts repository-relative paths.
 - `--max-hits` caps returned hits; dropped hit and group counts are always
   reported, and unreadable files are counted.
+
+### `cairn rationale`
+
+- Lists rationale records: comments whose text begins `NOTE:`, `WHY:`, or
+  `HACK:` (after the comment opener and optional whitespace), extracted
+  during `cairn build` in every language with a mapped comment node type.
+  One record per comment; continuation lines fold into the text. Docstrings
+  never produce records, and `TODO:`/`FIXME:` are out of scope.
+- Target: `--symbol <name>` or `--file <path>`. Records print one per line,
+  ordered by line, with kind tags (`note`/`why`/`hack`). `--db` selects the
+  store; `--json` emits machine-readable rows.
+- Attribution: a record belongs to the innermost enclosing callable or type
+  whose span contains its line; otherwise it is file-level. A marker
+  directly above a definition falls outside that symbol's span and is
+  file-attributed.
+- `cairn update` deletes and re-derives each reindexed file's rationale rows
+  in the same transaction as its symbols, so removed markers never linger.
+- MCP `explore` output includes a `=== Rationale (N) ===` section (after
+  Tribal memory) when any matched symbol has rationale records, and omits
+  it otherwise; the MCP tool count is unchanged.
+
+### `cairn prs`
+
+- One read-only triage command fusing GitHub PR state with the local graph.
+  The default view lists open PRs from `gh` over the workspace's remote as a
+  six-column table — `PR`, `Title`, `Branch`, `Author`, `CI`, `Review`. CI
+  is classified conservatively from `statusCheckRollup`
+  (`pass`/`fail`/`pending`/`none`); `Author` and `Review` print `-` when gh
+  reports none.
+- Strictly read-only on both sides: the store opens read-only with no
+  freshness refresh, and gh runs only as a subprocess with pinned read-only
+  argv (`pr list` / `pr view` / `pr diff`); no tokens are read, logged, or
+  passed beyond gh's own configuration.
+- gh missing, unauthenticated, timed out (30 s), or erroring produces one
+  actionable error carrying gh's message (a missing binary gets install +
+  `gh auth login` guidance) — the report is assembled before anything
+  renders, so a failure never prints a partial table.
+- `--impact PR|BRANCH` targets one open PR by number (optional `#`) or
+  branch name (a branch must not start with `-`), fetches the diff and base
+  ref via gh, and prints: the `Store: local index (built <age>|never)` line
+  (impact reflects the local index as-is, never a fresh build of the PR
+  branch), `Changed symbols:` with file spans, `Dependents:` with depth and
+  resolution, `Unindexed changed files:` for any changed file with no
+  indexed symbols, and `Deleted files:` (`repo:path`). Traversal reuses the
+  impact depth caps — no unbounded walk.
+- `--conflicts` ranks open-PR pairs by shared-community overlap of their
+  touched symbols (`#12 + #34: 3 shared (label-a, label-b)` lines, largest
+  overlap first, PR-number tie-break); it resolves every open PR's seeds,
+  so it costs one `gh pr diff` per PR. Community tables are consumed, never
+  built: absent or empty `communities`/`symbol_communities` print
+  `Merge-order risk: unavailable — community tables absent — run cairn
+  communities` instead of failing; with tables populated but no shared
+  labels the section reads `no shared-community PR pairs`.
+- `--json` emits the whole report as one document:
+  `{"store": {"index": "local", "built": "<age>"|null}, "prs": [{number,
+  title, head_ref, author, ci_state, review_decision}…], "impact": …|null,
+  "conflicts": {"pairs": [{a, b, shared, communities}], "hint": …}|null}` —
+  `impact` and `conflicts` are `null` unless `--impact`/`--conflicts` was
+  passed; `built` is the store-age string (`"3d old"`, `"just now"`) or
+  `null` when the store has no build runs.
+- `--db` selects the store.
 
 ## Embeddings & rerank
 
@@ -113,13 +204,36 @@ Group: `cairn memory …`
 
 | Subcommand | Purpose |
 |---|---|
-| `record <type> "<title>"` | capture a memory (decision/pattern/mistake/workaround) |
+| `record <type> "<title>"` | capture a memory (decision/pattern/mistake/workaround); `--stance` declares a prior stance (see [Memory stance](#memory-stance)) |
+| `reflect` | recompute stances across the store from supersession and citation evidence (see [Memory stance](#memory-stance)) |
 | `search` / `list` / `digest` / `stats` | recall and inspect (`search --as-of <date>` for point-in-time recall) |
 | `share --agent <id> --symbols a,b,c` | publish a memory to other agents' recall on the shared store |
 | `check --agent <id> --symbols a,b,c` | warn on other agents' recent activity on the symbol set |
 | `timeline <symbol>` | a symbol's memory history with validity intervals and successor links |
 | `evolve` / `promote` / `demote` / `forget` | lifecycle |
 | `decay` / `purge` / `consolidate` / `batch-critic` / `embed` / `capture` | maintenance |
+
+### Memory stance
+
+Memories carry an optional stance — `preferred`, `tentative`, or
+`contested` — orthogonal to the lifecycle tiers (a promoted memory can be
+contested).
+
+- `cairn memory record --stance preferred|tentative|contested` declares a
+  prior stance at record time.
+- `cairn memory reflect` recomputes stances across the store from
+  supersession and citation evidence: a memory superseded by a peer when
+  the pair shares a symbol ref that still verifies is `contested` and
+  names that peer; a
+  memory whose refs-verified fraction dropped below its recorded baseline
+  is `tentative`; a memory whose every cited ref verifies is `preferred`.
+  The evidence verdict overrides a declared prior when they conflict, and
+  the prior survives when evidence yields no verdict. Reflect touches
+  stance metadata only — never bodies, titles, tiers, or scores — and is
+  idempotent and deterministic on an unchanged store.
+- Stance renders inline wherever memories are listed — `cairn memory search`
+  / `list` output and MCP `recall_memory` / `explore` output — with the
+  contradicting peer named on contested entries.
 
 ## Serving & surfaces
 
@@ -155,8 +269,30 @@ Group: `cairn memory …`
 | `cairn bench` | performance suites |
 | `cairn eval` | retrieval evaluation |
 | `cairn viz [--export FILE]` | render graph diagrams; `--export` writes one self-contained HTML file |
-| `cairn hooks install|uninstall` | git hooks |
+| `cairn hooks install|uninstall` | manage the cairn git hooks — post-commit + post-checkout (see [below](#cairn-hooks)) |
 | `cairn version` / `upgrade` | version and self-upgrade |
 | `cairn sync` | sync pending watcher edits |
+
+### `cairn hooks`
+
+- `cairn hooks install` writes a post-commit and a post-checkout hook into
+  every discovered git repo's `.git/hooks/`, idempotently: an existing
+  cairn hook is rewritten in place, and a foreign hook (no cairn marker in
+  its content) is never overwritten. `uninstall` removes only cairn-marked
+  hooks.
+- post-commit: after every commit, backgrounds
+  `cairn update --diff-ref <prev>..HEAD` plus `cairn validate-paths --mark`.
+  The previous commit resolves from the reflog (`HEAD@{1}`); a repo's first
+  commit falls back to an empty-tree range. Output is discarded — the commit
+  never waits on the update, and a failed update never fails the commit.
+- post-checkout: on branch switches only, backgrounds
+  `cairn update --diff-ref <old>..<new>`; file checkouts run nothing.
+- With a non-default `CAIRN_HOME`, installed hooks embed an
+  `export CAIRN_HOME` line (see [configuration.md](configuration.md)).
+- `cairn init --with-hooks` installs both hooks with the same rules as
+  `cairn hooks install` (opt-in, never interactive).
+- In a workspace with no git repository, `hooks install` prints guidance
+  and exits 1; `init --with-hooks` prints the guidance as a warning and init
+  still succeeds. Neither path writes partial hooks.
 
 Global: `-v/--verbose` for debug logging.

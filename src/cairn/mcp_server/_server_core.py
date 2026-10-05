@@ -431,6 +431,39 @@ def _health_block(conn) -> dict:
     }
 
 
+def healthz_payload() -> dict:
+    """Bounded /healthz payload: status, store_reachable, read_only, degradations count.
+
+    Crash-proof: an unreachable store degrades to status "unhealthy" rather
+    than raising, and no field beyond the documented payload is exposed.
+    """
+    store_reachable = False
+    degradations = 0
+    try:
+        conn = _conn()
+        try:
+            conn.execute("SELECT 1").fetchone()
+            degradations = len(_health_block(conn)["degradations"])
+            store_reachable = True
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return {
+        "status": "ok" if store_reachable else "unhealthy",
+        "store_reachable": store_reachable,
+        "read_only": _read_only_mode(),
+        "degradations": degradations,
+    }
+
+
+async def healthz_response(request):
+    """GET /healthz handler: the bounded health payload as JSON (HTTP 200 even when unhealthy)."""
+    from starlette.responses import JSONResponse
+
+    return JSONResponse(healthz_payload())
+
+
 # --- Index/build status as a Resource ----------------------------------
 # Index freshness is browsable data, exposed as a subscribable resource a
 # client lists under resources/ and polls cheaply.

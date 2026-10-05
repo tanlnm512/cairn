@@ -105,10 +105,6 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
 
     # --- traversal ---------------------------------------------------------
 
-    def _walk(self, node: Node, source: bytes, pf: ParsedFile):
-        for child in node.children:
-            self._visit(child, source, pf)
-
     def _visit(self, node: Node, source: bytes, pf: ParsedFile):
         t = node.type
 

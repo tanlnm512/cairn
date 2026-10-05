@@ -1,0 +1,8 @@
+{
+  "number": 42,
+  "headRefName": "fix/depth-cap",
+  "baseRefName": "main",
+  "title": "Cap traversal depth",
+  "state": "OPEN",
+  "url": "https://github.com/example/example/pull/42"
+}

@@ -19,12 +19,13 @@ import sqlite3
 
 import pytest
 
-# The sixteen main views (same inventory the asset tests crawl).
+# The seventeen main views (same inventory the asset tests crawl).
 _MAIN_VIEWS = (
     "/",
     "/workspaces",
     "/projects",
     "/graph",
+    "/communities",
     "/history",
     "/tokens",
     "/chains",
@@ -172,7 +173,7 @@ def test_stat_rows_render_through_the_cards_macro(tmp_path):
 
 
 def test_every_main_view_renders_the_restyled_shell(tmp_path):
-    """All sixteen main views return 200 and render the shared shell —
+    """All seventeen main views return 200 and render the shared shell —
     sidebar, topbar, and a non-empty main region — on the token-driven
     stylesheet (no blank or unstyled views)."""
     client = _client(tmp_path)

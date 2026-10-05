@@ -27,6 +27,18 @@ CLOSURE_EDGE_FACTOR = 5
 CLOSURE_MAINTAIN_BUDGET_WALL_SECONDS = 2.0
 CLOSURE_MAINTAIN_AFFECTED = 50
 
+# Path-query budget at the gate point: wall seconds one max-depth-4
+# find_symbol_paths query between edge-connected seed sets must stay within
+# on the built corpus (PATH_QUERY_SEEDS bounds each endpoint set).
+PATH_QUERY_BUDGET_WALL_SECONDS = 2.0
+PATH_QUERY_SEEDS = 25
+PATH_QUERY_MAX_DEPTH = 4
+
+# Communities budget at the gate point: wall seconds one full
+# compute_communities run (edge pull, Louvain partition, hub/label
+# derivation, table persist) must stay within on the built corpus.
+COMMUNITIES_BUDGET_WALL_SECONDS = 10.0
+
 
 def synthesize_structural_edges(
     conn: sqlite3.Connection, *, factor: int = CLOSURE_EDGE_FACTOR
@@ -155,12 +167,77 @@ def run_scaling_suite(
 
             mem, _ = peak_memory(_build_and_embed)
 
-            # Closure op: multiply structural-edge volume deterministically, then
-            # time + memory-trace one transitive-closure build over it.
             conn = get_db(db_path)
             try:
-                synthesize_structural_edges(conn)
                 kind_ph = ",".join("?" for _ in STRUCTURAL_EDGE_KINDS)
+
+                # Path-query op: one max-depth-4 walk between bounded
+                # edge-connected seed sets on the built graph, before the
+                # closure-gate edge multiplication below; timed after a
+                # discarded warmup call.
+                from ..graph.taint import find_symbol_paths
+
+                path_from_ids = {
+                    r[0]
+                    for r in conn.execute(
+                        f"SELECT DISTINCT source_id FROM edges"
+                        f" WHERE kind IN ({kind_ph})"
+                        f" ORDER BY source_id LIMIT {PATH_QUERY_SEEDS}",
+                        STRUCTURAL_EDGE_KINDS,
+                    ).fetchall()
+                }
+                path_to_ids: set[str] = set()
+                if path_from_ids:
+                    seed_ph = ",".join("?" for _ in path_from_ids)
+                    path_to_ids = {
+                        r[0]
+                        for r in conn.execute(
+                            f"SELECT DISTINCT target_id FROM edges"
+                            f" WHERE kind IN ({kind_ph})"
+                            f" AND target_id IS NOT NULL"
+                            f" AND source_id IN ({seed_ph})"
+                            f" ORDER BY target_id LIMIT {PATH_QUERY_SEEDS}",
+                            (*STRUCTURAL_EDGE_KINDS, *path_from_ids),
+                        ).fetchall()
+                    }
+
+                def _path_op() -> int:
+                    return len(
+                        find_symbol_paths(
+                            conn,
+                            path_from_ids,
+                            path_to_ids,
+                            max_depth=PATH_QUERY_MAX_DEPTH,
+                        )
+                    )
+
+                path_count = 0
+                path_s: float = 0.0
+                if path_from_ids and path_to_ids:
+                    _path_op()
+                    _t0 = _t.perf_counter()
+                    path_count = _path_op()
+                    path_s = _t.perf_counter() - _t0
+
+                # Communities op: one full partition run on the built corpus,
+                # before the closure-gate edge multiplication below; timed
+                # after a discarded warmup call. Recorded as zero when the
+                # optional graph-analytics extra is absent.
+                from ..graph.communities import compute_communities
+
+                communities_count = 0
+                communities_s: float = 0.0
+                try:
+                    compute_communities(conn)
+                    _t0 = _t.perf_counter()
+                    communities_count = compute_communities(conn)
+                    communities_s = _t.perf_counter() - _t0
+                except ImportError:
+                    pass
+
+                # Closure op: multiply structural-edge volume deterministically, then
+                # time + memory-trace one transitive-closure build over it.
+                synthesize_structural_edges(conn)
                 structural_edges = conn.execute(
                     f"SELECT COUNT(*) FROM edges WHERE kind IN ({kind_ph})",
                     STRUCTURAL_EDGE_KINDS,
@@ -211,6 +288,10 @@ def run_scaling_suite(
                 closure_peak_memory_mb=closure_mem.peak_mb,
                 closure_edges=structural_edges,
                 closure_maintain_seconds=maintain_s,
+                path_query_seconds=path_s,
+                path_query_paths=path_count,
+                communities_seconds=communities_s,
+                communities_count=communities_count,
             )
             report.points.append(point)
             if progress:

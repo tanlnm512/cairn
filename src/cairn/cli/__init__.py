@@ -15,6 +15,7 @@ from . import agents       # noqa: F401
 from . import ask_context  # noqa: F401
 from . import bench        # noqa: F401
 from . import compass      # noqa: F401
+from . import communities  # noqa: F401
 from . import core         # noqa: F401
 from . import dashboard    # noqa: F401
 from . import dataflow     # noqa: F401
@@ -26,7 +27,10 @@ from . import knowledge    # noqa: F401
 from . import map          # noqa: F401
 from . import memory       # noqa: F401
 from . import pack         # noqa: F401
+from . import paths        # noqa: F401
+from . import prs          # noqa: F401
 from . import query        # noqa: F401
+from . import rationale    # noqa: F401
 from . import review       # noqa: F401
 from . import serve        # noqa: F401
 from . import skill        # noqa: F401

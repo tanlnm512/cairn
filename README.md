@@ -19,7 +19,7 @@ The precise call graph, without the guesswork · every answer re-derivable from 
 
 cairn parses your repos with tree-sitter into a **resolution-labeled structural
 graph** (15 languages), fuses it with **code-grounded tribal memory**, compass,
-and wiki, and serves all of it through one MCP server (25 tools) + a `cairn`
+and wiki, and serves all of it through one MCP server (26 tools) + a `cairn`
 CLI. The product is a **verification contract**: every `exact` edge is actually
 resolved, every symbol in a synthesized doc is graph-verified by a
 deterministic critic, and the LLM never sits in the query path.
@@ -335,6 +335,7 @@ Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
 | `cairn pack --task "<text>" --budget <N>` | One-shot token-budgeted context block: ranked sources, blast lines, compass excerpt, memories |
 | `cairn taint --from <src> --to <sink>` | Trace inter-procedural taint paths over precise call edges (`--fuzzy` opt-in, depth-capped) |
 | `cairn review` | Diff-scoped review pack (`--base`), pre-submit memory guard (`--pre-submit [--gate]`), comment capture (`--capture-event`) |
+| `cairn prs` | Open-PR triage fusing gh with the local graph: CI/review list, per-PR graph impact (`--impact PR\|BRANCH`), merge-order risk (`--conflicts`), `--json`; read-only on both sides |
 | `cairn context <file>` | Compass + memory + wiki context for a file |
 | `cairn memory / compass / wiki / task / knowledge …` | The layered stores + LLM task queue (memory: `share`/`check` multi-agent verbs, `timeline <symbol>`, `search --as-of <date>`) |
 | `cairn install-agents` / `cairn uninstall` | Wire / remove agent integration |
@@ -347,11 +348,11 @@ Deep reference: [docs/cli-reference.md](docs/cli-reference.md).
 
 ## MCP Tools
 
-25 tools across four layers — same store as the CLI:
+26 tools across four layers — same store as the CLI:
 
 | Layer | Tools |
 |-------|-------|
-| **graph** (12) | `find_definition`, `get_callers` / `get_callees`, `impact_analysis`, `cross_repo_deps`, `semantic_search`, `search_symbols`, `repo_map`, `file_api`, `explore` (the aggregator — recommended first call), `federated_search` (cross-store), `visualize_graph` |
+| **graph** (13) | `find_definition`, `get_callers` / `get_callees`, `impact_analysis`, `cross_repo_deps`, `semantic_search`, `search_symbols`, `repo_map`, `file_api`, `explore` (the aggregator — recommended first call), `path` (shortest structural path between two symbols), `federated_search` (cross-store), `visualize_graph` |
 | **compass + knowledge base** (5) | `get_compass`, `search_knowledge`, `ask_compass` (cross-layer router), `trace_flow`, `generate_flow` |
 | **memory** (2) | tribal memory: `recall_memory`, `record_memory` (lifecycle verbs are CLI-only: `cairn memory digest|evolve|promote|demote|forget|decay`) |
 | **knowledge** (6) | OKF business docs / workflows: add / search / status / delete / `trace_workflow` / `wiki_generate` |

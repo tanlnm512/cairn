@@ -165,8 +165,8 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.1.0
 
-      - name: Install (with dev + ingest extras)
-        run: uv sync --extra dev --extra ingest --python ${{ matrix.python-version }}
+      - name: Install (with dev + ingest + graph-analytics extras)
+        run: uv sync --extra dev --extra ingest --extra graph-analytics --python ${{ matrix.python-version }}
 
       - name: Validate skill eval specs
         run: uv run --no-sync python scripts/run_skill_evals.py
@@ -354,6 +354,40 @@ jobs:
   # 2 past the 15% threshold) -- or a noisy shared runner -- can never redden
   # CI. "Advisory first, gate later if stable" (observability-telemetry
   # plan, Phase 2).
+  container:
+    name: Container build (Dockerfile smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t cairn:http-smoke .
+      - name: Keyless wildcard entrypoint refuses to start
+        run: |
+          set +e
+          out=$(docker run --rm --name cairn-smoke -e CAIRN_WORKSPACE=/data/ws --entrypoint /bin/sh cairn:http-smoke -c "cairn init --no-build >/dev/null 2>&1; cairn serve --transport http --host 0.0.0.0" 2>&1)
+          rc=$?
+          set -e
+          echo "$out" | tail -3
+          # D-004: with the store present, non-loopback bind without a key
+          # exits 1 on the API-key refusal before binding.
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::keyless container exited 0 (expected refusal exit 1)"
+            exit 1
+          fi
+          echo "$out" | grep -q "without an API key"
+      - name: Keyed entrypoint reaches /healthz
+        run: |
+          docker run -d --name cairn-keyed -e CAIRN_WORKSPACE=/data/ws -e CAIRN_MCP_API_KEY=ci-smoke-key -p 18765:9876 --entrypoint /bin/sh cairn:http-smoke -c "cairn init --no-build >/dev/null 2>&1; exec cairn serve --transport http --host 0.0.0.0"
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18765/healthz > /tmp/hz.json 2>/dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" -ne 1 ]; then echo "::error::healthz never came up"; docker logs cairn-keyed | tail -5; docker rm -f cairn-keyed; exit 1; fi
+          grep -q '"status"' /tmp/hz.json
+          docker rm -f cairn-keyed
+
   bench:
     name: Bench (advisory baseline comparison)
     runs-on: ubuntu-latest

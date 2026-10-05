@@ -891,6 +891,16 @@ def _parse_file_worker(args: tuple[str, str, str, str]) -> tuple[str, str, str, 
         return path, rel_path, language, repo, None, err_msg, st
 
 
+def ensure_repo_row(cur, repo: str) -> None:
+    """Insert a placeholder repos row when absent so repo_id FKs hold."""
+    cur.execute(
+        """INSERT INTO repos (id, name, path, language, git_remote, indexed_at)
+           VALUES (?, ?, ?, '', NULL, ?)
+           ON CONFLICT(id) DO NOTHING""",
+        (repo, repo, ".", _now()),
+    )
+
+
 def insert_parsed_file(
     cur,
     repo: str,
@@ -908,6 +918,7 @@ def insert_parsed_file(
     ``abs_path`` is the absolute path used only to stat for size/mtime.
     Returns (symbol_count, edge_count, import_count).
     """
+    ensure_repo_row(cur, repo)
     file_id = _new_id()
     # Populate size and mtime for catch-up reconciliation.
     try:
@@ -1070,8 +1081,40 @@ def insert_parsed_file(
         repository.insert_imports(cur, imp_rows)
     if edge_rows:
         repository.insert_edges(cur, edge_rows)
+    if pf.rationale:
+        repository.insert_rationale(cur, _rationale_rows(pf, file_id, sym_rows))
 
     return len(sym_rows), len(edge_rows), len(imp_rows)
+
+
+# Symbol kinds a rationale record can be attributed to: innermost containing
+# callable or type wins; module/property/variable/route kinds never attribute.
+_CALLABLE_OR_TYPE_KINDS = frozenset({
+    "function", "method", "constructor",
+    "class", "interface", "enum", "protocol", "mixin", "implementation",
+})
+
+
+def _rationale_rows(pf: ParsedFile, file_id: str, sym_rows: List[tuple]) -> List[tuple]:
+    """Attribute each record to the innermost containing callable/type, else None."""
+    spans = [
+        (row[0], sym.line_start, sym.line_end)
+        for sym, row in zip(pf.symbols, sym_rows)
+        if sym.kind in _CALLABLE_OR_TYPE_KINDS
+    ]
+    rows: List[tuple] = []
+    for record in pf.rationale:
+        symbol_id = None
+        best = None
+        for sym_id, line_start, line_end in spans:
+            width = line_end - line_start
+            if (
+                line_start <= record.line <= line_end
+                and (best is None or width < best)
+            ):
+                symbol_id, best = sym_id, width
+        rows.append((_new_id(), file_id, symbol_id, record.line, record.kind, record.text))
+    return rows
 
 
 def _module_dotted(rel_path: str) -> str:
@@ -1248,16 +1291,7 @@ def materialize_import_edges(
 
 
 def insert_parse_error(cur, repo: str, path: str, error_message: str, stack_trace: str | None = None):
-    # Ensure a repos row exists so the parse_errors.repo_id FK holds even when
-    # the error fires before the repo was registered (e.g. incremental reindex
-    # of a file whose repo_id is empty or inferred differently than build
-    # stored). Idempotent — ON CONFLICT is a no-op if the row already exists.
-    cur.execute(
-        """INSERT INTO repos (id, name, path, language, git_remote, indexed_at)
-           VALUES (?, ?, ?, '', NULL, ?)
-           ON CONFLICT(id) DO NOTHING""",
-        (repo, repo, ".", _now()),
-    )
+    ensure_repo_row(cur, repo)
     cur.execute(
         """INSERT INTO parse_errors (id, file_path, repo_id, error_message, stack_trace, timestamp)
            VALUES (?, ?, ?, ?, ?, ?)""",

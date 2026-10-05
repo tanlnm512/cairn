@@ -172,6 +172,17 @@ bench = [
     "datasets>=4.0",
 ]
 
+# Symbol-community analytics (`cairn communities`, symbol-communities D-002):
+# Louvain partitioning via networkx. Opt-in because the core query/build path
+# never needs it; imports are strictly lazy inside the communities module --
+# base installs (and CI without this extra) run unaffected, and absence fails
+# with an actionable install hint rather than an import error. Pure-Python, so
+# the platform matrix is unchanged. Floor 3.4 keeps `louvain_communities(seed=
+# ...)` available on every supported Python arm.
+graph-analytics = [
+    "networkx>=3.4",
+]
+
 [project.scripts]
 cairn = "cairn.cli:main"
 

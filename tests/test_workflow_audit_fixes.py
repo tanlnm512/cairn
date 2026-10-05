@@ -69,25 +69,17 @@ def test_incremental_repairs_incoming_edges(caller_callee_db, caller_callee_ws, 
 
 
 # ---------------------------------------------------------------------------
-# #1 — incremental_update rebuilds the derived indexes (transitive_edges).
+# #1 — incremental_update refreshes derived indexes; a store whose closure
+# was never built gains none on update.
 # ---------------------------------------------------------------------------
 
-def test_incremental_rebuilds_derived_indexes(caller_callee_db, caller_callee_ws, tmp_path):
-    """incremental_update must refresh transitive_edges after a change,
-    the same way a full build does.
+def test_incremental_preserves_closure_free_store(caller_callee_db, caller_callee_ws, tmp_path):
+    """incremental_update must not build a closure the store never had;
+    --with-closure on a rebuild is the only path that materializes one.
     """
     db = str(tmp_path / "derived.db")
     conn = caller_callee_db(db)
     try:
-        # Seed the transitive table so a stale state is detectable.
-        from cairn.graph.dataflow import build_transitive_closure
-        build_transitive_closure(conn)
-        before = conn.execute("SELECT COUNT(*) AS c FROM transitive_edges").fetchone()[0]
-        assert before >= 1
-
-        # Corrupt the table to simulate staleness, then run incremental_update.
-        conn.execute("DELETE FROM transitive_edges")
-        conn.commit()
         assert conn.execute("SELECT COUNT(*) FROM transitive_edges").fetchone()[0] == 0
 
         # Edit a file so there's a change to pick up.
@@ -97,13 +89,16 @@ def test_incremental_rebuilds_derived_indexes(caller_callee_db, caller_callee_ws
     finally:
         conn.close()
 
-    incremental_update(workspace=str(caller_callee_ws), db_path=db)
+    update = incremental_update(workspace=str(caller_callee_ws), db_path=db)
+    assert update["errors"] == [], update["errors"]
+    assert update["files_reindexed"] >= 1, update
+
     conn = get_db(db)
     try:
-        # transitive_edges should be repopulated by incremental_update now.
         after = conn.execute("SELECT COUNT(*) FROM transitive_edges").fetchone()[0]
-        assert after >= 1, (
-            "incremental_update should rebuild transitive_edges; table stayed empty"
+        assert after == 0, (
+            "incremental_update must leave a never-built closure absent; "
+            "table gained rows"
         )
     finally:
         conn.close()

@@ -17,7 +17,7 @@ LAUNCH_LABEL = "Launch workspace"
 # nav item.
 NAV_SECTIONS: tuple = (
     (None, ("workspaces",)),
-    ("Explore", ("projects", "graph")),
+    ("Explore", ("projects", "graph", "communities")),
     ("Knowledge", ("knowledge", "wiki", "memory", "tasks")),
     ("Activity", ("history", "tokens", "chains")),
     ("System", ("health", "embeddings", "database", "settings")),
@@ -27,6 +27,7 @@ NAV_LABELS: dict = {
     "workspaces": "Workspaces",
     "projects": "Projects",
     "graph": "Graph",
+    "communities": "Communities",
     "history": "History",
     "tokens": "Tokens",
     "chains": "Chains",

@@ -41,10 +41,6 @@ class RubyParser(BaseParser, TreeSitterParserBase):
         pf.edges.extend(self._pending_edges)
         return pf
 
-    def _walk(self, node: Node, source: bytes, pf: ParsedFile):
-        for child in node.children:
-            self._visit(child, source, pf)
-
     def _visit(self, node: Node, source: bytes, pf: ParsedFile):
         t = node.type
 
@@ -122,6 +118,8 @@ class RubyParser(BaseParser, TreeSitterParserBase):
         """Walk a class/module body, skipping the consumed ``superclass`` child."""
         for child in node.children:
             if child.type == "superclass":
+                continue
+            if self._rationale_from_comment(child, source, pf):
                 continue
             self._visit(child, source, pf)
 

@@ -1,6 +1,7 @@
-"""Enforcing closure-budget gate: the scaling suite's closure op must stay
-within the recorded wall/memory budget at the 1000-file gate point, and the
-deterministic 5x structural-edge synthesis must preserve graph shape."""
+"""Enforcing budget gates: the scaling suite's closure, path-query, and
+communities ops must stay within their recorded budgets at the 1000-file gate
+point, and the deterministic 5x structural-edge synthesis must preserve graph
+shape."""
 from __future__ import annotations
 
 import sqlite3
@@ -85,6 +86,24 @@ def _assert_closure_budget(point) -> None:
     )
 
 
+def _assert_path_query_budget(point) -> None:
+    wall_budget = scaling_suite_mod.PATH_QUERY_BUDGET_WALL_SECONDS
+    assert point.path_query_paths > 0, "path query ran against a pathless graph"
+    assert point.path_query_seconds <= wall_budget, (
+        f"path query wall {point.path_query_seconds:.3f}s at {point.n_files} files "
+        f"exceeds budget {wall_budget:.1f}s"
+    )
+
+
+def _assert_communities_budget(point) -> None:
+    wall_budget = scaling_suite_mod.COMMUNITIES_BUDGET_WALL_SECONDS
+    assert point.communities_count > 0, "communities op ran against no structural edges"
+    assert point.communities_seconds <= wall_budget, (
+        f"communities wall {point.communities_seconds:.3f}s at {point.n_files} files "
+        f"exceeds budget {wall_budget:.1f}s"
+    )
+
+
 @pytest.mark.infra
 def test_closure_budget_gate_at_1000_files(tmp_path, monkeypatch):
     """The enforcing gate: closure at 5x structural-edge volume on the
@@ -101,6 +120,44 @@ def test_over_budget_closure_fails_the_gate(tmp_path, monkeypatch):
     point = _run_gate_point(tmp_path, monkeypatch, sizes=(6,))
     with pytest.raises(AssertionError, match="exceeds budget"):
         _assert_closure_budget(point)
+
+
+@pytest.mark.infra
+def test_path_query_budget_gate_at_1000_files(tmp_path, monkeypatch):
+    """The enforcing gate: one max-depth-4 path query on the 1000-file medium
+    corpus must stay within the recorded budget."""
+    point = _run_gate_point(tmp_path, monkeypatch, sizes=(GATE_FILES,))
+    assert point.n_files == GATE_FILES
+    _assert_path_query_budget(point)
+
+
+def test_over_budget_path_query_fails_the_gate(tmp_path, monkeypatch):
+    """An over-budget path query fails the gate assertion (enforced, not
+    advisory): a zero budget must trip on any completed path query."""
+    monkeypatch.setattr(scaling_suite_mod, "PATH_QUERY_BUDGET_WALL_SECONDS", 0.0)
+    point = _run_gate_point(tmp_path, monkeypatch, sizes=(6,))
+    with pytest.raises(AssertionError, match="exceeds budget"):
+        _assert_path_query_budget(point)
+
+
+@pytest.mark.infra
+def test_communities_budget_gate_at_1000_files(tmp_path, monkeypatch):
+    """The enforcing gate: one full communities run on the 1000-file medium
+    corpus must stay within the recorded budget."""
+    pytest.importorskip("networkx")
+    point = _run_gate_point(tmp_path, monkeypatch, sizes=(GATE_FILES,))
+    assert point.n_files == GATE_FILES
+    _assert_communities_budget(point)
+
+
+def test_over_budget_communities_fails_the_gate(tmp_path, monkeypatch):
+    """An over-budget communities run fails the gate assertion (enforced, not
+    advisory): a zero budget must trip on any completed communities run."""
+    pytest.importorskip("networkx")
+    monkeypatch.setattr(scaling_suite_mod, "COMMUNITIES_BUDGET_WALL_SECONDS", 0.0)
+    point = _run_gate_point(tmp_path, monkeypatch, sizes=(6,))
+    with pytest.raises(AssertionError, match="exceeds budget"):
+        _assert_communities_budget(point)
 
 
 class TestSynthesizeStructuralEdges:

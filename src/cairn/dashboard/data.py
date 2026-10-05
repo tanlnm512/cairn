@@ -1905,6 +1905,83 @@ def get_session_chains(
     }
 
 
+COMMUNITY_HUB_CAP = 3
+
+
+def get_communities(conn: sqlite3.Connection) -> List[dict]:
+    """Every persisted community with size and top hubs, in stored id order; [] when none persisted."""
+    rows = conn.execute(
+        """
+        SELECT c.id, c.label, c.size,
+               s.qualified_name AS qualified_name,
+               sc.structural_degree AS structural_degree
+        FROM communities c
+        JOIN symbol_communities sc ON sc.community_id = c.id
+        JOIN symbols s ON s.id = sc.symbol_id
+        JOIN files f ON f.id = s.file_id
+        ORDER BY c.id, sc.structural_degree DESC, f.path, s.qualified_name
+        """
+    ).fetchall()
+    communities: List[dict] = []
+    by_id: Dict[int, dict] = {}
+    for row in rows:
+        community = by_id.get(row["id"])
+        if community is None:
+            community = {
+                "id": row["id"],
+                "label": row["label"],
+                "size": row["size"],
+                "hubs": [],
+            }
+            by_id[row["id"]] = community
+            communities.append(community)
+        if len(community["hubs"]) < COMMUNITY_HUB_CAP:
+            community["hubs"].append(
+                {
+                    "qualified_name": row["qualified_name"],
+                    "structural_degree": row["structural_degree"],
+                }
+            )
+    return communities
+
+
+def get_community_members(
+    conn: sqlite3.Connection, community_id: int
+) -> Optional[dict]:
+    """One community with its degree-ranked member symbols; None when the id persists no membership."""
+    row = conn.execute(
+        "SELECT id, label, size FROM communities WHERE id = ?", (community_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    members = [
+        {
+            "qualified_name": member["qualified_name"],
+            "path": member["path"],
+            "structural_degree": member["structural_degree"],
+        }
+        for member in conn.execute(
+            """
+            SELECT s.qualified_name AS qualified_name,
+                   f.path AS path,
+                   sc.structural_degree AS structural_degree
+            FROM symbol_communities sc
+            JOIN symbols s ON s.id = sc.symbol_id
+            JOIN files f ON f.id = s.file_id
+            WHERE sc.community_id = ?
+            ORDER BY sc.structural_degree DESC, f.path, s.qualified_name
+            """,
+            (community_id,),
+        )
+    ]
+    return {
+        "id": row["id"],
+        "label": row["label"],
+        "size": row["size"],
+        "members": members,
+    }
+
+
 class MissingDatabaseError(FileNotFoundError):
     """The graph DB file does not exist — nothing read-only to open."""
 

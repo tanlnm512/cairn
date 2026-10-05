@@ -70,10 +70,12 @@ class CriticResult:
         return self.passed
 
 
-# Section headings the default quality heuristic recognizes (module compass,
-# flow compass, and the heading both share).
+# Section headings the default quality heuristic recognizes (module compass
+# including its optional Subsystems section, flow compass, and the heading
+# both share).
 _DEFAULT_SECTION_VOCAB = (
     "# What Does This Module Do?",
+    "# Subsystems",
     "# Common Modification Patterns",
     "# Build-Failure Patterns",
     "# Cross-Module Dependencies",
@@ -83,6 +85,12 @@ _DEFAULT_SECTION_VOCAB = (
     "# Modules Spanned",
     "# Tribal Knowledge",
 )
+
+# Default-vocab quality denominator. Deliberately NOT len(_DEFAULT_SECTION_VOCAB):
+# both compass shapes emit all 5 of their own headings unconditionally, so a
+# pool-derived denominator scores complete 5-section bodies 0.5 — under the
+# 0.7 warned-draft threshold.
+_DEFAULT_COMPLETE_SECTIONS = 5.0
 
 
 def critic_concept(
@@ -130,7 +138,10 @@ def critic_concept(
         # is complete when fully present.
         vocab = _DEFAULT_SECTION_VOCAB if section_vocab is None else section_vocab
         sections = sum(1 for h in vocab if h in body)
-        total = 5.0 if section_vocab is None else float(max(len(vocab), 1))
+        total = (
+            _DEFAULT_COMPLETE_SECTIONS if section_vocab is None
+            else float(max(len(vocab), 1))
+        )
         quality = min(sections / total, 1.0)
 
     # No factual errors is mandatory. With no warnings this passes at quality

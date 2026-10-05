@@ -16,6 +16,7 @@ import pytest
 
 from cairn.graph.schema import _apply_schema
 from cairn.memory.promotion import capture_memory
+from cairn.memory.store import get_memory
 from cairn.okf.bundle import OKFBundle
 
 
@@ -121,6 +122,7 @@ def test_recall_no_stale_flag_for_real_refs(db, bundle, monkeypatch):
     )
     out = _recall("auth", db, bundle, monkeypatch)
     assert "[STALE]" not in out, out
+    assert "stance=" not in out, out
 
 
 def test_recall_partial_stale_when_one_of_two_refs_gone(db, bundle, monkeypatch):
@@ -173,3 +175,36 @@ def test_recall_does_not_crash_when_verification_raises(db, bundle, monkeypatch)
     # Did not crash; STALE not flagged (can't compute); '?' surfaced.
     assert "[STALE]" not in out, out
     assert "refs-verified=?" in out, out
+
+
+def test_recall_renders_stance_after_refs_segment(db, bundle, monkeypatch):
+    """A memory carrying memory_stance renders ', stance=<value>' inside the
+    bracket, immediately after the refs segment."""
+    capture_memory(
+        db, bundle, type_="workaround", title="auth workaround",
+        body="Call `login()` twice on 401. Why: token race.",
+        confidence=0.7, stance="tentative",
+    )
+    out = _recall("auth", db, bundle, monkeypatch)
+    assert "refs-verified=1.0, stance=tentative]" in out, out
+
+
+def test_recall_contested_renders_peer_hint_line(db, bundle, monkeypatch):
+    """A contested memory carries its peer as a hint line under the result,
+    mirroring the STALE hint shape."""
+    result = capture_memory(
+        db, bundle, type_="decision", title="auth login backoff",
+        body="`login()` retries with exponential backoff. Why: flaky upstream.",
+        confidence=0.8, stance="contested",
+    )
+    concept = get_memory(bundle, result["path"])
+    concept.extensions["memory_stance_peer"] = "memory/tribal/bbb-new-auth"
+    concept.concept_id = result["path"]
+    bundle.write_concept(concept)
+
+    out = _recall("login", db, bundle, monkeypatch)
+    assert "refs-verified=1.0, stance=contested]" in out, out
+    assert (
+        "    ^ contradicted by memory/tribal/bbb-new-auth "
+        "-- verify before relying on this memory" in out
+    ), out

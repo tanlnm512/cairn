@@ -16,6 +16,7 @@ server. SKILL.md keeps only a name index — come here for the details.
 - `file_api(path, structured=False)` -- Body-free symbol records for one indexed file. A null signature means no signature signal was stored. `structured=True` returns the symbol records.
 - `cross_repo_deps(repo, limit=50)` -- Cross-repo dependency map
 - `visualize_graph(scope, symbol?, module?, repo?, depth=3, format="mermaid")` -- Mermaid/DOT/JSON diagram of a symbol/module/impact/repo/deps scope
+- `path(from_pattern, to_pattern, fuzzy=False, max_depth=4, limit=50)` -- Shortest structural path between two symbols over the live graph (same hop chain the `cairn path` CLI prints). Endpoints accept name or qualified-name patterns matched as case-insensitive substrings; fuzzy=True also follows ambiguous/unresolved hops.
 
 ## Layer 2: Knowledge Base + Compass
 - `search_knowledge(query, type_filter="", limit=10, full_body=False)` -- Search wiki, compass, patterns, memory. Use `type_filter="Wiki"` for wiki articles, `type_filter="Pattern"` for non-obvious patterns, `type_filter="Compass"` for module guides, or leave empty for all.
@@ -25,7 +26,7 @@ server. SKILL.md keeps only a name index — come here for the details.
 
 ## Layer 4: Memory
 - `recall_memory(query, tier?)` -- Search past decisions, patterns, mistakes (symbol/title-keyed; see `references/tool-behaviors.md`)
-- `record_memory(type, title, body, resource?, confidence?)` -- Capture a learning (auto-supersedes near-duplicates of the same type)
+- `record_memory(type, title, body, resource="", confidence=0.7, stance=None)` -- Capture a learning (auto-supersedes near-duplicates of the same type). `stance` records a prior stance (`preferred`|`tentative`|`contested`; None = unset) that `cairn memory reflect` recomputes from evidence; invalid values raise ValueError before anything is written.
 
 Lifecycle verbs (digest, evolve, promote, demote, forget, decay) are CLI-only:
 `cairn memory <verb>`.

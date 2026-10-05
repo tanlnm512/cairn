@@ -46,6 +46,8 @@ of the closed campaign, scripts recoverable from git history.
 | `benchmarks/quality/ladder-v2/sweep-ladder-enrich-rerankoff.json` | `benchmarks/quality/MEASURE.md` |
 | `benchmarks/quality/ladder-v2/sweep-ladder-enrichidf-rerankoff.json` | `benchmarks/quality/MEASURE.md` |
 | `benchmarks/quality/warm_time.json` | `benchmarks/quality/MEASURE.md` (Quick reference row) |
+| `benchmarks/worked/perf-DS-v1/manifest.json` | `benchmarks/worked/perf-DS-v1/README.md` |
+| `benchmarks/worked/perf-DS-v1/perf.json` | `benchmarks/worked/perf-DS-v1/README.md` |
 
 ## Keeping this inventory true
 

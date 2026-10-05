@@ -20,7 +20,7 @@ _CLIENT_CHOICES = [*CLIENTS, "all"]
               help="Where to write configs: 'workspace' (./.claude/) or 'global' (~/.claude/). If omitted, prompts interactively.")
 @click.option("--force", is_flag=True, help="Overwrite existing cairn files.")
 @click.option("--dry-run", is_flag=True, help="Show what would be written; change nothing.")
-@click.option("--git-hooks", is_flag=True, help="Also install git post-commit hooks in repos.")
+@click.option("--git-hooks", is_flag=True, help="Also install git git hooks (post-commit + post-checkout) in repos.")
 @click.option("--sse", "sse", is_flag=True,
               help="Use SSE configs (shared daemon) — this is the default; the flag is kept for explicitness. Run `cairn serve start` first.")
 @click.option("--stdio", "stdio", is_flag=True,

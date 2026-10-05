@@ -34,11 +34,13 @@
    "impacted": [
     [
      "chain_h2",
-     "f02.py"
+     "f02.py",
+     0
     ],
     [
      "chain_h3",
-     "f03.py"
+     "f03.py",
+     1
     ]
    ],
    "total": 2,
@@ -49,11 +51,13 @@
    "impacted": [
     [
      "cyc_a",
-     "f07.py"
+     "f07.py",
+     0
     ],
     [
      "cyc_b",
-     "f07.py"
+     "f07.py",
+     1
     ]
    ],
    "total": 2,
@@ -70,66 +74,66 @@
    "impacted": [
     [
      "chain_h1",
-     "f01.py"
+     "f01.py",
+     0
     ],
     [
      "chain_h2",
-     "f02.py"
-    ],
-    [
-     "chain_h2",
-     "f02.py"
+     "f02.py",
+     0
     ],
     [
      "chain_h3",
-     "f03.py"
+     "f03.py",
+     1
     ],
     [
      "crunch",
-     "f05.py"
+     "f05.py",
+     0
     ],
     [
      "cyc_a",
-     "f07.py"
-    ],
-    [
-     "cyc_a",
-     "f07.py"
+     "f07.py",
+     0
     ],
     [
      "cyc_b",
-     "f07.py"
+     "f07.py",
+     1
     ],
     [
      "duplicated",
-     "f07.py"
+     "f07.py",
+     0
     ],
     [
      "entry_north",
-     "f06.py"
-    ],
-    [
-     "entry_north",
-     "f06.py"
+     "f06.py",
+     1
     ],
     [
      "entry_south",
-     "f06.py"
+     "f06.py",
+     1
     ],
     [
      "mid_a",
-     "f04.py"
+     "f04.py",
+     0
     ],
     [
      "mid_b",
-     "f04.py"
+     "f04.py",
+     0
     ],
     [
      "mid_c",
-     "f05.py"
+     "f05.py",
+     0
     ]
    ],
-   "total": 15,
+   "total": 12,
    "truncated": false
   },
   "leaf_util|d3|fuzzy|l100": {
@@ -137,70 +141,66 @@
    "impacted": [
     [
      "chain_h1",
-     "f01.py"
+     "f01.py",
+     0
     ],
     [
      "chain_h2",
-     "f02.py"
-    ],
-    [
-     "chain_h2",
-     "f02.py"
+     "f02.py",
+     0
     ],
     [
      "chain_h3",
-     "f03.py"
+     "f03.py",
+     1
     ],
     [
      "crunch",
-     "f05.py"
+     "f05.py",
+     0
     ],
     [
      "cyc_a",
-     "f07.py"
-    ],
-    [
-     "cyc_a",
-     "f07.py"
+     "f07.py",
+     0
     ],
     [
      "cyc_b",
-     "f07.py"
+     "f07.py",
+     1
     ],
     [
      "duplicated",
-     "f07.py"
+     "f07.py",
+     0
     ],
     [
      "entry_north",
-     "f06.py"
-    ],
-    [
-     "entry_north",
-     "f06.py"
-    ],
-    [
-     "entry_north",
-     "f06.py"
+     "f06.py",
+     1
     ],
     [
      "entry_south",
-     "f06.py"
+     "f06.py",
+     1
     ],
     [
      "mid_a",
-     "f04.py"
+     "f04.py",
+     0
     ],
     [
      "mid_b",
-     "f04.py"
+     "f04.py",
+     0
     ],
     [
      "mid_c",
-     "f05.py"
+     "f05.py",
+     0
     ]
    ],
-   "total": 16,
+   "total": 12,
    "truncated": false
   },
   "leaf_util|d3|precise|l500": {
@@ -208,66 +208,66 @@
    "impacted": [
     [
      "chain_h1",
-     "f01.py"
+     "f01.py",
+     0
     ],
     [
      "chain_h2",
-     "f02.py"
-    ],
-    [
-     "chain_h2",
-     "f02.py"
+     "f02.py",
+     0
     ],
     [
      "chain_h3",
-     "f03.py"
+     "f03.py",
+     1
     ],
     [
      "crunch",
-     "f05.py"
+     "f05.py",
+     0
     ],
     [
      "cyc_a",
-     "f07.py"
-    ],
-    [
-     "cyc_a",
-     "f07.py"
+     "f07.py",
+     0
     ],
     [
      "cyc_b",
-     "f07.py"
+     "f07.py",
+     1
     ],
     [
      "duplicated",
-     "f07.py"
+     "f07.py",
+     0
     ],
     [
      "entry_north",
-     "f06.py"
-    ],
-    [
-     "entry_north",
-     "f06.py"
+     "f06.py",
+     1
     ],
     [
      "entry_south",
-     "f06.py"
+     "f06.py",
+     1
     ],
     [
      "mid_a",
-     "f04.py"
+     "f04.py",
+     0
     ],
     [
      "mid_b",
-     "f04.py"
+     "f04.py",
+     0
     ],
     [
      "mid_c",
-     "f05.py"
+     "f05.py",
+     0
     ]
    ],
-   "total": 15,
+   "total": 12,
    "truncated": false
   },
   "no_such_symbol_xyz|d5|precise|l100": {

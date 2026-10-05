@@ -430,6 +430,15 @@ def _warn_machine_profile_mismatch(current: dict, stamped: object) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON (for CI / piping).")
 @click.option("--save", default=None, help="Save the result JSON to this file (baseline).")
 @click.option(
+    "--worked",
+    default=None,
+    help=(
+        "Write a reproducible worked bundle (raw JSON + inputs manifest + README "
+        "companion). Pass the benchmarks root for the canonical "
+        "benchmarks/worked/<suite>-<version>/ layout; any other DIR is used exactly."
+    ),
+)
+@click.option(
     "--compare",
     default=None,
     help="Compare against a saved baseline JSON file; flag regressions.",
@@ -484,6 +493,7 @@ def bench(
     embed_backend,
     as_json,
     save,
+    worked,
     compare,
     baseline,
     threshold,
@@ -662,6 +672,28 @@ def bench(
         if save:
             Path(save).write_text(json.dumps(payload, indent=2), encoding="utf-8")
             display.success(f"Saved baseline to {save}")
+
+        # Worked bundle if requested: after the results are emitted (and after
+        # --save) so a write failure can only cost the bundle, never the run;
+        # before compare so a regression exit-2 never orphans the evidence.
+        if worked:
+            from cairn.bench.corpus import DEFAULT_SEED
+            from cairn.bench.worked import write_worked_bundle
+
+            try:
+                written = write_worked_bundle(
+                    payload,
+                    worked,
+                    suite=suite,
+                    seed=DEFAULT_SEED if (suite != "swe-bench" and not workspace) else None,
+                    repeats=repeats,
+                    runs=runs,
+                    embed_backend=embed_backend,
+                )
+            except OSError as exc:
+                display.error(f"Worked bundle write failed: {exc}")
+                sys.exit(1)
+            display.success(f"Worked bundle written to {written[0].parent}")
 
         # Compare against baseline if requested (explicit --compare file, or
         # --baseline <DS-version> resolved from benchmarks/baselines/).

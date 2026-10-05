@@ -33,7 +33,7 @@ non-default home, `cairn install-agents` embeds `env.CAIRN_HOME` into every
 stdio MCP registration it writes (the Claude global-scope registration uses
 `claude mcp add -e`; droid's CLI path degrades to a warning — use its
 workspace-scope file registration), prefixes generated hook commands with
-the assignment, adds an `export` line to the git post-commit template, and
+the assignment, adds an `export` line to the git hook templates, and
 `cairn serve start` propagates it into the LaunchAgent plist. With the
 default home nothing is added — generated configs are unchanged. Re-run
 `cairn install-agents` after moving the store. Verify any environment with

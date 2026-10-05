@@ -211,7 +211,13 @@ def test_nested_repository_hook_uses_the_prefixed_repo_id(
     assert '--repo "parent/nested/child"' in hook_path.read_text(
         encoding="utf-8"
     )
+    post_checkout = child / ".git" / "hooks" / "post-checkout"
+    assert '--repo "parent/nested/child"' in post_checkout.read_text(
+        encoding="utf-8"
+    )
     assert uninstall_hooks([child_id], str(parent)) == [child_id]
+    assert not hook_path.exists()
+    assert not post_checkout.exists()
 
 
 def test_uninitialized_submodule_is_skipped_when_opted_in(

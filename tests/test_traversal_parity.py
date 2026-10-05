@@ -10,14 +10,13 @@ macOS failed on the Linux CI — DFS output is enumeration-order-dependent):
 
 * SQL row order follows build-time file enumeration, which the filesystem
   does not keep stable across platforms (APFS vs ext4) or tmp dirs.
-* DFS **depths** are first-visit path lengths — a diamond caller (calls the
-  target directly AND via another caller) gets depth 0 or 1 depending on
-  visit order. **Which rows survive a ``limit``** and **which cycle member
-  is reported** are order-dependent the same way.
-* Therefore the goldens pin only order-invariant facts: impacted row sets,
-  totals, truncated flags, cycle counts, chain membership. Depth fidelity is
-  pinned where it is deterministic: index mode (shortest-path, one assert
-  per known pair) and tree-shaped reachability (unique paths).
+* DFS **depths** are shortest-path distances (the walk tracks the minimum
+  distance per reached symbol), so they are order-invariant and pinned via
+  the goldens and the closure-free depth tests below. **Which rows survive
+  a ``limit``** and **which cycle member is reported** remain
+  enumeration-order-dependent.
+* Therefore the goldens pin order-invariant facts: impacted row sets with
+  their shortest-path depths, totals, truncated flags, cycle counts.
 
 ``get_dataflow``'s ``within_repo``/``cross_repo`` lists are built from Python
 sets (hash-randomized order); sorted at capture. The ``updated`` timestamp
@@ -167,6 +166,16 @@ PARITY_SOURCES: dict[str, str] = {
 @pytest.fixture(scope="module")
 def corpus_db(tmp_path_factory):
     """Build the parity corpus graph with derived indexes; return the db path."""
+    return str(_build_corpus_db(tmp_path_factory, with_closure=True))
+
+
+@pytest.fixture(scope="module")
+def plain_db(tmp_path_factory):
+    """Same corpus, default build shape: derived dataflow index, no closure."""
+    return str(_build_corpus_db(tmp_path_factory, with_closure=False))
+
+
+def _build_corpus_db(tmp_path_factory, with_closure: bool) -> str:
     from cairn.graph.builder import build_graph
 
     root = tmp_path_factory.mktemp("parity")
@@ -180,7 +189,8 @@ def corpus_db(tmp_path_factory):
     conn = get_db(str(db))
     try:
         build_dataflow_index(conn)
-        build_transitive_closure(conn)
+        if with_closure:
+            build_transitive_closure(conn)
     finally:
         conn.close()
     return str(db)
@@ -189,16 +199,15 @@ def corpus_db(tmp_path_factory):
 def _canon_impact(res: dict) -> dict:
     """    Order-insensitive canonical form of an impact_analysis result.
 
-    Only enumeration-order-INVARIANT facts are pinned: the set of impacted
-    (symbol, file) rows, the total, the truncated flag, and the cycle COUNT.
-    Per-row depths, which rows a limit keeps, and which cycle member gets
-    reported all depend on SQL row order (= build-time file enumeration, which
-    differs between filesystems). Depth fidelity is pinned where it is
-    deterministic: index mode (shortest-path, tested below) and tree-shaped
-    reachability (test_dfs_depths_tree_shaped)."""
+    Pins the order-invariant facts: the set of impacted (symbol, file, depth)
+    rows — depths are shortest-path distances, identical across enumeration
+    orders — plus the total, the truncated flag, and the cycle COUNT.
+    Which rows a limit keeps and which cycle member gets reported still
+    depend on SQL row order (= build-time file enumeration), so no
+    truncation-subset query is golden-pinned."""
     return {
         "impacted": sorted(
-            (r["symbol"], r["file"]) for r in res["impacted"]
+            (r["symbol"], r["file"], r["depth"]) for r in res["impacted"]
         ),
         "cycles": len(res["cycles"]),
         "total": res["total"],
@@ -357,6 +366,89 @@ def test_index_mode_skipped_for_fuzzy_and_deep(corpus_db):
         assert deep["total"] > 0
     finally:
         conn.close()
+
+
+# --- Closure-free DFS depths (default-build stores) --------------------------
+
+
+def test_dfs_depths_match_index_mode_without_closure(corpus_db, plain_db):
+    """Closure-free DFS depths equal index-mode depths: on a default-built
+    store the walk reports the same shortest-path depths the closure-era
+    index mode returns for the identical graph."""
+    dfs_conn = get_db(plain_db)
+    idx_conn = get_db(corpus_db)
+    try:
+        for name, depth in [("leaf_util", 3), ("chain_h1", 3), ("leaf_util", 2)]:
+            dfs = impact_analysis(dfs_conn, name, max_depth=depth, use_index=False)
+            idx = impact_analysis(idx_conn, name, max_depth=depth, use_index=True)
+            idx_depths = {(r["symbol"], r["file"]): r["depth"] for r in idx["impacted"]}
+            for r in dfs["impacted"]:
+                key = (r["symbol"], r["file"])
+                assert key in idx_depths, (name, depth, key)
+                assert r["depth"] == idx_depths[key], (name, depth, key)
+    finally:
+        dfs_conn.close()
+        idx_conn.close()
+
+
+def test_dfs_depths_shortest_on_closure_free_store(plain_db):
+    """Diamond pin without the closure: chain_h2 calls leaf_util directly
+    (depth 0) even though the walk can first reach it via chain_h1, and each
+    symbol yields exactly one row."""
+    conn = get_db(plain_db)
+    try:
+        res = impact_analysis(conn, "leaf_util", max_depth=3, use_index=False)
+        depths = {(r["symbol"], r["file"]): r["depth"] for r in res["impacted"]}
+        assert depths[("chain_h2", "f02.py")] == 0
+        assert depths[("chain_h3", "f03.py")] == 1
+        assert len(res["impacted"]) == len(depths)
+        assert res["total"] == len(res["impacted"])
+    finally:
+        conn.close()
+
+
+def test_dfs_reports_cycles_without_closure(plain_db):
+    """Cycle reporting survives on stores where the closure never engages."""
+    conn = get_db(plain_db)
+    try:
+        res = impact_analysis(conn, "cyc_b", max_depth=5, use_index=False)
+        assert res["cycles"]
+    finally:
+        conn.close()
+
+
+def test_dfs_relaxes_depth_on_later_shorter_path(fresh_db):
+    """A symbol first reached deep is re-expanded when a shorter route is
+    found later: its row and its descendants' rows relax to the minimum."""
+    fresh_db.execute(
+        "INSERT INTO repos (id, name, path, language) VALUES ('r1', 'r1', '/tmp/r1', 'python')"
+    )
+    fresh_db.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES ('f1', 'r1', 'a.py', 'python')"
+    )
+    fresh_db.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) VALUES (?,?,?,?,?)",
+        [(sid, "f1", sid, sid, "function") for sid in ["s", "p", "q", "r", "x", "w"]],
+    )
+    # Caller chains: r<-p<-s, x<-r and x<-q (x first reached at depth 2 via
+    # r, then at depth 1 via q), w<-x.
+    fresh_db.executemany(
+        "INSERT INTO edges (id, source_id, target_id, target_name, kind) VALUES (?,?,?,?,?)",
+        [
+            ("e1", "p", "s", "s", "calls"),
+            ("e2", "q", "s", "s", "calls"),
+            ("e3", "r", "p", "p", "calls"),
+            ("e4", "x", "r", "r", "calls"),
+            ("e5", "x", "q", "q", "calls"),
+            ("e6", "w", "x", "x", "calls"),
+        ],
+    )
+    fresh_db.commit()
+
+    res = impact_analysis(fresh_db, "s", max_depth=3, use_index=False)
+    depths = {r["symbol"]: r["depth"] for r in res["impacted"]}
+    assert depths == {"p": 0, "q": 0, "r": 1, "x": 1, "w": 2}
+    assert len(res["impacted"]) == len(depths)
 
 
 def test_dfs_depths_tree_shaped(corpus_db):

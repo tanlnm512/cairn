@@ -14,27 +14,31 @@ def hooks():
 @hooks.command("install")
 @click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE)
 def hooks_install(workspace):
-    from ..graph import scanner as scanner_mod
-    from ..hooks.git_hooks import install_hooks
+    from ..hooks.git_hooks import (
+        NO_GIT_REPOS_GUIDANCE,
+        discover_hook_repos,
+        install_hooks,
+    )
 
-    repos = [
-        scanner_mod.repository_id(r)
-        for r in scanner_mod.discover_repos(workspace)
-    ]
+    repos = discover_hook_repos(workspace)
+    if not repos:
+        raise click.ClickException(NO_GIT_REPOS_GUIDANCE)
     installed = install_hooks(repos, workspace)
-    click.echo(f"Installed post-commit hooks in {len(installed)} repos: {', '.join(installed)}")
+    if installed:
+        click.echo(
+            f"Installed post-commit and post-checkout hooks in "
+            f"{len(installed)} repos: {', '.join(installed)}"
+        )
+    else:
+        click.echo("No hooks installed; existing non-cairn hooks were left untouched")
 
 
 @hooks.command("uninstall")
 @click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE)
 def hooks_uninstall(workspace):
-    from ..graph import scanner as scanner_mod
-    from ..hooks.git_hooks import uninstall_hooks
+    from ..hooks.git_hooks import discover_hook_repos, uninstall_hooks
 
-    repos = [
-        scanner_mod.repository_id(r)
-        for r in scanner_mod.discover_repos(workspace)
-    ]
+    repos = discover_hook_repos(workspace)
     removed = uninstall_hooks(repos, workspace)
     click.echo(f"Removed hooks from {len(removed)} repos: {', '.join(removed)}")
 

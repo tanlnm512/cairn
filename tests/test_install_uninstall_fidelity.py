@@ -338,6 +338,300 @@ class TestHookCairnHomePrefix:
 
 
 # --------------------------------------------------------------------------
+# freshness-hooks FR-002: post-commit hook diffs the committed range
+# --------------------------------------------------------------------------
+
+class TestPostCommitRangeHook:
+    """The post-commit hook backgrounds a range-scoped update over the
+    committed span; a fresh repo's first commit (no HEAD@{1} reflog entry)
+    falls back to an empty-tree range."""
+
+    @staticmethod
+    def _render() -> str:
+        from cairn.hooks.git_hooks import POST_COMMIT_TEMPLATE
+
+        return POST_COMMIT_TEMPLATE.format(repo="repo")
+
+    def test_update_is_range_scoped_backgrounded_and_discarded(self):
+        hook = self._render()
+        assert (
+            'cairn update --repo "repo" --diff-ref "$range" > /dev/null 2>&1 &'
+        ) in hook
+        assert "cairn validate-paths --mark" in hook
+
+    def test_range_resolves_reflog_then_empty_tree_on_first_commit(self):
+        hook = self._render()
+        assert "git rev-parse -q --verify 'HEAD@{1}'" in hook
+        assert "$(git hash-object -t tree /dev/null)..HEAD" in hook
+
+
+# --------------------------------------------------------------------------
+# freshness-hooks FR-003: post-checkout hook updates on branch switches only
+# --------------------------------------------------------------------------
+
+class TestPostCheckoutGuardHook:
+    """The post-checkout hook updates old..new only when git reports a branch
+    checkout ($3 = 1); a file checkout ($3 = 0) runs nothing."""
+
+    @staticmethod
+    def _render() -> str:
+        from cairn.hooks.git_hooks import POST_CHECKOUT_TEMPLATE
+
+        return POST_CHECKOUT_TEMPLATE.format(repo="repo")
+
+    def test_branch_checkout_updates_the_ranged_span_in_background(self):
+        hook = self._render()
+        assert 'if [ "$3" = "1" ]; then' in hook
+        assert (
+            'cairn update --repo "repo" --diff-ref "$1..$2" > /dev/null 2>&1 &'
+        ) in hook
+        assert hook.index('if [ "$3" = "1" ]; then') \
+            < hook.index('cairn update --repo "repo" --diff-ref "$1..$2"') \
+            < hook.index("fi"), "the update must run inside the branch guard"
+
+    def test_default_home_render_is_byte_identical_to_template(
+            self, monkeypatch):
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        from cairn.hooks.git_hooks import (
+            POST_CHECKOUT_TEMPLATE,
+            _render_post_checkout,
+        )
+
+        assert _render_post_checkout("repo") == \
+            POST_CHECKOUT_TEMPLATE.format(repo="repo")
+        assert "CAIRN_HOME" not in _render_post_checkout("repo")
+
+    def test_custom_home_export_line_follows_the_shebang(self, tmp_path,
+                                                         monkeypatch):
+        custom = tmp_path / "custom_home"
+        monkeypatch.setenv("CAIRN_HOME", str(custom))
+        from cairn.hooks.git_hooks import _render_post_checkout
+
+        lines = _render_post_checkout("repo").splitlines()
+        assert lines[0] == "#!/bin/bash"
+        assert lines[1] == f'export CAIRN_HOME="{custom}"'
+        assert [ln for ln in lines if "CAIRN_HOME" in ln] == [lines[1]]
+
+
+# --------------------------------------------------------------------------
+# freshness-hooks FR-004: install/uninstall manage both hook files per repo
+# --------------------------------------------------------------------------
+
+class TestGitHookInstallCoverage:
+    """install_hooks/uninstall_hooks manage post-commit AND post-checkout per
+    repo: the refuse-to-clobber guard and the cairn-marker removal rule apply
+    per hook file, an existing cairn hook is rewritten in place, and the
+    signature/return contract stays a list of repo names."""
+
+    @staticmethod
+    def _hooks_dir(ws: Path) -> Path:
+        return ws / ".git" / "hooks"
+
+    @staticmethod
+    def _install(ws: Path) -> list[str]:
+        from cairn.hooks.git_hooks import install_hooks
+
+        return install_hooks(["repo"], str(ws))
+
+    def test_install_writes_both_hooks_executable_and_uninstall_removes_both(
+            self, tmp_path, monkeypatch):
+        import os
+
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".git").mkdir()
+
+        assert self._install(ws) == ["repo"]
+
+        for name in ("post-commit", "post-checkout"):
+            hook = (self._hooks_dir(ws) / name)
+            assert 'cairn update --repo "repo"' in hook.read_text(encoding="utf-8")
+            assert os.access(hook, os.X_OK), "hooks must be executable for git"
+
+        from cairn.hooks.git_hooks import uninstall_hooks
+        assert uninstall_hooks(["repo"], str(ws)) == ["repo"]
+        assert not (self._hooks_dir(ws) / "post-commit").exists()
+        assert not (self._hooks_dir(ws) / "post-checkout").exists()
+        assert uninstall_hooks(["repo"], str(ws)) == [], \
+            "a second uninstall has nothing cairn-marked left to remove"
+
+    def test_foreign_post_commit_skipped_but_post_checkout_still_installed(
+            self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        hooks = self._hooks_dir(ws)
+        hooks.mkdir(parents=True)
+        foreign = "#!/bin/sh\necho mine\n"
+        (hooks / "post-commit").write_text(foreign, encoding="utf-8")
+
+        assert self._install(ws) == ["repo"], \
+            "a repo with one foreign hook still gets its other cairn hook"
+
+        assert (hooks / "post-commit").read_text(encoding="utf-8") == foreign
+        assert "cairn" in (hooks / "post-checkout").read_text(encoding="utf-8")
+
+    def test_all_foreign_hooks_skip_the_repo_entirely(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        hooks = self._hooks_dir(ws)
+        hooks.mkdir(parents=True)
+        foreign_pc = "#!/bin/sh\necho mine\n"
+        foreign_pco = "#!/bin/sh\necho also-mine\n"
+        (hooks / "post-commit").write_text(foreign_pc, encoding="utf-8")
+        (hooks / "post-checkout").write_text(foreign_pco, encoding="utf-8")
+
+        assert self._install(ws) == []
+        assert (hooks / "post-commit").read_text(encoding="utf-8") == foreign_pc
+        assert (hooks / "post-checkout").read_text(encoding="utf-8") == foreign_pco
+
+    def test_existing_cairn_hook_is_upgraded_in_place(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        hooks = self._hooks_dir(ws)
+        hooks.mkdir(parents=True)
+        (hooks / "post-commit").write_text(
+            "#!/bin/bash\n# Auto-generated by cairn (cairn hooks install)\n"
+            'cairn update --repo "repo" > /dev/null 2>&1 &\n',
+            encoding="utf-8",
+        )
+
+        assert self._install(ws) == ["repo"]
+
+        from cairn.hooks.git_hooks import POST_COMMIT_TEMPLATE
+        assert (hooks / "post-commit").read_text(encoding="utf-8") == \
+            POST_COMMIT_TEMPLATE.format(repo="repo")
+
+    def test_uninstall_removes_only_cairn_marked_files(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        hooks = self._hooks_dir(ws)
+        hooks.mkdir(parents=True)
+        foreign = "#!/bin/sh\necho mine\n"
+        (hooks / "post-commit").write_text(foreign, encoding="utf-8")
+        self._install(ws)
+
+        from cairn.hooks.git_hooks import uninstall_hooks
+        assert uninstall_hooks(["repo"], str(ws)) == ["repo"]
+        assert (hooks / "post-commit").read_text(encoding="utf-8") == foreign, \
+            "a foreign hook must survive uninstall"
+        assert not (hooks / "post-checkout").exists()
+
+    def test_invalid_repo_name_writes_no_hooks(self, tmp_path):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".git").mkdir()
+        from cairn.hooks.git_hooks import install_hooks
+
+        with pytest.raises(ValueError):
+            install_hooks(["repo; rm -rf /"], str(ws))
+        assert not (self._hooks_dir(ws) / "post-commit").exists()
+        assert not (self._hooks_dir(ws) / "post-checkout").exists()
+
+
+# --------------------------------------------------------------------------
+# freshness-hooks FR-005/FR-006: init --with-hooks + non-git clean failure
+# --------------------------------------------------------------------------
+
+class TestInitWithHooks:
+    """`cairn init --with-hooks` installs both git hooks with the same rules
+    as `cairn hooks install`; in a non-git workspace `hooks install` exits 1
+    with guidance while `init --with-hooks` warns and still completes —
+    zero hook files written either way."""
+
+    @staticmethod
+    def _invoke(argv):
+        from cairn.cli import main
+
+        return CliRunner().invoke(main, argv)
+
+    @staticmethod
+    def _git_workspace(tmp_path: Path) -> Path:
+        ws = tmp_path / "ws"
+        (ws / ".git").mkdir(parents=True)
+        return ws
+
+    def test_init_with_hooks_installs_both_hooks_idempotently(self, tmp_path):
+        ws = self._git_workspace(tmp_path)
+        argv = ["init", "--no-build", "--with-hooks", "--workspace", str(ws)]
+
+        first = self._invoke(argv)
+        assert first.exit_code == 0, first.output
+        hooks_dir = ws / ".git" / "hooks"
+        contents = {
+            name: (hooks_dir / name).read_text(encoding="utf-8")
+            for name in ("post-commit", "post-checkout")
+        }
+        assert all("cairn" in body for body in contents.values())
+        assert "Git hooks" in first.output
+        assert "ws" in first.output, "the rail must name the repo hooks landed in"
+
+        second = self._invoke(argv)
+        assert second.exit_code == 0, second.output
+        for name, body in contents.items():
+            assert (hooks_dir / name).read_text(encoding="utf-8") == body, \
+                "re-running init --with-hooks must not duplicate or clobber hooks"
+
+    def test_hooks_install_surface_text_covers_both_hooks(self, tmp_path):
+        ws = self._git_workspace(tmp_path)
+
+        result = self._invoke(["hooks", "install", "--workspace", str(ws)])
+
+        assert result.exit_code == 0, result.output
+        assert "post-commit" in result.output
+        assert "post-checkout" in result.output
+        for name in ("post-commit", "post-checkout"):
+            hook = ws / ".git" / "hooks" / name
+            assert hook.exists()
+            assert os.access(hook, os.X_OK), "hooks must be executable for git"
+
+    def test_hooks_install_non_git_exits_1_with_guidance_and_no_files(
+            self, tmp_path):
+        ws = tmp_path / "plain"
+        ws.mkdir()
+
+        result = self._invoke(["hooks", "install", "--workspace", str(ws)])
+
+        assert result.exit_code == 1
+        assert "No git repositories found" in result.output
+        assert list(ws.iterdir()) == [], "a failed install must write zero files"
+
+    def test_init_with_hooks_warns_and_still_completes_on_non_git(
+            self, tmp_path):
+        ws = tmp_path / "plain"
+        ws.mkdir()
+
+        result = self._invoke(
+            ["init", "--no-build", "--with-hooks", "--workspace", str(ws)])
+
+        assert result.exit_code == 0
+        assert "No git repositories found" in result.output
+        assert list(ws.iterdir()) == [], "init must write zero hook files on non-git"
+        from cairn.paths import is_registered
+
+        assert is_registered(ws), "init's store registration must still succeed"
+
+    def test_init_survives_hook_name_guard_hit(self, tmp_path):
+        """A repo id failing the shell-injection allowlist must not crash init
+        after its store is registered: warn, skip hooks, keep exit 0."""
+        ws = tmp_path / "multi"
+        repo = ws / "my repo"
+        (repo / ".git").mkdir(parents=True)
+
+        result = self._invoke(
+            ["init", "--no-build", "--with-hooks", "--workspace", str(ws)])
+
+        assert result.exit_code == 0, result.output
+        assert "git hooks not installed" in result.output
+        assert not (repo / ".git" / "hooks" / "post-commit").exists()
+        assert not (repo / ".git" / "hooks" / "post-checkout").exists()
+
+
+# --------------------------------------------------------------------------
 # F2: global-scope uninstall
 # --------------------------------------------------------------------------
 

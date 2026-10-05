@@ -285,3 +285,19 @@ class TestCriticConceptIntegration:
             "symbol-ref warnings are non-blocking by design; a high-quality body "
             "should pass despite the warning"
         )
+
+
+class TestDefaultSectionVocab:
+    """Lockstep contract: the default pool recognizes the optional Subsystems
+    section while the default denominator stays a fixed 5 (never vocab length,
+    or warned 5-section drafts would score 0.5 < 0.7)."""
+
+    def test_vocab_recognizes_subsystems_with_fixed_denominator(self):
+        from cairn.compass.critic import (
+            _DEFAULT_COMPLETE_SECTIONS,
+            _DEFAULT_SECTION_VOCAB,
+        )
+
+        assert "# Subsystems" in _DEFAULT_SECTION_VOCAB
+        assert len(_DEFAULT_SECTION_VOCAB) == 10
+        assert _DEFAULT_COMPLETE_SECTIONS == 5.0
