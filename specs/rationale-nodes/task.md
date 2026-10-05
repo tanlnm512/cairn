@@ -16,17 +16,17 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 1: Extraction core (FR-001, FR-002, FR-005, FR-006, FR-008, NFR-003)
 <!-- Checkpoint: build of the cairn repo yields attributed rationale rows; python3 -m pytest tests/ -k parser -q green -->
-- [ ] T001 [P] Add the additive `rationale` table (id, file_id, symbol_id nullable FK, line, kind, text) plus file_id/symbol_id indexes to the schema, following the additive-only CREATE TABLE IF NOT EXISTS pattern with no MIGRATIONS entry (FR-001)
+- [ ] T001 (implemented) [P] Add the additive `rationale` table (id, file_id, symbol_id nullable FK, line, kind, text) plus file_id/symbol_id indexes to the schema, following the additive-only CREATE TABLE IF NOT EXISTS pattern with no MIGRATIONS entry (FR-001)
   - Touches:
     - `src/cairn/graph/schema.py`
   - Verify before implementing: `sed -n '110,115p' src/cairn/graph/schema.py` (survey S7 — the additive pattern this follows)
-- [ ] T002 [P] Add `RationaleRecord` + defaulted `rationale` list on `ParsedFile`, the `COMMENT_NODE_TYPES` per-language map (tech-spec D-001 table verbatim), and the opener-strip/marker-match/continuation-fold helper in a new `parsers/_rationale.py` — failing-test-first fixtures per mapped language plus docstring-produces-zero (FR-005) and out-of-scope-marker-produces-zero (FR-008) pins (FR-001, FR-005, FR-008)
+- [ ] T002 (implemented) [P] Add `RationaleRecord` + defaulted `rationale` list on `ParsedFile`, the `COMMENT_NODE_TYPES` per-language map (tech-spec D-001 table verbatim), and the opener-strip/marker-match/continuation-fold helper in a new `parsers/_rationale.py` — failing-test-first fixtures per mapped language plus docstring-produces-zero (FR-005) and out-of-scope-marker-produces-zero (FR-008) pins (FR-001, FR-005, FR-008)
   - Touches:
     - `src/cairn/parsers/base.py`
     - `src/cairn/parsers/_rationale.py`
     - `tests/test_rationale_extract.py`
   - Verify before implementing: `grep -rn "rationale" src/cairn --include="*.py"` (exit 1 — survey S1); re-run the tech-spec D-001 probe to confirm the map before coding it
-- [ ] T003 (after T002 — consumes `COMMENT_NODE_TYPES` and the extract helper from `src/cairn/parsers/_rationale.py` and the `ParsedFile.rationale` list field on `ParsedFile`) Hoist the byte-identical `_walk(self, node, source, pf)` into `TreeSitterParserBase` with the comment-node check in its child loop, delete the 11 per-parser copies, add the same one-line check to `GenericTreeSitterParser._visit_children`, dart `_process_siblings`, and ruby `_walk_excluding_superclass`; include the FR-006 no-fail fixture (language with empty map entry yields zero records, no error) (FR-006, NFR-003)
+- [ ] (implemented) T003 (after T002 — consumes `COMMENT_NODE_TYPES` and the extract helper from `src/cairn/parsers/_rationale.py` and the `ParsedFile.rationale` list field on `ParsedFile`) Hoist the byte-identical `_walk(self, node, source, pf)` into `TreeSitterParserBase` with the comment-node check in its child loop, delete the 11 per-parser copies, add the same one-line check to `GenericTreeSitterParser._visit_children`, dart `_process_siblings`, and ruby `_walk_excluding_superclass`; include the FR-006 no-fail fixture (language with empty map entry yields zero records, no error) (FR-006, NFR-003)
   - Touches:
     - `src/cairn/parsers/base.py`
     - `src/cairn/parsers/generic_tree_sitter.py`
@@ -44,7 +44,7 @@ Status reflects code state per [survey.md](survey.md), not intent.
     - `src/cairn/parsers/typescript.py`
     - `tests/test_rationale_extract.py`
   - Verify before implementing: `grep -n "def _walk" src/cairn/parsers/*.py` (11 copies to delete); `python3 -m pytest tests/ -k parser -q` green before and after (survey S3 verify)
-- [ ] T004 (after T001, T003 — consumes the `rationale` table columns and `ParsedFile.rationale` records) Persist rationale rows inside `insert_parsed_file` via a new `GraphRepository.insert_rationale`, attributing each record to the innermost callable-or-type symbol whose line_start/line_end span contains its line (module kind excluded; NULL when none) (FR-001, FR-002)
+- [ ] (implemented) T004 (after T001, T003 — consumes the `rationale` table columns and `ParsedFile.rationale` records) Persist rationale rows inside `insert_parsed_file` via a new `GraphRepository.insert_rationale`, attributing each record to the innermost callable-or-type symbol whose line_start/line_end span contains its line (module kind excluded; NULL when none) (FR-001, FR-002)
   - Touches:
     - `src/cairn/graph/builder.py`
     - `src/cairn/graph/repository.py`
@@ -53,18 +53,18 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 2: Query surfaces (FR-003, FR-004)
 <!-- Checkpoint: cairn rationale prints ordered kind-tagged rows; explore shows the section only when records exist; verify_tool_count() passes -->
-- [ ] T005 (after T004 — consumes the populated `rationale` table: rows keyed by symbol_id/file_id, ordered by line) Add read helpers in a new `src/cairn/graph/rationale.py` (records for symbol ids, records for file id, ordered by line) with tests (FR-003)
+- [ ] (implemented) T005 (after T004 — consumes the populated `rationale` table: rows keyed by symbol_id/file_id, ordered by line) Add read helpers in a new `src/cairn/graph/rationale.py` (records for symbol ids, records for file id, ordered by line) with tests (FR-003)
   - Touches:
     - `src/cairn/graph/rationale.py`
     - `tests/test_rationale_read.py`
   - Verify before implementing: `grep -n "def graph_grep" src/cairn/graph/grep.py` (the read-module precedent this mirrors)
-- [ ] T006 [P] (after T005 — consumes its read helpers, records-for-symbol-ids and records-for-file ordered by line; do not edit them) Add the `cairn rationale` command in a new `src/cairn/cli/rationale.py` with `--symbol`/`--file`/`--db`/`--json`, printing records ordered by line with kind tags, registered by one import line in `cli/__init__.py` (FR-003)
+- [ ] (implemented) T006 [P] (after T005 — consumes its read helpers, records-for-symbol-ids and records-for-file ordered by line; do not edit them) Add the `cairn rationale` command in a new `src/cairn/cli/rationale.py` with `--symbol`/`--file`/`--db`/`--json`, printing records ordered by line with kind tags, registered by one import line in `cli/__init__.py` (FR-003)
   - Touches:
     - `src/cairn/cli/rationale.py`
     - `src/cairn/cli/__init__.py`
     - `tests/test_rationale_cli.py`
   - Verify before implementing: `cairn --help` (survey S9 verify); `sed -n '1,14p' src/cairn/cli/__init__.py` (import-side-effect wiring)
-- [ ] T007 [P] (after T005 — consumes its read helpers, records-for-symbol-ids ordered by line; do not edit them) Append a gated `=== Rationale (N) ===` section to explore output after the Tribal memory section, rendering records for the matched seeds' symbol ids only when any exist; no new MCP tool (FR-004)
+- [ ] (implemented) T007 [P] (after T005 — consumes its read helpers, records-for-symbol-ids ordered by line; do not edit them) Append a gated `=== Rationale (N) ===` section to explore output after the Tribal memory section, rendering records for the matched seeds' symbol ids only when any exist; no new MCP tool (FR-004)
   - Touches:
     - `src/cairn/mcp_server/tools_graph.py`
     - `tests/test_explore_rationale.py`
@@ -72,12 +72,12 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 3: Incremental honesty + docs (FR-007, FR-003)
 <!-- Checkpoint: removing a marker comment then cairn update leaves that file's rationale rows exactly matching its current comments; python3 -m pytest tests/ -q -k "incremental and not infra" green -->
-- [ ] T008 [P] (after T004 — consumes the rationale persistence in `insert_parsed_file`; re-derive is already inherited via `reindex_paths`) Add `DELETE FROM rationale WHERE file_id = ?` to the incremental delete path, ordered before the symbols delete in the same transaction (nullable FK, no cascade — embeddings_mv ordering precedent), with a failing-test-first regression (FR-007)
+- [ ] (implemented) T008 [P] (after T004 — consumes the rationale persistence in `insert_parsed_file`; re-derive is already inherited via `reindex_paths`) Add `DELETE FROM rationale WHERE file_id = ?` to the incremental delete path, ordered before the symbols delete in the same transaction (nullable FK, no cascade — embeddings_mv ordering precedent), with a failing-test-first regression (FR-007)
   - Touches:
     - `src/cairn/graph/incremental.py`
     - `tests/test_rationale_incremental.py`
   - Verify before implementing: `sed -n '150,158p' src/cairn/graph/incremental.py` (delete ordering precedent); `python3 -m pytest tests/ -q -k "incremental and not infra"` (survey S6 verify)
-- [ ] T009 (after T006, T007, T008 — documents the shipped CLI flags, explore section, and update behavior) Document the feature: rationale markers, `cairn rationale` usage, and the explore section in README/docs plus a CHANGELOG entry (FR-003)
+- [ ] (implemented) T009 (after T006, T007, T008 — documents the shipped CLI flags, explore section, and update behavior) Document the feature: rationale markers, `cairn rationale` usage, and the explore section in README/docs plus a CHANGELOG entry (FR-003)
   - Touches:
     - `README.md`
     - `CHANGELOG.md`

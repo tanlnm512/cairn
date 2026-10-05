@@ -154,6 +154,10 @@ def reindex_paths(
                 except sqlite3.OperationalError as e:
                     note_contention("incremental.delete_embeddings", error=e)
                     logger.debug("embeddings table missing", exc_info=True)
+                # rationale's FKs (file_id, nullable symbol_id) have no
+                # cascade; clear its rows before the symbols/files deletes.
+                # Re-derive rides insert_parsed_file below.
+                cur.execute("DELETE FROM rationale WHERE file_id = ?", (file_id,))
                 cur.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
                 cur.execute("DELETE FROM parse_errors WHERE file_path = ?", (stored_path,))
                 cur.execute("DELETE FROM files WHERE id = ?", (file_id,))

@@ -445,6 +445,18 @@ CREATE TABLE IF NOT EXISTS symbol_communities (
     structural_degree INTEGER NOT NULL
 );
 
+-- Rationale records for NOTE:/WHY:/HACK: marker comments, attributed to the enclosing symbol (NULL = file-level).
+CREATE TABLE IF NOT EXISTS rationale (
+    id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL REFERENCES files(id),
+    symbol_id TEXT REFERENCES symbols(id),
+    line INTEGER NOT NULL,
+    kind TEXT NOT NULL,            -- 'note' | 'why' | 'hack'
+    text TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rationale_file ON rationale(file_id);
+CREATE INDEX IF NOT EXISTS idx_rationale_symbol ON rationale(symbol_id);
+
 -- Migration tracking: records which schema migrations have been applied.
 -- Used to ensure migrations are only run once and to detect partial/failed
 -- migrations. key is the migration name (e.g., "edges.resolution"), value

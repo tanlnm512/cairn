@@ -59,6 +59,7 @@ are read at process start, not per call.
 | `cairn map` | deterministic repository orientation map |
 | `cairn communities` | Louvain subsystem clusters over the symbol graph (requires the `[graph-analytics]` extra) |
 | `cairn grep <pattern>` | span-grouped search over indexed files |
+| `cairn rationale` | `NOTE:`/`WHY:`/`HACK:` marker-comment records for a symbol or file (see [below](#cairn-rationale)) |
 | `cairn deps <repo>` | cross-repo dependency map |
 | `cairn tree <path>` | file/module symbol tree |
 | `cairn ask "<question>"` | natural-language query across layers (`--all-repos` fans out across registered stores) |
@@ -110,6 +111,26 @@ are read at process start, not per call.
   <path-prefix>` restricts repository-relative paths.
 - `--max-hits` caps returned hits; dropped hit and group counts are always
   reported, and unreadable files are counted.
+
+### `cairn rationale`
+
+- Lists rationale records: comments whose text begins `NOTE:`, `WHY:`, or
+  `HACK:` (after the comment opener and optional whitespace), extracted
+  during `cairn build` in every language with a mapped comment node type.
+  One record per comment; continuation lines fold into the text. Docstrings
+  never produce records, and `TODO:`/`FIXME:` are out of scope.
+- Target: `--symbol <name>` or `--file <path>`. Records print one per line,
+  ordered by line, with kind tags (`note`/`why`/`hack`). `--db` selects the
+  store; `--json` emits machine-readable rows.
+- Attribution: a record belongs to the innermost enclosing callable or type
+  whose span contains its line; otherwise it is file-level. A marker
+  directly above a definition falls outside that symbol's span and is
+  file-attributed.
+- `cairn update` deletes and re-derives each reindexed file's rationale rows
+  in the same transaction as its symbols, so removed markers never linger.
+- MCP `explore` output includes a `=== Rationale (N) ===` section (after
+  Tribal memory) when any matched symbol has rationale records, and omits
+  it otherwise; the MCP tool count is unchanged.
 
 ## Embeddings & rerank
 

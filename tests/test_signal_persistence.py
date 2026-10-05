@@ -16,7 +16,7 @@ import pytest
 from cairn.graph.builder import get_parser, insert_parsed_file
 from cairn.graph.incremental import reindex_paths
 from cairn.graph.schema import _apply_schema, get_db
-from cairn.parsers.base import Edge, Import, ParsedFile, Symbol
+from cairn.parsers.base import Edge, Import, ParsedFile, RationaleRecord, Symbol
 
 
 @pytest.fixture
@@ -43,11 +43,17 @@ def _parsed_file() -> ParsedFile:
     pf.symbols.append(
         Symbol(name="plain", kind="function", line_start=7, line_end=8, qualified_name="plain")
     )
+    pf.symbols.append(
+        Symbol(name="Holder", kind="class", line_start=2, line_end=6, qualified_name="Holder")
+    )
     pf.imports.append(Import(imported_path="json", line=1, local_alias="j"))
     pf.imports.append(Import(imported_path="os", line=2))
     pf.edges.append(
         Edge(source_name="dumps_two", kind="calls", target_name="j.dumps", line=4, column=11)
     )
+    pf.rationale.append(RationaleRecord(line=4, kind="why", text="innermost function wins"))
+    pf.rationale.append(RationaleRecord(line=6, kind="note", text="class only"))
+    pf.rationale.append(RationaleRecord(line=1, kind="hack", text="file level"))
     return pf
 
 
@@ -56,7 +62,7 @@ def test_insert_parsed_file_persists_signals(db):
     n_sym, n_edge, n_imp = insert_parsed_file(
         db, "repo", "a.py", "/ws/repo/a.py", "python", "h1", _parsed_file(), {}, {}
     )
-    assert (n_sym, n_imp) == (3, 2)  # 2 declared symbols + module row; 2 imports
+    assert (n_sym, n_imp) == (4, 2)  # 3 declared symbols + module row; 2 imports
 
     imports = {
         r["imported_path"]: r["local_alias"]
@@ -70,6 +76,19 @@ def test_insert_parsed_file_persists_signals(db):
     assert arity["dumps_two"] == 2
     assert arity["plain"] is None
     assert arity["a"] is None  # synthesized module row never carries arity
+
+    symbol_ids = {
+        r["name"]: r["id"] for r in db.execute("SELECT id, name FROM symbols")
+    }
+    attribution = {
+        r["text"]: (r["kind"], r["line"], r["symbol_id"])
+        for r in db.execute("SELECT * FROM rationale")
+    }
+    assert attribution["innermost function wins"] == (
+        "why", 4, symbol_ids["dumps_two"]
+    )
+    assert attribution["class only"] == ("note", 6, symbol_ids["Holder"])
+    assert attribution["file level"] == ("hack", 1, None)
 
 
 def test_reindex_paths_persists_signals(tmp_path, hash_backend):

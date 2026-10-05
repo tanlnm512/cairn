@@ -98,6 +98,8 @@ class GenericTreeSitterParser(BaseParser, TreeSitterParserBase):
 
     def _visit_children(self, node: Node, source: bytes, parsed: ParsedFile) -> None:
         for child in node.children:
+            if self._rationale_from_comment(child, source, parsed):
+                continue
             self._visit(child, source, parsed)
 
     def _definition_name(self, node: Node, source: bytes) -> Optional[str]:

@@ -1081,8 +1081,40 @@ def insert_parsed_file(
         repository.insert_imports(cur, imp_rows)
     if edge_rows:
         repository.insert_edges(cur, edge_rows)
+    if pf.rationale:
+        repository.insert_rationale(cur, _rationale_rows(pf, file_id, sym_rows))
 
     return len(sym_rows), len(edge_rows), len(imp_rows)
+
+
+# Symbol kinds a rationale record can be attributed to: innermost containing
+# callable or type wins; module/property/variable/route kinds never attribute.
+_CALLABLE_OR_TYPE_KINDS = frozenset({
+    "function", "method", "constructor",
+    "class", "interface", "enum", "protocol", "mixin", "implementation",
+})
+
+
+def _rationale_rows(pf: ParsedFile, file_id: str, sym_rows: List[tuple]) -> List[tuple]:
+    """Attribute each record to the innermost containing callable/type, else None."""
+    spans = [
+        (row[0], sym.line_start, sym.line_end)
+        for sym, row in zip(pf.symbols, sym_rows)
+        if sym.kind in _CALLABLE_OR_TYPE_KINDS
+    ]
+    rows: List[tuple] = []
+    for record in pf.rationale:
+        symbol_id = None
+        best = None
+        for sym_id, line_start, line_end in spans:
+            width = line_end - line_start
+            if (
+                line_start <= record.line <= line_end
+                and (best is None or width < best)
+            ):
+                symbol_id, best = sym_id, width
+        rows.append((_new_id(), file_id, symbol_id, record.line, record.kind, record.text))
+    return rows
 
 
 def _module_dotted(rel_path: str) -> str:

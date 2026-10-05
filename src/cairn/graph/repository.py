@@ -52,3 +52,13 @@ class GraphRepository:
                VALUES (?,?,?,?,?,?,?,?,'tree_sitter')""",
             rows,
         )
+
+    def insert_rationale(
+        self, cur: sqlite3.Cursor, rows: Iterable[tuple[Any, ...]]
+    ) -> None:
+        cur.executemany(
+            """INSERT INTO rationale
+               (id, file_id, symbol_id, line, kind, text)
+               VALUES (?,?,?,?,?,?)""",
+            rows,
+        )

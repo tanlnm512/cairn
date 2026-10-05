@@ -36,11 +36,6 @@ class GoParser(BaseParser, TreeSitterParserBase):
         self._walk(tree.root_node, source, pf)
         return pf
 
-    def _walk(self, node: Node, source: bytes, pf: ParsedFile):
-        """Depth-first traversal, recursing into every child by default."""
-        for child in node.children:
-            self._visit(child, source, pf)
-
     def _visit(self, node: Node, source: bytes, pf: ParsedFile):
         t = node.type
 

@@ -417,3 +417,8 @@ decisions).
   records.
 - **Consequences**: if a future grammar emits docstrings as comment nodes,
   FR-005 breaks loudly in fixtures rather than silently in the field.
+
+### D-012: Delivery rulings
+- **Context**: T009 documented `docs/cli-reference.md` (its Touches list named README/CHANGELOG; the payload scoped cli-reference); the clean sweep flags marker-word strings inside rationale TEST FIXTURES; one CLI test parsed `result.output` where the repo hygiene rule requires `result.stdout`.
+- **Decision**: docs/cli-reference.md joins T009's scope by ruling; the fixture marker strings are adjudicated as legitimate test data (the feature's own subject matter), not debug debris; the test fixed to result.stdout per the hygiene rule.
+- **Consequences**: scope and hygiene gates clean; fixtures keep their markers.

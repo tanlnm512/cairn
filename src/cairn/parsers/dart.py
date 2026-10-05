@@ -99,6 +99,10 @@ class DartParser(BaseParser, TreeSitterParserBase):
             t = node.type
             consumed = 1
 
+            if self._rationale_from_comment(node, source, pf):
+                i += consumed
+                continue
+
             if t == "import_or_export":
                 imp = self._parse_import(node, source)
                 if imp:

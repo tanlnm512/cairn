@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Rationale indexing: `cairn build` captures comments whose text begins
+  `NOTE:`, `WHY:`, or `HACK:` in every language with a mapped comment node
+  type and persists them in an additive `rationale` table, each record
+  attributed to the innermost enclosing callable or type whose span
+  contains the comment line (file-level otherwise; one record per comment
+  with continuation lines folded into the text; docstrings never produce
+  records, and `TODO:`/`FIXME:` markers are out of scope). The new
+  `cairn rationale` command (`--symbol`/`--file` targets, `--db`, `--json`)
+  prints records ordered by line with kind tags (`note`/`why`/`hack`); MCP
+  `explore` output adds a gated `Rationale` section when any matched symbol
+  has records and omits it otherwise, with the MCP tool count unchanged;
+  incremental reindex and `cairn update` delete and re-derive each affected
+  file's rationale rows together with its symbols, so removed markers never
+  linger.
 - Freshness hooks: `cairn update --diff-ref A..B` scopes changed-file
   detection to a git ref range (range diff only — the untracked pass and
   stat fallback are skipped, and both endpoints are pre-validated so a bad

@@ -497,7 +497,8 @@ def explore(query: str) -> str:
     """Answer 'how does X work' in one call. Returns matching symbols' verbatim
     source grouped by file, the call paths between them (including ambiguous
     dispatch hops), a blast-radius summary, any matching tribal memory
-    (past decisions/mistakes from this workspace's memory store), and a taint
+    (past decisions/mistakes from this workspace's memory store), marker-comment
+    rationale for the matched symbols, and a taint
     warning when a matched symbol is the entry or sink endpoint of a known
     source-to-sink flow. Recommended first move for any structural question;
     reach for get_callers/impact_analysis/search_knowledge to drill down when
@@ -525,6 +526,9 @@ def explore(query: str) -> str:
             === Tribal memory (1) ===
               Never evict numpy from sys.modules mid-process
                 How to apply: keep numpy loaded until the interpreter exits
+
+            === Rationale (1) ===
+              ApiFactory.kt:18 [note] retry budget belongs to the caller
     """
     from cairn.graph import queries
     from cairn.graph.config import load_config
@@ -537,12 +541,18 @@ def explore(query: str) -> str:
 
     conn = _conn()
     tribal: list = []
+    rationale: list = []
     taint_paths: list = []
     try:
         freshness = _fresh_graph(conn)
         result = queries.explore(conn, query)
         if result["seeds"]:
             seed_names = [s["name"] for s in result["seeds"] if s.get("name")]
+
+            from cairn.graph.rationale import records_for_symbol_ids
+            rationale = records_for_symbol_ids(
+                conn, [s["id"] for s in result["seeds"] if s.get("id")]
+            )
 
             config = load_config(resolve_workspace())
             registry = build_registry(config.taint_sources, config.taint_sinks)
@@ -681,6 +691,15 @@ def explore(query: str) -> str:
                 out.append(f"    How to apply: {apply_line}")
     else:
         out.append("  (none)")
+
+    # --- Rationale section ---
+    if rationale:
+        seed_files = {s["id"]: s["file_path"] or "" for s in seeds if s.get("id")}
+        out.append(f"=== Rationale ({len(rationale)}) ===")
+        for r in rationale:
+            short = seed_files.get(r["symbol_id"], "").rsplit("/", 1)[-1]
+            out.append(f"  {short}:{r['line']} [{r['kind']}] {r['text']}")
+
     # --- Taint paths section ---
     if taint_paths:
         out.append("=== Taint paths ===")
