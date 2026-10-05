@@ -141,13 +141,36 @@ Group: `cairn memory …`
 
 | Subcommand | Purpose |
 |---|---|
-| `record <type> "<title>"` | capture a memory (decision/pattern/mistake/workaround) |
+| `record <type> "<title>"` | capture a memory (decision/pattern/mistake/workaround); `--stance` declares a prior stance (see [Memory stance](#memory-stance)) |
+| `reflect` | recompute stances across the store from supersession and citation evidence (see [Memory stance](#memory-stance)) |
 | `search` / `list` / `digest` / `stats` | recall and inspect (`search --as-of <date>` for point-in-time recall) |
 | `share --agent <id> --symbols a,b,c` | publish a memory to other agents' recall on the shared store |
 | `check --agent <id> --symbols a,b,c` | warn on other agents' recent activity on the symbol set |
 | `timeline <symbol>` | a symbol's memory history with validity intervals and successor links |
 | `evolve` / `promote` / `demote` / `forget` | lifecycle |
 | `decay` / `purge` / `consolidate` / `batch-critic` / `embed` / `capture` | maintenance |
+
+### Memory stance
+
+Memories carry an optional stance — `preferred`, `tentative`, or
+`contested` — orthogonal to the lifecycle tiers (a promoted memory can be
+contested).
+
+- `cairn memory record --stance preferred|tentative|contested` declares a
+  prior stance at record time.
+- `cairn memory reflect` recomputes stances across the store from
+  supersession and citation evidence: a memory superseded by a peer when
+  the pair shares a symbol ref that still verifies is `contested` and
+  names that peer; a
+  memory whose refs-verified fraction dropped below its recorded baseline
+  is `tentative`; a memory whose every cited ref verifies is `preferred`.
+  The evidence verdict overrides a declared prior when they conflict, and
+  the prior survives when evidence yields no verdict. Reflect touches
+  stance metadata only — never bodies, titles, tiers, or scores — and is
+  idempotent and deterministic on an unchanged store.
+- Stance renders inline wherever memories are listed — `cairn memory search`
+  / `list` output and MCP `recall_memory` / `explore` output — with the
+  contradicting peer named on contested entries.
 
 ## Serving & surfaces
 

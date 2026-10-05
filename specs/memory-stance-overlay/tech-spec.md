@@ -294,3 +294,8 @@ frontmatter restores the exact pre-feature file state.
   again without reseeding; a first reflect run on a legacy store seeds
   missing baselines (seed-only, no downgrade on that first pass), which keeps
   FR-006 idempotency intact.
+
+### D-007: Delivery scope additions
+- **Context**: T007's documentation mandate covers `CHANGELOG.md` (the [Unreleased] entry) though its Touches list names only docs/cli-reference.md.
+- **Decision**: `CHANGELOG.md` joins the delivery set by ruling.
+- **Consequences**: scope audit clean.

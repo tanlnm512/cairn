@@ -13,6 +13,7 @@ from ..okf.provenance import Tier
 from ..okf.utils import slugify
 
 TIERS = ("raw", "drafts", "tribal", "archived")
+STANCES = ("preferred", "tentative", "contested")
 TIER_DIRS = {
     "raw": "memory/raw",
     "drafts": "memory/drafts",
@@ -74,6 +75,7 @@ def create_memory(
     tags: Optional[List[str]] = None,
     score: Optional[float] = None,
     supersedes: Optional[List[str]] = None,
+    stance: Optional[str] = None,
 ) -> OKFConcept:
     """Build a memory OKF concept with lifecycle frontmatter.
 
@@ -81,8 +83,13 @@ def create_memory(
     replaces. When set, the new memory is marked ``memory_is_latest: true``
     and the superseded chain is inherited + extended. Callers must flip
     ``memory_is_latest`` to false on the old memory (see ``evolve_memory`` in
-    promotion.py).
+    promotion.py). ``stance`` is a record-time prior from ``STANCES``
+    (None = unset); any other value raises ``ValueError``.
     """
+    if stance is not None and stance not in STANCES:
+        raise ValueError(
+            f"stance must be one of {'|'.join(STANCES)}, got {stance!r}"
+        )
     tier = tier_for_score(score if score is not None else confidence)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     okf_type = f"{TIER_TYPE_PREFIX[tier]}-{type_}"
@@ -109,6 +116,8 @@ def create_memory(
         "memory_supersedes": list(supersedes) if supersedes else [],
         "memory_superseded_by": None,
     }
+    if stance is not None:
+        extensions["memory_stance"] = stance
     return OKFConcept(
         type=okf_type,
         title=title,

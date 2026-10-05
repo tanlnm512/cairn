@@ -45,6 +45,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   load-balanced deployments, and a read-only default; ships with a slim
   non-root Dockerfile (`CAIRN_HOME=/data` volume, HTTP entrypoint) and
   deployment docs. Local stdio and SSE transports are unchanged.
+- Memory stance overlay: memories carry an optional stance (`preferred` /
+  `tentative` / `contested`, orthogonal to the lifecycle tiers);
+  `cairn memory record --stance preferred|tentative|contested` declares a
+  prior at record time, and the new `cairn memory reflect` recomputes
+  stances across the store from supersession and citation-verification
+  evidence — a memory superseded by a peer when the pair shares a symbol
+  ref that still verifies is contested and names that peer, a memory whose
+  refs-verified fraction dropped below its recorded baseline downgrades to
+  tentative, a memory whose every cited ref verifies is preferred, and the
+  evidence verdict overrides a declared prior on conflict while the prior
+  survives when evidence yields no verdict. Reflect touches stance
+  metadata only — never bodies, titles, tiers, or scores — and is
+  idempotent and deterministic on an unchanged store; stance renders
+  inline in `cairn memory search` / `list` output and MCP
+  `recall_memory` / `explore` output.
 
 ### Fixed
 - Full-codebase audit wave (2026-10-02): 141 defects and 3 systemic clusters

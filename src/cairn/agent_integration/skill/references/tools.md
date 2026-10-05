@@ -26,7 +26,7 @@ server. SKILL.md keeps only a name index — come here for the details.
 
 ## Layer 4: Memory
 - `recall_memory(query, tier?)` -- Search past decisions, patterns, mistakes (symbol/title-keyed; see `references/tool-behaviors.md`)
-- `record_memory(type, title, body, resource?, confidence?)` -- Capture a learning (auto-supersedes near-duplicates of the same type)
+- `record_memory(type, title, body, resource="", confidence=0.7, stance=None)` -- Capture a learning (auto-supersedes near-duplicates of the same type). `stance` records a prior stance (`preferred`|`tentative`|`contested`; None = unset) that `cairn memory reflect` recomputes from evidence; invalid values raise ValueError before anything is written.
 
 Lifecycle verbs (digest, evolve, promote, demote, forget, decay) are CLI-only:
 `cairn memory <verb>`.

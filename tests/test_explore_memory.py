@@ -42,9 +42,11 @@ def env(tmp_path, monkeypatch):
     return OKFBundle(str(knowledge)), db_path
 
 
-def _write_tribal(bundle: OKFBundle, title: str, body: str, slug: str) -> str:
+def _write_tribal(bundle: OKFBundle, title: str, body: str, slug: str, **ext) -> str:
     """Write one tribal memory concept; returns its concept_id."""
     concept_id = f"memory/tribal/{slug}"
+    extensions = {"memory_tier": "tribal", "memory_type": "mistake"}
+    extensions.update(ext)
     bundle.write_concept(
         OKFConcept(
             type="Tribal-mistake",
@@ -52,7 +54,7 @@ def _write_tribal(bundle: OKFBundle, title: str, body: str, slug: str) -> str:
             description=title,
             body=body,
             concept_id=concept_id,
-            extensions={"memory_tier": "tribal", "memory_type": "mistake"},
+            extensions=extensions,
         )
     )
     return concept_id
@@ -211,3 +213,40 @@ def test_concurrent_explore_calls_record_both_references(env):
     rows = _ref_rows(db_path)
     assert len(rows) == 2
     assert {r["context"] for r in rows} == {query}
+
+
+# ---------------------------------------------------------------------------
+# stance renders inline on the title line
+# ---------------------------------------------------------------------------
+
+
+def test_explore_renders_stance_inline_on_title_line(env):
+    from cairn.mcp_server import tools_graph
+
+    bundle, _ = env
+    _write_tribal(
+        bundle,
+        "Never evict numpy from sys.modules mid-process",
+        "Why: C extensions break if unloaded mid-run.\n"
+        "How to apply: keep numpy imported until the interpreter exits.",
+        "never-evict-numpy",
+        memory_stance="contested",
+        memory_stance_peer="memory/tribal/newer-numpy-rule",
+    )
+    _write_tribal(
+        bundle,
+        "Plain numpy guidance",
+        "Why: prose.\nHow to apply: nothing.",
+        "plain-numpy",
+    )
+    out = tools_graph.explore("numpy_loader")
+
+    assert "=== Tribal memory (2) ===" in out
+    section = _tribal_section_lines(out)
+    assert (
+        "  Never evict numpy from sys.modules mid-process, "
+        "stance=contested (peer: memory/tribal/newer-numpy-rule)"
+    ) in section
+    # Unset stance renders the bare title line, unchanged.
+    assert "  Plain numpy guidance" in section
+    assert not any("stance=" in ln for ln in section if "Plain numpy" in ln)

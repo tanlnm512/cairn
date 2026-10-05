@@ -667,7 +667,14 @@ def explore(query: str) -> str:
     out.append(f"=== Tribal memory ({len(tribal)}) ===")
     if tribal:
         for c in tribal:
-            out.append(f"  {c.title or c.concept_id}")
+            title = c.title or c.concept_id
+            stance = c.extensions.get("memory_stance") or ""
+            if stance:
+                title += f", stance={stance}"
+                peer = c.extensions.get("memory_stance_peer") or ""
+                if stance == "contested" and peer:
+                    title += f" (peer: {peer})"
+            out.append(f"  {title}")
             m = re.search(r"^How to apply:\s*(.+)$", c.body, re.M)
             apply_line = m.group(1).strip() if m else (c.description or "").strip()
             if apply_line:

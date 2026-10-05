@@ -10,12 +10,13 @@ from .main import DEFAULT_DB_PATH, get_db, main
 
 
 def _memory_line(c, conn, with_tier: bool = False, with_concept_id: bool = False) -> str:
-    """One memory-listing line: '[<tier> ]<score>, refs-verified=<refs>' title [id].
+    """One memory-listing line: '[<tier> ]<score>, refs-verified=<refs>[, stance=<s>[ peer=<id>]]' title [id].
 
     ``refs-verified`` is the live backtick-ref fraction ('?' when ``conn`` is
-    None or the verification read fails). The flags carry the per-command
-    column differences: search shows tier + concept id, list shows tier,
-    digest shows the score only.
+    None or the verification read fails). The stance segment renders only
+    when ``memory_stance`` is set; contested entries carry the peer id
+    inline. The flags carry the per-command column differences: search shows
+    tier + concept id, list shows tier, digest shows the score only.
     """
     if conn is None:
         refs = "?"
@@ -29,7 +30,15 @@ def _memory_line(c, conn, with_tier: bool = False, with_concept_id: bool = False
     tier = f"{c.extensions.get('memory_tier', '?')} " if with_tier else ""
     cid = f"  ({c.concept_id})" if with_concept_id else ""
     score = c.extensions.get("memory_score", "?")
-    return f"  [{tier}{score}, refs-verified={refs}] {c.title}{cid}"
+    stance = c.extensions.get("memory_stance")
+    stance_seg = ""
+    if stance:
+        stance_seg = f", stance={stance}"
+        if stance == "contested":
+            peer = c.extensions.get("memory_stance_peer")
+            if peer:
+                stance_seg += f" peer={peer}"
+    return f"  [{tier}{score}, refs-verified={refs}{stance_seg}] {c.title}{cid}"
 
 @main.group()
 def memory():
@@ -46,9 +55,14 @@ def memory():
               help="Failure signature from the post_tool_failure hook. The "
                    "capture happens only when this signature was already "
                    "seen once before; a first occurrence exits quietly.")
+@click.option("--stance", default=None,
+              type=click.Choice(["preferred", "tentative", "contested"]),
+              help="Record-time prior stance. `cairn memory reflect` "
+                   "recomputes the evidence verdict and overrides it on "
+                   "conflict.")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def memory_record(mtype, title, body, resource, confidence, recurrence_key, db, knowledge):
+def memory_record(mtype, title, body, resource, confidence, recurrence_key, stance, db, knowledge):
     """Record a learning: decision|pattern|mistake|workaround.
 
     For decision/mistake/workaround, structure --body as the fact/rule
@@ -75,13 +89,38 @@ def memory_record(mtype, title, body, resource, confidence, recurrence_key, db, 
     bundle = OKFBundle(knowledge)
     result = capture_memory(
         conn, bundle, type_=mtype, title=title, body=body or title,
-        resource=resource, confidence=confidence,
+        resource=resource, confidence=confidence, stance=stance,
     )
     embed_memory_concepts(conn, bundle, [result["path"]])
     conn.commit()
     conn.close()
     signals = result["signals"]
     click.echo(f"Recorded {mtype} '{title}' -> {result['path']} (score={signals['score']}, tier={result['tier']})")
+
+
+@memory.command("reflect")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+def memory_reflect(db, knowledge):
+    """Recompute memory stances from supersession and citation evidence.
+
+    Contested > tentative > preferred > the recorded prior; writes stance
+    frontmatter only and is idempotent on an unchanged store.
+    """
+    from ..memory.stance import reflect_store
+    from ..okf.bundle import OKFBundle
+
+    bundle = OKFBundle(knowledge)
+    conn = get_db(db)
+    try:
+        summary = reflect_store(bundle, conn)
+    finally:
+        conn.close()
+    click.echo(
+        f"Reflected {summary['changed'] + summary['unchanged']} memory(ies): "
+        f"{summary['changed']} changed, {summary['unchanged']} unchanged, "
+        f"{summary['contested']} contested."
+    )
 
 
 @memory.command("evolve")

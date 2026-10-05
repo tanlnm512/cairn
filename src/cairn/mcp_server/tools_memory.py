@@ -141,9 +141,14 @@ def recall_memory(
             )
             tag = " [SUPERSEDED]" if superseded else ""
             stale_tag = " [STALE]" if is_stale else ""
-            out.append(f"  [{t} {score}, refs-verified={refs_display}{prov_tag}] {c.title}{tag}{stale_tag}")
+            stance = c.extensions.get("memory_stance") or ""
+            stance_tag = f", stance={stance}" if stance else ""
+            out.append(f"  [{t} {score}, refs-verified={refs_display}{prov_tag}{stance_tag}] {c.title}{tag}{stale_tag}")
             if is_stale:
                 out.append("    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory")
+            peer = c.extensions.get("memory_stance_peer") or ""
+            if stance == "contested" and peer:
+                out.append(f"    ^ contradicted by {peer} -- verify before relying on this memory")
             if c.description:
                 out.append(f"    {c.description}")
             attribution = shared_by_id.get(getattr(c, "concept_id", None))
@@ -164,7 +169,8 @@ def recall_memory(
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
 @instrument
 def record_memory(
-    type: str, title: str, body: str, resource: str = "", confidence: float = 0.7
+    type: str, title: str, body: str, resource: str = "", confidence: float = 0.7,
+    stance: str | None = None,
 ) -> str:
     """Capture a learning. type: decision|pattern|mistake|workaround.
 
@@ -174,6 +180,11 @@ def record_memory(
     behavior). The why is what makes a memory worth surfacing months later;
     a bare fact without it is easy to misapply once the original context is
     forgotten.
+
+    Pass stance (preferred|tentative|contested) to record a prior stance;
+    omit it (None) to leave the stance unset -- `cairn memory reflect`
+    recomputes stances from evidence. An invalid value raises ValueError
+    before anything is written.
 
     Don't record what's cheaper to re-derive than to recall: facts already
     answerable by explore/find_definition/get_callers, plain git history
@@ -189,7 +200,7 @@ def record_memory(
     try:
         result = capture_memory(
             conn, bundle, type_=type, title=title, body=body,
-            resource=resource or None, confidence=confidence,
+            resource=resource or None, confidence=confidence, stance=stance,
         )
     finally:
         conn.close()
