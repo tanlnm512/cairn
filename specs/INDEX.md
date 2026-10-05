@@ -24,7 +24,7 @@ the archive entry above.
 - [symbol-communities](symbol-communities/spec.md) — done (delivered 7905dd2, 2026-10-05)
 - [freshness-hooks](freshness-hooks/spec.md) — done (delivered 4937446, 2026-10-05)
 - [http-mcp-serving](http-mcp-serving/spec.md) — done (delivered bdbfe29, 2026-10-05)
-- [memory-stance-overlay](memory-stance-overlay/spec.md) — draft (created 2026-10-04)
+- [memory-stance-overlay](memory-stance-overlay/spec.md) — done (delivered fb89eae, 2026-10-05)
 - [pr-tooling](pr-tooling/spec.md) — draft (created 2026-10-04)
 - [rationale-nodes](rationale-nodes/spec.md) — draft (created 2026-10-04)
 - [bench-worked-artifacts](bench-worked-artifacts/spec.md) — draft (created 2026-10-04)

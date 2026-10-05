@@ -1,6 +1,6 @@
 # Spec: memory-stance-overlay
 
-**Status**: active
+**Status**: done
 **Effort**: standard
 **Created**: 2026-10-04
 **Branch**: `feat/memory-stance-overlay`
