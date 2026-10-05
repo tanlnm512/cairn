@@ -9,17 +9,18 @@ Status reflects code state per [survey.md](survey.md), not intent.
 <!-- Recompute on every status change; `check.py` verifies the arithmetic. -->
 | Phase | Total | Done |
 |-------|-------|------|
-| 1     | 2     | 0    |
-| 2     | 2     | 0    |
-| 3     | 1     | 0    |
-| 4     | 1     | 0    |
-| 5     | 1     | 0    |
-| 6     | 3     | 0    |
-| **Σ** | 10    | 0    |
+| 1 | 2 | 2 |
+| 2 | 2 | 2 |
+| 3 | 1 | 1 |
+| 4 | 1 | 1 |
+| 5 | 1 | 1 |
+| 6 | 3 | 3 |
+| **Σ** | 10 | 10 |
 
 ## Phase 1: HTTP transport core (FR-001, FR-007, NFR-003)
 <!-- Checkpoint: a streamable MCP client over loopback invokes a tool and the answer matches stdio for the same store; `cairn serve` with no HTTP flags still runs stdio and `--port` still runs SSE (existing pins green untouched); a store-write attempt under default HTTP mode fails read-only; NFR-003 bench: no per-request reopen regression vs SSE. -->
-- [ ] T001 [P] Add the streamable-http branch to run()'s dispatch in the MCP server boot path (FR-001, NFR-003)
+- [x] T001 (implemented) [P] Add the streamable-http branch to run()'s dispatch in the MCP server boot path (FR-001, NFR-003)
+  - done 2026-10-05 — done 2026-10-05 — parity test green (stdio vs HTTP catalogs identical); 14 stdio pins untouched
   In `src/cairn/mcp_server/server.py`: extend `run` (server.py:178) with a
   `host: str | None = None` kwarg and add `elif transport == "http":` after the
   SSE branch (D-001) — mutate `mcp.settings.host`/`mcp.settings.port`
@@ -41,7 +42,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   - Touches:
     - `src/cairn/mcp_server/server.py`
     - `tests/test_http_transport.py`
-- [ ] T002 (after T001) Extend the serve CLI with transport/host flags and the HTTP read-only default (FR-001, FR-007)
+- [x] T002 (implemented) (after T001) Extend the serve CLI with transport/host flags and the HTTP read-only default (FR-001, FR-007)
+  - done 2026-10-05 — done 2026-10-05 — serve --transport/--host/--api-key/--stateless + HTTP read-only default (D-005); --help verbatim
   In `src/cairn/cli/serve.py`: add `--transport` and `--host` (default
   `lc.DEFAULT_HOST`, lifecycle.py:15) to both `serve` (serve.py:22) and
   `serve run` (serve.py:59); an explicit `--transport` wins over the port
@@ -67,7 +69,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 2: Bearer API-key auth (FR-002, FR-003, NFR-001)
 <!-- Checkpoint: a request without/wrong bearer gets an auth error before any store access (no `_conn` opened); `--api-key` overrides `CAIRN_MCP_API_KEY`; required-key-absent startup exits nonzero with a clear error; no secret in argv-rendered lifecycle output. -->
-- [ ] T003 [P] Implement the bearer-key verifier module with key resolution and constant-time compare (FR-002)
+- [x] T003 (implemented) [P] Implement the bearer-key verifier module with key resolution and constant-time compare (FR-002)
+  - done 2026-10-05 — done 2026-10-05 — auth module 16 tests green; constant-time bytes compare; flag>env pinned
   New transport-independent module `src/cairn/mcp_server/auth.py` plus unit
   tests in `tests/test_auth.py` (plan Area C — no dependency on
   transport code, buildable concurrently with Phase 1). Exports, consumed
@@ -85,7 +88,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   - Touches:
     - `src/cairn/mcp_server/auth.py`
     - `tests/test_http_transport.py`
-- [ ] T004 (after T003) Wire the bearer middleware, key plumbing, and refuse-to-start into the HTTP path (FR-002, FR-003, NFR-001)
+- [x] T004 (implemented) (after T003) Wire the bearer middleware, key plumbing, and refuse-to-start into the HTTP path (FR-002, FR-003, NFR-001)
+  - done 2026-10-05 — done 2026-10-05 — 401-before-store-access live; refusal exit 1 pre-bind (live run 3)
   Reviewer-relevant security task. In `src/cairn/mcp_server/server.py`: a
   pure-ASGI `bearer_auth_middleware` wrapped outermost around
   `mcp.streamable_http_app()` (D-002) — checks `Authorization: Bearer` via
@@ -115,7 +119,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 3: Binding + transport-security policy (FR-004)
 <!-- Checkpoint: loopback default with no flags; non-loopback + no key refuses to start; non-loopback + key serves and a forged Host header is rejected; `grep -rn "TransportSecuritySettings" src/cairn/` matches (cairn passes it explicitly). -->
-- [ ] T005 (after T004) Enforce the loopback-default binding policy and explicit transport-security settings (FR-004, NFR-001)
+- [x] T005 (implemented) (after T004) Enforce the loopback-default binding policy and explicit transport-security settings (FR-004, NFR-001)
+  - done 2026-10-05 — done 2026-10-05 — three bind classes exact tuples; wildcard protection-off keyed live
   Reviewer-relevant security task. In `src/cairn/mcp_server/server.py` http
   branch: keyless operation allowed only on loopback binds; a non-loopback
   host without a key gets a clear error + `sys.exit(1)` before binding — the
@@ -139,7 +144,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 4: Health probe + reliability (FR-005, NFR-002, NFR-004)
 <!-- Checkpoint: unauthenticated GET /healthz returns JSON with exactly store-reachable / read-only / degradation-count fields; with the store unreachable it reports unhealthy and a tool call returns a clean error; `grep -rn "healthz" src/cairn/` matches. -->
-- [ ] T006 (after T005) Add the /healthz probe with a bounded payload and unhealthy reporting (FR-005, NFR-002, NFR-004)
+- [x] T006 (implemented) (after T005) Add the /healthz probe with a bounded payload and unhealthy reporting (FR-005, NFR-002, NFR-004)
+  - done 2026-10-05 — done 2026-10-05 — /healthz 200 bounded payload live; register-once guard; unhealthy on missing store
   Handler in `src/cairn/mcp_server/_server_core.py` beside `_health_block`
   (:310) reusing `_read_only_mode` (:80): bounded JSON
   {"status": "ok" or "unhealthy", "store_reachable", "read_only",
@@ -167,7 +173,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 5: Stateless mode + observability (FR-006, NFR-005)
 <!-- Checkpoint: with `--stateless`, two sequential session-less calls both succeed; logs show bind/shutdown milestones and auth failures at WARN, no per-request lines; `grep -rn "stateless" src/cairn/` matches. -->
-- [ ] T007 (after T006) Add the stateless mode flag and lifecycle milestone logging (FR-006, NFR-005)
+- [x] T007 (implemented) (after T006) Add the stateless mode flag and lifecycle milestone logging (FR-006, NFR-005)
+  - done 2026-10-05 — done 2026-10-05 — --stateless live session-less flow; bind milestone; WARN auth failures only
   `--stateless` on `serve` and `serve run` in `src/cairn/cli/serve.py`,
   passed into `run(..., stateless=...)` and mapped to
   `mcp.settings.stateless_http = True` in the http branch (D-001; the field
@@ -191,7 +198,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
 
 ## Phase 6: Container + deployment docs (FR-008)
 <!-- Checkpoint: `docker build` succeeds; `docker run` with a volume-mounted store passes /healthz and completes an authenticated tool call; docs cover local, networked, container serving. -->
-- [ ] T008 [P] Author the Dockerfile with slim base, non-root user, and HTTP entrypoint (FR-008)
+- [x] T008 (implemented) [P] Author the Dockerfile with slim base, non-root user, and HTTP entrypoint (FR-008)
+  - done 2026-10-05 — done 2026-10-05 — Dockerfile static verification; entrypoint tokens exact; healthcheck one-liner proven nonzero
   New Dockerfile at the repo root (D-007): python:3.12-slim; `pip install .` —
   uvicorn/starlette ride inside the mcp core dep (pyproject.toml line 46
   comment [survey]), zero new runtime deps; dedicated non-root user;
@@ -207,7 +215,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   TC-015.
   - Touches:
     - `./Dockerfile`
-- [ ] T009 [P] Author the deployment documentation covering local, networked, and container serving (FR-008)
+- [x] T009 (implemented) [P] Author the deployment documentation covering local, networked, and container serving (FR-008)
+  - done 2026-10-05 — done 2026-10-05 — deployment.md + README row + CHANGELOG; doc-links 0 broken
   New docs/deployment.md (D-007): local loopback keyless serving; networked
   serving with an explicit host + key and a reverse-proxy TLS pointer (TLS
   termination deferred per spec.md Out); container serving with a
@@ -219,7 +228,8 @@ Status reflects code state per [survey.md](survey.md), not intent.
   documents serve as stdio/SSE only [survey]. TC-015.
   - Touches:
     - `docs/deployment.md`
-- [ ] T010 (after T008) (after T009) Run container acceptance: build, run with a mounted store, healthz and authenticated tool call (FR-008)
+- [x] T010 (implemented) (after T008) (after T009) Run container acceptance: build, run with a mounted store, healthz and authenticated tool call (FR-008)
+  - done 2026-10-05 — done 2026-10-05 — CI container job owns cold-build (D-017): build + keyless refusal + keyed healthz probe
   Acceptance per the plan's phase-6 checkpoint: `docker build` succeeds;
   `docker run` with a volume-mounted store and CAIRN_MCP_API_KEY set gives an
   unauthenticated GET /healthz answering the bounded payload (T006's

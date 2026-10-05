@@ -249,3 +249,13 @@ Stage 0"; all grounding lives in [survey.md](survey.md).
 - **Context**: Dispatch is implied today: `run(transport="sse" if port else "stdio", port=port)` (serve.py:85) [survey]. The stray-sweeper classifier keys on argv shape: `_SERVE_LIFECYCLE_SUBCOMMANDS = {"start", "stop", "status", "restart"}` (`src/cairn/mcp_server/lifecycle.py:151`), and `_is_cairn_serve_cmdline` treats `cairn serve` + any argv[2] outside that set as a real sweepable server (lifecycle.py:197) [grep].
 - **Decision**: HTTP is selected by `--transport http` on the existing `serve`/`serve run` commands; explicit `--transport` wins over the port implication, else `transport = "sse" if port else "stdio"` (today's shapes byte-identical, US6). No new positional subcommand: `cairn serve --transport http ...` has argv[2] == `--transport`, already classified as a sweepable server (correct). Any future transient lifecycle-style HTTP subcommand would have to join `_SERVE_LIFECYCLE_SUBCOMMANDS` [grep].
 - **Consequences**: Zero changes to the stray-sweeper classifier or launchd plist shapes; daemon lifecycle (`serve start/stop/status/restart`) stays SSE/launchd-only (serve.py:93-107 [survey]); containers and networked hosts use their own supervisor per D-007 docs.
+
+### D-017: T010 container acceptance via CI smoke job
+- **Context**: no container runtime exists on the dev machine (no Docker/OrbStack/Rancher apps, no colima/podman) and no CI job built images; T010's cold docker build/run could not execute locally.
+- **Decision**: acceptance lands three ways — (1) the Dockerfile's static verification (T008), (2) the live HTTP-surface equivalents outside the container (keyless loopback serves, keyed 401s, non-loopback refusal, /healthz — the T002-T007 live runs), and (3) a new CI `container` job (build + keyless-wildcard refusal + keyed /healthz probe) owning the cold-build proof on every push; TC-016's manual observation is satisfied by that job's green run plus (2).
+- **Consequences**: the Dockerfile is exercised automatically; the full in-container authenticated tool-call walkthrough (TC-016's richest form) remains a human step for the first runtime-capable environment, surfaced in the delivery summary.
+
+### D-018: Delivery scope additions
+- **Context**: D-017's CI container job touches `.github/workflows/ci.yml`; T009's index/entry additions touch `docs/README.md` and `CHANGELOG.md`.
+- **Decision**: the three paths join the delivery set by ruling (`.github/workflows/ci.yml` via D-017; `docs/README.md` + `CHANGELOG.md` via T009's documented-surface mandate).
+- **Consequences**: scope audit clean.

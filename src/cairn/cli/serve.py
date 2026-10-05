@@ -16,16 +16,42 @@ from ..mcp_server import lifecycle as lc
     "--read-only/--read-write",
     "read_only",
     default=None,
-    help="Open the graph DB read-only (default: read-only under SSE, read-write under stdio).",
+    help="Open the graph DB read-only (default: read-only under SSE/HTTP, read-write under stdio).",
+)
+@click.option(
+    "--transport",
+    default=None,
+    type=click.Choice(["stdio", "sse", "http"]),
+    help="Transport: stdio (default), sse, or http. An explicit value wins over the --port-means-SSE implication.",
+)
+@click.option(
+    "--host",
+    default=lc.DEFAULT_HOST,
+    help=f"Bind host for the http transport (default {lc.DEFAULT_HOST}, loopback).",
+)
+@click.option(
+    "--api-key",
+    default=None,
+    help=(
+        "Bearer API key required by the http transport on non-loopback binds. "
+        "Takes precedence over CAIRN_MCP_API_KEY; prefer the env var (this flag is visible in process listings)."
+    ),
+)
+@click.option(
+    "--stateless",
+    is_flag=True,
+    default=False,
+    help="Run the http transport without session affinity (sequential session-less requests succeed; for load balancers).",
 )
 @click.pass_context
-def serve(ctx, db, port, read_only):
+def serve(ctx, db, port, read_only, transport, host, api_key, stateless):
     """Start the cairn MCP server, or manage the persistent SSE daemon.
 
     \b
-    Run in the foreground (classic stdio / one-shot SSE):
-      cairn serve                 # stdio (MCP clients spawn this)
-      cairn serve --port N        # SSE on port N, foreground
+    Run in the foreground (classic stdio / one-shot SSE / streamable HTTP):
+      cairn serve                    # stdio (MCP clients spawn this)
+      cairn serve --port N           # SSE on port N, foreground
+      cairn serve --transport http   # streamable HTTP on port 9876
 
     \b
     Manage a persistent SSE daemon shared by all clients (macOS launchd):
@@ -36,7 +62,10 @@ def serve(ctx, db, port, read_only):
     """
     if ctx.invoked_subcommand is None:
         # `cairn serve` with no subcommand: foreground mode.
-        _serve_foreground(db=db, port=port, read_only=read_only)
+        _serve_foreground(
+            db=db, port=port, read_only=read_only,
+            transport=transport, host=host, api_key=api_key, stateless=stateless,
+        )
 
 
 @serve.command("run")
@@ -56,33 +85,71 @@ def serve(ctx, db, port, read_only):
         "force read-write behaviour."
     ),
 )
-def serve_run(db, port, read_only):
-    """Run the MCP server in the foreground (stdio by default, SSE with --port)."""
-    _serve_foreground(db=db, port=port, read_only=read_only)
+@click.option(
+    "--transport",
+    default=None,
+    type=click.Choice(["stdio", "sse", "http"]),
+    help="Transport: stdio (default), sse, or http. An explicit value wins over the --port-means-SSE implication.",
+)
+@click.option(
+    "--host",
+    default=lc.DEFAULT_HOST,
+    help=f"Bind host for the http transport (default {lc.DEFAULT_HOST}, loopback).",
+)
+@click.option(
+    "--api-key",
+    default=None,
+    help=(
+        "Bearer API key required by the http transport on non-loopback binds. "
+        "Takes precedence over CAIRN_MCP_API_KEY; prefer the env var (this flag is visible in process listings)."
+    ),
+)
+@click.option(
+    "--stateless",
+    is_flag=True,
+    default=False,
+    help="Run the http transport without session affinity (sequential session-less requests succeed; for load balancers).",
+)
+def serve_run(db, port, read_only, transport, host, api_key, stateless):
+    """Run the MCP server in the foreground (stdio, SSE with --port, HTTP with --transport http)."""
+    _serve_foreground(
+        db=db, port=port, read_only=read_only,
+        transport=transport, host=host, api_key=api_key, stateless=stateless,
+    )
 
 
-def _serve_foreground(db, port, read_only=None):
-    """Foreground serve: stdio unless --port is given (then SSE).
+def _serve_foreground(db, port, read_only=None, transport=None, host=None, api_key=None, stateless=False):
+    """Foreground serve: stdio unless --port (SSE) or --transport is given.
 
-    read_only tri-state: None => auto (read-only under SSE/launchd,
+    read_only tri-state: None => auto (read-only under SSE/HTTP,
     read-write under stdio), True/False => explicit override.
     """
     import os
 
+    from ..mcp_server.auth import resolve_api_key
     from ..paths import resolve_store
 
     store = resolve_store()
     os.environ["CAIRN_DB"] = db or str(store.db)
     os.environ["CAIRN_KNOWLEDGE"] = str(store.knowledge)
     os.environ["CAIRN_WORKSPACE"] = str(store.workspace)
+    if transport is None:
+        transport = "sse" if port else "stdio"
+    # HTTP without --port lands on the documented default port.
+    if transport == "http" and not port:
+        port = lc.DEFAULT_PORT
     # Default: the shared SSE daemon runs read-only (contention-safe); a
     # foreground stdio server keeps read-write for interactive use.
     if read_only is None:
-        read_only = bool(port)
+        read_only = bool(port) or transport == "http"
     os.environ["CAIRN_READ_ONLY"] = "1" if read_only else "0"
     from ..mcp_server.server import run
 
-    run(transport="sse" if port else "stdio", port=port)
+    # Key precedence is decided here and travels in-process; run() never re-reads the env.
+    run(
+        transport=transport, port=port, host=host,
+        api_key=resolve_api_key(api_key), stateless=stateless,
+    )
 
 
 # --- daemon lifecycle subcommands -----------------------------------------

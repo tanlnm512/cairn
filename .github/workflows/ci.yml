@@ -354,6 +354,35 @@ jobs:
   # 2 past the 15% threshold) -- or a noisy shared runner -- can never redden
   # CI. "Advisory first, gate later if stable" (observability-telemetry
   # plan, Phase 2).
+  container:
+    name: Container build (Dockerfile smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t cairn:http-smoke .
+      - name: Keyless wildcard entrypoint refuses to start
+        run: |
+          set +e
+          docker run --rm --name cairn-smoke cairn:http-smoke
+          rc=$?
+          set -e
+          # D-004: non-loopback bind without a key exits 1 before binding.
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::keyless container exited 0 (expected refusal exit 1)"
+            exit 1
+          fi
+      - name: Keyed entrypoint reaches /healthz
+        run: |
+          docker run -d --name cairn-keyed -e CAIRN_MCP_API_KEY=ci-smoke-key -p 18765:9876 cairn:http-smoke
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18765/healthz > /dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:18765/healthz | grep -q '"status"'
+          docker rm -f cairn-keyed
+
   bench:
     name: Bench (advisory baseline comparison)
     runs-on: ubuntu-latest

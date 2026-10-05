@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hint and leaves the store untouched.
 - Dashboard `/communities` view: renders the partition with community sizes,
   hub symbols, and member drill-down (nav under Explore, after Graph).
+- HTTP serving: `cairn serve --transport http` exposes the full MCP tool
+  registry over Streamable HTTP with bearer-key auth (`CAIRN_MCP_API_KEY`
+  env or `--api-key`, flag wins), loopback-default binding with keyless
+  operation restricted to loopback binds (a non-loopback bind without a key
+  refuses to start), Host-header transport security per bind class, an
+  unauthenticated `/healthz` probe, an optional `--stateless` mode for
+  load-balanced deployments, and a read-only default; ships with a slim
+  non-root Dockerfile (`CAIRN_HOME=/data` volume, HTTP entrypoint) and
+  deployment docs. Local stdio and SSE transports are unchanged.
 
 ### Fixed
 - Full-codebase audit wave (2026-10-02): 141 defects and 3 systemic clusters

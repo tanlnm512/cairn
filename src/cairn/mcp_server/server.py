@@ -1,6 +1,7 @@
 """cairn MCP server: exposes graph query tools to AI agents."""
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import sqlite3
@@ -8,6 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 # Bootstrap: allow running as a script (python .../server.py) OR as a module
@@ -20,6 +22,9 @@ if str(_PROJECT_ROOT) not in sys.path:
 from cairn.graph.schema import get_db
 from cairn.paths import render_env_resolution_chain, resolve_store
 from cairn.utils.logging import configure_logging, quiet_server_noise
+from mcp.server.transport_security import TransportSecuritySettings
+
+from .auth import bearer_key_ok
 
 # Wire the metric-buffering conn factory BEFORE importing any tools_*.py:
 # the first @instrument-wrapped tool call would otherwise hit a None factory.
@@ -175,8 +180,136 @@ def _timestamped_print(msg: str, file=None) -> None:
     print(f"[{ts}] {msg}", file=file or sys.stderr, flush=True)
 
 
-def run(transport: str = "stdio", port: int | None = None):
-    """Run the MCP server.
+# --- HTTP transport: auth gate, bind policy, health probe -------------------
+
+_HTTP_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+_HTTP_WILDCARD_HOSTS = ("0.0.0.0", "::")
+_HEALTHZ_PATH = "/healthz"
+_auth_logger = logging.getLogger(__name__)
+
+
+def _authorization_header(scope) -> str | None:
+    """Return the first Authorization header value in the ASGI scope, or None."""
+    for name, value in scope.get("headers", []):
+        if name == b"authorization":
+            return value.decode("latin-1")
+    return None
+
+
+class _BearerAuthMiddleware:
+    """Pure-ASGI bearer-key gate: 401 without invoking the wrapped app on bad credentials.
+
+    Non-HTTP scopes (lifespan) and the exempt path pass through untouched.
+    """
+
+    def __init__(self, app, api_key: str):
+        self._app = app
+        self._api_key = api_key
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path") == _HEALTHZ_PATH:
+            await self._app(scope, receive, send)
+            return
+        if bearer_key_ok(_authorization_header(scope), self._api_key):
+            await self._app(scope, receive, send)
+            return
+        # Never log the presented credential or the configured key.
+        _auth_logger.warning(
+            "cairn: rejected unauthorized HTTP request for %s", scope.get("path", "")
+        )
+        body = b'{"error":"unauthorized"}'
+        await send({
+            "type": "http.response.start",
+            "status": 401,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+                (b"www-authenticate", b"Bearer"),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+
+def _transport_security_for(host: str) -> TransportSecuritySettings:
+    """Host-header protection settings for the bind class: loopback / specific / wildcard.
+
+    Wildcard binds cannot enumerate Host values, so protection is explicitly
+    off there and the mandatory API key is the gate.
+    """
+    if host in _HTTP_LOOPBACK_HOSTS:
+        return TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"],
+            allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+        )
+    if host in _HTTP_WILDCARD_HOSTS:
+        return TransportSecuritySettings(
+            enable_dns_rebinding_protection=False, allowed_hosts=[], allowed_origins=[],
+        )
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[host, f"{host}:*", "127.0.0.1:*", "localhost:*", "[::1]:*"],
+        allowed_origins=[],
+    )
+
+
+def _require_http_api_key(host: str, api_key: str | None) -> None:
+    """Refuse (exit 1, pre-bind) a non-loopback HTTP bind without a resolved key."""
+    if api_key or host in _HTTP_LOOPBACK_HOSTS:
+        return
+    _timestamped_print(
+        f"cairn: error: refusing to serve HTTP on non-loopback host '{host}' "
+        f"without an API key. Set CAIRN_MCP_API_KEY or pass --api-key."
+    )
+    sys.exit(1)
+
+
+def _register_healthz_route() -> None:
+    """Register GET /healthz on the singleton exactly once (custom_route appends unconditionally)."""
+    if any(
+        getattr(route, "path", None) == _HEALTHZ_PATH
+        for route in mcp._custom_starlette_routes
+    ):
+        return
+    from ._server_core import healthz_response
+
+    mcp.custom_route(_HEALTHZ_PATH, methods=["GET"])(healthz_response)
+
+
+def _build_http_app(
+    host: str | None,
+    port: int | None,
+    api_key: str | None,
+    stateless: bool,
+):
+    """Apply the http bind policy to mcp.settings and return the ready-to-serve ASGI app.
+
+    All settings mutations happen here, before streamable_http_app() builds
+    the session manager (which snapshots stateless/transport-security once).
+    """
+    if host:
+        mcp.settings.host = host
+    if port:
+        mcp.settings.port = port
+    mcp.settings.stateless_http = bool(stateless)
+    mcp.settings.transport_security = _transport_security_for(mcp.settings.host)
+    _require_http_api_key(mcp.settings.host, api_key)
+    _register_healthz_route()
+    # ASGI callables are untyped: the bare app or the auth-wrapped one.
+    app: Any = mcp.streamable_http_app()
+    if api_key:
+        app = _BearerAuthMiddleware(app, api_key)
+    return app
+
+
+def run(
+    transport: str = "stdio",
+    port: int | None = None,
+    host: str | None = None,
+    api_key: str | None = None,
+    stateless: bool = False,
+):
+    """Run the MCP server (``api_key`` is the pre-resolved key: None means keyless).
 
     Runs a one-time catch-up at boot to absorb edits made while the server was
     down, then (FRESH-1) starts a live file watcher so source edits made while
@@ -366,6 +499,28 @@ def run(transport: str = "stdio", port: int | None = None):
                 file=sys.stdout,
             )
             mcp.run(transport="sse")
+        elif transport == "http":
+            app = _build_http_app(
+                host=host, port=port, api_key=api_key, stateless=stateless
+            )
+            import uvicorn
+
+            # Readiness signal, mirroring the SSE bind print: stdout has no
+            # JSON-RPC framing to protect under HTTP.
+            _timestamped_print(
+                f"cairn: MCP server listening on "
+                f"http://{mcp.settings.host}:{mcp.settings.port}/mcp",
+                file=sys.stdout,
+            )
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    app,
+                    host=mcp.settings.host,
+                    port=mcp.settings.port,
+                    log_level=mcp.settings.log_level.lower(),
+                )
+            )
+            server.run()
         else:
             mcp.run()
     finally:
