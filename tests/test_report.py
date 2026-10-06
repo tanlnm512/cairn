@@ -47,6 +47,46 @@ def _make_db(path, setup=None):
     conn.close()
 
 
+def _make_quality_repo(tmp_path):
+    root = tmp_path / "quality-repo"
+    audits = root / "docs" / "audits"
+    source = root / "src"
+    audits.mkdir(parents=True)
+    source.mkdir()
+    (root / "pyproject.toml").write_text("", encoding="utf-8")
+    db = root / "graph.db"
+    _make_db(db)
+    (audits / "2026-10-02.md").write_text(
+        "# Fixture audit\n\n"
+        "## Findings index — all 5 by priority\n\n"
+        "### P0 — High (2)\n\n"
+        "| ID | Location | Issue |\n|----|----------|-------|\n"
+        "| C77 | `x.py:1` | issue |\n| C1 | `x.py:2` | issue |\n\n"
+        "### P1 — Medium (1)\n\n"
+        "| ID | Location | Issue |\n|----|----------|-------|\n"
+        "| Q1 | `x.py:3` | issue |\n\n"
+        "### P2 — Low (1)\n\n"
+        "| ID | Location | Issue |\n|----|----------|-------|\n"
+        "| S1 | `x.py:4` | issue |\n\n"
+        "### P3 — Systemic clusters (1)\n\n"
+        "| ID | Scope | Issue |\n|----|-------|-------|\n"
+        "| SY1 | core | issue |\n",
+        encoding="utf-8",
+    )
+    (audits / "2026-10-02.status.json").write_text(
+        json.dumps({"schema_version": 1, "fixed": ["C77"]}) + "\n",
+        encoding="utf-8",
+    )
+    block = "# alpha\n# beta\n# gamma\n# delta\nX = 1\n"
+    for name in ("a.py", "b.py"):
+        (source / name).write_text(block, encoding="utf-8")
+    from cairn.cli.system.comment_style import main as comment_style_main
+
+    baseline = audits / "comment-style-baseline.json"
+    comment_style_main(["--root", str(root), "--baseline", str(baseline), "--init"])
+    return root, db
+
+
 def _run(db, *extra):
     """Invoke `cairn report --db <db> [extra]` and return the CliRunner result."""
     return CliRunner().invoke(main, ["report", "--db", str(db), *extra])
@@ -107,6 +147,77 @@ def test_human_output_renders_sections(tmp_path):
         assert section in result.output
     # The privacy-gate notice is present so the user knows it was scrubbed.
     assert "strip_private_data" in result.output
+
+
+def test_quality_gates_counts_render_in_json_and_human(tmp_path, monkeypatch):
+    root, db = _make_quality_repo(tmp_path)
+    monkeypatch.chdir(root)
+
+    json_result = _run(db, "--json")
+
+    assert json_result.exit_code == 0, json_result.output
+    assert json.loads(json_result.stdout)["quality_gates"] == {
+        "audit_status": {
+            "total": 5,
+            "remaining": 4,
+            "by_priority": {"P0": 1, "P1": 1, "P2": 1, "P3": 1},
+        },
+        "comment_style": {"remaining": 2},
+    }
+    human_result = _run(db)
+    assert human_result.exit_code == 0, human_result.output
+    assert "\n".join(
+        [
+            "## Quality gates",
+            "audit_status total: 4/5 remaining",
+            "audit_status P0: 1 remaining",
+            "audit_status P1: 1 remaining",
+            "audit_status P2: 1 remaining",
+            "audit_status P3: 1 remaining",
+            "comment_style remaining: 2",
+        ]
+    ) in human_result.output
+
+
+def test_quality_gates_are_unavailable_outside_source_checkout(tmp_path, monkeypatch):
+    db = tmp_path / "graph.db"
+    _make_db(db)
+    monkeypatch.chdir(tmp_path)
+
+    result = _run(db, "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["quality_gates"] == {
+        "audit_status": {"status": "unavailable"},
+        "comment_style": {"status": "unavailable"},
+    }
+    human_result = _run(db)
+    assert human_result.exit_code == 0, human_result.output
+    assert "audit_status: unavailable" in human_result.output
+    assert "comment_style: unavailable" in human_result.output
+
+
+def test_quality_gate_failures_degrade_without_diagnostics(tmp_path, monkeypatch):
+    root, db = _make_quality_repo(tmp_path)
+    (root / "docs" / "audits" / "2026-10-02.status.json").write_text(
+        "{not-json", encoding="utf-8"
+    )
+    (root / "docs" / "audits" / "comment-style-baseline.json").write_text(
+        "{not-json", encoding="utf-8"
+    )
+    monkeypatch.chdir(root)
+
+    result = _run(db, "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["quality_gates"] == {
+        "audit_status": {"status": "error"},
+        "comment_style": {"status": "error"},
+    }
+    human_result = _run(db)
+    assert human_result.exit_code == 0, human_result.output
+    assert str(root) not in human_result.output
+    assert "not-json" not in human_result.output
 
 
 def test_doctor_results_surface_recent_errors(tmp_path):

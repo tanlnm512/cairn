@@ -83,7 +83,7 @@
 <h1>cairn — System Architecture</h1>
 <p class="lead">A local, structural, agent-first codebase intelligence system: source → typed call graph in SQLite → layered knowledge (compass, wiki, memory) → 25-tool MCP server for AI agents.</p>
 
-<div class="callout callout-warn"><strong>Legacy snapshot.</strong> Current architecture reference: <a href="docs/architecture.md">docs/architecture.md</a>.</div>
+<div class="callout callout-warn"><strong>Legacy snapshot.</strong> Current architecture reference: <a href="../architecture.md">docs/architecture.md</a>.</div>
 
 <div class="callout">
   <strong>The defining property: every output is verifiable.</strong> Edges carry resolution labels (<code>exact</code>/<code>ambiguous</code>/<code>unresolved</code>); LLM-synthesized docs are fact-checked by a deterministic critic against the graph. An agent may hallucinate, but a hallucinated symbol can never land in a compass doc.
@@ -495,7 +495,7 @@ erDiagram
 <p>Every concept is a markdown file with YAML frontmatter (OKF v0.2). <code>memory_signals</code> caches the score; <code>memory_tier</code> tracks the lifecycle stage; <code>generated.by</code> records the last producer.</p>
 
 <hr>
-<p class="meta">See also: <a href="docs/architecture.md">architecture.md</a> (current reference) · <a href="docs/indexing.md">indexing.md</a> (resolution walkthrough) · <a href="docs/mcp-tools.md">mcp-tools.md</a> (25 MCP tools)</p>
+<p class="meta">See also: <a href="../architecture.md">architecture.md</a> (current reference) · <a href="../indexing.md">indexing.md</a> (resolution walkthrough) · <a href="../mcp-tools.md">mcp-tools.md</a> (25 MCP tools)</p>
 
 </div>
 

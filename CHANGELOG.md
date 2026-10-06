@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Quality ratchet: `make audit-status` prints remaining-vs-total audit findings by priority from `docs/audits/2026-10-02.md` plus a strict `.status.json` fix sidecar, and `make comment-style` enforces the AGENTS.md comment contract over `src/` through a machine-generated shrink-only baseline (`comment-style-shrink` re-derives it after fixes; growth fails). Both gates run as the `check-comment-lengths` pre-commit hook and the `quality-ratchet` CI job, expose `ARGS=--json`, and surface as a count-only `quality_gates` section in `cairn report`. The legacy root `architecture.html` and audit report moved to `docs/diagrams/` and `docs/audits/`.
 - Rationale indexing: `cairn build` captures comments whose text begins
   `NOTE:`, `WHY:`, or `HACK:` in every language with a mapped comment node
   type and persists them in an additive `rationale` table, each record

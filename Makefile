@@ -1,4 +1,4 @@
-.PHONY: dist evals ci-local ci-local-all verify-no-code-change release help
+.PHONY: dist evals ci-local ci-local-all verify-no-code-change audit-status comment-style comment-style-shrink release help
 
 # Build the wheel + sdist into dist/ for the HOST platform only (the
 # release workflow's cibuildwheel matrix builds the full platform set).
@@ -45,6 +45,18 @@ ci-local-all:
 verify-no-code-change:
 	uv run python scripts/verify_no_code_change.py $(REF)
 
+# Quality ratchets; module flags travel through ARGS because make consumes a
+# literal --json itself, so the JSON spelling is ARGS=--json.
+audit-status:
+	@uv run --no-sync python -m cairn.cli.system.audit_status $(ARGS)
+
+comment-style:
+	@uv run --no-sync python -m cairn.cli.system.comment_style $(ARGS)
+
+# Rewrites the comment baseline after cleanup; refuses growth.
+comment-style-shrink:
+	@uv run --no-sync python -m cairn.cli.system.comment_style --update $(ARGS)
+
 # Release walkthrough -- prints the steps AND previews the next bump.
 # Does NOT modify anything; the dry-run just shows what cz would do.
 # Full details: docs/release-checklist.md "Cutting a release".
@@ -79,7 +91,7 @@ release:
 		echo "(cz not available -- run 'uv sync --extra dev' first)"
 
 help:
-	@echo "Targets: dist evals ci-local ci-local-all verify-no-code-change release help"
+	@echo "Targets: dist evals ci-local ci-local-all verify-no-code-change audit-status comment-style comment-style-shrink release help"
 	@echo ""
 	@echo "  dist                   build wheel + sdist into dist/ (for distribution)"
 	@echo "  evals                  validate skill eval specs"
@@ -88,4 +100,9 @@ help:
 	@echo "  ci-local-all           the full 3.10-3.14 test matrix, sequentially"
 	@echo "  verify-no-code-change  AST-check that changed .py files are comment-only"
 	@echo "                         (REF=HEAD~1 to verify a commit; default: uncommitted)"
+	@echo "  audit-status           remaining-vs-total audit findings by priority"
+	@echo "                         (ARGS=--json for machine-readable output)"
+	@echo "  comment-style          gate long comment/docstring blocks against the baseline"
+	@echo "                         (ARGS=--json for machine-readable output)"
+	@echo "  comment-style-shrink   rewrite the baseline after cleanup; refuses growth"
 	@echo "  release                print the release walkthrough + preview the next bump"
