@@ -81,28 +81,32 @@ def _stdio_tool_catalog(env: dict) -> list[str]:
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         _TOOLS_LIST,
     ]
-    proc = subprocess.run(
-        [sys.executable, "-c", _BOOT, "stdio", "0"],
-        input="".join(json.dumps(m) + "\n" for m in messages),
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=90,
-        check=False,
+    last: subprocess.CompletedProcess | None = None
+    for _ in range(2):
+        last = subprocess.run(
+            [sys.executable, "-c", _BOOT, "stdio", "0"],
+            input="".join(json.dumps(m) + "\n" for m in messages),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=90,
+            check=False,
+        )
+        tools = None
+        for line in last.stdout.splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            message = json.loads(line)
+            if message.get("id") == 2 and "result" in message:
+                tools = _rpc_result_tools(message)
+        if tools is not None:
+            return tools
+    assert False, (
+        f"stdio session never answered tools/list (rc={last.returncode}); "
+        f"stdout tail: {last.stdout[-2000:]}; "
+        f"stderr tail: {last.stderr[-2000:]}"
     )
-    tools = None
-    for line in proc.stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        message = json.loads(line)
-        if message.get("id") == 2 and "result" in message:
-            tools = _rpc_result_tools(message)
-    assert tools is not None, (
-        "stdio session never answered tools/list; "
-        f"stderr tail: {proc.stderr[-2000:]}"
-    )
-    return tools
 
 
 def _http_post(url: str, payload: dict, headers: dict | None = None):
