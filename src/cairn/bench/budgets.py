@@ -53,7 +53,10 @@ def load_budgets(path: Path | str) -> dict[str, float]:
         raise ValueError("budget factor must be a number")
     if not math.isfinite(float(factor)) or factor < 10:
         raise ValueError("budget factor must be finite and at least 10")
-    return _validate_budgets(document.get("budgets"))
+    raw_budgets = document.get("budgets")
+    if not isinstance(raw_budgets, dict):
+        raise ValueError("budget file must contain a budgets object")
+    return _validate_budgets(raw_budgets)
 
 
 def evaluate_budgets(
