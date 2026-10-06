@@ -19,7 +19,6 @@ jobs:
     timeout-minutes: 10
     env:
       CAIRN_TELEMETRY: "off"
-      SMOKE_ROOT: ${{ runner.temp }}/weekly-smoke
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -31,6 +30,8 @@ jobs:
           uv sync
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - name: Build fixture graph
+        env:
+          SMOKE_ROOT: ${{ runner.temp }}/weekly-smoke
         run: |
           mkdir -p "$SMOKE_ROOT"
           cp -R benchmarks/datasource/t2/yarl "$SMOKE_ROOT/yarl"
@@ -40,6 +41,8 @@ jobs:
             --workspace "$SMOKE_ROOT" \
             --db "$SMOKE_ROOT/cairn.kg"
       - name: Replay CLI commands
+        env:
+          SMOKE_ROOT: ${{ runner.temp }}/weekly-smoke
         run: >
           uv run --no-sync python scripts/run_cli_smoke.py
           .github/smoke/cli-commands.txt
