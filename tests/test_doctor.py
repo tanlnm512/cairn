@@ -1384,3 +1384,148 @@ def test_memory_staleness_passes_when_memories_referenced(tmp_path):
     row = _by_name(json.loads(result.stdout), "memory_staleness")
     assert row["status"] == "PASS"
     assert "1 reference" in row["detail"]
+
+
+# ---------------------------------------------------------------------------
+# `doctor --fix`: opt-in remediation of dead cairn-owned SSE registrations.
+# The engine (probe / freshness refusal / backup / atomic rewrite /
+# idempotence) is pinned in tests/test_doctor_fix.py; these pin the CLI
+# wiring: the flag, the JSON actions payload, the environment-only
+# recompute (every other row keeps its pre-fix result), and the
+# tradeoff-bearing summary.
+# ---------------------------------------------------------------------------
+
+
+def _dead_sse_responder(monkeypatch):
+    """Drive every SSE reachability probe off a live socket."""
+    from cairn.mcp_server import lifecycle
+
+    monkeypatch.setattr(lifecycle, "sse_responds", lambda **_: False)
+
+
+def _write_home_claude_sse(url):
+    """A user-owned (home-level) claude registration pointing at ``url``."""
+    path = Path.home() / ".claude.json"
+    path.write_text(
+        json.dumps({"mcpServers": {"cairn": {"url": url}}}), encoding="utf-8"
+    )
+    return path
+
+
+def _age_file(path):
+    """Push ``path``'s mtime past the fix engine's freshness window."""
+    stamp = time.time() - 3600
+    os.utime(path, (stamp, stamp))
+
+
+def test_fix_repoints_dead_sse_and_recomputes_environment_only(
+        tmp_path, monkeypatch):
+    """`--fix --json` repoints a dead user-owned SSE registration, lists
+    the action with the stdio-vs-daemon tradeoff, and recomputes ONLY the
+    environment row: every other check keeps its pre-fix result. A second
+    run reports zero actions and leaves the backup alone."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.chdir(ws)
+    db = tmp_path / "store.db"
+    _make_db(db)
+    url = "http://127.0.0.1:65530/sse"
+    cfg = _write_home_claude_sse(url)
+    before = cfg.read_bytes()
+    _age_file(cfg)
+    _dead_sse_responder(monkeypatch)
+
+    read_only = _run(db, "--json")
+    assert read_only.exit_code == 1, read_only.output
+    pre = json.loads(read_only.stdout)
+    assert [r["name"] for r in pre if r["status"] == "FAIL"] == ["environment"]
+
+    fixed = _run(db, "--fix", "--json")
+    assert fixed.exit_code == 0, fixed.output
+    payload = json.loads(fixed.stdout)
+    assert payload["actions"] == [{
+        "client": "claude",
+        "config": "~/.claude.json",
+        "action": "repointed-to-stdio",
+        "url": url,
+    }]
+    assert [
+        r for r in payload["checks"] if r["name"] != "environment"
+    ] == [r for r in pre if r["name"] != "environment"]
+    post_env = _by_name(payload["checks"], "environment")
+    assert post_env["status"] in {"PASS", "WARN"}
+    assert "does not respond" not in post_env["detail"]
+    summary = " ".join(payload["summary"])
+    assert "repointed claude in ~/.claude.json to stdio" in summary
+    assert "stdio" in summary and "daemon" in summary and "tradeoff" in summary
+    rewritten = json.loads(cfg.read_text(encoding="utf-8"))
+    assert "command" in rewritten["mcpServers"]["cairn"]
+    assert cfg.with_suffix(".json.bak").read_bytes() == before
+
+    again = _run(db, "--fix", "--json")
+    assert again.exit_code == 0, again.output
+    assert json.loads(again.stdout)["actions"] == []
+    assert json.loads(cfg.read_text(encoding="utf-8")) == rewritten
+    assert cfg.with_suffix(".json.bak").read_bytes() == before
+
+
+def test_fix_on_healthy_environment_reports_zero_actions(
+        tmp_path, monkeypatch):
+    """A healthy environment under `--fix` changes nothing: zero actions,
+    an empty summary, and the command's help states it is read-only
+    unless `--fix`."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.chdir(ws)
+    db = tmp_path / "store.db"
+    _make_db(db)
+
+    result = _run(db, "--fix", "--json")
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["actions"] == []
+    assert payload["summary"] == []
+    assert _by_name(payload["checks"], "environment")["status"] == "PASS"
+
+    help_text = CliRunner().invoke(main, ["doctor", "--help"]).output
+    assert "read-only unless --fix" in " ".join(help_text.lower().split())
+
+
+def test_fix_refuses_fresh_config_with_guidance(tmp_path, monkeypatch):
+    """A registration whose config changed inside the freshness window is
+    refused, not rewritten: the action record and summary carry the
+    guidance, the file and its (absent) backup stay untouched, and the
+    human output names the refusal plus the transport tradeoff."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.chdir(ws)
+    db = tmp_path / "store.db"
+    _make_db(db)
+    url = "http://127.0.0.1:65530/sse"
+    cfg = _write_home_claude_sse(url)
+    before = cfg.read_bytes()
+    _dead_sse_responder(monkeypatch)
+
+    refused = _run(db, "--fix", "--json")
+    assert refused.exit_code == 1, refused.output
+    payload = json.loads(refused.stdout)
+    assert payload["actions"] == [{
+        "client": "claude",
+        "config": "~/.claude.json",
+        "action": "refused-recent-write",
+        "url": url,
+    }]
+    assert any(
+        "refused ~/.claude.json" in line and "retry" in line
+        for line in payload["summary"]
+    )
+    assert cfg.read_bytes() == before
+    assert not cfg.with_suffix(".json.bak").exists()
+
+    human = _run(db, "--fix")
+    assert human.exit_code == 1, human.output
+    assert "fix actions: 1" in human.output
+    assert "refused ~/.claude.json" in human.output
+    assert "retry" in human.output
+    assert "tradeoff" in human.output
+    assert "stdio" in human.output and "daemon" in human.output

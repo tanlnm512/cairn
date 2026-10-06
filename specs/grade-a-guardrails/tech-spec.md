@@ -258,3 +258,35 @@ runners so their failure contracts are testable without GitHub.
 - **Context**: survey recorded 7 doctor failures as sandbox `Permission` errors on socket-binding, with the atomic-writes file fully green — the known loopback-sandbox class.
 - **Decision**: fix-path tests monkeypatch the SSE responder; any genuinely binding test is verified via the core-suite or an out-of-sandbox run and noted as such, never as a product flake.
 - **Consequences**: `doctor --fix` verification stays deterministic in the sandbox; real-socket behavior still gets covered outside it.
+
+## Decisions appended during delivery
+
+### D-014: Live TC-018/TC-019 adjudicated — the verifier is correct, main is unprotected
+- **Context**: The proof run's live `make verify-protection` exits 1: `required_reviews PASS (ruleset:20313135)`, `force_push_denial FAIL (observed: False; no source)`, `required_status_checks FAIL` (all ten MANDATORY_CHECKS missing).
+- **Decision**: TC-018's Given ("main configured according to the release checklist") is an environment state, not a repo artifact — it is unmet on the real repository, so the TC is adjudicated environment-gated, not code-failed. TC-019's observable (exit 1, names the drifted settings and the source, "protection not verified") is demonstrated by this exact live output — the real repo is the drift fixture. Configuring main's protection (force-push denial + required checks) is a maintainer GitHub action outside this spec's write scope, tracked as the grade-A plan's Phase-3 human step.
+- **Consequences**: No code change; the verifier's first live run surfaced a true positive. The unit suite (9 stubbed-gh tests) plus TC-020 carry the code-contract proof.
+
+### D-015: Stacked-branch scope diff ruled
+- **Context**: The scope diff vs the shared approval freeze lists 24 unmentioned paths: the delivered ratchet spec's files (this branch stacks on `feat/grade-a-ratchet`), ratchet's derived `spawns/` payloads, `specs/INDEX.md`, and `tests/test_perf_budgets.py`.
+- **Decision**: Ratchet's files are another spec's already-committed delivery (C1 `46a7732`), not guardrails scope creep; `spawns/` is regenerate-only; `specs/INDEX.md` carries only registration lines; `tests/test_perf_budgets.py` is T006's constitutionally-required test file (C-02), implied by its task though unlisted in Touches.
+- **Consequences**: Guardrails' C1 stages only guardrails-owned files; the stack order (ratchet PR first, guardrails rebase/merge after) keeps attribution clean.
+
+### D-016: CLI output prints and test fixtures are intentional
+- **Context**: The cleanliness sweep flags 21 added-line suspects across `run_cli_smoke.py`, `verify_protection.py`, `mint_perf_budgets.py`, `tests/test_cli_smoke.py`, and one comment banner in `tests/test_doctor.py`.
+- **Decision**: Every script `print()` is the tool's output contract (`::group::`/`::error::` annotations, PASS/FAIL verdict lines, JSON payloads, stderr error lines) — the FR-004/FR-005/NFR-005 surfaces. The `print('boom')` in `test_cli_smoke.py` is subprocess input (a deliberately failing command), and the `test_doctor.py` banner is test coverage documentation; FR-003's comment contract scopes to `src/` only.
+- **Consequences**: No change; sweep heuristic adjudicated per ratchet's D-009 precedent.
+
+### D-017: Initial budgets carry reference-local ×25 cross-machine headroom
+- **Context**: Reviewer BLOCK — the checked-in budgets carried `reference-local` provenance while ci.yml enforced them, contradicting the release-checklist rule T007 itself added.
+- **Decision**: Re-mint the initial budgets at factor 25 (2.5× headroom beyond the catastrophe floor, for the reference-local→CI-runner class gap); the checklist now states the rule truthfully (≥25× until the first CI-class recalibration, factor 10 after). The loader's ≥10 floor and the sizing test's `>= 10 × observed` assertion both hold.
+- **Consequences**: First main push produces CI-class perf data; the release-checklist recalibration step then drops to factor 10. No spec text change — FR-003's "≥10×" remains the floor.
+
+### D-018: The enforcing bench step is budget-only
+- **Context**: Reviewer WARN — the main/merge-group enforce step inherited `$BASE` (`--compare`/`--baseline`), so the advisory 15%-regression exit 2 would redden main runs with no `continue-on-error`, a tightening FR-003 never recorded.
+- **Decision**: Drop `$BASE` from the enforcing step; PR legs keep the advisory compare. The main gate is exactly the catastrophe-budget gate the spec names.
+- **Consequences**: Regression-trend comparison stays advisory everywhere; downstream mint/compare steps are unaffected (they consume `bench-current.json`, still saved).
+
+### D-019: Reviewer WARN-2 and the mutation survivor are concurrency artifacts
+- **Context**: The reviewer read a live `and` in `mint_perf_budgets.py:62` while the mutation run was flipping it; the frozen tree reads `or` (verified post-run). The lone mutation survivor (`verify_protection.py:409` exit-code flip) is masked by the real repo's unprotected state — the live TC exits 1 either way.
+- **Decision**: WARN-2 cleared as a transient mutant. The survivor is adjudicated oracle-masked; the stubbed-gh unit suite pins exit codes on healthy fixtures.
+- **Consequences**: No code change for either.

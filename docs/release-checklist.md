@@ -86,6 +86,47 @@ in `pyproject.toml` under `[tool.commitizen]`. The CHANGELOG stays hand-curated
 — `cz` drafts it, a human finalizes it. Install it once with
 `uv sync --extra dev`.
 
+### Perf latency budgets
+`benchmarks/baselines/perf_p95_budgets.json` holds the catastrophe-class
+(≥10× observed p95) budgets enforced on the main/merge-group bench job.
+Budgets age with the corpus and hardware: when either changes materially,
+save a CI-class `cairn bench --suite perf --json` run and recalibrate from it:
+
+```sh
+uv run python scripts/mint_perf_budgets.py \
+  --from <ci-perf-run.json> --factor 10 \
+  --out benchmarks/baselines/perf_p95_budgets.json
+```
+
+The minted file carries the source run's provenance stamp (timestamp,
+dataset, `cairn_version`, `machine_profile`). Review that stamp in the diff —
+budgets minted from a `reference-local` run enforce at ≥25× (the cross-machine
+headroom the initial checked-in budgets carry) and drop to factor 10 only
+after the first CI-class recalibration — and commit the recalibrated file
+together with the change that motivated it.
+
+### Main branch protection
+`make verify-protection` is maintainer-run: `gh` must be authenticated with
+admin scope because the legacy branch-protection endpoint requires it. The
+check is read-only, unions evidence from the legacy and rulesets APIs, and is
+deliberately not wired into CI. Use `make verify-protection ARGS=--json` for
+machine-readable output. It exits zero only when `main` has:
+
+- at least one required approving review;
+- force-push denial;
+- every status check named by `MANDATORY_CHECKS` in
+  `scripts/verify_protection.py`:
+  - Security (pip-audit + bandit)
+  - Type check (mypy)
+  - PR title (conventional commits)
+  - pre-commit (all local gates)
+  - Quality ratchet (audit debt + comment style)
+  - Dependency review (PR)
+  - Test (Python 3.14)
+  - Closure budget gate (1000-file scaling point)
+  - Verify DS-v2 seal
+  - Container build (Dockerfile smoke)
+
 ### Conventional commits (the prerequisite)
 `cz` reads the conventional-commit history since the last tag to compute the
 bump and draft the changelog. This project already follows the convention:

@@ -562,6 +562,215 @@ class TestBenchCliBaseline:
         assert result.exit_code == 1
         assert "Baseline file not found" in result.output
 
+
+# --- CLI p95 budget gate (--budgets / --budget-mode) ----------------------
+
+_BUDGETED_TOOLS = (
+    "find_definition",
+    "get_callers",
+    "impact_analysis",
+    "search_symbols",
+    "semantic_search",
+    "explore",
+)
+
+
+def _budget_measurements(**overrides):
+    """Fixed p95 (ms) per budgeted tool; defaults are within budget."""
+    return {tool: 1.0 for tool in _BUDGETED_TOOLS} | overrides
+
+
+def _patch_budgeted_perf_suite(monkeypatch, p95_ms_by_tool):
+    """Swap the perf suite for fixed-p95 ops (deterministic budget scenarios)."""
+    from cairn.bench.report import OpTiming, PerfReport
+    from cairn.bench.timing import TimingResult
+
+    report = PerfReport(
+        symbols=10,
+        edges=5,
+        ops=[
+            OpTiming(
+                name=name,
+                timing=TimingResult(
+                    name=name, median=ms / 1000, p95=ms / 1000
+                ),
+            )
+            for name, ms in p95_ms_by_tool.items()
+        ],
+    )
+    monkeypatch.setattr(
+        "cairn.bench.run_perf_suite", lambda *args, **kwargs: report
+    )
+
+
+def _write_budget_file(tmp_path, budgets):
+    from cairn import __version__
+
+    path = tmp_path / "budgets.json"
+    path.write_text(
+        json.dumps({
+            "schema": "cairn-perf-budgets/1",
+            "timestamp": "2026-10-05T00:00:00+00:00",
+            "dataset": {"version": "DS-test"},
+            "cairn_version": __version__,
+            "machine_profile": {"runner_class": "ci-test"},
+            "factor": 10,
+            "budgets": budgets,
+        }),
+        encoding="utf-8",
+    )
+    return path
+
+
+class TestBenchCliBudgets:
+    def _budgets_at_5ms(self, tmp_path):
+        return _write_budget_file(tmp_path, {tool: 5.0 for tool in _BUDGETED_TOOLS})
+
+    def test_no_budget_flags_preserve_today_payload(self, tmp_path, monkeypatch):
+        _patch_budgeted_perf_suite(monkeypatch, _budget_measurements())
+        result = _invoke_perf_cli(["--json"], tmp_path, monkeypatch)
+        assert result.exit_code == 0, result.output
+        assert "budgets" not in json.loads(result.stdout)
+
+    def test_advise_prints_trend_lines_without_gating(self, tmp_path, monkeypatch):
+        _patch_budgeted_perf_suite(
+            monkeypatch, _budget_measurements(explore=6.0)
+        )
+        budgets = self._budgets_at_5ms(tmp_path)
+        result = _invoke_perf_cli(["--budgets", str(budgets)], tmp_path, monkeypatch)
+        assert result.exit_code == 0, result.output
+        assert "p95 budgets (advise)" in result.output
+        assert "EXCEEDS" in result.output
+        assert "within" in result.output
+        assert "6.0" in result.output and "5.0" in result.output
+
+    def test_advise_json_carries_budgets_block(self, tmp_path, monkeypatch):
+        _patch_budgeted_perf_suite(
+            monkeypatch, _budget_measurements(explore=6.0)
+        )
+        budgets = self._budgets_at_5ms(tmp_path)
+        result = _invoke_perf_cli(
+            ["--budgets", str(budgets), "--json"], tmp_path, monkeypatch
+        )
+        assert result.exit_code == 0, result.output
+        block = json.loads(result.stdout)["budgets"]
+        assert block["mode"] == "advise"
+        tools = {t["tool"]: t for t in block["tools"]}
+        assert tools["explore"] == {
+            "tool": "explore",
+            "p95_ms": 6.0,
+            "budget_ms": 5.0,
+            "over": True,
+        }
+        assert tools["find_definition"]["over"] is False
+
+    def test_enforce_breach_exits_3_with_pinned_message(
+        self, tmp_path, monkeypatch
+    ):
+        _patch_budgeted_perf_suite(
+            monkeypatch, _budget_measurements(explore=6.0)
+        )
+        budgets = self._budgets_at_5ms(tmp_path)
+        result = _invoke_perf_cli(
+            ["--budgets", str(budgets), "--budget-mode", "enforce"],
+            tmp_path,
+            monkeypatch,
+        )
+        assert result.exit_code == 3
+        assert "tool explore: p95 6.0ms exceeds budget 5.0ms" in result.output
+        assert "within" in result.output  # non-breached tools still identified
+
+    def test_enforce_json_keeps_stdout_parseable(self, tmp_path, monkeypatch):
+        _patch_budgeted_perf_suite(
+            monkeypatch, _budget_measurements(explore=6.0)
+        )
+        budgets = self._budgets_at_5ms(tmp_path)
+        result = _invoke_perf_cli(
+            [
+                "--budgets", str(budgets),
+                "--budget-mode", "enforce",
+                "--json",
+            ],
+            tmp_path,
+            monkeypatch,
+        )
+        assert result.exit_code == 3
+        payload = json.loads(result.stdout)
+        assert payload["budgets"]["mode"] == "enforce"
+        assert "tool explore: p95 6.0ms exceeds budget 5.0ms" in result.stderr
+
+    def test_enforce_within_budget_exits_0(self, tmp_path, monkeypatch):
+        _patch_budgeted_perf_suite(monkeypatch, _budget_measurements())
+        budgets = self._budgets_at_5ms(tmp_path)
+        result = _invoke_perf_cli(
+            ["--budgets", str(budgets), "--budget-mode", "enforce"],
+            tmp_path,
+            monkeypatch,
+        )
+        assert result.exit_code == 0, result.output
+        assert "EXCEEDS" not in result.output
+
+    def test_enforce_breach_takes_precedence_over_regression_exit_2(
+        self, tmp_path, monkeypatch
+    ):
+        _patch_budgeted_perf_suite(
+            monkeypatch,
+            _budget_measurements(find_definition=1.5, explore=6.0),
+        )
+        budgets = self._budgets_at_5ms(tmp_path)
+        baseline = tmp_path / "baseline.json"
+        baseline.write_text(
+            json.dumps({"ops": [{"name": "find_definition", "median_ms": 0.5}]}),
+            encoding="utf-8",
+        )
+        result = _invoke_perf_cli(
+            [
+                "--budgets", str(budgets),
+                "--budget-mode", "enforce",
+                "--compare", str(baseline),
+            ],
+            tmp_path,
+            monkeypatch,
+        )
+        assert result.exit_code == 3
+        assert "REGRESSED" in result.output
+
+    def test_missing_budget_file_fails_promptly(self, tmp_path, monkeypatch):
+        called = []
+        monkeypatch.setattr(
+            "cairn.bench.run_perf_suite", lambda *a, **k: called.append(1)
+        )
+        result = _invoke_perf_cli(
+            ["--budgets", str(tmp_path / "nope.json")], tmp_path, monkeypatch
+        )
+        assert result.exit_code == 1
+        assert "nope.json" in result.output
+        assert called == []
+
+    def test_budgets_rejected_off_perf_suite(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+        from cairn.cli import main
+
+        called = []
+        monkeypatch.setattr(
+            "cairn.bench.run_scaling_suite", lambda *a, **k: called.append(1)
+        )
+        budgets = self._budgets_at_5ms(tmp_path)
+        result = CliRunner().invoke(main, [
+            "bench", "--suite", "scaling", "--sizes", "2",
+            "--budgets", str(budgets),
+        ])
+        assert result.exit_code == 1
+        assert "perf suite only" in result.output
+        assert called == []
+
+    def test_enforce_without_budgets_is_a_usage_error(self, tmp_path, monkeypatch):
+        _patch_budgeted_perf_suite(monkeypatch, _budget_measurements())
+        result = _invoke_perf_cli(["--budget-mode", "enforce"], tmp_path, monkeypatch)
+        assert result.exit_code == 1
+        assert "requires --budgets" in result.output
+
+
 class TestProfileClassBucketing:
     """Unit tests for _profile_class (the rolling-baseline class rule)."""
 

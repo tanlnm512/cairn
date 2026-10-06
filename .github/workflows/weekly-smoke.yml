@@ -1,0 +1,47 @@
+name: Weekly smoke
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weekly-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: CLI replay (vendored fixture)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CAIRN_TELEMETRY: "off"
+      SMOKE_ROOT: ${{ runner.temp }}/weekly-smoke
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Install
+        run: |
+          uv sync
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Build fixture graph
+        run: |
+          mkdir -p "$SMOKE_ROOT"
+          cp -R benchmarks/datasource/t2/yarl "$SMOKE_ROOT/yarl"
+          # The scanner needs a repo marker; the vendored tree has none.
+          mkdir "$SMOKE_ROOT/yarl/.git"
+          uv run --no-sync cairn build \
+            --workspace "$SMOKE_ROOT" \
+            --db "$SMOKE_ROOT/cairn.kg"
+      - name: Replay CLI commands
+        run: >
+          uv run --no-sync python scripts/run_cli_smoke.py
+          .github/smoke/cli-commands.txt
+          --fixture "$SMOKE_ROOT/yarl"
+          --db "$SMOKE_ROOT/cairn.kg"

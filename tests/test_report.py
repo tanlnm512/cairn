@@ -149,6 +149,87 @@ def test_human_output_renders_sections(tmp_path):
     assert "strip_private_data" in result.output
 
 
+def test_resolution_counts_render_in_json_and_human(tmp_path):
+    db = tmp_path / "graph.db"
+
+    def setup(conn):
+        conn.executemany(
+            "INSERT INTO files (id, repo_id, path, language) VALUES (?, 'r1', ?, ?)",
+            [
+                ("f-python", "a.py", "python"),
+                ("f-typescript", "a.ts", "typescript"),
+                ("f-kotlin", "a.kt", "kotlin"),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO symbols (id, file_id, name, kind) VALUES (?, ?, ?, 'function')",
+            [
+                ("s-python", "f-python", "python_source", ),
+                ("s-python-target", "f-python", "python_target"),
+                ("s-typescript", "f-typescript", "typescript_source"),
+                ("s-typescript-target", "f-typescript", "typescript_target"),
+                ("s-kotlin", "f-kotlin", "kotlin_source"),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO edges (id, source_id, target_id, kind, resolution) "
+            "VALUES (?, ?, ?, 'calls', ?)",
+            [
+                ("e-python-exact-1", "s-python", "s-python-target", "exact"),
+                ("e-python-exact-2", "s-python", "s-python-target", "exact"),
+                ("e-python-ambiguous", "s-python", "s-python-target", "ambiguous"),
+                ("e-python-unresolved", "s-python", None, "unresolved"),
+                ("e-typescript-exact", "s-typescript", "s-typescript-target", "exact"),
+                ("e-typescript-unresolved", "s-typescript", None, "unresolved"),
+            ],
+        )
+
+    _make_db(db, setup)
+
+    json_result = _run(db, "--json")
+    assert json_result.exit_code == 0, json_result.output
+    assert json.loads(json_result.stdout)["resolution"] == {
+        "kotlin": {
+            "exact": 0,
+            "ambiguous": 0,
+            "unresolved": 0,
+            "total": 0,
+            "exact_pct": 0.0,
+            "ambiguous_pct": 0.0,
+            "unresolved_pct": 0.0,
+        },
+        "python": {
+            "exact": 2,
+            "ambiguous": 1,
+            "unresolved": 1,
+            "total": 4,
+            "exact_pct": 0.5,
+            "ambiguous_pct": 0.25,
+            "unresolved_pct": 0.25,
+        },
+        "typescript": {
+            "exact": 1,
+            "ambiguous": 0,
+            "unresolved": 1,
+            "total": 2,
+            "exact_pct": 0.5,
+            "ambiguous_pct": 0.0,
+            "unresolved_pct": 0.5,
+        },
+    }
+
+    human_result = _run(db)
+    assert human_result.exit_code == 0, human_result.output
+    assert "\n".join(
+        [
+            "## Resolution",
+            "kotlin: 0 exact (0.0%), 0 ambiguous (0.0%), 0 unresolved (0.0%)",
+            "python: 2 exact (50.0%), 1 ambiguous (25.0%), 1 unresolved (25.0%)",
+            "typescript: 1 exact (50.0%), 0 ambiguous (0.0%), 1 unresolved (50.0%)",
+        ]
+    ) in human_result.output
+
+
 def test_quality_gates_counts_render_in_json_and_human(tmp_path, monkeypatch):
     root, db = _make_quality_repo(tmp_path)
     monkeypatch.chdir(root)

@@ -72,22 +72,37 @@ def get_stats(conn: sqlite3.Connection) -> dict:
         lang_rows = cur.execute(
             """SELECT f.language AS language,
                       SUM(e.resolution = 'exact') AS exact_n,
-                      SUM(e.resolution = 'ambiguous') AS ambiguous_n
-               FROM edges e
-               JOIN symbols s ON e.source_id = s.id
-               JOIN files f ON s.file_id = f.id
-               WHERE e.kind IN ('calls','references')
-                 AND e.resolution IN ('exact','ambiguous')
+                      SUM(e.resolution = 'ambiguous') AS ambiguous_n,
+                      SUM(e.resolution = 'unresolved') AS unresolved_n
+               FROM files f
+               LEFT JOIN symbols s ON s.file_id = f.id
+               LEFT JOIN edges e ON e.source_id = s.id
+                    AND e.kind IN ('calls','references')
+                    AND e.resolution IN ('exact','ambiguous','unresolved')
                GROUP BY f.language ORDER BY f.language"""
         ).fetchall()
     except sqlite3.OperationalError as e:
         note_contention("stats.exact_share_by_language", error=e)
         lang_rows = []
     stats["exact_share_by_language"] = {}
+    stats["resolution_by_language"] = {}
     for r in lang_rows:
-        lang_pool = (r["exact_n"] or 0) + (r["ambiguous_n"] or 0)
+        exact = r["exact_n"] or 0
+        ambiguous = r["ambiguous_n"] or 0
+        unresolved = r["unresolved_n"] or 0
+        total = exact + ambiguous + unresolved
+        stats["resolution_by_language"][r["language"]] = {
+            "exact": exact,
+            "ambiguous": ambiguous,
+            "unresolved": unresolved,
+            "total": total,
+            "exact_pct": exact / total if total else 0.0,
+            "ambiguous_pct": ambiguous / total if total else 0.0,
+            "unresolved_pct": unresolved / total if total else 0.0,
+        }
+        lang_pool = exact + ambiguous
         if lang_pool:
-            stats["exact_share_by_language"][r["language"]] = r["exact_n"] / lang_pool
+            stats["exact_share_by_language"][r["language"]] = exact / lang_pool
     # skipped-file counts by reason (best-effort -- the table may not exist).
     try:
         stats["skipped_total"] = cur.execute(

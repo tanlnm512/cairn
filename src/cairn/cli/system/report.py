@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ... import __version__
 from ...memory.privacy import strip_private_data
+from ...graph.stats import get_stats
 from .audit_status import collect_audit_status
 from .comment_style import DEFAULT_BASELINE, check_comment_baseline
 from .doctor import _knob_source, _run_doctor
@@ -248,6 +249,16 @@ def _quality_gates() -> dict:
     }
 
 
+def _report_resolution(conn) -> dict:
+    if conn is None:
+        return {}
+    try:
+        return get_stats(conn)["resolution_by_language"]
+    except Exception:
+        _log.debug("report: resolution stats unreadable", exc_info=True)
+        return {}
+
+
 def _build_report(db: str) -> dict:
     """Assemble the redacted bundle. Never raises.
 
@@ -259,6 +270,7 @@ def _build_report(db: str) -> dict:
     try:
         versions = _scrub_strings(_report_versions(conn))
         recent_errors = _gather_recent_errors(conn)
+        resolution = _report_resolution(conn)
     finally:
         if conn is not None:
             try:
@@ -271,6 +283,7 @@ def _build_report(db: str) -> dict:
         "versions": versions,
         "doctor": _scrub_doctor(_run_doctor(db)),
         "recent_errors": recent_errors,
+        "resolution": resolution,
         "quality_gates": _quality_gates(),
         "config": _scrub_strings(_report_config()),
     }
@@ -320,6 +333,18 @@ def _render_report(bundle: dict) -> str:
     if re_["tool_errors"]:
         for t in re_["tool_errors"]:
             lines.append(f"  {_fmt_ts(t['invoked_at'])} {t['tool_name']} {t.get('error_message') or ''}")
+    else:
+        lines.append("  none")
+    lines.append("")
+
+    lines.append("## Resolution")
+    if bundle["resolution"]:
+        for language, counts in bundle["resolution"].items():
+            lines.append(
+                f"{language}: {counts['exact']} exact ({counts['exact_pct']:.1%}), "
+                f"{counts['ambiguous']} ambiguous ({counts['ambiguous_pct']:.1%}), "
+                f"{counts['unresolved']} unresolved ({counts['unresolved_pct']:.1%})"
+            )
     else:
         lines.append("  none")
     lines.append("")

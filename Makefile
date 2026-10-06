@@ -1,4 +1,4 @@
-.PHONY: dist evals ci-local ci-local-all verify-no-code-change audit-status comment-style comment-style-shrink release help
+.PHONY: dist evals ci-local ci-local-all verify-no-code-change audit-status comment-style comment-style-shrink verify-protection release help
 
 # Build the wheel + sdist into dist/ for the HOST platform only (the
 # release workflow's cibuildwheel matrix builds the full platform set).
@@ -57,6 +57,13 @@ comment-style:
 comment-style-shrink:
 	@uv run --no-sync python -m cairn.cli.system.comment_style --update $(ARGS)
 
+# Maintainer-only main protection check; gh needs admin-scoped auth.
+# Deliberately not wired into CI.
+PROTECTION_REPO ?= tanlnm512/cairn
+verify-protection:
+	@uv run --no-sync python scripts/verify_protection.py \
+	  --repo $(PROTECTION_REPO) $(ARGS)
+
 # Release walkthrough -- prints the steps AND previews the next bump.
 # Does NOT modify anything; the dry-run just shows what cz would do.
 # Full details: docs/release-checklist.md "Cutting a release".
@@ -91,7 +98,7 @@ release:
 		echo "(cz not available -- run 'uv sync --extra dev' first)"
 
 help:
-	@echo "Targets: dist evals ci-local ci-local-all verify-no-code-change audit-status comment-style comment-style-shrink release help"
+	@echo "Targets: dist evals ci-local ci-local-all verify-no-code-change audit-status comment-style comment-style-shrink verify-protection release help"
 	@echo ""
 	@echo "  dist                   build wheel + sdist into dist/ (for distribution)"
 	@echo "  evals                  validate skill eval specs"
@@ -105,4 +112,6 @@ help:
 	@echo "  comment-style          gate long comment/docstring blocks against the baseline"
 	@echo "                         (ARGS=--json for machine-readable output)"
 	@echo "  comment-style-shrink   rewrite the baseline after cleanup; refuses growth"
+	@echo "  verify-protection      maintainer-only main branch protection check"
+	@echo "                         (ARGS=--json for machine-readable output)"
 	@echo "  release                print the release walkthrough + preview the next bump"

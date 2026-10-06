@@ -1,0 +1,27 @@
+{
+  "schema": "cairn-perf-budgets/1",
+  "timestamp": "2026-08-16T06:58:50.216998+00:00",
+  "dataset": {
+    "name": "benchmark-datasource",
+    "version": "DS-v1",
+    "tree_hash": "65e3df398b96f2cd31230ee17765fc01b0bc603e4e27914f3c31f41f061f87bb",
+    "identity_size": 300
+  },
+  "cairn_version": "0.11.0",
+  "machine_profile": {
+    "arch": "arm64",
+    "cpu": "arm",
+    "cpu_count": 10,
+    "os": "macOS-26.5.2-arm64-arm-64bit",
+    "runner_class": "reference-local"
+  },
+  "factor": 25.0,
+  "budgets": {
+    "find_definition": 0.75,
+    "get_callers": 1.5,
+    "impact_analysis": 2.75,
+    "search_symbols": 156.25,
+    "semantic_search": 5041.75,
+    "explore": 12843.25
+  }
+}

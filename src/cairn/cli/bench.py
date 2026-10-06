@@ -304,17 +304,75 @@ def _render_swe_bench_report(payload: dict) -> None:
     )
 
 
-def _stamp_and_emit(report, stamp: dict, as_json: bool) -> dict:
+def _stamp_and_emit(
+    report, stamp: dict, as_json: bool, budgets_payload: dict | None = None
+) -> dict:
     """Stamp the report payload with the measurement timestamp + artifact stamp, then print the table or emit the JSON."""
     payload = report.to_dict()
     payload["timestamp"] = datetime.now(timezone.utc).isoformat()
     payload.update(stamp)
+    if budgets_payload is not None:
+        payload["budgets"] = budgets_payload
     if not as_json:
         report.to_table()
     else:
         # Same content as report.to_json() plus the timestamp.
         click.echo(json.dumps(payload, indent=2))
     return payload
+
+
+def _budget_payload(
+    report, budgets: dict[str, float], mode: str
+) -> tuple[dict, list]:
+    """Evaluate p95 budgets into the payload block and its breach list."""
+    from cairn.bench.budgets import evaluate_budgets
+
+    breaches = evaluate_budgets(report, budgets)
+    breached = {breach.tool for breach in breaches}
+    measured = {op.name: round(op.timing.p95 * 1000, 2) for op in report.ops}
+    tools = [
+        {
+            "tool": tool,
+            "p95_ms": measured[tool],
+            "budget_ms": round(budget, 2),
+            "over": tool in breached,
+        }
+        for tool, budget in budgets.items()
+    ]
+    return {"mode": mode, "tools": tools}, breaches
+
+
+def _render_budget_trends(block: dict) -> None:
+    from . import display
+
+    rows = [
+        [
+            tool["tool"],
+            f"{tool['p95_ms']:.1f}",
+            f"{tool['budget_ms']:.1f}",
+            "EXCEEDS" if tool["over"] else "within",
+        ]
+        for tool in block["tools"]
+    ]
+    display.print_table(
+        f"p95 budgets ({block['mode']})",
+        columns=["operation", "p95 ms", "budget ms", "status"],
+        rows=rows,
+    )
+
+
+def _print_breaches(breaches: list, as_json: bool) -> None:
+    from . import display
+
+    for breach in breaches:
+        message = (
+            f"tool {breach.tool}: p95 {breach.measured_ms:.1f}ms "
+            f"exceeds budget {breach.budget_ms:.1f}ms"
+        )
+        if as_json:
+            click.echo(message, err=True)
+        else:
+            display.error(message)
 
 
 def _render_baseline_header(version: str, path: Path, data: dict) -> None:
@@ -457,6 +515,21 @@ def _warn_machine_profile_mismatch(current: dict, stamped: object) -> None:
     type=float,
     help="Regression threshold for --compare (fraction; default 0.15 = 15%).",
 )
+@click.option(
+    "--budgets",
+    "budgets_path",
+    default=None,
+    help=(
+        "Perf suite: p95 budget file (cairn-perf-budgets/1) to evaluate "
+        "after the run."
+    ),
+)
+@click.option(
+    "--budget-mode",
+    type=click.Choice(["advise", "enforce"]),
+    default="advise",
+    help="Budget evaluation: advise prints trends; enforce exits 3 on breach.",
+)
 @click.option("--repeats", default=3, type=int, help="Timed repeats per operation (perf).")
 @click.option(
     "--runs",
@@ -497,6 +570,8 @@ def bench(
     compare,
     baseline,
     threshold,
+    budgets_path,
+    budget_mode,
     repeats,
     runs,
     slice_expr,
@@ -521,6 +596,12 @@ def bench(
         if value and suite != "swe-bench":
             display.error(f"{flag} applies to the swe-bench suite only.")
             sys.exit(1)
+    if budgets_path is not None and suite != "perf":
+        display.error("--budgets applies to the perf suite only.")
+        sys.exit(1)
+    if budgets_path is None and budget_mode != "advise":
+        display.error(f"--budget-mode {budget_mode} requires --budgets.")
+        sys.exit(1)
     swe_slice: slice | None = None
     slice_label: str | None = None
     manifest_path: Path | None = None
@@ -579,6 +660,17 @@ def bench(
         baseline_version = baseline
         compare = str(_resolve_baseline_file(baseline, suite))
 
+    # Budgets load before any suite runs so a bad file fails in milliseconds.
+    budget_limits: dict[str, float] | None = None
+    if budgets_path is not None:
+        from cairn.bench.budgets import load_budgets
+
+        try:
+            budget_limits = load_budgets(budgets_path)
+        except (OSError, ValueError) as exc:
+            display.error(f"Budget file error ({budgets_path}): {exc}")
+            sys.exit(1)
+
     # CAIRN_DB is pinned below for the perf/agent suites; restore the
     # caller's value (or unset it) however the run ends, or it keeps pointing
     # at a temp DB path the finally deletes.
@@ -588,6 +680,8 @@ def bench(
 
     tmp_root = None
     tmp_db = None  # cg_bench_db_* dir created only by the perf/agent suites
+    budget_block: dict | None = None
+    budget_breaches: list = []
     try:
         if suite == "scaling":
             size_list = [int(s.strip()) for s in sizes.split(",") if s.strip()]
@@ -666,7 +760,17 @@ def bench(
                     embed_backend=embed_backend,
                     repeats=repeats,
                 )
-            payload = _stamp_and_emit(report, stamp, as_json)
+            if budget_limits is not None:
+                try:
+                    budget_block, budget_breaches = _budget_payload(
+                        report, budget_limits, budget_mode
+                    )
+                except ValueError as exc:
+                    display.error(f"Budget evaluation failed: {exc}")
+                    sys.exit(1)
+            payload = _stamp_and_emit(report, stamp, as_json, budget_block)
+            if budget_block is not None and not as_json:
+                _render_budget_trends(budget_block)
 
         # Save baseline if requested.
         if save:
@@ -697,6 +801,7 @@ def bench(
 
         # Compare against baseline if requested (explicit --compare file, or
         # --baseline <DS-version> resolved from benchmarks/baselines/).
+        regression_exit = False
         if compare:
             baseline_path = Path(compare)
             if not baseline_path.exists():
@@ -742,9 +847,21 @@ def bench(
                     rows=rows,
                 )
                 if any_regressed:
-                    sys.exit(2)  # CI signal: regressions found
+                    regression_exit = True  # CI signal: regressions found
             else:
                 display.success("No comparable operations vs baseline.")
+
+        # A budget breach (exit 3) outranks the advisory regression exit 2.
+        if budget_breaches:
+            if budget_mode == "enforce":
+                _print_breaches(budget_breaches, as_json)
+                sys.exit(3)
+            if not as_json:
+                display.warning(
+                    f"{len(budget_breaches)} p95 budget(s) exceeded (advisory)"
+                )
+        if regression_exit:
+            sys.exit(2)
     finally:
         restore_env(saved_db)
         if tmp_root and tmp_root.exists():
