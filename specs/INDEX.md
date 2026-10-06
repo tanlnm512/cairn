@@ -31,4 +31,4 @@ the archive entry above.
 - [corpus-breadth](corpus-breadth/spec.md) — draft (created 2026-10-04)
 - [concept-space-unification](concept-space-unification/spec.md) — draft (created 2026-10-04)
 - [grade-a-ratchet](grade-a-ratchet/spec.md) — done (delivered 46a7732, 2026-10-06)
-- [grade-a-guardrails](grade-a-guardrails/spec.md) — draft (created 2026-10-05)
+- [grade-a-guardrails](grade-a-guardrails/spec.md) — done (delivered bb4268c, 2026-10-06)

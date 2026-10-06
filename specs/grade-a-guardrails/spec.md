@@ -1,6 +1,6 @@
 # Spec: grade-a-guardrails
 
-**Status**: active
+**Status**: done
 **Effort**: standard
 **Created**: 2026-10-05
 **Branch**: `feat/grade-a-guardrails`

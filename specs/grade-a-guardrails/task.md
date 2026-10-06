@@ -3,7 +3,7 @@
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 **Lifecycle**: v2
 Status reflects code state per [survey.md](survey.md), not intent.
-**Delivered**: pending — delivery evidence; the orchestrator writes `commit @ <sha>` here
+**Delivered**: commit @ bb4268c
 
 ## Burndown
 | Phase | Total | Done |
