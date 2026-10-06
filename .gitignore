@@ -55,3 +55,6 @@ Thumbs.db
 # ---- ZCode session artifacts ----
 .zcode/
 .video_agent/plugin_root
+
+# spec-to-prod derived spawn payloads (regenerate-only, never committed)
+specs/*/spawns/
