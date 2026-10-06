@@ -1,0 +1,9 @@
+cairn stats
+cairn def URL --no-refresh --json
+cairn search URL* --kind class --no-refresh --json
+cairn callers split_url --no-refresh --json
+cairn impact URL --depth 2 --no-refresh --json
+cairn grep --fixed encode_url --no-refresh --json
+cairn tree yarl
+cairn map --no-refresh --json
+cairn pack --task URL --budget 1000 --json

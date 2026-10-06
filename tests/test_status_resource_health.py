@@ -415,9 +415,8 @@ class TestStatsResolutionShares:
         assert stats["ambiguous_share"] == pytest.approx(4 / pool)
 
     def test_minimal_schema_defaults_resolution_to_zero(self, tmp_path):
-        """The hand-built minimal schema has no ``resolution`` column: the new
-        query degrades to zero defaults instead of raising -- shares included
-        (0/0 denominator must not divide by zero)."""
+        """A schema without ``resolution`` degrades aggregate and per-language
+        counts to zero/empty defaults without dividing by zero."""
         from cairn.graph.queries import get_stats
 
         db = tmp_path / "bare.db"
@@ -439,6 +438,7 @@ class TestStatsResolutionShares:
 
         stats = get_stats(_open(db))
         assert stats["resolution"] == {"exact": 0, "ambiguous": 0, "unresolved": 0}
+        assert stats["resolution_by_language"] == {}
         assert stats["exact_share"] == 0
         assert stats["ambiguous_share"] == 0
 
@@ -487,13 +487,17 @@ class TestStatsProvenanceShares:
     """
 
     def test_edge_sources_and_per_language_share(self, tmp_path):
-        """Seeded two-language edges: provenance over all kinds, shares over
-        the calls/references pool joined through symbols->files."""
+        """Seeded two-language edges plus an edge-free language: provenance
+        over all kinds, shares and resolution counts over the pool."""
         from cairn.graph.queries import get_stats
 
         db = tmp_path / "graph.db"
 
         def seed(conn):
+            conn.execute(
+                "INSERT INTO files (id, repo_id, path, language) "
+                "VALUES ('f3', 'r1', 'lib.rs', 'rust')"
+            )
             conn.executemany(
                 "INSERT INTO edges (id, source_id, target_id, target_name, "
                 "kind, resolution, source) VALUES (?,?,?,?,?,?,?)",
@@ -519,6 +523,35 @@ class TestStatsProvenanceShares:
         assert stats["exact_share_by_language"] == {
             "kotlin": pytest.approx(3 / 4),
             "python": pytest.approx(1 / 2),
+        }
+        assert stats["resolution_by_language"] == {
+            "python": {
+                "exact": 1,
+                "ambiguous": 1,
+                "unresolved": 1,
+                "total": 3,
+                "exact_pct": 1 / 3,
+                "ambiguous_pct": 1 / 3,
+                "unresolved_pct": 1 / 3,
+            },
+            "kotlin": {
+                "exact": 3,
+                "ambiguous": 1,
+                "unresolved": 0,
+                "total": 4,
+                "exact_pct": 3 / 4,
+                "ambiguous_pct": 1 / 4,
+                "unresolved_pct": 0.0,
+            },
+            "rust": {
+                "exact": 0,
+                "ambiguous": 0,
+                "unresolved": 0,
+                "total": 0,
+                "exact_pct": 0.0,
+                "ambiguous_pct": 0.0,
+                "unresolved_pct": 0.0,
+            },
         }
         assert stats["resolution"] == {"exact": 4, "ambiguous": 2, "unresolved": 1}
 

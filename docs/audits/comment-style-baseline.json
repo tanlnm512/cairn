@@ -2509,13 +2509,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:0b2569b0e5cb62455c90d2bef7fa7dfa4c4038c6abfb3a347a4be30d06035272",
-      "paths": [
-        "src/cairn/cli/system/doctor.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:0c205b09fcbc324a17929633850d96fb331b18c87d85e596ef17a08ef23a473b",
       "paths": [
         "src/cairn/graph/query_enrich.py"
@@ -3807,13 +3800,6 @@
       "fingerprint": "docstring:42d9d24991624dc5e03c183e44df3078e3374faab1ab7828921f67c3eed400c6",
       "paths": [
         "src/cairn/knowledge/ingest/adr.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:42e5ba748fb771c62617d2d852cab1d35515ca0e0c6ab98f8f0aa165b359b96a",
-      "paths": [
-        "src/cairn/cli/system/doctor.py"
       ]
     },
     {

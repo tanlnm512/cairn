@@ -820,26 +820,18 @@ def _client_config_paths(client: str) -> list[tuple[Path, str, bool]]:
     return pairs
 
 
-def _enumerate_registrations() -> list[tuple[str, str, dict, bool]]:
-    """Every installed client's cairn MCP registration, read-only.
-
-    Enumerates installed clients via ``check_installed`` (the same installed
-    state ``install-agents`` reports), then reads each client's config files
-    for the cairn entry (shape-aware: flat ``mcpServers``, zcode's nested
-    ``mcp.servers``, opencode/kilo's ``mcp.cairn``). Returns (client, display
-    path, entry, workspace_owned) 4-tuples; absent or unparseable files are
-    skipped, never raised.
-    """
+def _enumerate_registrations() -> list[tuple[str, Path, str, dict, bool]]:
+    """Yield (client, config path, display path, entry, workspace_owned) per installed cairn registration; unreadable files are skipped."""
     from ...agent_install import _registration_entry, check_installed
 
-    found: list[tuple[str, str, dict, bool]] = []
+    found: list[tuple[str, Path, str, dict, bool]] = []
     for client, installed in check_installed(str(Path.cwd())).items():
         if not installed:
             continue
         for path, disp, workspace_owned in _client_config_paths(client):
             entry = _registration_entry(str(path))
             if entry is not None:
-                found.append((client, disp, entry, workspace_owned))
+                found.append((client, path, disp, entry, workspace_owned))
     return found
 
 
@@ -938,7 +930,8 @@ def _registration_findings(
     expected = {"db": str(db), "workspace": str(Path.cwd())}
     required_env = cairn_home_env()
 
-    for client, disp, entry, workspace_owned in _enumerate_registrations():
+    for client, _path, disp, entry, workspace_owned in (
+            _enumerate_registrations()):
         if "command" in entry:
             written = entry.get("env")
             written_env = dict(written) if isinstance(written, dict) else {}
@@ -1185,6 +1178,10 @@ def _run_doctor(db: str) -> list[dict]:
 
 _STATUS_STYLE = {_PASS: "success", _WARN: "warning", _FAIL: "error"}
 _STATUS_GLYPH = {_PASS: "✓", _WARN: "!", _FAIL: "✗"}
+_FIX_TRADEOFF = (
+    "tradeoff: stdio registrations run one cairn process per client; "
+    "SSE registrations share a single daemon"
+)
 
 
 def _render_doctor(results: list[dict], display) -> None:
@@ -1205,29 +1202,81 @@ def _render_doctor(results: list[dict], display) -> None:
             display.dim(f"      hint: {escape(r['hint'])}")
 
 
+def _fix_summary_lines(actions: list[dict]) -> list[str]:
+    """One guidance line per fix action, plus the transport tradeoff."""
+    from .doctor_fix import _REFUSED_RECENT, _REPOINTED, _SKIPPED_WORKSPACE
+
+    lines: list[str] = []
+    for action in actions:
+        client = action.get("client", "unknown")
+        config = action.get("config", "unknown")
+        url = action.get("url", "")
+        name = action.get("action")
+        if name == _REPOINTED:
+            lines.append(f"repointed {client} in {config} to stdio ({url})")
+        elif name == _REFUSED_RECENT:
+            lines.append(
+                f"refused {config}: changed recently; retry "
+                "`cairn doctor --fix` after it settles"
+            )
+        elif name == _SKIPPED_WORKSPACE:
+            lines.append(
+                f"skipped {config}: workspace-owned; edit the repo "
+                "registration deliberately"
+            )
+        else:
+            lines.append(f"{client} {config}: {name} ({url})")
+    if actions:
+        lines.append(_FIX_TRADEOFF)
+    return lines
+
+
+def _render_fix_summary(actions: list[dict], display) -> None:
+    """Render the fix-action count, one line per action, and the tradeoff."""
+    from rich.markup import escape
+
+    display.console.print(f"[bold]fix actions: {len(actions)}[/bold]")
+    for line in _fix_summary_lines(actions):
+        display.dim(f"      {escape(line)}")
+
+
 @main.command()
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-def doctor(db, as_json):
-    """Run 11 system health checks (PASS/WARN/FAIL each).
-
-    Surfaces silent degradations: schema integrity, embedding/ANN backend
-    fallbacks, embed-server health (probe/model/parity/latency when a server
-    backend is configured), graph freshness, parse errors, lock contention,
-    per-tool error/latency health, tribal-memory reference staleness, and
-    environment wiring (store resolution,
-    registrations, platform/transport, binary coherence). Read-only -- never
-    writes to the
-    store. Exit code is
-    0 when every check is PASS or WARN, and 1 when any check FAILs, so agents
-    can gate on it.
-    """
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="Repoint dead cairn-owned SSE registrations to stdio.",
+)
+def doctor(db, as_json, fix):
+    """Run system health checks; exits 0 on PASS/WARN-only, 1 on any FAIL; read-only unless --fix repoints cairn-owned registrations."""
     from .. import display
 
     results = _run_doctor(db)
+    actions: list[dict] | None = None
+    if fix:
+        from .doctor_fix import apply_doctor_fixes
+
+        actions = apply_doctor_fixes(db)
+        results = [
+            _check_environment(db) if r["name"] == "environment" else r
+            for r in results
+        ]
     if as_json:
-        click.echo(json.dumps(results, indent=2))
+        if actions is None:
+            click.echo(json.dumps(results, indent=2))
+        else:
+            click.echo(json.dumps(
+                {
+                    "checks": results,
+                    "actions": actions,
+                    "summary": _fix_summary_lines(actions),
+                },
+                indent=2,
+            ))
     else:
         _render_doctor(results, display)
+        if actions is not None:
+            _render_fix_summary(actions, display)
     code = 1 if any(r["status"] == _FAIL for r in results) else 0
     click.get_current_context().exit(code)

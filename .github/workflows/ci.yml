@@ -497,10 +497,10 @@ jobs:
       # first, then the table). Exit contract: 0 clean; 1 baseline/file
       # error; 2 regressions past 15%. A machine-profile mismatch only
       # WARNS and keeps the exit code at whatever the comparison alone
-      # decides (D-005). Exit 2 is absorbed by continue-on-error below --
-      # timing can never redden this job; the advisory PR-comment
-      # comparison lives in bench_compare.py.
-      - name: Run bench (fixed corpus, hash backend)
+      # decides (D-005). The PR step absorbs timing failures; the advisory
+      # PR-comment comparison lives in bench_compare.py.
+      - name: Run bench (fixed corpus, PR advisory)
+        if: github.event_name == 'pull_request'
         continue-on-error: true
         run: |
           if [ -f bench-baseline.json ]; then
@@ -510,7 +510,15 @@ jobs:
           fi
           uv run --no-sync cairn bench --suite perf --embed-backend hash --repeats 3 \
             --json --save bench-current.json \
+            --budgets benchmarks/baselines/perf_p95_budgets.json --budget-mode advise \
             $BASE
+
+      - name: Run bench (fixed corpus, main/merge-group budgets)
+        if: github.event_name != 'pull_request'
+        run: |
+          uv run --no-sync cairn bench --suite perf --embed-backend hash --repeats 3 \
+            --json --save bench-current.json \
+            --budgets benchmarks/baselines/perf_p95_budgets.json --budget-mode enforce
 
       # Mint the rolling baseline from THIS run (main pushes only -- PR
       # runs never write cache entries, so a PR's numbers can't become the

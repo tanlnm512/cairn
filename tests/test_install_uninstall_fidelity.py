@@ -1521,10 +1521,10 @@ class TestClaudeGlobalMcpRegistration:
 
         assert check_installed(str(ws))["claude"] is True
 
-        claude_hits = [(c, d, e, ws_owned)
-                       for c, d, e, ws_owned in _enumerate_registrations()
+        claude_hits = [(c, p, d, e, ws_owned)
+                       for c, p, d, e, ws_owned in _enumerate_registrations()
                        if c == "claude"]
-        assert ("claude", "~/.claude.json", entry, False) in claude_hits
+        assert ("claude", user_cfg, "~/.claude.json", entry, False) in claude_hits
 
     def test_doctor_reads_droid_user_scope_registration(
             self, fake_home, tmp_path):
@@ -1544,10 +1544,10 @@ class TestClaudeGlobalMcpRegistration:
 
         assert check_installed(str(ws))["droid"] is True
 
-        droid_hits = [(c, d, e, ws_owned)
-                      for c, d, e, ws_owned in _enumerate_registrations()
+        droid_hits = [(c, p, d, e, ws_owned)
+                      for c, p, d, e, ws_owned in _enumerate_registrations()
                       if c == "droid"]
-        assert ("droid", "~/.factory/mcp.json", entry, False) in droid_hits
+        assert ("droid", user_cfg, "~/.factory/mcp.json", entry, False) in droid_hits
 
     def test_claude_probe_reads_the_hooks_cairn_writes(self, fake_home, tmp_path):
         """check_installed's ~/.claude/settings.json probe must look at the
