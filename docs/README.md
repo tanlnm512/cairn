@@ -16,6 +16,7 @@ verbatim from the source.
 | How are external SCIP indexes imported and generated? | [scip.md](scip.md) |
 | How do I configure cairn (cairn.json, env vars, extras)? | [configuration.md](configuration.md) |
 | How do I run the benchmarks and reproduce published numbers? | [benchmarks.md](benchmarks.md) |
+| What remains to reach the grade-A bar? | [grade-a-roadmap.md](grade-a-roadmap.md) |
 
 ## Procedures (kept from the previous doc set)
 
