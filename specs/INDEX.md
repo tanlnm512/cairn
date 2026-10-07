@@ -32,3 +32,6 @@ the archive entry above.
 - [concept-space-unification](concept-space-unification/spec.md) — draft (created 2026-10-04)
 - [grade-a-ratchet](archive/2026-10-07-grade-a-ratchet/spec.md) — done (delivered 46a7732, 2026-10-06)
 - [grade-a-guardrails](archive/2026-10-07-grade-a-guardrails/spec.md) — done (delivered bb4268c, 2026-10-06)
+- [grade-a-ratchet](grade-a-ratchet/spec.md) — done (delivered 46a7732, 2026-10-06)
+- [grade-a-guardrails](grade-a-guardrails/spec.md) — done (delivered bb4268c, 2026-10-06)
+- [comment-sweep](comment-sweep/spec.md) — draft (created 2026-10-07)
