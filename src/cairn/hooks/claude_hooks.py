@@ -24,22 +24,15 @@ def _read_stdin() -> dict:
 
 
 def _cg_command() -> list[str]:
-    """Resolve a cairn invocation. Prefers a `cairn` binary on PATH; falls back to
-    `python -m cairn.cli.main` so the hook works from an editable install / source
-    checkout that isn't on PATH."""
+    """Resolve a cairn invocation, preferring PATH over the CLI package module."""
     cairn_bin = shutil.which("cairn")
     if cairn_bin:
         return [cairn_bin]
-    return [sys.executable, "-m", "cairn.cli.main"]
+    return [sys.executable, "-m", "cairn.cli"]
 
 
 def _run_cg(args: list, timeout: int = 30, stdin: str | None = None) -> str:
-    """Run a cairn command. Returns stdout.
-
-    ``stdin`` (if given) is piped to the child's stdin — use this for large
-    payloads (e.g. a session transcript) that would otherwise blow past
-    ARG_MAX (~256KB on macOS) when passed as an argv element.
-    """
+    """Run a cairn command with optional stdin; return stdout or a clear error."""
     try:
         result = subprocess.run(
             _cg_command() + args,
@@ -48,6 +41,10 @@ def _run_cg(args: list, timeout: int = 30, stdin: str | None = None) -> str:
             timeout=timeout,
             input=stdin,
         )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            suffix = f": {detail}" if detail else ""
+            return f"error: cairn exited {result.returncode}{suffix}"
         return result.stdout
     except (subprocess.SubprocessError, OSError) as e:
         return f"error: {e}"
