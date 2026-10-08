@@ -249,6 +249,7 @@ def _run_session_end(monkeypatch, capsys, payload: dict, calls: list):
 
     class _FakeCompleted:
         stdout = "queued memory-extract\n"
+        returncode = 0
 
     def fake_run(argv, **kwargs):
         calls.append({"argv": argv, "kwargs": kwargs})
@@ -350,6 +351,7 @@ def _run_session_start(monkeypatch, capsys, digest_stdout: str, calls: list):
 
     class _FakeCompleted:
         stdout = digest_stdout
+        returncode = 0
 
     def fake_run(argv, **kwargs):
         calls.append({"argv": argv, "kwargs": kwargs})
