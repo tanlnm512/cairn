@@ -1072,12 +1072,12 @@ class TestStoreTargeting:
 
         assert result.exit_code == 0, result.output
         assert "nothing to remove" in result.output
+        assert str(unregistered) in result.output
         assert other.exists(), \
             "-y must not widen a store miss to every workspace's store"
 
-    def test_interactive_miss_fallback_still_offers_the_whole_home(self, tmp_path):
-        """Without -y, a store miss still widens to the whole home behind the
-        interactive confirm (declining -- the default -- keeps everything)."""
+    def test_store_miss_fails_closed_and_names_workspace(self, tmp_path):
+        """A store miss never offers the whole home and names the workspace."""
         from cairn.cli import main
 
         home = tmp_path / "home"
@@ -1090,11 +1090,13 @@ class TestStoreTargeting:
             main,
             ["uninstall", "--graph-only", "--workspace", str(unregistered)],
             env={"CAIRN_HOME": str(home)},
-            input="n\n",
+            input="y\n",
         )
 
         assert result.exit_code == 0, result.output
-        assert other.exists(), "declining the confirm must keep everything"
+        assert str(unregistered) in result.output
+        assert "entire cairn home" not in result.output
+        assert other.exists(), "a confirmed store miss must keep every other store"
 
 
 # --------------------------------------------------------------------------

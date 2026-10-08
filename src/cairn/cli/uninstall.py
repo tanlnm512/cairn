@@ -106,15 +106,16 @@ def _remove_hooks(ws: str, dry_run: bool) -> None:
         click.echo("  (none found)")
 
 
-def _resolve_store_target(ws: str, full: bool, allow_widen: bool) -> tuple[Path, bool] | None:
-    """What gets deleted in step 3: ``(directory, whole_home)`` or None, keyed on the resolved workspace; a miss widens only interactively."""
+def _resolve_store_target(ws: str, full: bool) -> tuple[Path, bool] | None:
+    """Return ``(directory, whole_home)`` for deletion, keyed on the resolved workspace; only ``--full`` widens."""
     home = _home()
-    if not full:
+    if full:
+        if home.exists() and _home_has_stores(home):
+            return (home, True)
+    else:
         store = home / store_key(Path(ws).resolve())
         if store.exists():
             return (store, False)
-    if (full or allow_widen) and home.exists() and _home_has_stores(home):
-        return (home, True)
     return None
 
 
@@ -129,12 +130,16 @@ def _home_has_stores(home: Path) -> bool:
     return False
 
 
-def _remove_store(ws: str, full: bool, dry_run: bool, allow_widen: bool) -> None:
+def _remove_store(ws: str, full: bool, dry_run: bool) -> None:
     click.echo("➜ Graph and knowledge data")
-    resolved = _resolve_store_target(ws, full, allow_widen)
+    workspace = Path(ws).resolve()
+    resolved = _resolve_store_target(str(workspace), full)
 
     if resolved is None:
-        click.echo("  (no cairn store found — nothing to remove)")
+        if full:
+            click.echo("  (no cairn store found — nothing to remove)")
+        else:
+            click.echo(f"  (no cairn store found for workspace {workspace} — nothing to remove)")
         return
 
     target, whole_home = resolved
@@ -168,7 +173,7 @@ def _remove_store(ws: str, full: bool, dry_run: bool, allow_widen: bool) -> None
                 from ..agent_install.merge import _atomic_write_text
 
                 reg = json.loads(reg_path.read_text(encoding="utf-8"))
-                reg.pop(str(Path(ws).resolve()), None)
+                reg.pop(str(workspace), None)
                 # Atomic: a crash mid-rewrite must not leave a truncated
                 # registry behind (same discipline as the client configs).
                 # Same json.dumps format paths.py writes, just crash-safe.
@@ -311,9 +316,7 @@ def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, 
         click.echo("")
 
     if do_graph and (dry_run or confirm("graph and knowledge data")):
-        # A -y run must never widen a store miss to the whole home
-        # (--full is the explicit opt-in for that; see _resolve_store_target).
-        _remove_store(ws, full, dry_run, allow_widen=not yes)
+        _remove_store(ws, full, dry_run)
         click.echo("")
 
     if do_package and (dry_run or confirm("cairn binary")):
