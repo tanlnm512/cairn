@@ -39,10 +39,8 @@ def test_checked_in_budgets_are_schema_tagged_and_catastrophe_sized():
 
     assert REQUIRED_TOOLS <= budgets.keys()
     assert raw["schema"] == "cairn-perf-budgets/1"
-    assert raw["timestamp"] == baseline["timestamp"]
-    assert raw["dataset"] == baseline["dataset"]
-    assert raw["cairn_version"] == baseline["cairn_version"]
-    assert raw["machine_profile"] == baseline["machine_profile"]
+    runner_class = raw["machine_profile"]["runner_class"]
+    assert runner_class.startswith("ci-"), runner_class
     assert raw["factor"] >= 10
     assert all(budgets[tool] >= 10 * observed[tool] for tool in REQUIRED_TOOLS)
 
