@@ -29,6 +29,40 @@ def test_python_dash_m_runs_the_cli():
     assert proc.stdout.strip(), "module invocation must print the CLI help"
 
 
+def test_cli_package_dash_m_runs_the_cli():
+    proc = subprocess.run(
+        [sys.executable, "-m", "cairn.cli", "--help"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip(), "package invocation must print the CLI help"
+    assert "RuntimeWarning" not in proc.stderr
+
+
+def test_fallback_resolvers_use_cli_package(monkeypatch):
+    from cairn.agent_install import _common
+
+    impact_guard = _load_impact_guard()
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    expected = [sys.executable, "-m", "cairn.cli"]
+
+    assert claude_hooks._cg_command() == expected
+    assert _common.resolve_cg_command() == expected
+    assert impact_guard._cg_command() == expected
+
+
+def test_run_cg_reports_failed_subprocess(monkeypatch):
+    """Return a clear error string when cairn exits non-zero."""
+
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(["cairn"], 1, stdout="", stderr="boom")
+
+    monkeypatch.setattr(claude_hooks.subprocess, "run", fake_run)
+    monkeypatch.setattr(claude_hooks, "_cg_command", lambda: ["cairn"])
+
+    assert claude_hooks._run_cg(["update"]) == "error: cairn exited 1: boom"
+
+
 def _load_impact_guard():
     script = (Path(cairn.__file__).parent / "agent_integration" / "skill"
               / "scripts" / "impact_guard.py")

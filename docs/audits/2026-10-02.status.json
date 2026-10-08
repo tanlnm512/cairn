@@ -1,4 +1,7 @@
 {
   "schema_version": 1,
-  "fixed": []
+  "fixed": [
+    "C77",
+    "C1"
+  ]
 }

@@ -62,11 +62,11 @@ def _uninstall_bases(ws: Path, scope: str) -> list[Path]:
 
 
 def resolve_cg_command() -> list[str]:
-    """Return the preferred cairn argv, falling back to ``python -m cairn``."""
+    """Return the preferred cairn argv, preferring PATH over the CLI package module."""
     cairn_bin = shutil.which("cairn")
     if cairn_bin:
         return [cairn_bin]
-    return [sys.executable, "-m", "cairn.cli.main"]
+    return [sys.executable, "-m", "cairn.cli"]
 
 
 def opencode_format_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
@@ -100,7 +100,7 @@ def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dic
         # cairn binary: args = ["serve"]
         entry: dict = {"command": cmd[0], "args": ["serve"]}
     else:
-        # module fallback (e.g. [python, "-m", "cairn.cli.main"]): append "serve" to args
+        # Module fallback: append "serve" to the module arguments.
         command, *prefix = cmd
         entry = {"command": command, "args": [*prefix, "serve"]}
     # A non-default CAIRN_HOME must travel with the registration so the

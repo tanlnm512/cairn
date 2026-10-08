@@ -759,13 +759,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:5444b597e13f633c3cad3ed361e78353c3efbfc2c4472da791d55420caf3a246",
-      "paths": [
-        "src/cairn/hooks/claude_hooks.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:551424322fcfe54a28e76e4c36c1397f933eabbeebfa6dc330bca549165fdcc6",
       "paths": [
         "src/cairn/llm/client.py"
@@ -1098,13 +1091,6 @@
       "fingerprint": "docstring:9bfa1cf244e5be28489a37c47a5f098926b51b73a243b0c7d8c84083e87c4bd7",
       "paths": [
         "src/cairn/viz/renderers.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:9d63b3ed5e2dc1c1aacbe67db7f5c60bb545b5d57a996b735ca610b5bc3cb648",
-      "paths": [
-        "src/cairn/agent_integration/skill/scripts/impact_guard.py"
       ]
     },
     {
