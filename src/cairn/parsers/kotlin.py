@@ -159,10 +159,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             return
 
         if t == "class_parameter":
-            # Constructor parameter like `private val baseUrl: String`.
-            # These are properties when they declare val/var. Descend so a
-            # default-value call (`val repo: Repo = createRepo()`) emits
-            # its call edge.
+            # val/var parameters are properties and may initialize calls.
             sym = self._parse_class_parameter(node, source)
             if sym:
                 pf.symbols.append(sym)
@@ -182,11 +179,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     # --- name & modifier helpers ------------------------------------------
 
     def _classify_type_decl(self, node: Node, source: bytes) -> str:
-        """Classify a type declaration node into a symbol kind.
-
-        The vendored fwcd grammar folds `interface` and `enum class` into
-        class_declaration/object_declaration with a leading keyword child.
-        """
+        """Classify type declarations by their leading grammar keyword."""
         if node.type == "class_declaration":
             # Look at the first keyword child: interface | class | (enum class)
             for child in node.children:
@@ -289,12 +282,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return sym
 
     def _parse_property(self, node: Node, source: bytes) -> Optional[Symbol]:
-        # property_declaration: [modifiers] (val|var) variable_declaration ...
-        # The name lives inside variable_declaration; accept both
-        # `simple_identifier` and `identifier` spellings -- the sibling
-        # extractors (_var_name_and_type,
-        # _parse_function, _parse_type_identifier) already do. Without the
-        # `identifier` spelling every class-body val/var produced no Symbol.
+        # Accept both identifier spellings used by class-body properties.
         name = None
         for child in node.children:
             if child.type == "variable_declaration":
@@ -322,12 +310,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return sym
 
     def _emit_type_references(self, node: Node, source: bytes, owner: str) -> None:
-        """`references` edges for ``user_type`` annotations on a declaration's
-        signature (value parameters, return type, property/constructor
-        parameter types). Declaration bodies are excluded — local statements
-        are not part of the API surface, and body-level user_types (local
-        variable types) would dwarf the signature signal.
-        """
+        """Emit references Edges for user_type nodes on API signatures."""
         for child in node.children:
             if child.type in (
                 "function_body", "class_body", "enum_class_body", "statements",
@@ -352,10 +335,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             self._collect_user_types(child, source, owner)
 
     def _parse_class_parameter(self, node: Node, source: bytes) -> Optional[Symbol]:
-        """Constructor parameter: [modifiers] (val|var) name : Type.
-
-        Treated as a property when it has val/var (a real backing field).
-        """
+        """Return a constructor parameter Symbol only when it declares val or var."""
         has_val_or_var = False
         name = None
         for child in node.children:
@@ -405,12 +385,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
 
 
     def _parse_inheritance(self, node: Node, source: bytes, child_name: str):
-        """Emit implements/extends edges for a type declaration.
-
-        Kotlin uses ':' for both extends and implements, distinguished by node
-        type: a superclass (extends) is a `constructor_invocation` `Base(...)`;
-        interfaces (implements) are plain `user_type` targets.
-        """
+        """Emit extends and implements Edges from Kotlin supertype declarations."""
         # Each supertype is a direct `delegation_specifier` child (the plural
         # container is hidden). Targets are (name, is_extends).
         targets: List[tuple] = []
@@ -430,12 +405,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     def _collect_inheritance_targets(
         self, node: Node, source: bytes, targets: List[tuple]
     ):
-        """Recursively gather (name, is_extends) inheritance targets.
-
-        For a `constructor_invocation` `Base(...)`, the target name is the inner
-        `user_type`'s identifier (not the argument list). Plain `user_type`
-        targets are interfaces (implements).
-        """
+        """Collect name and extends flag from constructor and user supertypes."""
         if node is None:
             return
         if node.type == "constructor_invocation":
@@ -460,10 +430,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             return None
         receiver_type = self._infer_call_receiver_type(node, source)
 
-        # Kotlin operator-invoke sugar: `someUseCase(params)` desugars to
-        # `someUseCase.invoke(params)` on a DI-injected property/param/local.
-        # Rewrite the edge target from the variable name to its declared TYPE
-        # so callers reach the shared class.
+        # Bare operator-invoke calls retarget to the injected property's type.
         if receiver_type is None:
             bare = self._bare_callee_identifier(node, source)
             if bare is not None and bare == target and bare[:1].islower():
@@ -471,10 +438,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
                 if inferred and inferred != bare and inferred[:1].isupper():
                     target = inferred
 
-        # The same operator-invoke sugar applies to the explicit-receiver
-        # shape `this.prop(c)` / `obj.prop(c)` where `prop` is a DI-injected
-        # property of a UseCase type. Rewrite the target from the property name
-        # to the type name so the edge resolves to the shared UseCase class.
+        # Explicit-receiver operator-invoke calls retarget to the property type.
         enclosing = self._scope[-1] if self._scope else None
         declared_type_of_target = (
             self._field_types.get(enclosing, {}).get(target) if enclosing else None
@@ -501,10 +465,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         )
 
     def _count_call_arguments(self, node: Node) -> Optional[int]:
-        """Argument count of a call_expression: one per ``value_argument`` in
-        ``value_arguments``, plus one for a trailing lambda — a call argument
-        in Kotlin semantics. Type arguments don't count.
-        """
+        """Return value_argument count, counting a trailing lambda and no type arguments."""
         suffix = self._child_of_type(node, ("call_suffix",))
         if suffix is None:
             return None
@@ -521,12 +482,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
     # --- receiver-type inference ------------------------------------------
 
     def _count_parameters(self, fn_node: Node) -> Optional[int]:
-        """Parameter count of a function_declaration: direct ``parameter``
-        children of ``function_value_parameters``. Vararg modifiers and
-        default values are siblings/children, not extra parameters; an
-        extension receiver is not a parameter. None when the parameter
-        clause is absent.
-        """
+        """Return direct parameter count, excluding receivers and absent clauses."""
         fvp = self._child_of_type(fn_node, ("function_value_parameters",))
         if fvp is None:
             return None
@@ -570,11 +526,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return name, vtype
 
     def _class_param_name_and_type(self, node: Node, source: bytes):
-        """(name, type) for a `val`/`var` primary-constructor parameter.
-
-        Plain constructor params (no val/var, not a backing field) return
-        (None, None) -- they aren't accessible as `this.x` outside __init__.
-        """
+        """Return name and type for val or var constructor parameters only."""
         has_val_or_var = False
         name = None
         vtype = None
@@ -605,12 +557,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _infer_node_type(self, node: Optional[Node], source: bytes) -> Optional[str]:
-        """Best-effort type of an arbitrary receiver expression node.
-
-        Handles `this_expression`, a bare `identifier`, a constructor
-        `call_expression`, and a `navigation_expression` (field access chain).
-        Returns None for anything else.
-        """
+        """Return this, identifier, constructor, or navigation receiver types."""
         if node is None:
             return None
         if node.type == "this_expression":
@@ -619,10 +566,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
             name = self._node_text(node, source).strip()
             return self._resolve_bare_name_type(name)
         if node.type == "call_expression":
-            # Constructor call `Foo(...)` -> type is `Foo`. A call through a
-            # navigation chain (`factory.build()`) isn't a constructor call in
-            # any obvious way here, so we abstain rather than guess a return
-            # type.
+            # Only a direct capitalized callee is treated as a constructor.
             if node.children and node.children[0].type in ("simple_identifier", "identifier"):
                 text = self._node_text(node.children[0], source).strip()
                 if text[:1].isupper():
@@ -643,11 +587,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _resolve_bare_name_type(self, name: str) -> Optional[str]:
-        """Type of a bare identifier: local/param (innermost scope first),
-        else an implicit `this.<name>` field on the enclosing type, else -- if
-        capitalized -- a reference to that type itself (static/companion call
-        receiver, e.g. `Profile.create()`).
-        """
+        """Resolve a bare name through scopes, this fields, or its own type."""
         for scope in reversed(self._var_types):
             if name in scope:
                 return scope[name]
@@ -673,14 +613,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _infer_call_receiver_type(self, node: Node, source: bytes) -> Optional[str]:
-        """Receiver type for a call_expression, if the call is `X.method()`.
-
-        Bare calls (`method()`, no receiver) return None. Also handles the
-        property-invoke shape `this.prop(c)` / `obj.prop(c)` where the invoked
-        thing is the property itself (commonly a Kotlin ``operator fun invoke``
-        UseCase); in that case the receiver type is the declared type of the
-        whole nav expr, letting the rewrite fire.
-        """
+        """Return X.method receiver type, including operator-invoke properties."""
         nav = None
         for child in node.children:
             if child.type == "navigation_expression":
@@ -705,10 +638,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return self._infer_node_type(receiver_expr, source)
 
     def _bare_callee_identifier(self, node: Node, source: bytes) -> Optional[str]:
-        """The callee identifier text iff ``node`` is a truly bare call
-        `name(...)` -- its first child is a plain identifier. Returns None
-        otherwise, so the operator-invoke rewrite only fires for this shape.
-        """
+        """Return the callee only for a truly bare name call."""
         if not node.children:
             return None
         lead = node.children[0]
@@ -717,12 +647,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _extract_call_target_name(self, node: Node, source: bytes) -> Optional[str]:
-        """Extract the called name from a call_expression.
-
-        The called name is the last simple_identifier before the value_arguments.
-        A callee that is itself a call (``getHandler()(argOne)``) emits its own
-        inner call edge, so the outer call adds none.
-        """
+        """Return the called property, skipping nested calls and arguments."""
         lead = node.children[0] if node.children else None
         if lead is not None and lead.type == "call_expression":
             return None
@@ -746,11 +671,7 @@ class KotlinParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _tail_identifier(self, node: Node, source: bytes) -> Optional[str]:
-        """Last simple_identifier in a subtree (the called property).
-
-        ``call_suffix`` subtrees are excluded: an argument identifier is never
-        the call target (``getHandler()(argOne)`` targets ``getHandler``).
-        """
+        """Return the last call-target identifier outside call_suffix subtrees."""
         last = None
         stack = [node]
         while stack:

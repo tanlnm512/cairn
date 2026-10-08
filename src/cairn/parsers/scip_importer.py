@@ -70,10 +70,7 @@ _TS_SITES_SQL = (
     "AND coalesce(e.source, '') != 'scip'"
 )
 
-# --- protobuf availability --------------------------------------------------
-# A missing runtime AND a runtime older than the vendored stub's gencode
-# (ValidateProtobufRuntimeVersion raises VersionError, not ImportError)
-# degrade identically: the module imports, scip_available() is False.
+# Missing and too-old protobuf runtimes both leave scip unavailable.
 try:
     from google.protobuf.runtime_version import VersionError as _VersionError
 except ImportError:  # runtimes without a runtime_version module
@@ -177,11 +174,7 @@ def _resolve_target(
     symbol: str,
     doc_rel: str,
 ) -> Tuple[Optional[str], Optional[str], bool]:
-    """(target_id, resolution, drop): exact via the definition occurrence's own
-    position join; unresolved when the symbol has no in-workspace definition
-    site; drop when it has one that fails the join (a counted miss, never a
-    name-keyed guess). `local `-prefixed symbols are unique per document, so
-    only same-document definition sites are candidates for them."""
+    """Return exact position-joined resolution, dropping counted join misses."""
     candidates = def_sites.get(symbol, ())
     if symbol.startswith("local "):
         candidates = [c for c in candidates if _norm_rel(c[0]) == doc_rel]
@@ -206,10 +199,7 @@ def _plan_document(
     symbol_kinds: Dict[str, int],
     record: Dict[str, Any],
 ) -> Tuple[List[Tuple[Any, ...]], bool]:
-    """(edge rows, anomalous) for one document; unmatched files and unjoinable
-    occurrences are counted, not written, and a position-join rate below
-    _JOIN_ANOMALY_THRESHOLD flags the document anomalous (definition
-    occurrences excluded)."""
+    """Return edge rows and anomaly status for one document's occurrences."""
     rel = _norm_rel(doc.relative_path)
     spans = spans_by_rel.get(rel)
     if spans is None:
@@ -264,11 +254,7 @@ def _plan_document(
 def _count_disagreements(
     conn: sqlite3.Connection, file_id: str, rows: List[Tuple[Any, ...]]
 ) -> Tuple[int, int]:
-    """(disagreements, upgrades) between planned scip edges and the file's
-    tree-sitter edges, matched by (kind, line): both sides resolved to
-    different targets counts a disagreement; an ambiguous/unresolved
-    tree-sitter site the scip edge resolves exact counts an upgrade.
-    The scip edge wins either way."""
+    """Return disagreements and upgrades for SCIP edges by kind and line."""
     sites: Dict[Tuple[str, int], List[Tuple[Optional[str], str]]] = {}
     for kind, line, target_id, resolution in conn.execute(_TS_SITES_SQL, (file_id,)):
         sites.setdefault((kind, line), []).append((target_id, resolution))

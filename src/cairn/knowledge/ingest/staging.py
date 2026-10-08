@@ -38,11 +38,7 @@ class StagedEntry:
 
 
 def stage_outbox(entries: Iterable[StagedEntry], outbox_dir: Path) -> dict:
-    """Stage the OKF outbox and manifest; return the parsed manifest.
-
-    Rows are emitted in sorted (repo, relpath) order so re-run diffs are
-    deterministic.
-    """
+    """Stage a deterministic OKF outbox and return its parsed manifest."""
     outbox_dir = Path(outbox_dir)
     outbox_dir.mkdir(parents=True, exist_ok=True)
 
@@ -128,11 +124,7 @@ def _stage_document(
     # body it is handed, and strip_private_data is idempotent.
     body = strip_private_data(body)
     tags = _merged_tags(identity.tags, entry.classification.extra_tags)
-    # Author-declared relationships (D1.1), normalized to
-    # {concept_id, relation, kind}: identifiers, not free text -- kept
-    # verbatim like the other provenance fields. ADR supersede detection
-    # (D1.2) contributes the same shape from body/status markers; the
-    # union dedupes on (concept_id, relation, kind), declared first.
+    # Relationship identifiers stay verbatim; declared entries win before dedupe.
     relationships = normalize_relationships(
         extract_relationships(entry.parsed.extensions) + detected
     )

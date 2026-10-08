@@ -13,13 +13,7 @@ def kilo_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -
 
 
 def _kilo_config_path(workspace: str, scope: str = "workspace") -> Path:
-    """kilo.json location for the install scope.
-
-    ``scope="workspace"`` (default) targets ``<workspace>/kilo.json`` at the
-    project root; ``scope="global"`` targets ``~/.config/kilo/kilo.json``
-    — kilo's recommended global config path, which check_installed probes
-    so a global install is detected.
-    """
+    """Return the kilo.json path for workspace or global scope."""
     if scope == "global":
         return Path.home() / ".config" / "kilo" / "kilo.json"
     return Path(workspace) / "kilo.json"
@@ -28,12 +22,7 @@ def _kilo_config_path(workspace: str, scope: str = "workspace") -> Path:
 def install_kilo(workspace: str, force: bool = False, dry_run: bool = False,
                  transport: str = "stdio", sse_url: str | None = None,
                  scope: str = "workspace") -> InstallResult:
-    """Wire cairn into the kilo CLI.
-
-    Reach: like opencode, MCP is wired via the config file; skills reach
-    kilo agents via the ``.agents/skills/`` fallback written by
-    install_cross_tool (kilo's config format is opencode-derived).
-    """
+    """Install Kilo config and shared cross-tool agent assets."""
     res = InstallResult("kilo")
     # config_key="kilo" routes the merge through the opencode-format branch
     # of _already_installed / _deep_merge (mcp.<name>, command-as-array).
@@ -46,12 +35,7 @@ def install_kilo(workspace: str, force: bool = False, dry_run: bool = False,
 
 
 def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
-    """Remove cairn entries from kilo.json files.
-
-    ``scope="workspace"`` (default, historical) strips ``<ws>/kilo.json``;
-    ``scope="global"`` strips ``~/.config/kilo/kilo.json``; ``scope="all"``
-    strips both.
-    """
+    """Remove cairn from kilo.json files for the selected scope."""
     scopes = ["workspace", "global"] if scope == "all" else [scope]
     for s in scopes:
         _strip_mcp_kilo(_kilo_config_path(str(ws), s), res)

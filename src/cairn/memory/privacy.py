@@ -6,14 +6,6 @@ import re
 # ``<private>...</private>`` tags → [REDACTED].
 _PRIVATE_TAG_RE = re.compile(r"<private>[\s\S]*?</private>", re.IGNORECASE)
 
-# URI connection strings with embedded credentials:
-# ``postgres://admin:pass@db``, ``redis://:pass@cache``, basic-auth URLs,
-# AMQP/MongoDB DSNs, ... The scheme and host are non-secret debugging
-# context, so only the ``user:password@`` segment is replaced. Applied
-# BEFORE the generic secret shapes so a password that is itself
-# secret-shaped (e.g. an ``sk-...`` key) doesn't get half-substituted
-# first. The username is included in the redaction: it is frequently
-# service-account material and splitting it adds no diagnostic value.
 _URI_CREDENTIAL_RE = re.compile(
     r"\b(postgres(?:ql)?|mysql|mariadb|rediss?|mongodb(?:\+srv)?|amqps?|"
     r"https?|ftps?)://[^/@\s:]*:[^/@\s]+@",
@@ -44,14 +36,7 @@ _COMPILED_SECRETS = [re.compile(p, re.IGNORECASE) for p in _SECRET_PATTERN_SOURC
 
 
 def strip_private_data(input_text: str) -> str:
-    """Strip ``<private>`` tags and known secret shapes from ``input_text``.
-
-    ``<private>...</private>`` blocks become ``[REDACTED]``.
-    Secret-shaped tokens (API keys, bearer tokens, JWTs, etc.) become
-    ``[REDACTED_SECRET]``.
-    URI credentials (``postgres://user:pass@host``) keep their scheme and
-    host; only the ``user:pass@`` segment becomes ``[REDACTED_SECRET]``.
-    """
+    """Return input_text with private tags, URI credentials, and secret tokens removed."""
     result = _PRIVATE_TAG_RE.sub("[REDACTED]", input_text)
     result = _URI_CREDENTIAL_RE.sub(r"\1://[REDACTED_SECRET]@", result)
     for pattern in _COMPILED_SECRETS:

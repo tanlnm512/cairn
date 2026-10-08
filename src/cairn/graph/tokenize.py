@@ -20,10 +20,7 @@ BASE_STOP_WORDS = frozenset({
 def simple_tokenize(
     text: str, stop_words: Optional[Iterable[str]] = None, min_len: int = 3
 ) -> List[str]:
-    """Split on non-alphanumeric boundaries, lowercase, filter stop words.
-
-    Returns a deduplicated, order-preserving list of tokens >= min_len chars.
-    """
+    """Split on non-alphanumeric boundaries, lowercase, filter stop words."""
     stop: Set[str] = set(stop_words) if stop_words is not None else set(BASE_STOP_WORDS)
     tokens: List[str] = []
     seen = set()

@@ -10,14 +10,7 @@ from pathlib import Path
 
 
 def claude_desktop_config_path() -> Path:
-    """Location of Claude Desktop's global MCP config file, per-OS.
-
-    Claude Desktop (the GUI app) reads a single global config rather than a
-    per-workspace file:
-      macOS:   ~/Library/Application Support/Claude/claude_desktop_config.json
-      Windows: %APPDATA%/Claude/claude_desktop_config.json
-      Linux:   ~/.config/Claude/claude_desktop_config.json
-    """
+    """Return Claude Desktop's per-OS global MCP config path."""
     home = Path.home()
     if sys.platform == "darwin":
         return home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
@@ -144,11 +137,7 @@ def _json_has_cairn(path: Path) -> bool:
 
 
 def _hooks_have_cairn(path: Path) -> bool:
-    """True if a settings.json hooks block carries any cairn hook entry.
-
-    cairn writes only ``hooks`` into .claude/settings.json (never MCP keys),
-    so this — not the MCP-key probe — is what detects a hooks install there.
-    """
+    """Return True when Claude settings contain a cairn hook entry."""
     try:
         import json
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -170,12 +159,7 @@ def _hooks_have_cairn(path: Path) -> bool:
 
 
 def check_installed(workspace: str) -> dict[str, bool]:
-    """For each client, True if cairn is already wired in.
-
-    Checks the client's config file(s) and skill directories for cairn
-    entries. Used by `cairn install-agents` to show which clients already have
-    cairn vs which need it, so the user isn't blindly re-installing.
-    """
+    """Return each client's current cairn installation state."""
     ws = Path(workspace)
     home = Path.home()
     result: dict[str, bool] = {}

@@ -31,12 +31,7 @@ class FederatedResult:
 
 
 def iter_stores() -> Iterator[Tuple[str, StorePaths]]:
-    """Yield ``(workspace_path, store_paths)`` for every registry entry.
-
-    ``resolve_store``'s CAIRN_DB/CAIRN_KNOWLEDGE overrides pin the active
-    process's single store; fan-out derives each entry's layout from its own
-    store home instead.
-    """
+    """Yield ``(workspace_path, store_paths)`` for every registry entry."""
     for ws_path in sorted(_load_registry()):
         store = resolve_store(ws_path)
         yield ws_path, replace(
@@ -49,24 +44,7 @@ def iter_stores() -> Iterator[Tuple[str, StorePaths]]:
 def federated_search(
     query: str, limit: int = 20, shared_embed: bool = False
 ) -> FederatedResult:
-    """Search every registered workspace store and fuse the rankings.
-
-    Per store: ``semantic_search`` runs on a read-only connection; a store
-    with no embedding rows for the current model contributes its
-    ``search_symbols`` BM25 ranking instead (``provenance="bm25"``). The
-    cross-store merge is rank-level only (``rrf_fuse``) -- per-store scores
-    are never compared. ``limit`` bounds each store's fetch and the merged
-    ranking. Every registry entry is classified ``ok`` / ``missing`` /
-    ``locked`` / ``unindexed`` and reported in ``states``; entries that are
-    not ``ok`` are named in ``dropped`` and never abort the query.
-
-    ``shared_embed`` opts into shared-backend serving: when every reachable
-    store's embedding rows carry exactly the current model stamp, the query
-    is embedded once and the vector reused across those stores; any other
-    stamp mix keeps per-store embedding with rank-level fusion. Off by
-    default; never changes which hits callers get, only how many times the
-    query is embedded.
-    """
+    """Search every registered workspace store and fuse the rankings."""
     if not query or not query.strip():
         raise ValueError("query must not be empty")
     with _shared_query_embed(shared_embed and _stamps_share_backend()):
@@ -105,13 +83,7 @@ def federated_search(
 
 
 def _stamps_share_backend() -> bool:
-    """True when every reachable store's embedding rows carry exactly the
-    current model stamp.
-
-    A store without embedding rows is lexical-only and constrains nothing;
-    a foreign stamp, ambiguous multi-stamp rows, or an unreadable db keeps
-    per-store serving. Never raises and never writes.
-    """
+    """True when every reachable store's embedding rows carry exactly the current model stamp."""
     from cairn.graph import embeddings as emb
 
     model = emb.current_model()
@@ -136,12 +108,7 @@ def _stamps_share_backend() -> bool:
 
 @contextlib.contextmanager
 def _shared_query_embed(enabled: bool):
-    """Serve every query embed in the scope from one memoized vector.
-
-    ``semantic_search`` reaches the backend only through the process-global
-    ``embeddings.embed_query``, so enabling the share swaps that seam for a
-    memoizing wrapper; the swap is lock-serialized and always restored.
-    """
+    """Serve every query embed in the scope from one memoized vector."""
     if not enabled:
         yield
         return
@@ -164,12 +131,7 @@ def _shared_query_embed(enabled: bool):
 
 
 def _classify_store(store: StorePaths) -> str:
-    """``missing`` / ``unindexed`` / ``ok`` from the filesystem alone.
-
-    A store home that is absent is ``missing``; a home without a db file is
-    ``unindexed``. A db that exists but cannot be queried classifies
-    ``locked`` at query time. Never raises and never writes.
-    """
+    """``missing`` / ``unindexed`` / ``ok`` from the filesystem alone."""
     if not store.home.is_dir():
         return "missing"
     if not store.db.is_file():

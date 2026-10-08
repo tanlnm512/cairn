@@ -8,23 +8,14 @@ from ..merge import _merge_json_file, _rm_if_ours, _strip_mcp, _write_file
 
 
 def _omp_mcp_path(workspace: str, scope: str = "workspace") -> Path:
-    """.omp/mcp.json location for the install scope.
-
-    ``scope="workspace"`` (default) targets ``<workspace>/.omp/mcp.json``;
-    ``scope="global"`` targets ``~/.omp/agent/mcp.json`` -- omp's documented
-    user-level MCP config path.
-    """
+    """Return the .omp/mcp.json path for workspace or global scope."""
     if scope == "global":
         return Path.home() / ".omp" / "agent" / "mcp.json"
     return Path(workspace) / ".omp" / "mcp.json"
 
 
 def _omp_agents_dir(workspace: str, scope: str = "workspace") -> Path:
-    """.omp/agents/ location for the install scope.
-
-    ``scope="workspace"`` targets ``<workspace>/.omp/agents``; ``scope="global"``
-    targets ``~/.omp/agent/agents`` -- omp's documented user-level agent dir.
-    """
+    """Return the .omp agents directory for workspace or global scope."""
     if scope == "global":
         return Path.home() / ".omp" / "agent" / "agents"
     return Path(workspace) / ".omp" / "agents"
@@ -50,11 +41,7 @@ def install_omp(workspace: str, force: bool = False, dry_run: bool = False,
 
 
 def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
-    """Remove cairn entries/files for omp.
-
-    ``scope="workspace"`` (default) strips ``<ws>/.omp/``; ``scope="global"``
-    strips ``~/.omp/agent/``; ``scope="all"`` does both.
-    """
+    """Remove omp cairn files for the selected install scope."""
     scopes = ["workspace", "global"] if scope == "all" else [scope]
     for s in scopes:
         _strip_mcp(_omp_mcp_path(str(ws), s), res)

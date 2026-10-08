@@ -109,14 +109,7 @@ def _reflect_one(
 
 
 def reflect_store(bundle: OKFBundle, conn: sqlite3.Connection) -> Dict[str, int]:
-    """Recompute stance keys across every memory, in sorted concept-id order.
-
-    Writes a memory file (atomically, via bundle.write_concept) only when one
-    of the three stance keys changes; never touches lifecycle tier/score,
-    body, title, or the supersession keys. Returns
-    ``{"changed": n, "unchanged": n, "contested": n}`` where ``contested``
-    counts memories whose stance is contested after the pass.
-    """
+    """Recompute stance keys and return changed, unchanged, and contested counts."""
     summary = {"changed": 0, "unchanged": 0, "contested": 0}
     memo: Dict[str, bool] = {}
     with bundle.lock():

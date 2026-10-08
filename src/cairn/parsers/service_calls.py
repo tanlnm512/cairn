@@ -17,13 +17,7 @@ class ServiceCallExtraction:
         self.edges.extend(other.edges)
 
 
-# ---------------------------------------------------------------------------
-# Detection: per-language HTTP client call patterns.
-#
-# Lightweight regex scans over the raw source, not a second AST parse. They can
-# miss reformatted or multi-line variants but catch the common shapes and never
-# fail the file's indexing (the builder wraps the call in try/except).
-# ---------------------------------------------------------------------------
+# Detection uses bounded regex scans for common HTTP client calls.
 
 # JavaScript/TypeScript: fetch("url"), axios.get("url"), axios.post, etc.
 _JS_HTTP_PATTERNS = [
@@ -58,12 +52,7 @@ _LANGUAGE_PATTERNS: Dict[str, List[re.Pattern]] = {
 
 
 def detect_service_calls(pf: ParsedFile, language: str) -> Optional[ServiceCallExtraction]:
-    """Detect HTTP/service-call edges in a parsed file.
-
-    Returns None if nothing was found (the common case). Emits ``http_call``
-    edges for direct HTTP client invocations; ``service_call`` edges for calls
-    whose owner is a route handler (composing with route detection).
-    """
+    """Return HTTP and service-call Edges found by language-specific patterns."""
     patterns = _LANGUAGE_PATTERNS.get(language)
     if not patterns:
         return None

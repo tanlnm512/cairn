@@ -24,11 +24,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
     is_hx_request = context.is_hx_request
 
     def communities(request: Request) -> Response:
-        # ``community`` selects the drill-down; absent/bogus falls back to
-        # the unselected view (silent fallback, matching the graph scope
-        # param). An HX-Request renders the member region fragment alone;
-        # the fragment fetch skips the listing query (a drill-down is a
-        # cheap region render, never a full page).
+        # An HX drill-down renders only the member region and skips the listing query.
         raw = request.query_params.get("community", "").strip()
         community_id = int(raw) if raw.isdigit() else None
         fragment = is_hx_request(request)

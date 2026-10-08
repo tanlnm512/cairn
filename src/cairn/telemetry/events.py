@@ -14,14 +14,7 @@ from . import sink
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Event-name catalog.
-#
-# Module-level constants so emitter sites and consumers
-# (``cairn doctor`` / ``cairn metrics --contention``) share one spelling -- a
-# typo in a string literal would silently drop a signal that exists only to be
-# observed. The catalog is the contract between producers and the doctor.
-# ---------------------------------------------------------------------------
+# Event-name catalog shared by producers and consumers.
 ANN_FALLBACK = "ann_fallback"
 HASH_FALLBACK = "hash_fallback"
 EMBED_SERVER_DEGRADED = "embed_server_degraded"
@@ -33,13 +26,8 @@ TASK_LIFECYCLE = "task_lifecycle"
 STRAY_SWEPT = "stray_swept"
 SEMANTIC_UNAVAILABLE = "semantic_unavailable"
 EMBED_FLUSH_STALLED = "embed_flush_stalled"
-# P0-2 rerank confidence gating: semantic_search skipped the cross-encoder
-# stage because the fused (RRF) ranking was already decisive. Emitted at the
-# skip site in graph/semantic.py with a fixed-enum `reason` attr.
 RERANK_SKIPPED = "rerank_skipped"
 
-# Bounded reason enum for embed_server_degraded; emitters stay
-# within these six so the doctor/consumers can bucket on them.
 EMBED_SERVER_REASONS = frozenset(
     {
         "server_down",
@@ -51,35 +39,18 @@ EMBED_SERVER_REASONS = frozenset(
     }
 )
 
-# Defensive cap on any single serialized attr value so a runaway caller can't
-# bloat the events row / the WAL with a huge string. Attrs are supposed to be
-# short tags/enums; this is a guardrail, not a feature. Matches the 500-char
-# cap metric_buffering applies to ``tool_metrics.error_message``.
 _MAX_ATTR_CHARS = 500
 
-# Cap on the final serialized attrs JSON as a whole: individually-capped
-# values can still sum past the WAL-bloat guardrail via many keys or nested
-# lists. An attrs blob over this drops to NULL (the event itself survives).
 _MAX_SERIALIZED_ATTRS = 4000
 
 
 def _session_id() -> str:
-    """The correlation id stamped on every event (mirrors tool_metrics).
-
-    ``CAIRN_SESSION`` defaults to 'unknown'; the server/CLI set it per run so
-    events group into a 'session as trace' (the P1 tracing model).
-    """
+    """Return ``CAIRN_SESSION`` for event correlation, defaulting to unknown."""
     return os.environ.get("CAIRN_SESSION", "unknown")
 
 
 def _coerce_value(v: Any) -> Any:
-    """Defensively cap and redact one attr value at any nesting depth.
-
-    Strings are routed through ``strip_private_data`` then truncated to
-    ``_MAX_ATTR_CHARS``; dicts/lists are walked so a nested blob can't
-    smuggle an unbounded or secret-bearing string past the top-level check.
-    Anything else (int/float/bool/None/enums) passes through as-is.
-    """
+    """Return one scrubbed, structurally capped attr value at any depth."""
     if isinstance(v, str):
         from ..memory.privacy import strip_private_data
 
@@ -92,20 +63,7 @@ def _coerce_value(v: Any) -> Any:
 
 
 def _coerce_attrs(attrs: dict[str, Any]) -> Optional[str]:
-    """JSON-serialize attrs, redacting and truncating string values defensively.
-
-    Returns ``None`` for an empty dict (NULL ``attrs`` column). Non-serializable
-    values are stringified via ``default=str`` so :func:`emit` never raises --
-    a caller passing an odd object is a bug, but telemetry must not propagate
-    it. Every string value (plain, stringified, or nested in a container) is
-    routed through ``strip_private_data``: ``str(exc)`` routinely embeds secret
-    shapes and absolute paths, and this module is the policy point for what
-    reaches the ``events`` table (and, with OTLP on, the network) -- attrs must
-    stay enums/short tags, enforced here rather than trusted from callers. A
-    hard serialization failure (e.g. a cycle even ``str`` can't handle) or a
-    serialized blob still over the cap after truncation drops the attrs rather
-    than the event.
-    """
+    """Return scrubbed compact attrs JSON, or None when attrs are unusable."""
     if not attrs:
         return None
     from ..memory.privacy import strip_private_data
@@ -115,9 +73,6 @@ def _coerce_attrs(attrs: dict[str, Any]) -> Optional[str]:
         if isinstance(v, str):
             v = strip_private_data(v)[:_MAX_ATTR_CHARS]
         elif not isinstance(v, (int, float, bool, type(None))):
-            # Non-scalar: nested containers are capped structurally; anything
-            # else goes through str() (json's default) -- scrub that now, while
-            # we still hold the raw text.
             if isinstance(v, (dict, list, tuple)):
                 v = _coerce_value(v)
             else:
@@ -126,27 +81,14 @@ def _coerce_attrs(attrs: dict[str, Any]) -> Optional[str]:
     try:
         out = json.dumps(coerced, separators=(",", ":"), default=str)
     except (TypeError, ValueError):
-        # Last resort: keep the event with NULL attrs rather than raise or drop
-        # the whole signal. The event name + ts are still useful on their own.
         return None
     if len(out) > _MAX_SERIALIZED_ATTRS:
-        # Even capped values can sum past the guardrail (many keys / nested
-        # lists); the WAL-bloat bound wins over completeness.
         return None
     return out
 
 
 def emit(name: str, **attrs: Any) -> None:
-    """Append a telemetry event to the shared sink buffer (best-effort).
-
-    No-op under ``CAIRN_TELEMETRY=off`` (the master kill switch) or
-    ``CAIRN_READ_ONLY`` (a mode=ro daemon would fail every flush and buffer
-    indefinitely -- same rationale as ``metric_buffering._log_metric``). Never
-    raises: serialization/gating errors are swallowed at debug. The row is
-    ``(ts, name, session_id, attrs_json)`` matching the ``events`` table.
-    """
-    # Master switch + read-only gate: cheap env reads on every call (near-zero
-    # overhead when off), so toggling takes effect without a module reload.
+    """Buffer one gated telemetry event and tap OTLP without raising."""
     if sink.is_telemetry_off() or sink.is_read_only():
         return
     try:
@@ -154,38 +96,17 @@ def emit(name: str, **attrs: Any) -> None:
         attrs_json = _coerce_attrs(attrs)
         session_id = _session_id()
         sink.enqueue(ts, name, session_id, attrs_json)
-        # Optional OTLP tap: no-op (one env read) unless
-        # CAIRN_OTEL_ENDPOINT is set. Appends to otel's own side buffer --
-        # the SQLite row queued above stays authoritative and is never
-        # stolen by the export path.
         otel.record(ts, name, session_id, attrs_json)
     except Exception:
-        # enqueue does buffered, non-DB work; a failure here is a logic bug,
-        # not a DB outage. Still must not raise into a caller.
         logger.debug("emit(%s) failed", name, exc_info=True)
 
 
-# ---------------------------------------------------------------------------
-# warn_once -- process-global one-time-warning
-#
-# Generalizes graph/embeddings.warn_hash_fallback_once and
-# graph/ann_index.warn_ann_fallback_once. Each degradation class warns at most
-# once per process so a repeated fallback (e.g. brute-force scan on every
-# semantic query) doesn't spam the log. Distinct keys warn independently.
-# ---------------------------------------------------------------------------
 _WARNED: set[str] = set()
 _WARN_LOCK = threading.Lock()
 
 
 def warn_once(key: str, warn_logger: logging.Logger, msg: str) -> None:
-    """Emit ``msg`` via ``warn_logger.warning`` at most once per (process, key).
-
-    No-op under ``CAIRN_TELEMETRY=off`` (the whole telemetry module is a no-op
-    then). Thread-safe: the guard set is mutated only under
-    ``_WARN_LOCK``; the log call happens after release so logging can't
-    serialize concurrent callers (mirrors the contention-helper pattern in
-    ``graph.schema.note_contention``).
-    """
+    """Log ``msg`` once per process and key unless telemetry is off."""
     if sink.is_telemetry_off():
         return
     with _WARN_LOCK:
@@ -195,40 +116,12 @@ def warn_once(key: str, warn_logger: logging.Logger, msg: str) -> None:
     warn_logger.warning(msg)
 
 
-# ---------------------------------------------------------------------------
-# note_contention lives in graph/schema.py -- it owns the per-site once-guard,
-# the unconditional operational WARNING, and emits the lock_contention event
-# via emit() above (best-effort, CAIRN_TELEMETRY-gated). It is the single
-# canonical helper wired at the swallow sites: the warning stays operational
-# even under CAIRN_TELEMETRY=off.
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# semantic_unavailable -- durable signal for a semantic-off degrade
-#
-# explore() and search_knowledge() both degrade to lexical-only results when
-# the semantic backend can't contribute (not installed / no embeddings built /
-# an unexpected error). Those degrades were completely silent, so this helper
-# emits ONE ``semantic_unavailable`` event per (process, surface) plus the
-# matching once-guarded WARNING. ``surface`` is a bounded enum (explore |
-# knowledge), ``reason`` a bounded enum (unavailable | no_embeddings | error) --
-# both declared in the cardinality guard (tests/test_cardinality_guard.py).
-# ---------------------------------------------------------------------------
-
 _SEMANTIC_SURFACES = frozenset({"explore", "knowledge"})
 _SEMANTIC_REASONS = frozenset({"unavailable", "no_embeddings", "error"})
 
 
 def note_semantic_unavailable(surface: str, reason: str) -> None:
-    """Record + warn that a query surface degraded to lexical-only results.
-
-    Fires at most once per (process, surface): the first degrade wins and its
-    reason is the one recorded, mirroring ``warn_ann_fallback_once``'s single
-    process-global guard. No-op under ``CAIRN_TELEMETRY=off`` (both the event
-    and the WARNING -- unlike lock contention, this is a quality signal, not an
-    operational outage). Never raises.
-    """
+    """Record and warn once when a query surface degrades to lexical-only."""
     try:
         if sink.is_telemetry_off():
             return

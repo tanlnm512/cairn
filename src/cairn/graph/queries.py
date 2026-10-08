@@ -10,10 +10,6 @@ from .stats import get_stats, get_tree, group_by_top_level
 from .traversal import find_definition, get_callers, get_callees, impact_analysis, trace_flow
 from .vector_math import l2norm as _l2norm, dot as _dot
 
-# semantic_search is imported lazily below to avoid pulling the heavy
-# embeddings/reranker/ann stack at module-load time when only structural
-# queries are needed. A module-level __getattr__ keeps
-# `from cairn.graph.queries import semantic_search` working.
 def __getattr__(name):
     if name == "semantic_search":
         from .semantic import semantic_search

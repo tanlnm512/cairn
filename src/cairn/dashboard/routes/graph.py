@@ -102,18 +102,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
         return JSONResponse(result)
 
     def palette_results(request: Request) -> Response:
-        """The command palette's filtered rows as an HTML fragment (the
-        palette input's ``hx-get`` target, swapped into the listbox).
-
-        ``q`` filters the palette's two seed sources the way the old
-        client-side filter did — case-insensitive substring over view and
-        workspace labels, composed from the same shell_context the seed
-        JSON rides — and from two characters up merges ``symbol_suggest``
-        (the /graph/suggest data function, same 8-row cap and truncation
-        notice) after them, each symbol row linking into /graph's symbol
-        scope with the focus (and selected store) params. Rows carry
-        their action as a data attribute; this route decides content, the
-        palette component decides focus and activation."""
+        """Return filtered palette seed rows and, from two characters, symbol suggestions."""
         query = request.query_params.get("q", "").strip()
         selected_db, _, store_key = resolve_selection(
             request, db_path, knowledge_dir
@@ -160,10 +149,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
         )
 
     def graph_neighbors(request: Request) -> Response:
-        # Repeatable ``name`` param: strip each, drop empties,
-        # dedupe preserving first-seen order (dict.fromkeys is ordered).
-        # An empty list after cleaning hits the function's empty contract
-        # (200 with empty nodes), never an error.
+        # Strip, drop empties, and dedupe names preserving first-seen order.
         names = [
             name
             for name in dict.fromkeys(
@@ -186,12 +172,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
         return JSONResponse(result)
 
     def graph_inspect(request: Request) -> Response:
-        # Side-panel payload for one symbol (identity + callers + callees +
-        # impact with affected tests). Missing/blank names hit the data
-        # function's not-found contract (200 with found=False), never an
-        # error — the panel just stays empty. The canvas node-click fetch
-        # rides htmx (HX-Request header) and gets the server-rendered panel
-        # fragment; other callers keep the JSON payload.
+        # Unknown names return found=False; htmx gets the panel fragment, others JSON.
         name = request.query_params.get("name", "")
         selected_db, _, store_key = resolve_selection(request, db_path, knowledge_dir)
         conn = get_read_only_db(selected_db)

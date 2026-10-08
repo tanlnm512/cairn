@@ -32,29 +32,7 @@ def capture_memory(
     supersedes_threshold: float = 0.85,
     stance: Optional[str] = None,
 ) -> Dict:
-    """Create, score, and store a new memory in one step.
-
-    Shared by the CLI (`cairn memory record`/`capture`) and the MCP
-    `record_memory` tool. Before storing, the new memory is compared against
-    existing ``memory_is_latest`` memories of the same type via semantic
-    cosine similarity; if a match exceeds ``supersedes_threshold``, the new
-    memory supersedes the old one (chains the version history and flips the
-    old to ``memory_is_latest: false``). Returns ``superseded`` in the result.
-
-    ``stance`` is a record-time prior (store.STANCES; None = unset; invalid
-    values raise ``ValueError`` before anything is written). When the body
-    cites refs, ``memory_refs_baseline`` is seeded with the live
-    refs-verified fraction at capture time.
-
-    The body AND title are redacted via :func:`strip_private_data` before
-    scoring and storage, so secrets (API keys, bearer tokens, connection
-    strings, ``<private>`` tags) never reach disk regardless of which caller
-    reached this function. The title matters as much as the body: it is
-    persisted verbatim, duplicated into the concept description, and
-    slugified into the concept_id/filename. The hook path already
-    redacts before calling here; this is the floor for every other caller
-    (the MCP ``record_memory`` tool, the CLI).
-    """
+    """Create, score, redact, and store a memory, superseding a close latest match."""
     from .privacy import strip_private_data
 
     body = strip_private_data(body)
@@ -126,14 +104,7 @@ _PROGRESS_COUNT_RE = re.compile(
 
 
 def _is_session_bookkeeping(title: str, body: str) -> bool:
-    """Match session-bookkeeping content: task IDs, branch refs, and dated
-    or progress counts.
-
-    The task-ID, branch, and dated-count patterns run against the title
-    and body; the progress-count pattern runs against the title only,
-    since bodies legitimately contain sentences like "3 callers
-    remaining".
-    """
+    """Return whether title or body is task, branch, dated-count, or title-only progress noise."""
     combined = f"{title}\n{body}"
     if (
         _TASK_ID_RE.search(combined)
@@ -145,15 +116,7 @@ def _is_session_bookkeeping(title: str, body: str) -> bool:
 
 
 def _sanitize_ref_context(context: str) -> str:
-    """Redact + hard-truncate a ref context before it reaches memory_refs.
-
-    The ``context`` column stores the raw query that surfaced a memory
-    (search_memory passes its ``query`` verbatim); queries can
-    quote secrets (a pasted connection string, an API key being searched
-    for). :func:`strip_private_data` handles the known secret shapes; the
-    200-char cap bounds anything the regex floor misses. Refs are analytics,
-    not correctness -- a truncated context loses nothing.
-    """
+    """Return a redacted reference context capped to 200 characters."""
     from .privacy import strip_private_data
 
     return strip_private_data(context or "")[:_MAX_REF_CONTEXT_CHARS]
@@ -166,13 +129,7 @@ _MAX_REF_CONTEXT_CHARS = 200
 def record_references_batch(
     conn: sqlite3.Connection, refs: list, session_id: str
 ):
-    """Insert N memory_refs in ONE transaction (best-effort).
-
-    ``refs`` is a list of (memory_path, context) tuples. Contexts are
-    redacted + truncated via ``_sanitize_ref_context`` before persisting.
-    Batching avoids acquiring the SQLite write lock N times
-    under concurrent servers.
-    """
+    """Insert sanitized memory references in one best-effort transaction."""
     if not refs:
         return
     import uuid
@@ -203,12 +160,7 @@ def record_references_batch(
 
 
 def _lexical_memory_match(concepts, query):
-    """Score memory concepts by multi-token keyword overlap against the query.
-
-    Tokenizes the query (stop-filtered) and counts how many tokens appear in each
-    concept's title + description + body. Recovers matches the substring-based
-    bundle.search misses when query tokens are spread across fields.
-    """
+    """Return concepts whose stop-filtered query tokens span title, description, or body."""
     tokens = [t for t in simple_tokenize(query) if t not in BASE_STOP_WORDS]
     if not tokens:
         return []
@@ -223,10 +175,7 @@ def _lexical_memory_match(concepts, query):
 
 
 def _parse_instant(value) -> Optional[datetime]:
-    """Parse an ISO-8601 date/timestamp to an aware datetime.
-
-    Date-only values are midnight UTC; absent or malformed values yield None.
-    """
+    """Return an aware UTC datetime, midnight UTC for dates, or None."""
     if not value:
         return None
     try:
@@ -247,21 +196,12 @@ def _instant_key(instant: datetime) -> str:
     )
 
 
-# valid_from/valid_until strings repeat across concepts and queries (creation
-# timestamps are second-resolution), so each distinct bound is normalized to a
-# sort key once; per-concept validity checks are then string comparisons only.
-# A cached None marks a malformed bound (lenient open interval).
 _BOUND_KEYS: Dict[Any, Optional[str]] = {}
 _BOUND_KEYS_MAX = 4096
 
 
 def _bound_key(value) -> Optional[str]:
-    """Sort key for a validity bound, memoized per distinct value.
-
-    None means absent or malformed -- a lenient open bound, decided by
-    :func:`_parse_instant` so every accepted ISO-8601 shape (offsets,
-    date-only, rollovers) normalizes through the same parser.
-    """
+    """Return a memoized chronological validity key, or None for an open bound."""
     if not value:
         return None
     try:
@@ -279,14 +219,7 @@ def _bound_key(value) -> Optional[str]:
 
 
 def _valid_at(c: OKFConcept, query_key: str) -> bool:
-    """True iff the memory's validity interval contains the query instant.
-
-    ``query_key`` is the query instant's sort key from :func:`_instant_key`,
-    so both bounds are checked by string comparison. A memory is visible at
-    the instant iff ``valid_from <= instant`` and (``valid_until`` is open or
-    ``> instant``). Missing or malformed bounds are lenient (treated as
-    open), matching the pre-feature default of ``memory_is_latest``.
-    """
+    """Return whether a concept validity interval contains query_key."""
     valid_from = _bound_key(c.extensions.get("valid_from"))
     if valid_from is not None and valid_from > query_key:
         return False
@@ -306,20 +239,7 @@ def search_memory(
     *,
     as_of: Optional[str] = None,
 ) -> List[OKFConcept]:
-    """Search tribal + canonical memories via fused lexical + semantic ranking.
-
-    Runs a lexical scan (substring + multi-token broaden) and a semantic scan
-    (cosine over persisted memory_embeddings) and fuses both ranked lists with
-    RRF (same technique as the code-search hybrid), so a semantically related
-    memory with no shared keywords can surface instead of only being tried
-    once lexical comes up completely empty. Semantic degrades to a no-op
-    (pure lexical results) until at least one memory has been embedded --
-    embedding happens out-of-band at capture/evolve time, not here. Superseded
-    memories (``memory_is_latest: false``) are filtered out by default; pass
-    ``include_superseded=True`` to traverse the version chain. ``as_of``
-    (ISO-8601 date/timestamp; ``None`` = now) restricts results to memories
-    valid at that instant, independent of ``include_superseded``.
-    """
+    """Return visible memories ranked by fused lexical and semantic matches."""
     if as_of is not None:
         instant = _parse_instant(as_of)
         if instant is None:
@@ -372,10 +292,6 @@ def search_memory(
     if semantic_ids:
         from cairn.graph import rrf_fuse
 
-        # _semantic_memory_search already stamped "semantic"/"semantic (hash
-        # backend)" on its own hits; upgrade any hit found BOTH ways to
-        # "fused"/"fused (hash backend)" -- mirrors the code-search hybrid's
-        # bm25/semantic/fused labeling. Lexical-only hits stay unstamped.
         lexical_id_set = set(lexical_ids)
         for c in semantic_hits:
             if c.concept_id in lexical_id_set:
@@ -408,16 +324,7 @@ def _semantic_memory_search(
     include_superseded: bool = False,
     query_key: Optional[str] = None,
 ) -> List[OKFConcept]:
-    """Cosine scan over persisted memory_embeddings, ranked by best-matching chunk.
-
-    Returns [] if nothing has been embedded yet (fresh install, or before a
-    backfill has run) or on any error -- never raises, mirroring
-    knowledge/search.py's _semantic_search. A memory can have multiple
-    embedded chunks (see chunk_memory_body); this dedupes to one entry per
-    concept_id, keeping its single best-scoring chunk's rank. ``query_key``
-    (the query instant's :func:`_instant_key` sort key; None = now) bounds
-    the validity interval a candidate must cover.
-    """
+    """Return each embedded memory once at its best-matching chunk without raising."""
     if query_key is None:
         query_key = _instant_key(datetime.now(timezone.utc))
     try:
@@ -433,10 +340,6 @@ def _semantic_memory_search(
             (model,),
         ).fetchall()
         triples = [(r["vec"], r["dim"], r["doc_id"]) for r in rows]
-        # Deliberately brute-force: the memory corpus is small and curated, so a
-        # full-table cosine scan is sub-millisecond and not worth a vec0 index.
-        # (graph/ann_index.py's ANN path covers only the code-corpus embeddings
-        # table; see its module docstring for when to extend it here.)
         scored = cosine_scan(q_blob, q_dim, triples, threshold=0.1)
 
         # Stamp provenance so callers know these are semantic, not lexical;
@@ -472,17 +375,7 @@ def _semantic_memory_search(
 
 
 def promote_memory(bundle: OKFBundle, memory_path: str, conn=None) -> Optional[str]:
-    """Force-promote a memory to canonical (compass or wiki).
-
-    Moves the file from its tier dir into compass/ (for decisions/patterns) or
-    wiki/ (for the architecture). Returns the new concept_id or None on failure.
-
-    If ``conn`` is provided, the memory's persisted embedding row is renamed
-    from the old concept_id to the new one in place (content is unchanged by a
-    promote), avoiding a re-embed of identical text. The caller is responsible
-    for committing/owning the transaction; pass ``conn=None`` to skip (in which
-    case the caller should enqueue a fresh embed at the new id).
-    """
+    """Promote a memory to compass or wiki and return its new concept id."""
     with bundle.lock():
         concept = store_mod.get_memory(bundle, memory_path)
         if concept is None:
@@ -501,10 +394,6 @@ def promote_memory(bundle: OKFBundle, memory_path: str, conn=None) -> Optional[s
             new_id = f"wiki/features/promoted-{store_mod.slugify(concept.title or '')}-{unique_suffix}"
         concept.type = new_type
         concept.extensions["memory_status"] = "canonical"
-        # Clear the tier label: search_memory()/router.py filter on truthy
-        # memory_tier to decide whether a result is a memory hit, so a stale
-        # label here would make a promoted, canonical concept keep showing up as
-        # an unpromoted memory.
         concept.extensions.pop("memory_tier", None)
         old_id = concept.concept_id
         # from_file leaves concept_id as an ABSOLUTE path, but embedding doc_ids
@@ -521,10 +410,6 @@ def promote_memory(bundle: OKFBundle, memory_path: str, conn=None) -> Optional[s
         _append_promotion(concept, "force_promote", concept.extensions.get("memory_score", 0.0))
         # Write the new file (with history) first...
         bundle.write_concept(concept)
-        # Carry the embedding forward in place instead of orphaning it (a
-        # promote never changes content, so re-embedding would be wasted work).
-        # Import via the cairn.graph public surface (not the internal submodule)
-        # per the layering rule enforced by test_layer_direction.
         if conn is not None:
             from cairn.graph import embeddings as _emb
             _emb.rename_memory_embedding(conn, old_id, new_id)  # caller commits
@@ -549,10 +434,6 @@ def batch_critic(
     dropped = 0
     tribal = 0
     for concept in drafts:
-        # Compute critic score: LLM if available, else a neutral default.
-        # DEFAULT_CRITIC_SCORE is shared with score_memory() so both code paths
-        # agree on the neutral value; a float is required (compute_score has no
-        # None handling).
         signals = score_memory(concept, conn, bundle)
         critic = llm_critic(concept) if llm_critic else DEFAULT_CRITIC_SCORE
         signals["critic_score"] = critic
@@ -579,13 +460,7 @@ def batch_critic(
 
 
 def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90, conn=None) -> Dict:
-    """Expire raw memories older than raw_max_days; archive tribal past staleness.
-
-    If ``conn`` is provided, also reap embedding rows orphaned by the tier moves
-    (a decay moves a memory to a new concept_id, leaving its embedding row
-    stranded at the old address). Reap is best-effort and also cleans orphans
-    left by other paths; it never fails decay.
-    """
+    """Expire raw and stale tribal memories, then reap orphaned embeddings."""
     expired = 0
     archived = 0
     with bundle.lock():
@@ -604,10 +479,6 @@ def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90, 
                 archived += 1
     reaped = 0
     if conn is not None and (expired or archived):
-        # The moves above orphan embedding rows at the old concept_ids; clean
-        # them now rather than letting dead vectors accumulate in the table
-        # (memory search is a brute-force cosine scan, so orphans tax every
-        # recall). Reap also catches orphans from other paths.
         from cairn.graph import embeddings as _emb
         try:
             reaped = _emb.reap_orphaned_memory_embeddings(conn, bundle)
@@ -618,12 +489,7 @@ def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90, 
 
 
 def tribal_digest(bundle: OKFBundle, limit: int = 10) -> List[OKFConcept]:
-    """Top tribal memories by score, for a quick session-orientation digest.
-
-    Reads tribal memories directly via list_memories() rather than the
-    query-based search paths -- this answers "what's worth knowing before I
-    start", not "find X".
-    """
+    """Return top-scoring tribal memories for session orientation."""
     mems = store_mod.list_memories(bundle, tier="tribal")
     mems.sort(key=lambda c: c.extensions.get("memory_score", 0), reverse=True)
     return mems[:limit]
@@ -644,11 +510,7 @@ def memory_stats(bundle: OKFBundle) -> Dict:
 
 
 def _norm_cid(bundle: OKFBundle, concept_id: str) -> str:
-    """Normalize an (possibly absolute) concept_id to bundle-relative.
-
-    OKFConcept.from_file sets concept_id to an absolute path; the supersession
-    chain should store relative ids so it survives a workspace move.
-    """
+    """Return a concept id relative to the bundle root."""
     try:
         return str(Path(concept_id).resolve().relative_to(Path(bundle.root).resolve()))
     except (ValueError, TypeError):
@@ -663,13 +525,7 @@ def _find_supersession_candidate(
     body: str,
     threshold: float = 0.85,
 ) -> Optional[str]:
-    """Find the best existing memory that the new one supersedes.
-
-    Two-tier check: (1) cheap blocking by same ``type`` + ``memory_is_latest``;
-    (2) quick exact title match -> immediate supersession; otherwise (3) embed
-    the new text + each candidate and take the top cosine, superseding if >=
-    threshold. Returns the candidate concept_id, or None.
-    """
+    """Return the closest latest same-type memory to supersede, or None."""
     candidates: list[OKFConcept] = []
     for cid in bundle.list_concepts(prefix="memory/"):
         try:
@@ -690,10 +546,6 @@ def _find_supersession_candidate(
         if (c.title or "").strip().lower() == title_lower and title_lower:
             return c.concept_id
 
-    # Tier 2: semantic cosine. Reuses the same backend as search_memory's
-    # semantic fallback so dimensions line up. Silently returns None if the
-    # embedding backend isn't available -- supersession is an enhancement,
-    # not a correctness requirement.
     try:
         from cairn.graph import embeddings as emb
         from cairn.retrieval import cosine_scan
@@ -737,22 +589,7 @@ def evolve_memory(
     new_title: Optional[str] = None,
     new_body: Optional[str] = None,
 ) -> Optional[Dict]:
-    """Explicit revision: create a new version that supersedes ``memory_path``.
-
-    The agent-initiated path (vs. insert-time supersession): chains
-    ``memory_supersedes``, flips the old to ``memory_is_latest: false``, and
-    stores the new version. At least one of new_title / new_body must differ
-    from the old memory.
-
-    The new body AND title are redacted via :func:`strip_private_data`
-    before storage, mirroring ``capture_memory``'s floor -- the CLI
-    ``cairn memory evolve`` verb and any other caller reach this function, so
-    without redaction here a secret in an evolved body or the new title would
-    persist verbatim (titles additionally leak into the
-    description field and the slugified filename). ``new_body``
-    is None when only the title changes; the old body was already redacted
-    at capture time.
-    """
+    """Create and store a redacted revision that supersedes memory_path."""
     from .privacy import strip_private_data
 
     if new_body is not None:
@@ -804,12 +641,7 @@ def _rescore_with_critic(signals: Dict, critic: float) -> float:
 
 
 def _append_promotion(concept: OKFConcept, action, score: float):
-    """Append a record to ``promotion_history``.
-
-    ``action`` may be a :class:`~cairn.memory.store_protocol.Decision` (the
-    named lifecycle enum) or a freeform string; the stable string value is
-    persisted either way.
-    """
+    """Append action's stable string value to promotion_history."""
     # Accept Decision enums transparently; fall back to str for other callers.
     action_str = action.value if hasattr(action, "value") else str(action)
     hist = concept.extensions.setdefault("promotion_history", [])

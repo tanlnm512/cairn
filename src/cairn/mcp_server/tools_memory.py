@@ -21,40 +21,7 @@ def recall_memory(
     as_of: str | None = None,
     agent: str | None = None,
 ) -> str:
-    """Search past decisions, patterns, mistakes, workarounds. Increments refs.
-
-    Each result shows a live-recomputed refs-verified fraction (backtick-quoted
-    file/symbol refs in the body that still exist in the graph right now) --
-    not just the score cached at write time, which may have gone stale since.
-    A low value means the memory may cite a file/symbol that was since
-    renamed or removed; verify before relying on it.
-
-    Query by symbol name or title keywords (e.g. "ApiFactory", "backoff"), not
-    natural-language prose -- matching is token-based with a semantic fallback.
-
-    By default superseded (revised) memories are hidden -- only the latest
-    version of a decision is returned. Set include_superseded=true to audit
-    the full revision history (each superseded memory points to its successor).
-
-    By default only memories valid now are returned. Pass as_of (ISO-8601
-    date or datetime, e.g. "2026-01-15") to recall as of that instant:
-    memories created after it are hidden, memories closed before it are
-    dropped. A malformed as_of raises ValueError. Validity and
-    include_superseded are orthogonal filters.
-
-    Pass agent (a caller-supplied agent id, [A-Za-z0-9._-], <=64 chars) to
-    merge other agents' shared memories for the queried symbols into the
-    results, each carrying a "shared by" attribution line. Omitted (the
-    default), the single-agent path runs: identical output, no sharing
-    query. A malformed agent raises ValueError.
-
-    Example:
-        recall_memory("ApiFactory backoff")
-        ->  2 memories matching 'ApiFactory backoff':
-              [0.78 | refs 3/3] ApiFactory uses per-flavor base URLs
-                decision · confidence 0.9
-              ...
-    """
+    """Search past decisions/patterns/mistakes/workarounds by symbol or title tokens, showing live refs-verified fractions; tier/include_superseded/as_of/agent filter."""
     from cairn.memory.promotion import search_memory
     from cairn.memory.scoring import _graph_verification
 
@@ -73,8 +40,8 @@ def recall_memory(
         conn.close()
         raise
 
-    # Read-through merge, gated on agent: the default path runs no sharing
-    # query and returns the search output unchanged.
+    # Read-through merge, gated on agent: the default path runs no
+    # sharing query.
     shared_by_id: dict = {}
     if agent is not None:
         extra, shared_by_id = shared_recall_entries(
@@ -94,10 +61,8 @@ def recall_memory(
             f"have been captured -- see the Memory Capture Workflow in the skill."
         )
     out = [f"{len(results)} memories matching '{query}':"]
-    # If any hit involved the semantic/fused ranking, surface the backend
-    # quality: the hash fallback carries token-overlap signal, not real
-    # semantic meaning. One-time warning is enough -- provenance on each line
-    # carries it too.
+    # Surface backend quality when any hit used semantic/fused ranking: the
+    # hash fallback carries token overlap, not semantic meaning.
     if any(c.extensions.get("provenance") for c in results):
         from cairn.graph import embeddings as _emb
         _emb.warn_hash_fallback_once(logger, context="recall_memory")
@@ -128,12 +93,8 @@ def recall_memory(
                 refs_display = "n/a (0 refs)"
             else:
                 refs_display = str(refs_verified)
-            # Stale flag: a discrete verdict derived from the fraction. A memory
-            # is stale when at least one cited backtick ref no longer exists in
-            # the graph (fraction < 1.0). Memories with no backtick refs have
-            # nothing to verify (n/a) and are never flagged stale. This is the
-            # recall-side analog of the critic gate -- surfacing silent drift
-            # loudly. Threshold chosen deliberately: < 1.0 = "any ref stale".
+            # Stale when any cited backtick ref no longer exists (fraction
+            # < 1.0); zero-ref memories are n/a, never stale.
             is_stale = (
                 n_refs > 0
                 and isinstance(refs_verified, (int, float))
@@ -172,26 +133,7 @@ def record_memory(
     type: str, title: str, body: str, resource: str = "", confidence: float = 0.7,
     stance: str | None = None,
 ) -> str:
-    """Capture a learning. type: decision|pattern|mistake|workaround.
-
-    For decision/mistake/workaround, structure body as: the fact/rule itself,
-    then a `Why:` line (the reasoning -- a constraint, incident, or tradeoff
-    that led here) and a `How to apply:` line (when this should change future
-    behavior). The why is what makes a memory worth surfacing months later;
-    a bare fact without it is easy to misapply once the original context is
-    forgotten.
-
-    Pass stance (preferred|tentative|contested) to record a prior stance;
-    omit it (None) to leave the stance unset -- `cairn memory reflect`
-    recomputes stances from evidence. An invalid value raises ValueError
-    before anything is written.
-
-    Don't record what's cheaper to re-derive than to recall: facts already
-    answerable by explore/find_definition/get_callers, plain git history
-    (who changed what -- `git log`/`git blame` are authoritative), or
-    ephemeral in-progress state that's only relevant to the current session.
-    Every raw capture still costs review/decay cycles even if never promoted.
-    """
+    """Capture a learning (type: decision|pattern|mistake|workaround); Why:/How to apply: body lines make it durable; stance optional."""
     from cairn.memory.promotion import capture_memory
     from . import embed_buffering
 

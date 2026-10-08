@@ -35,18 +35,7 @@ AMBIGUOUS_POINTER_REASON = "ambiguous pointer"
 
 
 def rebuild_knowledge_index(conn, bundle: OKFBundle) -> Dict[str, Any]:
-    """Recompute knowledge_edges + knowledge_doc_refs from the bundle.
-
-    Wipes and repopulates both tables in one transaction-less pass on
-    ``conn`` (the caller commits). Idempotent on an unchanged bundle:
-    identical rows, identical created_at stamps. Returns counts:
-    ``{docs, edges, derived, doc_refs}`` plus ``dangling`` -- the declared
-    ``relates_to`` pointers that indexed nothing (each ``{doc_id,
-    concept_id}``; they stay frontmatter-only). Entries carry ``reason:
-    ambiguous pointer`` plus the ``candidates`` paths when several
-    resources shared the pointer's basename; other entries matched no
-    concept id or resource path at all.
-    """
+    """Rebuild both derived tables and return counts plus dangling pointers."""
     docs = _load_docs(bundle)
     doc_ids = {doc_id for doc_id, _ in docs}
     declared, dangling = _frontmatter_edges(bundle, docs, doc_ids)
@@ -63,14 +52,7 @@ def rebuild_knowledge_index(conn, bundle: OKFBundle) -> Dict[str, Any]:
 
 
 def related_docs(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]]:
-    """Stored neighbors of one doc, bare-id in / normalized-dict out.
-
-    Reads both edge directions (doc_id and related_id sides) and normalizes
-    the neighbor id with :func:`normalize_doc_id` for callers. Rows the
-    bundle no longer resolves are skipped, so a deleted doc never surfaces
-    as a phantom neighbor between rebuilds. Output is deterministic:
-    outgoing rows first, each direction ordered by neighbor id.
-    """
+    """Return deterministic normalized neighbors from both edge directions."""
     normalized = normalize_doc_id(bundle, doc_id)
     neighbors: List[Dict[str, Any]] = []
     seen: Set[Tuple[str, str, str, str]] = set()
@@ -105,30 +87,7 @@ def related_docs(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]]:
 
 
 def supersede_chain(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]]:
-    """The supersede chain containing ``doc_id``, ordered oldest -> newest.
-
-    Follows the stored ``supersedes`` / ``superseded-by`` edges (both
-    directions declare the same newer/older fact, so either half alone
-    walks the full chain). Any chain member may be the entry point: every
-    member appears exactly once, positioned causally. Walks are
-    visited-set-guarded, so a cyclic edge set terminates instead of
-    looping, and edges naming docs the bundle no longer resolves are
-    skipped (stale index between rebuilds). A doc with no supersede edges
-    is a chain of one.
-
-    Chains are assumed linear: the writer records one successor per
-    superseded doc, so the forward walk resolves one successor per fork.
-    On a branched supersede DAG (one doc superseded by two successors)
-    the walk follows the sorted-first branch, and the start doc's
-    membership in the result is asserted rather than implied -- a walk
-    that drops the queried doc fails loudly instead of returning a
-    branch without it.
-
-    Each member dict carries ``concept_id``, ``title``, ``doc_status`` and
-    ``relation`` (this member's relation to the NEXT member; ``None`` on
-    the last). Raises ``ValueError`` when ``doc_id`` resolves to no
-    knowledge concept (see ``resolve_knowledge_doc``).
-    """
+    """Return the oldest-to-newest supersede chain containing ``doc_id``."""
     concept = resolve_knowledge_doc(bundle, doc_id)
     start = normalize_doc_id(bundle, concept.concept_id)
     newer_of, older_of, concepts = _supersede_facts(conn, bundle)
@@ -178,13 +137,7 @@ def supersede_chain(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]
 
 
 def _supersede_facts(conn, bundle: OKFBundle):
-    """Supersede adjacency from the edge index, endpoints resolvable.
-
-    Returns ``(newer_of, older_of, concepts)``: ``newer_of[older]`` is the
-    set of docs superseding it, ``older_of[newer]`` the set it supersedes,
-    and ``concepts`` caches the resolved concept per id (``None`` for
-    unresolvable ids, whose rows are dropped).
-    """
+    """Return resolvable supersede adjacency and concept cache maps."""
     newer_of: Dict[str, Set[str]] = {}
     older_of: Dict[str, Set[str]] = {}
     concepts: Dict[str, Optional[OKFConcept]] = {}
@@ -228,17 +181,7 @@ def _frontmatter_edges(
     docs: List[Tuple[str, OKFConcept]],
     doc_ids: Set[str],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Declared edges for the relates_to entries whose target resolves,
-    plus the pointers that indexed nothing (returned so callers can
-    surface the failed index instead of leaving it silent).
-
-    Pointer resolution is shared with the ingest dry-run
-    (:func:`_resolve_pointer`), so a link the dry run resolves is the link
-    the rebuild indexes. A pointer that resolves to the declaring doc
-    itself produces no edge and is not dangling; one whose basename
-    matches several resources produces no edge and a dangling warning
-    naming the candidates.
-    """
+    """Return resolved declared edges and dangling pointer warnings."""
     from cairn.knowledge.relationships import normalize_relationships
 
     resources = _resource_index(docs)
@@ -274,12 +217,7 @@ def _pointer_warning(
     pointer: str,
     ambiguous: Optional[List[str]],
 ) -> Dict[str, Any]:
-    """The dangling-warning record for an unresolved pointer.
-
-    Plain ``{doc_id, concept_id}`` when nothing matched; a basename
-    ambiguity adds ``reason: ambiguous pointer`` and the ``candidates``
-    resource paths (sorted shortest-first) that contended for it.
-    """
+    """Return an unresolved-pointer warning with optional candidates."""
     warning: Dict[str, Any] = {"doc_id": doc_id, "concept_id": pointer}
     if ambiguous is not None:
         warning["reason"] = AMBIGUOUS_POINTER_REASON
@@ -294,24 +232,7 @@ def _resolve_pointer(
     resources: Dict[str, str],
     self_id: str,
 ) -> Tuple[Optional[str], Optional[List[str]]]:
-    """Resolved doc id for one relates_to pointer, plus its ambiguity.
-
-    Resolution tries, in order: the pointer as a concept id, the pointer
-    as a recorded resource path (ingest records the source path as the
-    promoted doc's ``resource``), and resource-prefixed forms of the
-    pointer -- fed documents promote ``workspace/<relpath>`` resources,
-    so a bare repo-relative pointer names the same file as its prefixed
-    resource. The prefixed form fires only on a UNIQUE basename match:
-    several resources sharing the pointer's basename cannot be told
-    apart, so none is picked and the contention is reported instead. A
-    pointer resolving to the declaring doc itself returns ``self_id``:
-    the caller records neither an edge nor a dangling warning for it.
-
-    Returns ``(related, ambiguous)``: ``related`` is the resolved doc id
-    (``self_id`` for a self-pointer) or None, and ``ambiguous`` lists the
-    contending resource paths -- set only when ``related`` is None and
-    the basename matched several resources.
-    """
+    """Return one pointer's resolved doc id and basename ambiguity."""
     related = normalize_doc_id(bundle, pointer)
     ambiguous: Optional[List[str]] = None
     if related not in doc_ids or related == self_id:
@@ -338,21 +259,7 @@ def _resolve_pointer(
 def dangling_manifest_pointers(
     bundle: OKFBundle, rows: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
-    """relates_to pointers across staged manifest rows that will index
-    nothing (dry run).
-
-    Applies the rebuild's resolution (:func:`_resolve_pointer`) to a
-    not-yet-written manifest: a pointer resolves when its normalized id
-    names a knowledge concept -- promoted in the store, or staged by this
-    same run -- or when it names a source document by path (a promoted
-    doc's recorded ``resource``, a staged row's ``source_path`` which
-    becomes the promoted doc's resource, or that path's unique basename
-    extension). Anything else indexes nothing: it stays frontmatter-only
-    and never indexes. Each row carries ``{doc_id, concept_id}`` with
-    ``doc_id`` the row's source_path; a basename ambiguity adds
-    ``reason: ambiguous pointer`` naming the candidate paths.
-    Deterministic: manifest row order, declaration order within a row.
-    """
+    """Return staged relates_to pointers that would not index."""
     from cairn.knowledge.relationships import normalize_relationships
 
     docs = _load_docs(bundle) if bundle.root.exists() else []
@@ -388,12 +295,7 @@ def dangling_manifest_pointers(
 
 
 def _resource_index(docs: List[Tuple[str, OKFConcept]]) -> Dict[str, str]:
-    """``{resource path: doc_id}`` for promoted docs carrying one.
-
-    Keys are leading-slash-stripped so workspace-relative and absolute
-    spellings of the same source path match. First doc wins per resource
-    (sorted iteration order keeps it deterministic).
-    """
+    """Return resource paths mapped to first promoted doc ids."""
     index: Dict[str, str] = {}
     for doc_id, concept in docs:
         resource = (concept.resource or "").strip()
@@ -407,11 +309,7 @@ def _derived_edges(
     docs: List[Tuple[str, OKFConcept]],
     declared_pairs: Set[Tuple[str, str]],
 ) -> List[Dict[str, Any]]:
-    """Symmetric kind=derived edges for docs sharing tags or modules.
-
-    Pairs with a declared edge in either direction are skipped (the
-    explicit record already connects them).
-    """
+    """Return overlap edges not already declared in either direction."""
     meta = [
         (
             doc_id,
@@ -497,14 +395,7 @@ def _write_edges(conn, edges: List[Dict[str, Any]]) -> int:
 
 
 def _write_refs(conn, rows: List[Dict[str, Any]]) -> int:
-    """Replace the doc-refs table contents (no timestamp to preserve).
-
-    Dedupes on the table's primary key (doc_id, ref, ref_kind): a ref
-    carried by both the sources and verified families with differing
-    verified flags indexes as one row, verified=max -- a ref either
-    family verifies is verified. Deduping on the full 4-tuple instead
-    would attempt two rows per PK and crash the rebuild.
-    """
+    """Replace doc refs, deduping on PK with max verified flags."""
     conn.execute("DELETE FROM knowledge_doc_refs")
     verified_by_key: Dict[Tuple[str, str, str], int] = {}
     for r in rows:

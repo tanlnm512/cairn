@@ -8,20 +8,7 @@ from cairn.paths import resolve_store
 
 
 def execute_manifest(manifest: dict, conn) -> dict:
-    """Write every accepted manifest row via add_document, then embed.
-
-    The approval gate lives with the caller (the ``--ingest`` CLI flag);
-    this function executes an already-approved manifest. Rows are written
-    in sorted (repo, relpath) order so re-runs are deterministic.
-    ``conn`` is an open graph database connection (the caller owns it);
-    embedding runs only when the semantic backend is installed.
-
-    Doc-to-code refs (D1.3) resolve here rather than at staging: the
-    body's backticked tokens are verified against this connection (the
-    wiki verified-sources pattern), and only resolvable ones reach the
-    promoted concept's ``verified`` family -- and from there the
-    ``knowledge_doc_refs`` index via the post-write rebuild.
-    """
+    """Write approved rows, embed when available, and refresh derived knowledge."""
     from cairn.graph import embeddings as emb
 
     store = resolve_store()
@@ -65,12 +52,7 @@ def execute_manifest(manifest: dict, conn) -> dict:
         summary = emb.embed_knowledge(conn, bundle, batch_size=32)
         embedded = summary["embedded"]
 
-    # Derived-index refresh (D1): after every approved write the
-    # knowledge_edges / knowledge_doc_refs tables are rebuilt from the
-    # bundle so declared and overlap edges are queryable immediately. The
-    # rebuild leaves its rows uncommitted (caller-owned boundary); this
-    # connection is closed by the caller right after, which would roll the
-    # rows back, so commit here.
+    # Commit derived-index rows before the caller closes this connection.
     from cairn.knowledge.index import rebuild_knowledge_index
 
     index = rebuild_knowledge_index(conn, bundle)
@@ -119,18 +101,7 @@ def _pre_existing_docs(bundle: OKFBundle) -> set:
 def _merge_existing_inferred(
     bundle: OKFBundle, concept_id: str, declared
 ) -> list:
-    """Declared relationships plus the concept's existing ``kind: inferred``
-    entries.
-
-    ``add_document`` rewrites the promoted concept from source, so a
-    re-ingest without this merge would wipe critic-approved inferred
-    links -- frontmatter is the durable record, and the merge keeps it
-    intact across re-scans (the post-write rebuild re-indexes the entries
-    from the merged frontmatter). Declared entries come first, so a pair
-    the source declares keeps its source kind; dedupe is on
-    ``(concept_id, relation, kind)``. A concept the store does not have
-    yet merges nothing.
-    """
+    """Merge declared relationships with an existing concept's inferred ones."""
     from cairn.knowledge.relationships import INFERRED, normalize_relationships
 
     merged = normalize_relationships(list(declared or []))
@@ -156,20 +127,7 @@ def verify_manifest(
     pre_existing: int | None = None,
     overwritten: int = 0,
 ) -> dict:
-    """Post-write checks: count vs manifest, OKF validation, smoke search.
-
-    Three verify legs: the store's document count must
-    EQUAL the expected population -- ``pre_existing + accepted -
-    overwritten`` when the caller supplies the executor's pre-write state
-    (``add_document`` overwrites in place, so a fully-successful run
-    leaves the store holding exactly that many docs, incremental or not),
-    or the manifest's accepted count alone when they are absent
-    (standalone, pre-write use: a store not holding exactly the batch is
-    a mismatch). The ``cairn validate`` OKF-conformance check must pass
-    (run in-process, no subprocess), and a smoke search must hit. Safe to
-    run before any write: an absent store reports zeros, a failed
-    validation, and no smoke hit rather than creating anything.
-    """
+    """Return exact count, conformance, and smoke-search verification legs."""
     from cairn.knowledge.store import list_documents
     from cairn.okf.bundle import OKFBundle
     from cairn.paths import resolve_store
@@ -214,14 +172,7 @@ def verify_manifest(
 
 
 def _validate_leg(store) -> dict:
-    """Run the ``cairn validate`` conformance check in-process.
-
-    Calls the same :func:`cairn.okf.conformance.check_bundle` the CLI
-    wraps -- no subprocess -- against the knowledge bundle path the
-    executor already resolved. An absent bundle fails the leg (check_bundle
-    reports the missing root). Defensive by contract: any raise degrades
-    to ``validate_ok=False`` with the message, never a crashed run.
-    """
+    """Validate the knowledge bundle in-process, degrading faults to a leg."""
     try:
         from cairn.okf.conformance import check_bundle
 

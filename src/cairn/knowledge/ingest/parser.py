@@ -34,11 +34,7 @@ class ParsedDoc:
 
 
 def parse_source_doc(text: str) -> ParsedDoc:
-    """Parse one source document into metadata plus a stripped body.
-
-    Frontmatter metadata wins over inline markers; a missing frontmatter
-    title falls back to the body's first heading.
-    """
+    """Return parsed metadata plus the frontmatter-stripped body."""
     block, body = _split_source_frontmatter(text)
     meta = _frontmatter_metadata(block)
     return ParsedDoc(
@@ -54,11 +50,7 @@ def parse_source_doc(text: str) -> ParsedDoc:
 
 
 def _split_source_frontmatter(text: str) -> tuple[str | None, str]:
-    """Split a leading ``---``-fenced frontmatter block from the body.
-
-    Returns ``(None, text)`` when the document does not open with a fence
-    or the fence is never closed.
-    """
+    """Return leading frontmatter and body, or the original text."""
     lines = text.splitlines()
     if not lines or lines[0].strip() != _FENCE:
         return None, text
@@ -71,12 +63,7 @@ def _split_source_frontmatter(text: str) -> tuple[str | None, str]:
 
 
 def _frontmatter_metadata(block: str | None) -> dict:
-    """Map a frontmatter block to raw values: the source keys plus every
-    unknown key (kept verbatim for extensions).
-
-    Malformed YAML never raises: the minimal line-based fallback recovers
-    the clean ``key: value`` pairs it can and drops the rest.
-    """
+    """Return YAML metadata, falling back to clean key/value pairs."""
     if block is None:
         return {}
     try:

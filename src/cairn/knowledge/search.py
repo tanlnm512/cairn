@@ -21,10 +21,7 @@ _WEIGHT_BODY = 1
 
 
 def _visible(concept, include_archived: bool) -> bool:
-    """True unless the doc is archived and the caller didn't opt in.
-
-    "superseded" docs still surface by default; only "archived" is excluded.
-    """
+    """Return visibility, excluding archived docs unless opted in."""
     if include_archived:
         return True
     return concept.extensions.get("doc_status") != "archived"
@@ -38,14 +35,7 @@ def search_knowledge(
     threshold: float = 0.3,
     include_archived: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Search knowledge docs. Returns list of result dicts.
-
-    Each result: {concept_id, title, doc_type, score, provenance,
-                  affects_modules, affects_repos, chunk}
-
-    Archived documents are excluded by default (see `_visible`); pass
-    include_archived=True to see them anyway (e.g. an explicit audit).
-    """
+    """Return scored lexical or semantic knowledge search results."""
     # 1. Lexical search (substring across title/description/body/tags)
     results = _lexical_search(conn, bundle, query, limit, include_archived)
 
@@ -63,13 +53,7 @@ def search_knowledge(
 
 
 def _lexical_search(conn, bundle, query, limit, include_archived=False):
-    """Multi-token lexical search scoped to knowledge/ concepts.
-
-    Tokenizes the query, scores each knowledge document per-token with field
-    weighting (title > description/tags > body), then expands results along
-    the stored relationship edges (``knowledge_edges``: extracted/derived
-    neighbors of each hit; inferred edges never boost).
-    """
+    """Return scored lexical hits and trusted-edge expansions."""
     # Tokenize: split on non-alphanumeric, filter stop words, keep >=3 chars.
     tokens = simple_tokenize(query, stop_words=_STOP_WORDS)
 
@@ -199,17 +183,7 @@ def _find_related(
     conn, bundle, parent_id, parent_score, scored, already_in_results,
     include_archived=False,
 ):
-    """Stored-edge neighbors of ``parent_id`` eligible for expansion.
-
-    Reads the relationship index (``knowledge_edges``, rebuilt after
-    ingest) instead of recomputing tag/module overlap at query time: every
-    extracted/derived edge boosts its neighbor to >=50% of the parent's
-    score, in both edge directions. Inferred edges are excluded --
-    low-trust links never elevate a doc beyond its own merit. Docs already
-    in the results (by their own lexical merit or another expansion) are
-    skipped, and the caller's visibility rules still apply. Ties order by
-    doc id.
-    """
+    """Return eligible stored-edge neighbors for lexical expansion."""
     if conn is None:
         return []
 
@@ -240,12 +214,7 @@ def _find_related(
 
 
 def _neighbors_or_empty(conn, bundle, parent_id):
-    """Stored neighbors of ``parent_id``; empty on any index read failure.
-
-    The expansion is a bonus layer over lexical hits, so a missing or
-    unreadable index degrades to no expansion instead of failing the
-    search (same never-crash convention as the semantic path).
-    """
+    """Return stored neighbors, degrading index failures to no expansion."""
     from cairn.knowledge.index import related_docs
 
     try:
@@ -256,16 +225,7 @@ def _neighbors_or_empty(conn, bundle, parent_id):
 
 
 def _semantic_search(conn, bundle, query, limit, threshold, include_archived=False):
-    """Semantic cosine scan over knowledge_embeddings table.
-
-    NO symbols/files JOIN (unlike queries.semantic_search).
-    Reads concept metadata from the bundle, not from DB.
-
-    Every degrade branch (backend unavailable, no knowledge embeddings, an
-    unexpected error) records one ``semantic_unavailable`` signal on the
-    'knowledge' surface, so a silently-empty semantic path is distinguishable
-    from "no matches".
-    """
+    """Return bundle-backed semantic hits and record every degrade path."""
     try:
         from cairn.graph import embeddings as emb
         if not emb.embeddings_available():
@@ -290,10 +250,7 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
             (model,),
         ).fetchall()
 
-        # Cosine scan — dual path (numpy or pure-Python). Deliberately brute-force:
-        # the knowledge corpus is small and curated, so a full-table scan is
-        # sub-millisecond and not worth a vec0 index (see graph/ann_index.py for
-        # the ANN path, which covers only the code-corpus embeddings table).
+        # Exact scan suits the small curated corpus; ANN covers code embeddings.
         scored = _cosine_scan(rows, q_blob, q_dim, threshold)
         scored.sort(key=lambda x: -x[0])
 
@@ -327,11 +284,7 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
 
 
 def _note_semantic_off(reason: str) -> None:
-    """Best-effort semantic_unavailable signal for the knowledge surface.
-
-    Never raises (the degrade path must stay crash-proof); no-op when the
-    telemetry package itself is unavailable.
-    """
+    """Best-effort emit one semantic-unavailable signal without raising."""
     try:
         from cairn.telemetry import note_semantic_unavailable
 
@@ -341,10 +294,7 @@ def _note_semantic_off(reason: str) -> None:
 
 
 def _cosine_scan(rows, q_blob, q_dim, threshold):
-    """Cosine similarity scan. Returns [(score, doc_id, chunk), ...].
-
-    Thin adapter over the shared ``cairn.retrieval.cosine_scan``.
-    """
+    """Return cosine-scored chunks via the shared retrieval scanner."""
     from cairn.retrieval import cosine_scan
 
     triples = [(r["vec"], r["dim"], (r["doc_id"], r["chunk"])) for r in rows]

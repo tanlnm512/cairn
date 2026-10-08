@@ -14,8 +14,6 @@ from pathlib import Path
 from ... import __version__
 from ...memory.privacy import strip_private_data
 from ...graph.stats import get_stats
-from .audit_status import collect_audit_status
-from .comment_style import DEFAULT_BASELINE, check_comment_baseline
 from .doctor import _knob_source, _run_doctor
 from .metrics import _fmt_ts
 from ..main import DEFAULT_DB_PATH, get_db, main
@@ -31,12 +29,9 @@ _log = logging.getLogger(__name__)
 _ERROR_EVENTS: tuple[str, ...] = ("ann_fallback", "hash_fallback", "lock_contention")
 _REPORT_LIMIT = 20  # bounded set of recent rows per source (events / tool errors)
 
-# Absolute-path redaction. POSIX: a leading "/" followed by one or more
-# directory segments ("~" shorthand included); Windows: a drive-letter root.
-# The lookbehind keeps URL path portions ("https://host/x") and relative
-# workspace paths ("src/main.py") intact -- only absolute local paths leak the
-# user's directory structure. The basename survives so a report stays
-# debuggable ("[PATH]/main.py:10" still names the failing file).
+# Absolute-path redaction: POSIX leading "/" or "~" roots, Windows
+# drive-letter roots; URLs and relative paths stay intact, basenames survive
+# so reports stay debuggable.
 _POSIX_PATH_RE = re.compile(r"(?<![\w:/.-])/(?:[^\s\"']+/)+[^\s\"']*|(?<![\w])~/[^\s\"']+")
 _WIN_PATH_RE = re.compile(r"(?<![\w])(?:[A-Za-z]:)?\\(?:[^\\\s\"']+\\)+[^\\\s\"']*")
 
@@ -54,13 +49,7 @@ def _redact_paths(text: str) -> str:
 
 
 def _scrub(value):
-    """Privacy gate for one bundle field.
-
-    Strings pass through ``strip_private_data`` (secret shapes / tags / URI
-    credentials) and then ``_redact_paths`` (absolute local paths);
-    anything else (ints/floats/None/timestamps) is returned unchanged. Applied
-    to every field below so the redaction invariant holds regardless of source.
-    """
+    """Privacy gate for one field: strings get strip_private_data then path redaction; other types pass through."""
     if isinstance(value, str):
         return _redact_paths(strip_private_data(value))
     return value
@@ -72,12 +61,7 @@ def _scrub_strings(d: dict) -> dict:
 
 
 def _scrub_doctor(results: list[dict]) -> list[dict]:
-    """Redact the dynamic-content fields of doctor rows (``detail``/``hint``).
-
-    ``name``/``status`` come from a closed enum and cannot carry user data, so
-    they are left as-is; ``detail`` (e.g. parse_errors lists file paths) and
-    ``hint`` are the fields that could carry paths/secrets and are scrubbed.
-    """
+    """Redact the dynamic doctor fields (``detail``/``hint``); name/status come from a closed enum."""
     out: list[dict] = []
     for r in results:
         rr = dict(r)
@@ -89,13 +73,7 @@ def _scrub_doctor(results: list[dict]) -> list[dict]:
 
 
 def _open_report_conn(db: str):
-    """Open the store for reads; return None (never raise) if it can't open.
-
-    Mirrors doctor's graceful-degradation contract: a missing/read-only/corrupt
-    store degrades the DB-dependent sections to empty/FAIL rather than crashing.
-    A path that doesn't exist is NOT created -- the report is a read-only
-    diagnostic and must not materialize a store (or mask a typo'd ``--db``).
-    """
+    """Open the store for reads; None (never raise) when it cannot open, and never create a missing store."""
     if not Path(db).exists():
         _log.debug("report: store missing at %s", db)
         return None
@@ -107,11 +85,7 @@ def _open_report_conn(db: str):
 
 
 def _report_versions(conn) -> dict:
-    """Runtime + store versions. cairn/Python/platform/sqlite are always cheap;
-    ``db_schema_user_version`` is a best-effort ``PRAGMA user_version`` probe
-    (cairn applies ``CREATE TABLE IF NOT EXISTS`` DDL and does not track a
-    numeric schema version, so this is typically 0; None when unreadable).
-    """
+    """Runtime + store versions; db_schema_user_version is a best-effort PRAGMA probe (None when unreadable)."""
     user_version = None
     if conn is not None:
         try:
@@ -130,13 +104,7 @@ def _report_versions(conn) -> dict:
 
 
 def _gather_recent_errors(conn) -> dict:
-    """Bounded set of recent error-ish rows from ``events`` + ``tool_metrics``.
-
-    ``events``: the degradation-catalog names (``_ERROR_EVENTS``), newest first,
-    capped at ``_REPORT_LIMIT``. ``tool_metrics``: rows with ``status='error'``,
-    newest first, same cap. Both degrade to empty lists on any read failure or
-    when the store is unavailable -- never raise. Every string value is scrubbed.
-    """
+    """Bounded recent error rows from events + tool_metrics (newest first, scrubbed, never raise)."""
     events: list[dict] = []
     tool_errors: list[dict] = []
     if conn is None:
@@ -181,12 +149,7 @@ def _gather_recent_errors(conn) -> dict:
 
 
 def _report_config() -> dict:
-    """Effective CAIRN_* knobs (the same list ``_check_config`` echoes).
-
-    A structured key->value form of the config-echo check so the report's
-    ``config`` section is self-describing in JSON. Values are scrubbed by the
-    caller before inclusion.
-    """
+    """Effective CAIRN_* knobs as a structured key->value echo, mirroring _check_config."""
     return {
         "workers": os.environ.get("CAIRN_WORKERS", "<unset>"),
         "read_only": os.environ.get("CAIRN_READ_ONLY", "<unset>"),
@@ -209,6 +172,8 @@ def _source_root() -> Path | None:
 
 
 def _audit_quality_gate(root: Path) -> dict:
+    from .audit_status import collect_audit_status
+
     try:
         status = collect_audit_status(root)
         return {
@@ -224,6 +189,8 @@ def _audit_quality_gate(root: Path) -> dict:
 
 
 def _comment_quality_gate(root: Path) -> dict:
+    from .comment_style import DEFAULT_BASELINE, check_comment_baseline
+
     try:
         status = check_comment_baseline(root, root.joinpath(*DEFAULT_BASELINE))
         if not status["ok"]:
@@ -260,12 +227,7 @@ def _report_resolution(conn) -> dict:
 
 
 def _build_report(db: str) -> dict:
-    """Assemble the redacted bundle. Never raises.
-
-    Versions/recent-errors share one read connection (closed in ``finally``);
-    doctor opens its own via ``_run_doctor`` (reused unchanged). All string
-    fields are routed through the privacy gate before the bundle is returned.
-    """
+    """Assemble the redacted bundle; never raises, every string routed through the privacy gate."""
     conn = _open_report_conn(db)
     try:
         versions = _scrub_strings(_report_versions(conn))
@@ -290,12 +252,7 @@ def _build_report(db: str) -> dict:
 
 
 def _render_report(bundle: dict) -> str:
-    """Plain-text rendering of the bundle (clean copy-paste, no ANSI codes).
-
-    Kept as plain text (rather than ``display``/rich) so the bundle pastes
-    cleanly into a GitHub issue and so ``--out`` can faithfully capture the
-    same text that goes to stdout. Doctor rows render as PASS/WARN/FAIL lines.
-    """
+    """Plain-text rendering (no ANSI) so the bundle pastes cleanly and --out captures stdout verbatim."""
     lines: list[str] = [
         "cairn report — redacted diagnostic bundle",
         "# Secrets scrubbed via memory.privacy.strip_private_data; absolute "
@@ -378,26 +335,8 @@ def _render_report(bundle: dict) -> str:
 @click.option("--out", "out_path", default=None,
               help="Write the bundle to this file as well as printing it.")
 def report(db, as_json, out_path):
-    """Print a redacted diagnostic bundle for bug reports / GitHub issues.
-
-    Assembles four sections into one bundle: versions (cairn/Python/platform/
-    sqlite/store), the 11 doctor checks, recent error-ish events and
-    ``tool_metrics`` errors, and the effective ``CAIRN_*`` config.
-
-    PRIVACY GATE: every string field is
-    passed through ``memory.privacy.strip_private_data`` (known secret shapes
-    -- API keys, bearer tokens, JWTs, ... -- and ``<private>`` tags are
-    redacted to ``[REDACTED_SECRET]`` / ``[REDACTED]``) and then through path
-    redaction (absolute local filesystem paths collapse to
-    ``[PATH]/<basename>``, since ``str(exc)`` from file I/O embeds them).
-
-    The bundle is printed to stdout and NEVER auto-uploaded. ``--out PATH``
-    additionally writes it to a file (JSON with ``--json``, otherwise the same
-    human-readable text); the file-write confirmation goes to stderr so it
-    can't corrupt JSON output. Best-effort throughout: a missing, read-only, or
-    corrupt store degrades to empty sections and a schema FAIL (mirroring
-    ``cairn doctor``) and never raises.
-    """
+    """Print a redacted diagnostic bundle (versions, doctor checks, recent errors, config); never uploads.
+    ``--out`` writes the same text to a file and confirms on stderr so JSON output stays parseable."""
     bundle = _build_report(db)
     if as_json:
         text = json.dumps(bundle, indent=2, default=str)

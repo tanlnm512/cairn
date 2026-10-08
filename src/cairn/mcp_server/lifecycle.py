@@ -58,19 +58,7 @@ def render_plist(
     knowledge_path: str | None = None,
     read_only: bool = True,
 ) -> dict:
-    """Build the LaunchAgent plist as a dict (plistlib-renderable).
-
-    Runs `cairn serve run --port <N> --read-only`. The daemon is read-only by
-    default: the shared SSE server opens the graph DB with `mode=ro` so it
-    never contends with `cairn build`/`cairn embed`/`cairn memory`. Pass
-    read_only=False for a read-write daemon (not recommended for shared use).
-
-    Args:
-        workspace: absolute path to the workspace whose store the daemon
-            should serve (launchd's cwd is `/`).
-        db_path: explicit DB path (overrides workspace-derived path).
-        knowledge_path: explicit knowledge dir.
-    """
+    """Build the LaunchAgent plist dict for a read-only-by-default `cairn serve run` daemon."""
     bin_ = cg_bin()
     env = {
         # Inherit the user PATH so `cairn` can find python etc.
@@ -121,11 +109,7 @@ def is_loaded() -> bool:
 
 
 def running_pid() -> int | None:
-    """PID of the running daemon, or None if loaded-but-not-running / not loaded.
-
-    Handles the two launchctl output formats across macOS versions (plist-style
-    `"PID" = N;` and tab-style `PID<Tab>Status<Tab>Label`).
-    """
+    """PID of the running daemon, or None; parses both launchctl output formats."""
     if not is_macos():
         return None
     r = subprocess.run(
@@ -152,13 +136,7 @@ _SERVE_LIFECYCLE_SUBCOMMANDS = {"start", "stop", "status", "restart"}
 
 
 def _pid_cmdline(pid: int) -> str | None:
-    """Full command line of ``pid``, or None when it can't be read.
-
-    Tries /proc/<pid>/cmdline (Linux) first, then `ps -p <pid> -o command=`
-    (macOS). None means the pid exited, is unreadable, or the platform has
-    neither source -- callers must treat that as "can't identify, don't kill".
-    Never raises.
-    """
+    """Full command line of ``pid``; None when unreadable (never identify-and-kill blindly)."""
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as fh:
             raw = fh.read()
@@ -179,16 +157,7 @@ def _pid_cmdline(pid: int) -> str | None:
 
 
 def _is_cairn_serve_cmdline(cmdline: str) -> bool:
-    """True when ``cmdline`` is a real `cairn serve` SERVER invocation.
-
-    Anchored token match on the argv shapes that actually occur:
-    editors spawn plain ``cairn serve`` (stdio -- docs/quickstart.md) and
-    launchd runs ``cairn serve run --port N``. Both have argv[0] ending in
-    ``cairn`` and argv[1] exactly ``serve``. The lifecycle subcommands
-    (start/stop/status/restart) are excluded, as are loose cmdline substrings
-    (``grep cairn serve``, ``vi cairn server.py``, ``cairn build``) that a
-    pgrep pattern scan alone would false-positive on.
-    """
+    """True when ``cmdline`` is a real `cairn serve` server invocation (anchored, subcommands excluded)."""
     tokens = cmdline.split()
     if len(tokens) < 2:
         return False
@@ -198,14 +167,7 @@ def _is_cairn_serve_cmdline(cmdline: str) -> bool:
 
 
 def _db_holder_pids(db_path: str | Path) -> set[int] | None:
-    """Pids that hold ``db_path`` open (the same lsof technique serve_status
-    uses; ``-F p`` machine-readable output emits ``p<pid>`` lines).
-
-    Returns None when verification was IMPOSSIBLE (lsof missing, timed out,
-    or errored) -- callers must treat None as "can't verify", never as "no
-    holders". A legitimate "nobody holds this file" is an empty set: lsof
-    exits 1 with NO stderr for that, but 1 WITH stderr for real failures.
-    """
+    """Pids holding ``db_path`` open; None means verification failed (never conflated with empty)."""
     try:
         r = subprocess.run(
             ["lsof", "-F", "p", str(db_path)],
@@ -224,13 +186,7 @@ def _db_holder_pids(db_path: str | Path) -> set[int] | None:
 
 
 def _pgrep_candidates() -> list[int]:
-    """Pids whose full command line mentions `cairn serve` (a superset).
-
-    Deliberately a broad substring regex: the anchored per-pid token check in
-    find_strays is the real filter, so this pattern only needs to over-match,
-    never under-match (every ``argv[0]=*cairn argv[1]=serve`` shape contains
-    the literal ``cairn serve``). pgrep never lists itself.
-    """
+    """Pids whose cmdline mentions `cairn serve` — a deliberately over-matching superset."""
     try:
         r = subprocess.run(
             ["pgrep", "-f", "cairn serve"],
@@ -249,23 +205,7 @@ def _pgrep_candidates() -> list[int]:
 
 
 def find_strays(db_path: str | Path) -> list[int]:
-    """Find `cairn serve` PIDs NOT managed by launchd that hold THIS db.
-
-    These are orphaned stdio servers left over from editor sessions -- the
-    root cause of WAL lock contention. A pid qualifies as a stray only when
-    ALL of these hold:
-
-    1. Its full command line is a real `cairn serve` server invocation
-       (anchored token match via ps). Editors launch plain ``cairn serve``
-       with the db passed via CAIRN_DB env -- never in argv -- so loose
-       argv-pattern scans false-positive or miss.
-    2. It is not in the protected set: self, the launchd daemon, and the
-       daemon's children.
-    3. It actually holds ``db_path`` open, verified via lsof. A foreground
-       server on a DIFFERENT db is never ours to kill; if lsof verification
-       is impossible, NOTHING is killed -- an unverifiable kill is worse
-       than a missed sweep pass.
-    """
+    """Find `cairn serve` pids not managed by launchd that hold this db; never kills unverified pids."""
     daemon_pid = running_pid()
     protected = {daemon_pid, os.getpid()}
     if daemon_pid is not None:
@@ -294,10 +234,7 @@ def find_strays(db_path: str | Path) -> list[int]:
 
 
 def _children_of(ppid: int) -> set[int]:
-    """Return direct child pids of ``ppid`` via a single ``pgrep -P`` call.
-
-    Best-effort: on failure or a non-macOS host it returns an empty set.
-    """
+    """Return direct child pids of ``ppid`` (best-effort, empty on failure)."""
     try:
         r = subprocess.run(
             ["pgrep", "-P", str(ppid)],
@@ -316,16 +253,7 @@ def _children_of(ppid: int) -> set[int]:
 
 
 def terminate_pid(pid: int, timeout: float = 5.0, cmd_check=None) -> None:
-    """SIGTERM a pid, wait, SIGKILL if still alive. Best-effort, never raises.
-
-    ``cmd_check``: optional predicate over the pid's command line.
-    When given, the command line is re-verified immediately before SIGTERM
-    and again before SIGKILL: if the targeted process died in between (the
-    TERM->KILL window is up to ``timeout`` seconds) and the kernel REUSED the
-    pid for an unrelated process, the kill is aborted rather than fired at
-    the innocent newcomer. Unreadable cmdlines also abort -- can't confirm,
-    can't kill.
-    """
+    """SIGTERM, wait, then SIGKILL; cmd_check re-verification aborts on pid reuse."""
     import signal
     import time
 
@@ -357,12 +285,7 @@ def terminate_pid(pid: int, timeout: float = 5.0, cmd_check=None) -> None:
 
 
 def sweep_strays(db_path: str | Path, log: bool = False) -> int:
-    """Find and kill stray `cairn serve` processes. Returns count killed.
-
-    Idempotent; best-effort (a pid that died between find and kill is a no-op).
-    Passes the anchored cmdline check to terminate_pid so a pid that was
-    reused for an unrelated process between find and kill is never SIGKILLed.
-    """
+    """Find and kill stray `cairn serve` processes; returns the count killed."""
     strays = find_strays(db_path)
     for pid in strays:
         terminate_pid(pid, cmd_check=_is_cairn_serve_cmdline)
@@ -410,16 +333,7 @@ def sse_url(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST) -> str:
 
 
 def sse_responds(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST, timeout: float = 2.0) -> bool:
-    """Liveness check: does the SSE server actually answer HTTP requests?
-
-    Probes the root path ``/`` (not ``/sse``) and reads the start of the
-    response status line. A bare TCP accept is a false-positive (the listen
-    backlog accepts even when uvicorn is wedged). Hitting ``/`` avoids the SSE
-    handler's request validation; a 404 still proves uvicorn parsed the request.
-
-    Returns True only if the server both accepted AND emitted a response byte
-    within `timeout`.
-    """
+    """True when the SSE server accepts and answers an HTTP request within ``timeout``."""
     import socket
 
     try:

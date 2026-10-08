@@ -16,19 +16,14 @@ from ..utils.logging import configure_logging
 
 DEFAULT_KNOWLEDGE_PATH = str(default_knowledge_path())
 
-# Wired-once flag: the cli-metrics flusher's connection factory is injected the
-# first time a command dispatches, never at import. The factory itself resolves
-# the store at CALL time (once per flush), so CAIRN_DB/cwd are read when
-# flushing, not at boot.
+# Wired once: the cli-metrics flusher's connection factory is injected on first
+# dispatch, never at import, and resolves the store at call time so CAIRN_DB
+# and cwd are read when flushing, not at boot.
 _FLUSH_CONN_WIRED = False
 
 
 def _wire_flusher_conn() -> None:
-    """Inject the cli-metrics flusher's writable connection factory (once).
-
-    Best-effort by contract: a telemetry-module import failure or a wiring
-    error must never kill the command — skip wiring and leave rows buffered.
-    """
+    """Inject the cli-metrics flusher's writable connection factory once; best-effort, never kills a command."""
     global _FLUSH_CONN_WIRED
     if _FLUSH_CONN_WIRED:
         return
@@ -48,12 +43,7 @@ def _record_invocation(
     status: str,
     error_message: str = "",
 ) -> None:
-    """Buffer one usage row via the cli-metrics builder; never raises.
-
-    Recording must never fail the command (best-effort doctrine), so
-    even the import is guarded — a missing/broken telemetry module degrades
-    to "no row", never to a failed CLI run.
-    """
+    """Buffer one usage row via the cli-metrics builder; never raises, even on a broken telemetry module."""
     try:
         from ..telemetry import cli_metrics
 
@@ -82,11 +72,9 @@ class _RecordingGroup(click.Group):
         return super().parse_args(ctx, args)
 
     def invoke(self, ctx: click.Context) -> Any:
-        # Captured before dispatch so the row exists even on error paths.
-        # invoked_subcommand is read at RECORD time — click's Group.invoke
-        # sets it while resolving the subcommand, so it is available after
-        # super().invoke() on success and error paths alike, extending the
-        # root path one level (per-subcommand aggregation).
+        # Captured before dispatch so the row exists on error paths;
+        # invoked_subcommand is set while click resolves the subcommand, so
+        # reading it at RECORD time works on success and error alike.
         argv = sys.argv[1:]
 
         def sub_path() -> str:
@@ -135,18 +123,9 @@ class _RecordingGroup(click.Group):
 )
 def main(verbose: bool):
     """cairn-intel: local codebase intelligence system."""
-    # Central logging config point for the CLI surface. Configures ONLY the
-    # `cairn` logger — never root — because stdout must stay clean (it's the
-    # JSON-RPC channel for the stdio MCP transport, and FastMCP pins its own
-    # level to avoid clobbering root; see mcp_server/_server_core.py).
-    #
-    # Group-option placement: `-v` must precede the
-    # subcommand, e.g. `cairn -v build`. Placing it after the subcommand
-    # (`cairn build -v`) is rejected by click as an unknown option of the
-    # subcommand. For position-independent control, set CAIRN_LOG_LEVEL=DEBUG.
-    # The group callback runs before any subcommand, so this fires once per
-    # invocation and is idempotent (configure_logging attaches its handler at
-    # most once).
+    # Configures only the `cairn` logger, never root: stdout is the stdio
+    # JSON-RPC channel. `-v` must precede the subcommand; use
+    # CAIRN_LOG_LEVEL=DEBUG for position-independent control.
     configure_logging(verbose=verbose)
 
 

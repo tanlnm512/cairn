@@ -30,16 +30,7 @@ _CLIENT_CHOICES = [*CLIENTS, "all"]
 @click.option("--yes", "-y", is_flag=True,
               help="Skip the interactive prompt; install for detected clients that don't already have cairn.")
 def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, stdio, sse_url, yes):
-    """Wire cairn into AI coding clients (Claude Code/Desktop, Cursor, Droid, ZCode, etc.).
-
-    Detects which clients are installed and shows whether cairn is already
-    wired in. By default, prompts you to choose which clients to install for
-    (skipping those that already have cairn). Use --client to bypass the
-    prompt, or --yes to auto-install for all detected-and-not-yet-installed.
-
-    Scope: --scope workspace (default) writes to ./.claude/, ./.cursor/ etc.
-    --scope global writes to ~/.claude/, ~/.cursor/ etc. (all projects inherit).
-    """
+    """Wire cairn into AI coding clients (Claude Code/Desktop, Cursor, Droid, ZCode, etc.); prompts unless --client/--yes."""
     from ..agent_install import install, detect_clients, check_installed
 
     if sse and stdio:
@@ -128,10 +119,8 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
                 click.echo("Aborted.")
                 return
 
-            # Respect the selection as-is. An explicitly empty selection
-            # installs nothing, rather than silently falling back to the
-            # detected defaults (which install() would do for an empty/None
-            # clients list).
+            # An explicitly empty selection installs nothing; install() would
+            # otherwise fall back to the detected defaults.
             if not answer:
                 click.echo("Nothing selected. Use --client <name> to target a specific client.")
                 return
@@ -227,13 +216,7 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
                    "Match this to the --scope you installed with.")
 @click.option("--workspace", "ws_arg", default=None, help="Workspace root (default: resolved).")
 def uninstall_agents(clients, scope, ws_arg):
-    """Remove cairn entries from AI client configs. Idempotent.
-
-    Strips the cairn MCP server and hooks from config files (preserving
-    other entries) and deletes cairn skill/command/subagent files. Use
-    --scope global (or all) to also remove what a `install-agents --scope
-    global` wrote under ~.
-    """
+    """Remove cairn entries from AI client configs, idempotently; --scope global|all also removes user-level writes."""
     from ..agent_install import uninstall
 
     # Same as install-agents: default to cwd, not ancestor walk.
@@ -272,4 +255,3 @@ def uninstall_agents(clients, scope, ws_arg):
 
     click.echo("")
     click.echo("Done. Git hooks: run `cairn hooks uninstall` separately if needed.")
-

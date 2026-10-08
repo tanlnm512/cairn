@@ -14,27 +14,8 @@ from .main import main
                    "natural pair for the bge-m3 embedder; or $CAIRN_RERANK_MODEL "
                    "if set).")
 def download_reranker(model_name):
-    """Download the reranker model and enable reranking.
-
-    Fetches the CrossEncoder weights into the local HuggingFace cache (default:
-    BAAI/bge-reranker-base, ~1.1GB), then writes a persistent enable marker so
-    reranking is on for subsequent queries — no need to export CAIRN_RERANK=1.
-    (Set CAIRN_RERANK=0 to force it back off.)
-
-    Needs the optional [semantic] extra (it provides sentence-transformers,
-    the same dependency as local embeddings):
-
-        pip install 'cairn-intel[semantic]'
-
-    Examples:
-
-        cairn download-reranker                       # bge-reranker-base + enable
-        cairn download-reranker --model cross-encoder/ms-marco-MiniLM-L-6-v2
-
-    At query time, if the configured model is missing/evicted from the cache,
-    reranking falls back to the hybrid (vector + BM25 + RRF) order rather than
-    failing — re-run this command to re-fetch.
-    """
+    """Download the reranker model and enable reranking persistently (CAIRN_RERANK=0 forces it off).
+    Needs the optional [semantic] extra: pip install 'cairn-intel[semantic]'."""
     from ..graph.reranker import (
         current_rerank_model, download_reranker_model, install_hint,
         reranker_available, set_rerank_enabled_persistently,

@@ -35,10 +35,7 @@ class BlastBaseError(RuntimeError):
 
 
 def _git(repo: Path, args: list[str]) -> str:
-    # errors="replace": git sniffs only the first 8KB for binary detection, so
-    # a diff can carry non-UTF-8 payload bytes past that mark; the parser
-    # regexes hunks and paths only, so replaced characters are inert.
-    # core.quotePath=false keeps non-ASCII paths byte-identical to files.path.
+    # Diff syntax tolerates replaced payload bytes; paths stay byte-compatible.
     result = subprocess.run(
         ["git", "-c", "core.quotePath=false", *args],
         cwd=str(repo),
@@ -527,12 +524,7 @@ def compute_blast(
     limit: int = 500,
     refresh: bool | None = None,
 ) -> dict:
-    """Refresh stored spans and return the reverse radius of a git diff.
-
-    The result carries ``taint_paths``: taint paths whose entry or sink
-    symbol is a changed seed, computed over the workspace taint registry
-    with the query's precision (``fuzzy``).
-    """
+    """Refresh stored spans and return the reverse radius of a git diff."""
     refresh_for_query(conn, repair=refresh)
     workspace_path = Path(workspace).resolve()
     basis, changed = _changed_files(conn, workspace_path, base)

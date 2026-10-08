@@ -132,12 +132,7 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
         mods = []
         for child in node.children:
             if child.type == "modifiers":
-                # The nested modifiers node can contain non-modifier children
-                # (e.g. an `attribute` like @available(...)). Filter through
-                # SWIFT_MODIFIERS so only real modifier keywords are kept --
-                # matching the direct-child path below and the Java/Kotlin
-                # extractors' pattern. Without this, an attribute's text
-                # pollutes the symbol's modifier list.
+                # Nested modifiers may contain attributes; keep only modifier keywords.
                 for m in child.children:
                     txt = self._node_text(m, source).strip()
                     if txt and txt in SWIFT_MODIFIERS:
@@ -234,11 +229,7 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
                 self._var_types.record(*self._param_name_type(child, source))
 
     def _param_name_type(self, node: Node, source: bytes):
-        """(local_name, declared_type) of a ``parameter``.
-
-        An external argument label may precede the local name, so the local
-        name is the last identifier before the type.
-        """
+        """Return a parameter's local name after any external label."""
         name = None
         type_name = None
         for c in node.children:
@@ -259,11 +250,7 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _record_property_type(self, node: Node, source: bytes) -> None:
-        """Record a ``let``/``var`` binding's name → type for receiver lookup.
-
-        The declared type annotation wins; otherwise a ``Type()`` initializer
-        call (capitalized callee) infers the type. Anything else abstains.
-        """
+        """Record a binding's declared or initializer-inferred type."""
         name = self._pattern_name(node, source)
         type_name = None
         for child in node.children:
@@ -325,20 +312,12 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_inheritance(self, node: Node, source: bytes, child_name: str):
-        """Inheritance-clause targets as ordered `extends`/`implements` edges.
-
-        A class/actor's first listed type is its superclass (`extends`);
-        every other target, and every target on structs/enums/protocols
-        (where inheritance is protocol conformance only), is `implements`.
-        """
+        """Return superclass extends plus remaining conformance implements edges."""
         specifiers: List[Node] = []
         for child in node.children:
             if child.type in ("type_inheritance_clause", "inheritance_specifier"):
                 self._collect_specifiers(child, specifiers)
-        # A grammar build may parse `struct`/`enum` declarations under
-        # class_declaration; the keyword child distinguishes them (the same
-        # inspection _classify_type uses). Only a true class/actor has a
-        # superclass; structs/enums conform to protocols only.
+        # Class declarations parsed from struct or enum keywords have no superclass.
         keyword_children = {
             self._node_text(c, source).strip() for c in node.children
         }
@@ -384,11 +363,7 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
         )
 
     def _call_receiver_text(self, node: Node, source: bytes) -> Optional[str]:
-        """Text of the called navigation_expression's `target` field.
-
-        call_expression exposes no field labels at swift 0.7.3; the receiver
-        is readable only one level down, on the navigation_expression.
-        """
+        """Return receiver text from the nested navigation expression target."""
         lead = node.children[0]
         if lead.type not in ("navigation_expression", "member_expression"):
             return None

@@ -24,13 +24,7 @@ def doc_type_slug(doc_type: str) -> str:
 
 
 def _redact_step_descriptions(steps: List[dict]) -> List[dict]:
-    """Redact the free-text ``description`` of each workflow step.
-
-    Returns a new list (caller-owned dicts are not mutated). Only
-    ``description`` is scrubbed: ``name``/``symbol``/``file`` are graph
-    identifiers the staleness checker resolves against the code graph, so
-    rewriting them would silently break workflow sync.
-    """
+    """Return copied steps with only free-text descriptions redacted."""
     out = []
     for step in steps:
         desc = step.get("description")
@@ -41,19 +35,7 @@ def _redact_step_descriptions(steps: List[dict]) -> List[dict]:
 
 
 def normalize_doc_id(bundle: OKFBundle, concept_id: str) -> str:
-    """Normalize any doc id shape to the bare bundle-relative concept_id.
-
-    Accepts bare ids (``knowledge/spec/foo``), ``.md``-suffixed ids, and
-    path-shaped ids (absolute paths as returned by ``OKFBundle`` reads,
-    whose ``concept_id`` attribute is the file path, not the bare id).
-    This is the ONE normalization point shared by the derived-index
-    rebuild and the CLI/dashboard consumers that correlate frontmatter
-    pointers with bundle reads.
-
-    Best-effort: on any path that can't be normalized (escapes the bundle
-    root, OS error), the input minus a ``.md`` suffix is returned as-is so
-    the caller's namespace check still sees the raw shape.
-    """
+    """Normalize a doc id to its bare bundle-relative concept id."""
     cid = concept_id[:-3] if concept_id.endswith(".md") else concept_id
     try:
         rel = str(
@@ -69,19 +51,7 @@ def normalize_doc_id(bundle: OKFBundle, concept_id: str) -> str:
 def _refuse_out_of_namespace(
     bundle: OKFBundle, doc_id: str, concept: Optional[OKFConcept]
 ) -> None:
-    """Namespace guard for the knowledge store's mutating chokepoints.
-
-    ``get_document`` reads ANY concept path in the bundle, so without this
-    guard ``update_status``/``delete_document`` happily act on compass/wiki/
-    memory concepts. The MCP tools pre-guard, but the CLI twins call the
-    store directly -- enforcing it here fixes both and any future caller.
-
-    Raises ``ValueError`` only when there is something out-of-namespace to
-    act on (a resolvable concept, or -- for the delete path -- an existing
-    file that failed to parse). Unresolvable ids keep the historical
-    ``False``/not-found semantics, which is what the MCP tools' pre-guarded
-    "not found" branch relies on.
-    """
+    """Raise when an out-of-namespace target is about to be acted on."""
     if concept is not None:
         resolved = normalize_doc_id(bundle, concept.concept_id)
     else:
@@ -119,40 +89,7 @@ def add_document(
     relationships: Optional[List[dict]] = None,  # {concept_id, relation, kind}
     verified_refs: Optional[List[dict]] = None,  # {ref, kind: file|symbol, verified}
 ) -> str:
-    """Ingest a document. Returns the concept_id.
-
-    concept_id pattern: knowledge/{doc_type}/{slug}.
-
-    ``steps`` is an optional ordered list of step dicts stored under the
-    ``steps`` extension (intended for ``doc_type="workflow"``; see
-    ``cairn/knowledge/workflow.py``).
-
-    ``relationships`` is an optional list of relationship entries stored
-    verbatim under the ``relates_to`` extension (D1.1), each normalized
-    to ``{concept_id, relation, kind}`` with kind defaulting to
-    ``extracted``; entries are identifiers, not free text, so they are
-    never redacted.
-
-    ``verified_refs`` is an optional list of verified doc-to-code refs
-    (D1.3) stored as the concept's ``verified`` family (OKF v0.2, the
-    wiki pattern), each ``{ref, kind: file|symbol, verified: true}``;
-    callers pass pre-resolved entries (``knowledge/ingest/refs.py``).
-    Refs are graph identifiers and are never redacted; the family is
-    omitted entirely when nothing (or nothing resolvable) is passed.
-
-    Privacy floor: title, body, description, and step
-    descriptions are routed through :func:`strip_private_data` at this
-    store chokepoint BEFORE the
-    slug is derived and ``bundle.write_concept`` runs, so a secret pasted
-    into any free-text field never reaches the .md file (nor the
-    knowledge_embeddings rows, which embed the *stored* body). Redaction
-    runs before slugification so a secret-shaped title can't leak into the
-    concept_id/filename either. ``strip_private_data`` is pattern-based (it
-    only rewrites secret-shaped substrings), so agent-authored wiki/compass/
-    workflow content is untouched. Step ``name``/``symbol``/``file`` are
-    identifiers (graph anchors for staleness checks), not free text, and are
-    left verbatim.
-    """
+    """Redact, normalize, and store one document; return its concept id."""
     title = strip_private_data(title)
     body = strip_private_data(body)
     # Explicit descriptions are redacted here; an absent one falls back to
@@ -229,16 +166,7 @@ def get_document(bundle: OKFBundle, doc_id: str) -> Optional[OKFConcept]:
 
 
 def resolve_knowledge_doc(bundle: OKFBundle, doc_id: str) -> OKFConcept:
-    """Resolve a knowledge-namespaced document, or raise ``ValueError``.
-
-    Shared guard for the relationship query surface (``related``/``chain``
-    CLI and dashboard consumers): raises when ``doc_id`` matches no
-    concept, and applies the same namespace refusal as the mutating
-    chokepoints (``_refuse_out_of_namespace``) when it resolves to a
-    compass/wiki/memory concept. The returned concept keeps the bundle's
-    path-shaped ``concept_id``; callers normalize via
-    :func:`normalize_doc_id` when they need the bare id.
-    """
+    """Resolve a knowledge doc or reject missing and foreign ids."""
     concept = get_document(bundle, doc_id)
     if concept is None:
         raise ValueError(
@@ -254,17 +182,7 @@ DOC_STATUSES = ("active", "superseded", "archived")
 
 
 def update_status(bundle: OKFBundle, doc_id: str, new_status: str) -> bool:
-    """Update doc_status, enforcing the documented forward-only lifecycle.
-
-    Rejects (returns False, doesn't raise):
-      - unknown status values (only "active"/"superseded"/"archived" valid)
-      - backward transitions (e.g. archived -> active); re-add as a fresh
-        document instead.
-    A missing/unknown current status is treated as "active".
-
-    Raises ValueError when ``doc_id`` resolves to a concept outside the
-    knowledge/ namespace (see ``_refuse_out_of_namespace``).
-    """
+    """Apply a forward-only status transition and return success."""
     if new_status not in DOC_STATUSES:
         return False
     with bundle.lock():
@@ -283,15 +201,7 @@ def update_status(bundle: OKFBundle, doc_id: str, new_status: str) -> bool:
 
 
 def delete_document(bundle: OKFBundle, doc_id: str, conn=None) -> bool:
-    """Delete a knowledge document and its embedding rows.
-
-    Removes the .md file from the bundle and optionally cleans up
-    knowledge_embeddings rows in the database.
-
-    Raises ValueError when ``doc_id`` resolves to a concept (or an existing
-    file) outside the knowledge/ namespace (see
-    ``_refuse_out_of_namespace``).
-    """
+    """Delete a document and optional embeddings without committing."""
     with bundle.lock():
         concept = get_document(bundle, doc_id)
         _refuse_out_of_namespace(bundle, doc_id, concept)
@@ -331,11 +241,7 @@ def import_directory(
     affects_modules: Optional[List[str]] = None,
     affects_repos: Optional[List[str]] = None,
 ) -> List[str]:
-    """Batch-ingest all .md files in a directory. Returns list of concept_ids.
-
-    Validates file size and skips oversized files (above IMPORT_MAX_FILE_SIZE).
-    Imported docs default to doc_source='imported' for lower authority.
-    """
+    """Import in-size markdown files as lower-authority knowledge docs."""
     imported = []
     for md_file in sorted(Path(dir_path).rglob("*.md")):
         # Validate file size; one vanished file skips, never aborts the import.

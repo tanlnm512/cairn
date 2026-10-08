@@ -93,12 +93,8 @@ def _run_sync(conn, workspace, changed, db):
         for error in result["errors"][:5]:
             display.dim(f"  {error}")
 
-    # Persist a 'sync' build_runs row (best-effort; record_build_run
-    # swallows all errors). reindex_paths returns reindexed/deleted only;
-    # resolution mix / parse-error breakdown / phase_timings stay NULL
-    # (the sync path has no scan/parse/resolve phase contract). Recorded
-    # in the sync command rather than shared reindex_paths so `cairn
-    # update` records its own 'incremental' row.
+    # Best-effort 'sync' build_runs row: only reindexed/deleted counts are
+    # meaningful; scan/parse/resolve columns stay NULL.
     from ...graph.builder import record_build_run
 
     record_build_run(
@@ -118,11 +114,7 @@ def _run_sync(conn, workspace, changed, db):
 @click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE)
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 def sync(workspace, db):
-    """Manually re-index changed files (used when watcher is disabled or for scripting).
-
-    Detects files changed since last index via size/mtime comparison and
-    re-indexes them. Equivalent to what the watcher does automatically.
-    """
+    """Manually re-index size/mtime-drifted files — what the watcher does, on demand."""
     from .. import display
 
     conn = get_db(db)

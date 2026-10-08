@@ -9,10 +9,7 @@ from tree_sitter import Language, Parser
 
 @functools.lru_cache(maxsize=16)
 def get_parser(language: str) -> Parser:
-    """Return a cached tree-sitter Parser for the given language.
-
-    Raises ValueError if the language is not supported.
-    """
+    """Return a cached tree-sitter Parser, raising ValueError when unsupported."""
     capsule = _load_language_capsule(language)
     return Parser(Language(capsule))
 
@@ -32,10 +29,7 @@ _SPECIAL_LOADERS = {
     "typescript": ("tree_sitter_typescript", "language_typescript"),
     "tsx": ("tree_sitter_typescript", "language_tsx"),
     "javascript": ("tree_sitter_javascript", "language"),
-    # tree-sitter-php ships two grammars with non-standard entry points:
-    # language_php() (PHP+HTML, "program" nodes) and language_php_only() (pure
-    # PHP AST, no HTML wrapper). We use php_only so the parser sees clean
-    # declaration nodes instead of an embedded-html tree.
+    # php_only yields a pure PHP AST instead of an embedded-HTML tree.
     "php": ("tree_sitter_php", "language_php_only"),
 }
 
@@ -53,10 +47,7 @@ def _load_language_capsule(language: str):
         lang_mod = _load_language_module(language)
         return lang_mod.language()
     except ValueError:
-        # Not a built-in. Fall through to the plugin entry-point scan:
-        # external packages may register this language via the
-        # ``cairn.parsers.v1`` entry-point group. Built-ins stay preferred
-        # (faster, no metadata walk) -- the scan only runs on a miss.
+        # Built-in misses fall through to the parser plugin entry-point group.
         capsule = _load_plugin_capsule(language)
         if capsule is not None:
             return capsule
@@ -64,14 +55,7 @@ def _load_language_capsule(language: str):
 
 
 def _load_plugin_capsule(language: str):
-    """Look up ``language`` in the ``cairn.parsers.v1`` entry-point group.
-
-    Returns the language capsule (PyCapsule) from the first matching entry
-    point, or None if no plugin registered this language. An entry point in the
-    group resolves to a zero-arg callable returning the capsule. Failures in a
-    plugin (bad entry point, import error) are caught and skipped so one broken
-    plugin can't break the whole registry -- it just won't provide its language.
-    """
+    """Return the first working plugin capsule for language, else None."""
     import importlib.metadata
 
     eps = importlib.metadata.entry_points(group=_PLUGIN_ENTRY_POINT_GROUP)
@@ -81,10 +65,7 @@ def _load_plugin_capsule(language: str):
                 factory = ep.load()
                 return factory()
             except Exception as exc:  # noqa: BLE001 - a broken plugin is skipped
-                # A broken plugin is skipped, not fatal -- the language simply
-                # stays unsupported unless another entry point provides it. But
-                # we surface a warning so a misbehaving plugin doesn't silently
-                # disappear without any diagnostic signal.
+                # Broken plugins warn and are skipped so registration remains usable.
                 warnings.warn(
                     f"cairn parser plugin {ep.name!r} for language "
                     f"{language!r} failed to load and was skipped: "

@@ -147,14 +147,7 @@ def _skip_reason(
 
 
 def _dir_rule_matches(parts: Tuple[str, ...], pattern: str) -> bool:
-    """Dir rules match any single directory segment, or any joined
-    parent-path prefix of the relpath.
-
-    Single-segment patterns ("drafts") keep matching per segment. A
-    multi-segment workspace pattern ("docs/notes") additionally matches
-    the joined directory prefixes, so it catches "docs/notes/x.md"
-    instead of silently never firing against any single segment.
-    """
+    """Match a directory rule against segments and joined parent prefixes."""
     segments = [part.lower() for part in parts[:-1]]
     if any(fnmatch(segment, pattern) for segment in segments):
         return True

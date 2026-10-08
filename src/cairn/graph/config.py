@@ -48,12 +48,7 @@ _INCLUDE_NESTED_REPOS_KEY = "include_nested_repos"
 
 
 def load_config(root: Union[str, Path]) -> CairnConfig:
-    """Load ``cairn.json`` from ``root`` (workspace or repo dir).
-
-    Returns a default config if no file exists or it is empty/malformed. On a
-    malformed file, prints a warning to stderr and falls back to defaults
-    rather than crashing the build -- a bad config must never break indexing.
-    """
+    """Load ``cairn.json`` from ``root`` (workspace or repo dir)."""
     root = Path(root)
     path = root / "cairn.json"
     if not path.exists():
@@ -148,12 +143,7 @@ def _as_string_list(value, path: Path, key: str) -> List[str]:
 def _as_string_dict(
     value, path: Path, key: str, desc: str = "prefix -> repo id"
 ) -> Dict[str, str]:
-    """Coerce a JSON value into a dict[str, str] of non-empty mappings.
-
-    Drops malformed entries (non-string keys/values, empty strings) with a
-    warning. A bad value never crashes the build: returns ``{}`` on type
-    mismatch.
-    """
+    """Coerce a JSON value into a dict[str, str] of non-empty mappings."""
     if value is None:
         return {}
     import sys
@@ -175,12 +165,7 @@ def _as_string_dict(
 
 
 def _as_name_table(value, path: Path, key: str) -> Dict[str, Set[str]]:
-    """Coerce a JSON object into a taint category -> exact call-name table.
-
-    Each category's value parses through ``_as_string_list``; a declared
-    category is kept even when its name list is empty. Malformed tables
-    return ``{}`` and never crash the build.
-    """
+    """Coerce a JSON object into a taint category -> exact call-name table."""
     if value is None:
         return {}
     import sys
@@ -201,12 +186,7 @@ def _as_name_table(value, path: Path, key: str) -> Dict[str, Set[str]]:
 
 
 def _as_dict(value, path: Path, key: str) -> Dict[str, object]:
-    """Return the raw JSON object for ``key``; ``{}`` on type mismatch.
-
-    Values are kept as-is (nested objects/arrays included): the ingest
-    package types and layers this section; here we only guarantee a dict
-    and never crash the build.
-    """
+    """Return the raw JSON object for ``key``; ``{}`` on type mismatch."""
     if value is None:
         return {}
     import sys

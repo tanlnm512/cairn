@@ -23,13 +23,7 @@ SIGNATURE_NODES = {"function_signature", "constructor_signature"}
 
 
 def resolve_relative_dart_import(importer: Path, spec: str) -> Optional[str]:
-    """Resolve a relative Dart import ('./foo.dart', '../bar.dart') to an
-    absolute, extension-stripped path if the target file exists on disk.
-
-    Bare/package specs (`package:foo/bar.dart`, `dart:core`) return `None` --
-    callers store them unchanged and the resolver leaves them unresolved
-    (external), same convention as TypeScript's package imports.
-    """
+    """Return an existing extension-stripped relative Dart import path, else None."""
     if not spec.startswith("."):
         return None
     base = (importer.parent / spec).resolve()
@@ -300,12 +294,7 @@ class DartParser(BaseParser, TreeSitterParserBase):
 
     @staticmethod
     def _formal_parameters(fpl: Node) -> List[Node]:
-        """formal_parameter nodes of a parameter list, in source order.
-
-        Optional positional ``[...]`` and named ``{...}`` groups nest theirs
-        inside optional_formal_parameters; a function-typed parameter owns a
-        nested formal_parameter_list that must not be counted here.
-        """
+        """Return direct formal parameters, excluding nested function parameter lists."""
         params: List[Node] = []
         for c in fpl.children:
             if c.type == "formal_parameter":
@@ -464,11 +453,7 @@ class DartParser(BaseParser, TreeSitterParserBase):
         )
 
     def _import_alias(self, node: Node, source: bytes) -> Optional[str]:
-        """`import 'u' as a;` -- the identifier child after the `as` token.
-
-        Combinator identifiers (show/hide) sit inside `combinator` nodes and
-        never bind a local name; export specifications carry no `as` at all.
-        """
+        """Return the local alias after as, ignoring show and hide combinators."""
         spec = self._find_descendant(node, "import_specification")
         if spec is None:
             return None

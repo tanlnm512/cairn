@@ -26,10 +26,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .auth import bearer_key_ok
 
-# Wire the metric-buffering conn factory BEFORE importing any tools_*.py:
-# the first @instrument-wrapped tool call would otherwise hit a None factory.
-# _conn in _server_core is exactly the connection factory metric_buffering
-# needs (open graph DB for the current workspace).
+# Wire the conn factory before the tool imports: the first
+# instrument-wrapped call would otherwise hit a None factory.
 from ._server_core import _bundle, _conn, _rw_conn, mcp
 from .metric_buffering import configure_conn
 configure_conn(_conn)
@@ -55,19 +53,7 @@ _EXPECTED_TOOL_COUNT = 26
 
 
 def _drain_buffered_telemetry() -> None:
-    """Synchronously drain every buffered telemetry sink (best-effort).
-
-    The parent-death watchdog exits via ``os._exit(0)`` from a non-main
-    thread, which bypasses ``atexit`` entirely -- so the sinks' atexit drains
-    (telemetry sink ``_flush_all``, ``embed_buffering._flush``) never run and
-    up to 30s of buffered events/tool_metrics, the OTLP side buffer, and 15s
-    of queued memory embeddings would be silently lost on a NORMAL session
-    end (client disconnect). Direct flush calls are the robust route:
-    ``atexit`` only fires on main-thread interpreter shutdown, so there is
-    nothing to hook from the watchdog thread. Each flush is individually
-    isolated so one failing sink can't block the others, and a drain failure
-    must never prevent the exit that follows it.
-    """
+    """Synchronously drain every buffered telemetry sink (best-effort, isolated per sink)."""
     try:
         from cairn.telemetry import flush as _telemetry_flush
 
@@ -95,11 +81,7 @@ def _drain_buffered_telemetry() -> None:
 
 
 def _watch_parent_loop() -> None:
-    """Body of the parent-death watchdog thread (see _install_exit_watchdog).
-
-    Module-level (not nested) so the drain-then-exit contract is unit-testable
-    without spawning the thread.
-    """
+    """Parent-death watchdog body: drain buffers, then os._exit(0) when the parent changes."""
     try:
         parent = os.getppid()
     except OSError:
@@ -120,14 +102,7 @@ def _watch_parent_loop() -> None:
 
 
 def _install_exit_watchdog():
-    """Ensure the server dies when its parent (the MCP client) dies.
-
-    Two mechanisms: SIGTERM/SIGINT -> SystemExit in the main thread, and a
-    background daemon thread polling the parent pid (reparented to init on
-    POSIX) -> buffered-telemetry drain + os._exit(0). Deliberately does NOT
-    read stdin: the MCP SDK's anyio transport is the sole reader of the stdin
-    fd, and reading it here steals bytes from JSON-RPC messages.
-    """
+    """Ensure the server dies with its parent (signals + parent-pid poll); never reads stdin."""
     def _signal_handler(_signum, _frame):
         raise SystemExit(0)
 
@@ -145,12 +120,7 @@ def _install_exit_watchdog():
 # hardcoded literal, so a dropped tools_*.py import or removed @mcp.tool
 # decorator trips this guard.
 def _count_fastmcp_tools():
-    """Count tools actually registered on the FastMCP instance.
-
-    Reads the live registry synchronously via FastMCP internals. The private
-    API can move across SDK versions, so :class:`AttributeError` degrades to a
-    safe count of 0 rather than crashing the boot guard.
-    """
+    """Count registered tools via FastMCP internals; AttributeError degrades to 0."""
     try:
         return len(mcp._tool_manager.list_tools())
     except AttributeError:
@@ -159,12 +129,7 @@ def _count_fastmcp_tools():
 
 
 def verify_tool_count() -> None:
-    """Raise AssertionError if the registered tool count drifts.
-
-    Deliberately a callable rather than a module-level ``assert`` so merely
-    importing :mod:`cairn.mcp_server` never trips it; a regression should
-    surface at server start, not as an import-time error.
-    """
+    """Raise AssertionError when the registered tool count drifts from the expected."""
     actual = _count_fastmcp_tools()
     assert actual == _EXPECTED_TOOL_COUNT, (
         f"Expected {_EXPECTED_TOOL_COUNT} tools, but found {actual}. "
@@ -197,10 +162,7 @@ def _authorization_header(scope) -> str | None:
 
 
 class _BearerAuthMiddleware:
-    """Pure-ASGI bearer-key gate: 401 without invoking the wrapped app on bad credentials.
-
-    Non-HTTP scopes (lifespan) and the exempt path pass through untouched.
-    """
+    """Pure-ASGI bearer gate: 401 on bad credentials; non-HTTP scopes and /healthz pass through."""
 
     def __init__(self, app, api_key: str):
         self._app = app
@@ -231,11 +193,7 @@ class _BearerAuthMiddleware:
 
 
 def _transport_security_for(host: str) -> TransportSecuritySettings:
-    """Host-header protection settings for the bind class: loopback / specific / wildcard.
-
-    Wildcard binds cannot enumerate Host values, so protection is explicitly
-    off there and the mandatory API key is the gate.
-    """
+    """Host-header protection for the bind class; off on wildcard, where the API key is the gate."""
     if host in _HTTP_LOOPBACK_HOSTS:
         return TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
@@ -282,11 +240,7 @@ def _build_http_app(
     api_key: str | None,
     stateless: bool,
 ):
-    """Apply the http bind policy to mcp.settings and return the ready-to-serve ASGI app.
-
-    All settings mutations happen here, before streamable_http_app() builds
-    the session manager (which snapshots stateless/transport-security once).
-    """
+    """Apply the bind policy to mcp.settings, then build the ASGI app (settings snapshot once)."""
     if host:
         mcp.settings.host = host
     if port:
@@ -309,27 +263,14 @@ def run(
     api_key: str | None = None,
     stateless: bool = False,
 ):
-    """Run the MCP server (``api_key`` is the pre-resolved key: None means keyless).
-
-    Runs a one-time catch-up at boot to absorb edits made while the server was
-    down, then (FRESH-1) starts a live file watcher so source edits made while
-    this process runs are reindexed within the debounce window (~2s). The
-    watcher needs the ``[watch]`` extra; without it freshness falls back to
-    boot catch-up + explicit ``cairn update``. It never starts in read-only
-    mode or when CAIRN_WATCH=0.
-    """
+    """Run the MCP server (``api_key`` pre-resolved; None means keyless), with boot catch-up."""
     # Per-process session id: metric_buffering/telemetry/builder stamp rows
     # with CAIRN_SESSION (default "unknown"); setdefault keeps an externally
     # provided id in control.
     os.environ.setdefault("CAIRN_SESSION", uuid4().hex[:12])
 
-    # Central logging config for the server surface: reads CAIRN_LOG_LEVEL
-    # (default WARNING) and attaches a stderr handler to the `cairn` logger
-    # only — never root. stdout is the JSON-RPC channel under stdio, so every
-    # other diagnostic in this file is already hand-stamped to stderr; the
-    # logger handler follows the same rule. FastMCP pins its own level in
-    # _server_core.py to avoid reconfiguring root, which this complements
-    # rather than fights (it configures the `cairn` namespace, not root).
+    # Configure the `cairn` logger namespace only, with a stderr handler:
+    # stdout is the JSON-RPC channel under stdio.
     configure_logging()
 
     # Long-running server boot: suppress non-actionable third-party noise.
@@ -338,10 +279,8 @@ def run(
     # Fail fast if tool registration drifted.
     verify_tool_count()
 
-    # Stdio servers should die when their MCP client disconnects. The watchdog
-    # polls os.getppid() and self-exits when the parent changes -- correct for
-    # stdio where the client IS the parent, but wrong for SSE where the parent
-    # is launchd/zsh. SSE daemons are managed via `cairn serve stop` (SIGTERM).
+    # Stdio servers die with their client: the parent-pid watchdog is wrong
+    # for SSE (launchd/zsh parent), where SIGTERM manages the daemon.
     if transport == "stdio":
         _install_exit_watchdog()
 
@@ -376,36 +315,16 @@ def run(
         )
         sys.exit(1)
 
-    # Warm the semantic models (embedder + reranker) in a background daemon
-    # thread (P0-1): the first semantic_search otherwise pays the full lazy
-    # model load (~9.4s measured, ~5s of it HF Hub metadata round-trips even
-    # on cached weights). Runs on the shared path so BOTH stdio and SSE get
-    # it, before serving starts, without blocking boot (thread started, not
-    # joined). Only ever warms weights already in the local HF cache -- it
-    # never downloads -- and is inert for hash/openai embed backends and a
-    # disabled reranker. Placed after the DB guard so an unbootable server
-    # doesn't load weights it will never use, and before the catch-up pass
-    # so weights load in parallel with reindexing. The kill switch
-    # (CAIRN_WARM_MODELS=0/false/no) is checked inside the function so the
-    # gate is unit-testable; the warm thread never writes to stdout (stdout
-    # is the JSON-RPC channel under stdio) -- it logs via the
-    # stderr-configured `cairn` logger only.
+    # Warm cached semantic weights in a background thread so the first
+    # semantic_search skips the lazy model load; never downloads.
     from cairn.graph.model_warmup import warm_models_in_background
 
     warm_models_in_background()
 
-    # Read-only mode: the shared SSE daemon opens the DB with mode=ro so it
-    # can never hold the writer lock and therefore never contends with
-    # `cairn build`/`cairn embed`/`cairn memory`. The two boot write paths
-    # below (catch-up reindex, memory decay) are SKIPPED in read-only mode:
-    # they are covered by the writable CLI side (`cairn update`, `cairn memory
-    # decay`). Serving-time analytics writes already no-op under read-only.
+    # Read-only servers never hold the writer lock.
     read_only = os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes")
 
-    # Boot catch-up: absorb edits made while no server was running.
-    # conn.close() lives in `finally` (with a preceding rollback()) so a
-    # mid-transaction failure doesn't leave an uncommitted write transaction
-    # pinning SQLite's writer lock for the life of this process.
+    # close() in `finally` so failed catch-up never pins the writer lock.
     if read_only:
         _timestamped_print(
             "cairn: read-only mode -- boot catch-up and memory decay "
@@ -419,10 +338,8 @@ def run(
             conn = get_db(db_path)
             n = ensure_fresh_force(conn, str(workspace))
             if n:
-                # Boot log line goes to stderr, NOT stdout: for stdio transport,
-                # stdout IS the JSON-RPC channel the MCP client reads, and a
-                # plain-text line written there before mcp.run() corrupts the
-                # framing.
+                # stderr only: stdout is the stdio JSON-RPC channel, and a
+                # plain-text line there corrupts the framing.
                 _timestamped_print(
                     f"cairn: caught up {n} file(s) changed while the server was down"
                 )
@@ -434,8 +351,7 @@ def run(
             if conn is not None:
                 conn.close()
 
-    # Run memory decay at server boot to archive stale raw memories automatically.
-    # Skipped in read-only mode: decay writes, so it belongs on the writable CLI side.
+    # Boot-time memory decay archives stale raw memories (writable side only).
     if not read_only:
         try:
             from cairn.memory.promotion import decay
@@ -460,17 +376,9 @@ def run(
             # Don't fail server boot if decay has an issue (e.g., knowledge dir doesn't exist yet)
             _timestamped_print(f"cairn: memory decay failed (non-critical): {e}")
 
-    # Live file watching (FRESH-1): keep the graph fresh for edits made while
-    # this server runs. Started on the shared path so BOTH stdio and SSE get
-    # it, after the DB guard and boot catch-up, with the SAME workspace/db the
-    # server resolved (passed explicitly -- the graph layer must not import
-    # mcp_server). start() is a logged no-op when the [watch] extra is absent
-    # or CAIRN_WATCH=0, and never runs in read-only mode (the watcher writes
-    # pending_sync rows + reindexes, so the read-only SSE daemon stays
-    # writer-free by construction). The PYTEST_CURRENT_TEST guard mirrors the
-    # model-warmup pattern: in-process test boots of run() must not leave a
-    # real filesystem observer thread watching the developer's machine across
-    # test boundaries.
+    # Live watching keeps the graph fresh for edits made while this server
+    # runs; start() is a logged no-op without the watch extra or with
+    # CAIRN_WATCH=0, and test boots must not leave a real observer thread.
     live_watcher = None
     if not read_only and not os.environ.get("PYTEST_CURRENT_TEST"):
         from cairn.graph.watcher import FileWatcherService
@@ -480,12 +388,8 @@ def run(
 
     try:
         if transport == "sse":
-            # The shared SSE daemon is the canonical writer-free reader. Stray
-            # per-editor stdio `cairn serve` processes can still hold the WAL lock
-            # and reintroduce "database is locked" because the stray opened the DB
-            # read-write. A background sweeper evicts them periodically so a daemon
-            # crash+restart self-heals. Runs only under SSE: a stdio server is
-            # itself a potential stray and must not kill its siblings.
+            # SSE-only: a stdio server is itself a potential stray and must not
+            # kill its siblings; the sweeper lets a restarted daemon self-heal.
             _install_stray_sweeper(db_path, interval_s=60.0)
 
             # FastMCP.run() in mcp>=1.0 reads host/port from mcp.settings, not kwargs.
@@ -532,15 +436,7 @@ def run(
 
 
 def _run_stray_sweep(db_path: str) -> int:
-    """One stray-sweep pass: kill orphan ``cairn serve`` PIDs + emit when any die.
-
-    Factored out of ``_install_stray_sweeper``'s loop so the
-    emit-on-genuine-kill behavior is unit-testable
-    without spinning the daemon thread (which sleeps ``interval_s`` between
-    ticks). Returns the count killed. The emit fires ONLY when a pass actually
-    killed something -- an idle sweep (the common case) emits nothing, so a
-    healthy daemon doesn't generate a ``stray_swept`` row every 60s.
-    """
+    """One stray-sweep pass; emits stray_swept only when a pass actually killed."""
     from ..mcp_server import lifecycle as lc
     from cairn.telemetry import STRAY_SWEPT, emit as _emit
 
@@ -552,11 +448,7 @@ def _run_stray_sweep(db_path: str) -> int:
 
 
 def _install_stray_sweeper(db_path: str, interval_s: float = 60.0):
-    """Background daemon thread that periodically evicts orphan `cairn serve` PIDs.
-
-    Called only from the SSE daemon path (see run()). Best-effort: the sweep
-    logs one line per kill to stderr. Idempotent start.
-    """
+    """Background daemon thread that periodically evicts orphan `cairn serve` pids."""
     def _loop():
         # Delay the first sweep so a freshly-started daemon doesn't race a
         # still-initializing sibling it shouldn't touch.

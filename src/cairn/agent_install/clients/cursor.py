@@ -36,11 +36,7 @@ def cursor_hooks_json() -> dict:
 def install_cursor(workspace: str, force: bool, dry_run: bool,
                    transport: str = "stdio", sse_url: str | None = None,
                    scope: str = "workspace") -> InstallResult:
-    """Wire cairn into Cursor (.cursor/mcp.json, rules, subagents, hooks).
-
-    ``scope="workspace"`` writes to ``<workspace>/.cursor/`` (default).
-    ``scope="global"`` writes to ``~/.cursor/`` so all projects inherit.
-    """
+    """Install Cursor configuration, rules, subagents, and hooks."""
     ws = Path(workspace)
     base = ws if scope == "workspace" else Path.home()
     res = InstallResult("cursor")
@@ -59,16 +55,7 @@ def install_cursor(workspace: str, force: bool, dry_run: bool,
 
 
 def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
-    """Remove cairn files/entries for Cursor.
-
-    ``scope="workspace"`` (the default, historical behavior) strips
-    ``<ws>/.cursor/``. ``scope="global"`` strips ``~/.cursor/`` -- where a
-    ``--scope global`` install wrote mcp.json, rules, subagents, and hooks.
-    ``scope="all"`` does both.
-
-    Rules/subagents are only removed when byte-identical to what the
-    installer writes, so a user's own file at the same path survives.
-    """
+    """Remove Cursor files and entries for the selected install scope."""
     for base in _uninstall_bases(ws, scope):
         _strip_mcp(base / ".cursor" / "mcp.json", res)
         _rm_if_ours(base / ".cursor" / "rules" / "cairn.mdc",

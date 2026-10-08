@@ -78,10 +78,7 @@ class JavaParser(BaseParser, TreeSitterParserBase):
         if t == "field_declaration":
             for sym in self._parse_field(node, source):
                 pf.symbols.append(sym)
-            # Descend into initializers so calls in field initializers (e.g.
-            # `private final Repo repo = createRepo();`) emit edges. Mirrors
-            # method_declaration above; without this, field-initializer calls
-            # were silently dropped.
+            # Field initializers can contain call edges.
             self._walk(node, source, pf)
             return
 
@@ -93,10 +90,7 @@ class JavaParser(BaseParser, TreeSitterParserBase):
             return
 
         if t == "object_creation_expression":
-            # `new Foo()` -- a constructor call. Emit a calls edge to the
-            # constructed type so get_callers/impact_analysis see it (C# does
-            # the same for its object_creation_expression). Without this,
-            # every `new Foo()` in Java produced no edge at all.
+            # Constructor calls target the constructed class.
             edge = self._parse_new(node, source)
             if edge:
                 pf.edges.append(edge)
@@ -233,13 +227,7 @@ class JavaParser(BaseParser, TreeSitterParserBase):
                         )
 
     def _extract_type_name(self, node: Node, source: bytes) -> Optional[str]:
-        """Return the base type name of a type node.
-
-        Handles plain (``type_identifier``/``scoped_type_identifier``) and
-        parameterised (``generic_type``) forms. For ``List<Foo>`` returns
-        ``List``; for ``java.util.List<Foo>`` returns ``java.util.List``; for
-        a bare ``Bar`` returns ``Bar`` unchanged.
-        """
+        """Return a generic type's base name, or a plain or scoped type verbatim."""
         if node.type == "generic_type":
             # generic_type wraps its head (type_identifier or
             # scoped_type_identifier) followed by type_arguments.
@@ -267,10 +255,7 @@ class JavaParser(BaseParser, TreeSitterParserBase):
                 yield from child.children
 
     def _method_arity(self, node: Node) -> Optional[int]:
-        # formal_parameters children: formal_parameter | spread_parameter |
-        # receiver_parameter (plus punctuation/comments). Varargs accept a
-        # varying call-site count, so the declared count is unknown; an
-        # explicit receiver_parameter is not a call-site argument.
+        # Varargs and explicit receivers do not define call-site arity.
         params = self._child_of_type(node, ("formal_parameters",))
         if params is None:
             return None
@@ -319,11 +304,7 @@ class JavaParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_new(self, node: Node, source: bytes) -> Optional[Edge]:
-        # object_creation_expression: 'new' <type> argument_list. The
-        # constructed type is the type node after 'new' (type_identifier for a
-        # simple name; class_type/scoped_type_identifier when qualified). Use
-        # the trailing identifier so the resolver can match it to the class
-        # symbol, mirroring the method-name-only call convention.
+        # The trailing type identifier names the constructed class.
         owner = self._current_edge_owner()
         for child in node.children:
             if child.type == "argument_list":

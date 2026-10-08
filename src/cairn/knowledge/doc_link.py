@@ -35,13 +35,7 @@ DOC_LINK_OUTPUT_SPEC = (
 def parse_doc_link_result(
     result: Optional[str],
 ) -> Tuple[List[Tuple[str, str, str]], List[str]]:
-    """Parse proposed edges out of a doc-link result body.
-
-    One edge per line: ``<concept_id> <relation> <related_id>``. Heading
-    lines, bullet markers, code-fence markers, and backticks around ids
-    are tolerated; anything else that is not a well-formed edge line is a
-    parse error naming the line. Returns ``(edges, errors)``.
-    """
+    """Parse one edge per result line and return ``(edges, errors)``."""
     edges: List[Tuple[str, str, str]] = []
     errors: List[str] = []
     for raw in (result or "").splitlines():
@@ -73,10 +67,7 @@ def validate_doc_link_edges(
     proposed: List[Tuple[str, str, str]],
     members: Optional[List[str]] = None,
 ) -> List[str]:
-    """Critic check: every referenced concept_id must exist and edges
-    must not be self-referential. When ``members`` is provided, each
-    edge endpoint must additionally be one of those ids (the completing
-    task's island). Errors name the invalid reference."""
+    """Return errors for unknown, self, or optional non-member endpoints."""
     from cairn.knowledge.islands import knowledge_doc_ids
     from cairn.knowledge.store import normalize_doc_id
 
@@ -110,11 +101,7 @@ def apply_doc_link_edges(
     conn,
     proposed: List[Tuple[str, str, str]],
 ) -> Dict[str, Any]:
-    """Write accepted proposals into both docs' frontmatter as
-    ``kind: inferred`` entries, then rebuild the derived index (committed
-    on ``conn``). An entry for the same pair+relation already present in
-    either kind wins -- no duplicates are written. Returns
-    ``{docs_updated, edges_applied}``."""
+    """Apply inferred edges to both docs, rebuild the index, and commit."""
     from cairn.knowledge.index import rebuild_knowledge_index
     from cairn.knowledge.store import normalize_doc_id
 

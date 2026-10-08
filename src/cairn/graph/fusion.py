@@ -9,13 +9,7 @@ def rrf_fuse(
     k: int = 60,
     weights: Optional[List[float]] = None,
 ) -> List[Tuple[str, float]]:
-    """Fuse multiple lists of document IDs using Reciprocal Rank Fusion.
-
-    :param rankings: List of ranked ID lists (each list ordered best to worst).
-    :param k: RRF constant (default 60, standard in industry).
-    :param weights: Optional relative weight for each input list. Default 1.0 each.
-    :return: List of (doc_id, fused_score) sorted descending by fused_score.
-    """
+    """Fuse multiple lists of document IDs using Reciprocal Rank Fusion."""
     if not rankings:
         return []
 

@@ -22,14 +22,7 @@ def reindex_paths(
     workspace: str,
     paths: list[str],
 ) -> dict:
-    """Re-index a set of absolute file paths. Handles repo resolution, deletion,
-    and resolver re-run. Returns {'reindexed': n, 'deleted': m,
-    'embedded_symbols': k, 'deferred_embeds': d, 'errors': [...]}.
-    'deleted' also counts files dropped because their parser is unavailable.
-
-    Idempotent and safe to call from the watcher thread (as long as the watcher
-    opens its own connection).
-    """
+    """Reindex absolute paths and return update, embedding, and error counts."""
     import uuid
     from datetime import datetime, timezone
 
@@ -49,10 +42,7 @@ def reindex_paths(
 
     # Group paths by repo for batched resolver re-run.
     repo_edges_by_file: dict[str, dict[str, list]] = {}
-    # Names of symbols that were deleted+recreated per repo. The repair pass
-    # re-resolves INCOMING edges (from other files) whose target pointed at one
-    # of these names; without it they stay 'unresolved' until the caller's own
-    # file is edited or a full rebuild runs (see resolver.repair_incoming_edges).
+    # Deleted and recreated names seed incoming-edge repair.
     repo_changed_target_names: dict[str, set[str]] = {}
 
     for abs_path in paths:
@@ -63,24 +53,12 @@ def reindex_paths(
         repo, rel_to_repo = resolved
 
         cur = conn.cursor()
-        # files.path is stored as REPO-RELATIVE (the portable-path contract);
-        # reindex_paths receives ABSOLUTE paths. Shared lookup: repo-relative
-        # primary scoped to the inferred repo, absolute fallback for DBs not
-        # yet rebuilt (path is only unique per (repo_id, path)).
+        # Prefer the stored portable path and repository id.
         row = _find_tracked_file_row(cur, workspace, abs_path)
-        # Use the STORED repo_id for downstream inserts so FK constraints on
-        # files.repo_id -> repos.id hold (the inferred 'repo' may not exist in
-        # repos at all). With no existing file row the inferred repo is kept;
-        # insert_parsed_file ensures its repos row exists before the insert.
         stored_repo = row["repo_id"] if row else repo
         stored_path = row["path"] if row else rel_to_repo  # normalize for delete
         file_id = row["id"] if row else None
 
-        # Snapshot the bare names of symbols currently in this file BEFORE
-        # deleting them. The repair pass uses these to re-resolve INCOMING
-        # edges (from other files) that pointed at a re-created symbol; without
-        # it they stay 'unresolved' until a full rebuild (see
-        # resolver.repair_incoming_edges).
         deleted_names: set[str] = set()
         if file_id:
             for r in cur.execute(
@@ -89,10 +67,7 @@ def reindex_paths(
                 if r["name"]:
                     deleted_names.add(r["name"])
 
-        # BEGIN one transaction around the whole delete+re-parse+insert so a
-        # crash mid-file either keeps the old rows or installs the new ones,
-        # never leaves a gap (old deleted, new not yet written). Commit/rollback
-        # is explicit at each exit below.
+        # Keep each file replacement atomic.
         try:
             conn.execute("BEGIN")
             if file_id:
@@ -100,23 +75,7 @@ def reindex_paths(
                     "DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file_id = ?)",
                     (file_id,),
                 )
-                # Cross-file edges/imports pointing INTO this file's symbols (as
-                # target) aren't touched by the DELETEs above. Null out those
-                # references before deleting the symbols below, or the FK
-                # (edges.target_id / imports.resolved_symbol_id -> symbols.id,
-                # no cascade) raises "FOREIGN KEY constraint failed". Nulling
-                # matches the unresolved-target convention: target_name/
-                # imported_path survive for the resolver to re-link.
-                #
-                # IMPORTANT: a resolved edge has target_name already cleared to
-                # NULL (the resolver drops the bare name once target_id is set).
-                # Backfill target_name from the symbol we're about to delete
-                # BEFORE nulling target_id, so the repair pass can still match
-                # these edges by name and re-resolve them once the symbol is
-                # re-created. Without this, an incremental reindex of a callee
-                # file permanently orphans its incoming edges (target_id AND
-                # target_name both NULL -> unresolvable, invisible to precise
-                # callers, and even fuzzy mode can't recover the name).
+                # Backfill names before nulling targets so repair can find them.
                 cur.execute(
                     "UPDATE edges SET "
                     "  target_name = COALESCE(target_name, "
@@ -169,15 +128,7 @@ def reindex_paths(
                 # DB is a no-op, not a deletion.
                 if file_id is not None:
                     deleted += 1
-                    # Register the deleted file's symbol names for the repair
-                    # pass even though nothing was re-created. The DELETE above
-                    # nulled+backfilled every incoming edge to those symbols;
-                    # without registering the names here those edges stay
-                    # 'unresolved' until their OWN files are edited or a full
-                    # rebuild runs -- while a fresh build would re-resolve them
-                    # (e.g. to a same-named symbol elsewhere, or to 'ambiguous'
-                    # if the deletion removed one of two duplicates). This makes
-                    # a deleted file behave exactly like a modified one.
+                    # Deleted names still need resolver repair.
                     if deleted_names:
                         repo_changed_target_names.setdefault(stored_repo, set()).update(deleted_names)
                 # Also remove from pending_sync if tracking.
@@ -215,12 +166,7 @@ def reindex_paths(
                 )
             parser = builder.get_parser(language) if available else None
             if parser is None:
-                # Drop the file's rows: the graph converges to fresh-build
-                # state, which skips unavailable-language files. Counted even
-                # for never-indexed files so strict refresh's
-                # repaired==len(drifted) holds; pending_sync is cleared so the
-                # staleness banner settles. The scanner re-detects the file
-                # once the grammar returns.
+                # Fresh builds skip unavailable parsers; strict refresh converges.
                 try:
                     conn.execute(
                         "DELETE FROM pending_sync WHERE path IN (?, ?)",
@@ -282,10 +228,7 @@ def reindex_paths(
         # Post-COMMIT embed leg: the file is durable here, so a failure in
         # this block defers the embeds and is never a parse failure.
         try:
-            # embed_symbols self-commits its batches: keep it after the COMMIT
-            # above or its commit would defeat the rollback on re-parse
-            # failure. A closed gate or a failing embed defers, never fails,
-            # the update.
+            # Self-committing embeds stay outside the reindex transaction.
             if name_to_symbol_ids:
                 new_ids = [
                     sid
@@ -307,12 +250,7 @@ def reindex_paths(
                             pass
                     else:
                         embedded_symbols += summary["embedded"]
-                        # embed_symbols' commit-failure path (lock contention)
-                        # leaves the batch buffered on an open transaction and
-                        # reports embedded=0. Settle it here or the next file
-                        # leg's BEGIN fails and that leg's rollback drops the
-                        # buffered rows. Flush success keeps the rows; a second
-                        # loss rolls back and defers the file's symbols.
+                        # Settle a failed embedding commit before this rollback.
                         if conn.in_transaction:
                             try:
                                 conn.commit()
@@ -321,15 +259,7 @@ def reindex_paths(
                                 deferred_embeds += len(new_ids)
                 else:
                     deferred_embeds += len(new_ids)
-            # Record BOTH the removed and the freshly-introduced names for the
-            # repair pass. The removed names cover edges whose targets were
-            # deleted+re-created (classic repair); the freshly-introduced names
-            # cover the resolution flip the other way -- an edge elsewhere that
-            # was ambiguous because the name did not exist (or existed once and
-            # a second definition just appeared) must be re-resolved to match
-            # what a fresh build would decide. Only names whose candidate count
-            # actually changed are registered, so the repair stays proportional
-            # to the edit.
+            # Repair only names whose global candidate count changed.
             changed_names = set(deleted_names) | set(name_to_symbol_ids.keys())
             if changed_names:
                 repo_changed_target_names.setdefault(stored_repo, set()).update(changed_names)
@@ -395,28 +325,7 @@ def incremental_update(
     db_path: Optional[str] = None,
     diff_ref: Optional[str] = None,
 ) -> dict:
-    """Re-index only changed files since the last build.
-
-    Uses `git diff` to find changed source files, deletes their old symbols/edges,
-    and re-parses + inserts them. With ``diff_ref`` set, detection is scoped to
-    that git range (``A..B``) and the worktree/untracked/stat signals are
-    skipped. After reindexing it re-applies the configured
-    SCIP overlay (existing index files only, never a generation) so covered files
-    keep index-sourced edges. It then refreshes the derived indexes (dataflow +
-    transitive closure) so cached impact lookups and multi-hop traversals reflect
-    the change; without this refresh `cairn update` would serve stale derived data.
-
-    Returns a summary dict including any per-file errors (re-parse failures,
-    resolver failures). Uses a longer busy_timeout than interactive MCP tool
-    calls so it can wait out lock contention from concurrently-running
-    `cairn serve` processes rather than fail after 5s.
-
-    The write phase runs under the schema build lock (LOCK_NB, non-blocking)
-    so a repo build's _clear_repo can never interleave with these writes --
-    the lock's own contract ("a build racing an update"). A concurrent build
-    raises RuntimeError; the caller surfaces it as "retry later". The diff
-    scan stays OUTSIDE the lock so a long scan doesn't hold it.
-    """
+    """Reindex changed files and refresh overlays and derived indexes."""
     started = time.time()
     conn = get_db(db_path, busy_timeout_ms=20000)
     try:
@@ -438,10 +347,7 @@ def incremental_update(
                 all_paths.append(str(repo_path / f))
 
         with build_lock(db_path or str(_resolve_store().db)):
-            # Snapshot the derived-index pre-state BEFORE reindex_paths deletes
-            # the changed files' rows -- closure ancestors and the old ids/names
-            # of the changed files' symbols are only computable while the old
-            # rows still exist (see _capture_derived_prestate).
+            # Old derived-index inputs disappear after reindex.
             pre = _capture_derived_prestate(conn, workspace, all_paths)
 
             result = reindex_paths(conn, workspace, all_paths)
@@ -463,10 +369,7 @@ def incremental_update(
                     logger.debug("scip overlay re-application failed", exc_info=True)
                     scip_errors.append(f"scip_overlay: {e}")
 
-            # Derived indexes: incremental maintenance restricted to the
-            # affected symbol set; the full rebuild only runs for a never-built
-            # table. Best-effort: a failure is reported as an error but does
-            # not undo the reindex.
+            # Maintain affected rows; rebuild only missing derived tables.
             derived_errors: list[str] = []
             if result["reindexed"] or result["deleted"]:
                 if pre["dataflow_built"]:
@@ -476,12 +379,6 @@ def incremental_update(
     finally:
         conn.close()
 
-    # Persist an 'incremental' build_runs row. Best-effort (record_build_run
-    # swallows all errors). reindex_paths returns reindexed/deleted counts but
-    # no resolution mix or parse-error breakdown, so those columns stay NULL --
-    # best-available rather than a refactor of the progress
-    # contract. Recorded here (not inside the shared reindex_paths) so the
-    # `cairn sync` CLI path records its own 'sync' row without double-counting.
     builder.record_build_run(
         db_path,
         "incremental",
@@ -502,13 +399,7 @@ def incremental_update(
 def _rebuild_derived_indexes(
     conn: sqlite3.Connection, closure_built: bool
 ) -> list[str]:
-    """Full rebuild of dataflow plus, only for a store that has one, the
-    transitive closure; returns error strings.
-
-    Fallback for a never-built derived table (no trusted pre-state to compute
-    an affected set from). Each phase is independent; a failure in one doesn't
-    skip the other.
-    """
+    """Rebuild absent derived indexes independently and return errors."""
     errors: list[str] = []
     try:
         from .dataflow import build_dataflow_index
@@ -530,10 +421,7 @@ def _rebuild_derived_indexes(
 
 
 def _repo_relative_path(workspace: str, abs_path: str) -> tuple[str, str] | None:
-    """Infer the owning repo and the repo-relative path for an absolute path.
-
-    Returns None when the path lies outside every known repo in the workspace.
-    """
+    """Return an absolute path's repository and repo-relative path."""
     repo = scanner_mod.infer_repo_for_path(abs_path, workspace)
     if not repo:
         return None
@@ -547,13 +435,7 @@ def _repo_relative_path(workspace: str, abs_path: str) -> tuple[str, str] | None
 
 
 def _find_tracked_file_row(cur, workspace: str, abs_path: str):
-    """Resolve an absolute path to its tracked ``files`` row (or None).
-
-    Normalizes through the same repo-relative path the delete/reinsert legs
-    compute, then applies the repo-relative-primary, absolute-fallback lookup
-    so pre/post snapshots agree with what reindex_paths actually deleted and
-    re-inserted.
-    """
+    """Return the tracked row for an absolute path, or None."""
     resolved = _repo_relative_path(workspace, abs_path)
     if resolved is None:
         return None
@@ -573,15 +455,7 @@ def _find_tracked_file_row(cur, workspace: str, abs_path: str):
 def _capture_derived_prestate(
     conn: sqlite3.Connection, workspace: str, paths: list[str]
 ) -> dict:
-    """Snapshot the old-graph inputs the affected-set computation needs; must
-    run BEFORE reindex_paths deletes the changed files' rows.
-
-    Keys: old_ids/old_names (the changed files' symbols), repair_sources and
-    repair_edge_ids (edges the null+repair pass can retarget, selected by
-    resolved old ids or old target names), ancestor_ids (closure ancestors of
-    the affected sources), old_targets (the deleted edges' resolved callees),
-    closure_built/dataflow_built (never-built fallback flags).
-    """
+    """Snapshot old graph inputs needed to compute affected sets."""
     from .dataflow import _chunked
 
     cur = conn.cursor()
@@ -716,14 +590,7 @@ def _maintain_derived_indexes(
     paths: list[str],
     pre: dict,
 ) -> list[str]:
-    """Incrementally maintain closure + dataflow for a completed reindex.
-
-    Closure sources = old/new ids, repair and name-repair sources, and their
-    closure ancestors; dataflow names = old/new names plus names reachable
-    from the changed edges' resolved targets. The closure leg runs only when
-    the store has a closure (an absent closure stays absent). Each phase is
-    best-effort and independent; returns error strings.
-    """
+    """Incrementally maintain built derived indexes and return errors."""
     from .dataflow import (
         _chunked,
         maintain_dataflow_index,
@@ -786,11 +653,7 @@ def _maintain_derived_indexes(
             errors.append(f"transitive_closure: {e}")
 
     try:
-        # Changed-edge target seeds for the dataflow-affected computation:
-        # the changed files' own edge targets (new state), plus the POST-repair
-        # targets of the captured repairable edge ids (precise because after
-        # repair those rows are unidentifiable by name/id -- only the row id
-        # survives). Pre-captured old_targets completes the old side.
+        # Repaired edge ids are only identifiable after the repair.
         new_targets: set[str] = set()
         for chunk in _chunked(new_ids):
             ph = ",".join("?" for _ in chunk)
@@ -840,22 +703,7 @@ def _filter_source_paths(lines) -> List[str]:
 
 
 def _changed_source_files(repo_path: Path, conn=None, diff_ref: Optional[str] = None) -> List[str]:
-    """Return repo-relative paths of changed source files since last index.
-
-    Flag-less: ``git diff --name-only HEAD`` plus untracked source files
-    (``git ls-files --others``), falling back to size/mtime comparison against
-    the ``files`` table when git is unavailable or the repo has no HEAD yet.
-    Without the fallback, such repos silently report "0 changed files" on every
-    ``cairn update``.
-
-    With ``diff_ref``: only ``git diff --name-only <diff_ref>`` -- the
-    untracked pass and the stat fallback are skipped, so the result is exactly
-    the ref span. A git failure logs and returns [].
-
-    ``conn`` (optional) is needed only for the flag-less fallback path. If
-    omitted and git is unavailable, returns [] -- callers that want the
-    fallback must pass the open connection.
-    """
+    """Return changed source paths using git or stat fallback."""
     if diff_ref is not None:
         out = _run_git(["diff", "--name-only", diff_ref], str(repo_path))
         if out is None:
@@ -887,13 +735,7 @@ def _changed_source_files(repo_path: Path, conn=None, diff_ref: Optional[str] = 
 
 
 def _changed_via_stat(repo_path: Path, conn) -> List[str]:
-    """Size/mtime-based change detection against the ``files`` table.
-
-    A file is "changed" if its on-disk size or mtime differs from the stored
-    row by more than the 0.5s mtime tolerance, or if a tracked file no longer
-    exists, or if a new source file appears that isn't in the table. Returns
-    repo-relative paths.
-    """
+    """Return changed paths by size, mtime, deletion, or new appearance."""
     repo_name = scanner_mod.repository_id(repo_path)
     try:
         file_rows = conn.execute(
@@ -937,11 +779,7 @@ def _reindex_file(
     conn: sqlite3.Connection, repo: str, repo_path: Path, rel_path: str,
     workspace: str = "",
 ):
-    """Delete old symbols/edges/imports/errors for a file and re-parse + insert it.
-
-    Single-file entry point used by `cairn update --file`. Delegates to
-    reindex_paths internally.
-    """
+    """Reindex one file through the shared path update machinery."""
     abs_path = str(repo_path / rel_path)
     # Derive workspace from repo_path.parent (multi-repo) or use explicit value.
     effective_ws = workspace or str(repo_path.parent)

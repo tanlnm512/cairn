@@ -120,15 +120,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_embeds(self, node: Node, source: bytes, owner: str) -> List[Edge]:
-        """`embeds` edges for one ``type_spec``.
-
-        Struct embedding: a ``field_declaration`` with no ``field_identifier``
-        (``*Base``, ``pkg.Config``, ``Base``). Interface embedding: a
-        ``type_elem`` among the interface's elements (``io.Writer``). Named
-        fields and method elements are members, not embeds, and are skipped.
-        Qualified and pointer embeds contribute their bare type name (the same
-        convention call targets use).
-        """
+        """Return embeds Edges for struct fields and interface type elements."""
         edges: List[Edge] = []
         struct = self._child_of_type(node, _STRUCT_TYPE)
         iface = self._child_of_type(node, _INTERFACE_TYPE)
@@ -224,12 +216,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_signature(self, node: Node, source: bytes):
-        """Return (parameters_str, return_type_str, arity) from a
-        function_declaration.
-
-        The signature's parameter_list is the FIRST one (function_declaration
-        has no receiver). The return type is the type node following it.
-        """
+        """Return function parameters, return type, and arity."""
         param_lists = [c for c in node.children if c.type == "parameter_list"]
         if not param_lists:
             return None, None, None
@@ -260,12 +247,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
         return params, return_type, self._param_arity(params_node)
 
     def _param_arity(self, params_node: Node) -> Optional[int]:
-        """Parameter count of a parameter_list; None when a variadic
-        parameter makes the count unknowable.
-
-        A declaration naming several parameters (``a, b int``) counts each
-        name; an unnamed declaration (``int``) counts one.
-        """
+        """Return parameter count, or None for a variadic parameter list."""
         arity = 0
         for child in params_node.children:
             if child.type == "variadic_parameter_declaration":
@@ -298,11 +280,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
         return ", ".join(parts) if parts else None
 
     def _receiver_type_from_params(self, recv_node: Node, source: bytes) -> Optional[str]:
-        """Extract the receiver type from a method's first parameter_list.
-
-        ``func (s *Server) ...`` -> ``Server``. Handles pointer_type and
-        qualified_type (``*http.Server`` -> ``http.Server``).
-        """
+        """Return the bare Go receiver type, unwrapping pointers and qualifiers."""
         for child in recv_node.children:
             if child.type != "parameter_declaration":
                 continue
@@ -319,11 +297,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
     # ------------------------------------------------------------ call parsing
 
     def _parse_call(self, node: Node, source: bytes) -> Optional[Edge]:
-        """call_expression -> Edge(kind='calls').
-
-        Captures the callee name and, when there's a receiver, its base type
-        for the resolver's type-aware tier.
-        """
+        """Return a calls Edge with callee name and inferred receiver type."""
         callee = None
         receiver_text = None
         for child in node.children:
@@ -377,14 +351,7 @@ class GoParser(BaseParser, TreeSitterParserBase):
     # ------------------------------------------------------------- import parse
 
     def _parse_imports(self, node: Node, source: bytes) -> List[Import]:
-        """import_declaration -> one Import per import_spec.
-
-        Handles both single (``import "fmt"``) and grouped
-        (``import ( "a"; "b" )``) forms. A ``package_identifier`` name child
-        is the local alias (``import qux "path"``); blank (``_``) and dot
-        (``.``) imports record no alias — a blank import binds nothing and a
-        dot import binds unqualified names.
-        """
+        """Return Imports for single and grouped specs, preserving only binding aliases."""
         imports: List[Import] = []
         # import_specs may be direct children or nested under import_spec_list.
         for spec in self._all_import_specs(node):

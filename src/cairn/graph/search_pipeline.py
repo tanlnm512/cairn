@@ -44,11 +44,7 @@ StageRecovery = Callable[["SearchContext"], None]
 
 @dataclass
 class SearchContext:
-    """State shared by one semantic-search run.
-
-    ``params`` is the caller-owned ``RetrievalParams``; it remains duck-typed
-    here to avoid a reverse dependency on the composition entry point.
-    """
+    """State shared by one semantic-search run."""
 
     conn: sqlite3.Connection
     query: str

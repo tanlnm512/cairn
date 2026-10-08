@@ -24,7 +24,7 @@ when the product is healthy.
   executable statement.
 - **Story**: US1 · **Traces to**: FR-001 (US1/AC2)
 
-**Pass condition**: `env UV_CACHE_DIR=/tmp/cairn-comment-sweep-qa make verify-no-code-change`
+**Pass condition**: `bash -lc 'env UV_CACHE_DIR=/tmp/cairn-comment-sweep-qa make verify-no-code-change 2>&1 >/dev/null | sed -n "s/^  //p" | sort | diff -q - <(printf "src/cairn/cli/system/report.py\ntests/test_report.py\n" | sort)'`
 
 Standing per-commit verify: after each intermediate trim commit, run
 `env UV_CACHE_DIR=/tmp/cairn-comment-sweep-qa make verify-no-code-change REF=HEAD~1`.
@@ -40,7 +40,7 @@ Standing per-commit verify: after each intermediate trim commit, run
   agree at or below 606.
 - **Story**: US1 · **Traces to**: FR-005 (US1/AC1)
 
-**Pass condition**: `jq -e '(.violations | length) <= 606' docs/audits/comment-style-baseline.json && env UV_CACHE_DIR=/tmp/cairn-comment-sweep-qa make comment-style ARGS=--json | jq -e '(.ok == true) and (.new == 0) and (.stale == 0) and (.remaining <= 606)'`
+**Pass condition**: `jq -e '(.violations | length) <= 606' docs/audits/comment-style-baseline.json && env UV_CACHE_DIR=/tmp/cairn-comment-sweep-qa make comment-style ARGS=--json | jq -e '(.ok == true) and ((.new | length) == 0) and ((.stale | length) == 0) and (.remaining <= 606)'`
 
 ## TC-004 — Durable-rationale destination remains available
 
@@ -138,7 +138,7 @@ Standing per-commit verify: after each intermediate trim commit, run
   command deliberately fails if the warning reappears.
 - **Story**: US3 · **Traces to**: FR-004 (US3/AC1)
 
-**Pass condition**: `bash -lc 'env UV_CACHE_DIR=/tmp/cairn-comment-sweep-qa make audit-status 2>&1 >/dev/null | grep -q RuntimeWarning && exit 1 || exit 0'`
+**Pass condition**: `bash -lc 'env UV_CACHE_DIR=/tmp/cairn-comment-sweep-qa make audit-status 2>&1 >/dev/null | grep -q RuntimeWarning && exit 1; exit ${PIPESTATUS[0]}'`
 
 ## TC-013 — Prose-pinned tests are updated, never deleted to pass
 

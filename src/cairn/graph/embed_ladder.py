@@ -39,19 +39,7 @@ def check_parity(
     ] = None,
     sample_limit: int = SAMPLE_LIMIT,
 ) -> ParityResult:
-    """Sample stored chunks under ``stamp`` and parity-check them.
-
-    ``embed_fn(texts) -> (float32-LE blobs, dim)`` defaults to the
-    server client. Contract:
-
-    * zero stored rows under the stamp -> vacuous pass (``sampled=0``,
-      ``mean_cosine=None``); ``embed_fn`` is never called.
-    * a served/stored dim mismatch fails naming both measured dims.
-    * otherwise pass iff mean pairwise cosine >= PARITY_GATE; failures
-      report the measured mean.
-
-    Sampling is deterministic: first ``sample_limit`` rows by rowid.
-    """
+    """Sample stored chunks under ``stamp`` and parity-check them."""
     if embed_fn is None:
         embed_fn = embeddings._embed_server
 
@@ -133,13 +121,7 @@ class LadderState:
 
 _LADDER_CACHE: dict = {"state": None}
 
-# Serializes the check-then-act on _LADDER_CACHE (double-checked locking: an
-# unlocked fast-path read, then re-check + evaluate under the lock) and the
-# membership-check+add on _DEGRADATION_NOTIFIED below. Without it, concurrent
-# MCP threads each race past the empty-cache check and double-run evaluation
-# (up to 16 embeds per candidate) and double-notify. Mirrors embeddings'
-# _ALIAS_GATE_LOCK discipline. notify_degradation runs OUTSIDE the lock so
-# telemetry emission never holds it.
+# Ladder cache checks and notification membership share one lock.
 _LADDER_LOCK = threading.Lock()
 
 # Rung-3 detail strings: short, machine-actionable, one per trigger reason.
@@ -168,12 +150,7 @@ def ladder_state() -> Optional[LadderState]:
 
 
 def set_session_stamp(stamp: Optional[str]) -> None:
-    """Pin the rung-1 alias binding: the stamp ``current_model()`` serves.
-
-    Holds the STORED corpus stamp (not the candidate's derived stamp) so
-    reads and writes keep hitting the existing rows with zero re-embed;
-    the adopted request model id moves via :func:`set_session_server_model`.
-    """
+    """Pin the rung-1 alias binding: the stamp ``current_model()`` serves."""
     embeddings._SESSION_STAMP_OVERRIDE = stamp
 
 
@@ -189,12 +166,7 @@ def set_session_backend(backend: Optional[str]) -> None:
 
 
 def reset_cache() -> None:
-    """Drop the cached verdict, every session override, and the notify
-    once-set (the next degradation logs and emits again).
-
-    Reached through ``embeddings.reset_backend_cache()`` (and directly in
-    tests); also the re-evaluation seam for doctor and ``cairn embed``.
-    """
+    """Reset ladder verdicts, overrides, and degradation notification state."""
     with _LADDER_LOCK:
         _LADDER_CACHE["state"] = None
         _DEGRADATION_NOTIFIED.clear()
@@ -203,15 +175,7 @@ def reset_cache() -> None:
     set_session_backend(None)
 
 
-# ---------------------------------------------------------------------------
-# Degradation notification fan-out. One unit per (process, reason):
-# a user-facing warn-once line on the shared 'cairn' logger plus one
-# EMBED_SERVER_DEGRADED event (host+model payload only). The
-# logger line is deliberately NOT gated on telemetry: events.warn_once
-# refuses under CAIRN_TELEMETRY=off, which would silence the unconditional
-# surface, so this module keeps a private once-set and leaves the telemetry
-# gates to emit() itself.
-# ---------------------------------------------------------------------------
+# --- Degradation notification fan-out ---
 
 logger = logging.getLogger("cairn")
 
@@ -248,16 +212,7 @@ def _degradation_host() -> str:
 
 
 def notify_degradation(reason: str, detail: str = "") -> None:
-    """Fan out one degradation notification, once per (process, reason).
-
-    ``reason`` is a ``telemetry.events.EMBED_SERVER_REASONS`` member;
-    ``detail`` is the caller's actionable remediation (defaults to a
-    per-reason hint). Fires as one unit: the warn-once logger line (never
-    telemetry-gated) and one ``EMBED_SERVER_DEGRADED`` event whose
-    attrs are reason + host + model only -- never request bodies or code
-    text; telemetry-off/read-only suppress the event, never the
-    line. Never raises.
-    """
+    """Fan out one degradation notification, once per (process, reason)."""
     with _LADDER_LOCK:
         if reason in _DEGRADATION_NOTIFIED:
             return
@@ -297,20 +252,12 @@ def _degradation_line(prefix: str) -> str:
 
 
 def degradation_footnote() -> str:
-    """The degradation footnote MCP tool results append.
-
-    Zero side effects; "" when no degradation is active, else one line
-    naming the rung, reason, and remediation.
-    """
+    """The degradation footnote MCP tool results append."""
     return _degradation_line("degraded: ")
 
 
 def degradation_banner() -> str:
-    """The dashboard degradation banner text.
-
-    Zero side effects; "" when no degradation is active, else one line
-    naming the rung, reason, and remediation.
-    """
+    """The dashboard degradation banner text."""
     return _degradation_line("Embedding backend degraded -- ")
 
 
@@ -318,21 +265,7 @@ def evaluate_ladder(
     conn: Optional[sqlite3.Connection] = None,
     force: bool = False,
 ) -> Optional[LadderState]:
-    """Evaluate the fallback ladder.
-
-    Consumers call this when the server probe fails or an embed error
-    occurs; the verdict is cached for the process per backend-state and
-    ``force=True`` re-evaluates (doctor / embed re-verification). No-ops —
-    returns None with nothing cached — unless the effective backend is the
-    server family. A healthy re-evaluation supersedes any active state
-    (``active=False``, cache back to None). A state-setting evaluation
-    notifies once at the end via :func:`notify_degradation`, so a
-    rung adoption is never silent.
-
-    Thread-safe: the cache check-then-act is double-checked under
-    ``_LADDER_LOCK``, so N concurrent callers produce exactly one
-    ``_evaluate`` pass and one notification per reason.
-    """
+    """Evaluate and cache the embedding fallback ladder verdict."""
     cached = _LADDER_CACHE["state"]  # fast path: unlocked read
     if cached is not None and not force:
         return cached
@@ -403,12 +336,7 @@ def _evaluate(conn: Optional[sqlite3.Connection]) -> Optional[LadderState]:
 def _try_rung2(
     conn: Optional[sqlite3.Connection], stamp: Optional[str]
 ) -> Optional[str]:
-    """The local model id rung 2 can adopt, or None.
-
-    Gates: sentence-transformers importable, weights cached, and parity
-    proven against stored rows (needs a conn with rows — same rule as
-    rung 1).
-    """
+    """The local model id rung 2 can adopt, or None."""
     if conn is None or stamp is None or not _sentence_transformers_available():
         return None
     model = _local_default_model()
@@ -448,15 +376,7 @@ def _sentence_transformers_available() -> bool:
 
 
 def _config_value(name: str) -> str:
-    """One CAIRN_EMBED_* knob through the config choke point (env > file),
-    stripped, '' when unset.
-
-    Lazy import: embeddings imports this module at load time, so the
-    reverse ``_config_or_env`` reference can only resolve at call time
-    (module-cycle discipline). File-persisted keys must reach the ladder's
-    probes exactly as they reach the main embed path, else parity checks
-    false-fail against authenticated/slow servers or the wrong local model.
-    """
+    """One CAIRN_EMBED_* knob through the config choke point (env > file), stripped, '' when unset."""
     from .embeddings import _config_or_env
 
     return (_config_or_env(name) or "").strip()
@@ -468,11 +388,7 @@ def _local_default_model() -> str:
 
 
 def _fetch_model_listing() -> Optional[List[str]]:
-    """GET {base}/models -> listed model ids, or None on any failure.
-
-    Same base URL / bearer / 2 s timeout discipline as the availability
-    probe; never raises.
-    """
+    """GET {base}/models -> listed model ids, or None on any failure."""
     import http.client
     import json
     import urllib.request
@@ -512,10 +428,7 @@ def _fetch_model_listing() -> Optional[List[str]]:
 
 
 def _embed_with_model(texts: Sequence[str], model_id: str) -> Tuple[List[bytes], int]:
-    """One /v1/embeddings POST pinned to ``model_id`` (rung-1 parity).
-
-    Single attempt, no retry ladder — a failing candidate just declines.
-    """
+    """One /v1/embeddings POST pinned to ``model_id`` (rung-1 parity)."""
     import json
     import urllib.request
 

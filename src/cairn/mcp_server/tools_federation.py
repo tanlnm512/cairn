@@ -13,21 +13,7 @@ from .tools_graph import _clamp
 def federated_search(
     query: str, limit: int = 20, *, shared_embed: bool = False
 ) -> str:
-    """Search every registered workspace store by meaning and merge the
-    rankings into one list where every hit is attributed to the workspace
-    it came from ('@ <workspace>' per line). A store without embeddings for
-    the current model contributes its lexical BM25 ranking (provenance
-    'bm25'); cross-store scores are rank-fused (RRF), so 'score' is a small
-    rank-fusion number -- trust rank order, not magnitude. Stores that are
-    missing, locked, or unindexed are named under 'unavailable' and never
-    abort the query. For the active workspace alone, prefer semantic_search.
-
-    Pass shared_embed=true to serve the query embed from one shared backend
-    when every reachable store's embedding rows carry the current model
-    stamp; any other stamp mix keeps per-store embedding. Sharing never
-    changes which hits are returned, only how many times the query is
-    embedded. Default is off.
-    """
+    """Search every registered store by meaning, merging rank-fused hits attributed per workspace; unavailable stores are named, never fatal; shared_embed=true shares one query embed when model stamps agree."""
     from cairn.graph.federation import federated_search as _federated
 
     limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary

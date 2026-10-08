@@ -13,15 +13,7 @@ from . import DashboardContext
 
 
 def _reject_cross_site(request: Request) -> Response | None:
-    """Return a 403 response for a POST whose browser origin headers name
-    another site, else None.
-
-    Loopback binding does not stop a web page from form-POSTing to the
-    dashboard (urlencoded bodies are CORS-safelisted, so no preflight
-    runs) — the mismatched Origin/Sec-Fetch-Site is the only signal.
-    Requests without these headers (curl, scripts) carry no cross-site
-    context and stay allowed.
-    """
+    """Reject browser POSTs naming another origin; headerless clients stay allowed."""
     from starlette.responses import PlainTextResponse
 
     site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
@@ -46,13 +38,7 @@ def _reject_cross_site(request: Request) -> Response | None:
 def _settings_context(
     store_key: str, saved: bool = False, error: str = "", parity=None
 ) -> dict:
-    """Settings-page context: per-knob file/effective state.
-
-    ``prefill`` is the file value when one exists — the form edits the
-    file layer — else the effective value; ``pinned`` marks an env var
-    shadowing whatever the file holds, rendered as an "overridden by
-    environment" marker so a save that "does nothing" is explainable.
-    """
+    """Return file/effective settings state without reflecting the API key."""
     import os
 
     from ..app import SETTINGS_BACKENDS, SETTINGS_KEYS
@@ -85,13 +71,7 @@ def _settings_context(
 
 
 def _embeddings_rows(conn) -> list:
-    """Per-corpus ``{corpus, model, count, last}`` rows for the status
-    view: the code corpus reads the embeddings table directly,
-    knowledge/memory ride embed_knowledge_count/embed_memory_count.
-    A corpus whose count cannot be read (store predating the table,
-    unresolvable or malformed backend config) reports unknown instead
-    of failing the page.
-    """
+    """Return per-corpus embedding rows, degrading unreadable state to unknown."""
     from ...graph import embeddings
 
     rows = []
@@ -119,11 +99,7 @@ def _embeddings_rows(conn) -> list:
                 (model,),
             ).fetchone()[0]
         except Exception:
-            # Unknown, rendered as an em-dash — never a 500. Broad on
-            # purpose: this is a status page, and current_model()'s
-            # URL resolution can raise ValueError on a malformed
-            # CAIRN_EMBED_BASE_URL, not just RuntimeError/sqlite3
-            # errors.
+            # Malformed backend URLs can raise ValueError; status rows degrade to unknown.
             pass
         rows.append(
             {"corpus": corpus, "model": model, "count": count, "last": last}
@@ -132,10 +108,7 @@ def _embeddings_rows(conn) -> list:
 
 
 def _embeddings_status(request: Request, context: DashboardContext) -> Response:
-    """Settings status view: effective backend + precedence, resolved
-    stamp, per-corpus counts, probe health, and the active fallback
-    rung — the rung rows read ladder_state(), the same accessor the
-    degradation banner builds from (one degradation source)."""
+    """Return effective embedding state from the shared probe and ladder seams."""
     from ..data import get_read_only_db
     from ...graph import embed_ladder, embeddings
 

@@ -148,12 +148,7 @@ class _CFamilyParser(BaseParser, TreeSitterParserBase):
         return sym
 
     def _parse_function(self, node: Node, source: bytes) -> Optional[Symbol]:
-        """function_definition -> Symbol(function | method).
-
-        The name lives under a function_declarator child. A function is a
-        method when it appears inside a class/struct body (i.e. _scope is
-        non-empty and the enclosing scope is a class).
-        """
+        """Return a function Symbol, classified as a method inside a class scope."""
         name = None
         for child in node.children:
             if child.type == "function_declarator":
@@ -180,15 +175,7 @@ class _CFamilyParser(BaseParser, TreeSitterParserBase):
     # ------------------------------------------------------------ call parsing
 
     def _parse_call(self, node: Node, source: bytes) -> Optional[Edge]:
-        """call_expression -> Edge(calls).
-
-        callee shapes (field-labeled per the pinned grammars):
-          - identifier           -> bare call:  ``foo()``
-          - field_expression     -> member call: ``obj->method()`` / ``obj.method()``
-          - qualified_identifier -> scoped call: ``ns::func()`` (C++ only);
-                                    its ``scope`` field is the receiver signal
-          - template_function    -> generic call: ``max_val<int>()``
-        """
+        """Return a calls Edge for identifier, member, scoped, or template callees."""
         callee = node.child_by_field_name("function")
         if callee is None:
             return None

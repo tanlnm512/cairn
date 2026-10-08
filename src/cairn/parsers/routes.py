@@ -23,11 +23,7 @@ class RouteExtraction:
 
 
 def candidate_frameworks(path: str, language: str) -> List[str]:
-    """Cheap name/language gate: which detectors are even worth trying.
-
-    Avoids running every detector against every file -- e.g. a plain utility
-    module with no decorators and not under pages/app gets nothing to do.
-    """
+    """Return route detectors worth trying for a TypeScript or JavaScript file."""
     if language not in ("typescript", "javascript"):
         return []
     frameworks = ["nestjs", "react_router"]
@@ -131,21 +127,10 @@ def _detect_nestjs(pf: ParsedFile) -> Optional[RouteExtraction]:
     return extraction if extraction.routes else None
 
 
-# ---------------------------------------------------------------------------
-# React Router: JSX <Route> and createBrowserRouter([...]) config objects.
-#
-# Regex-based (not a second AST parse) because JSX elements and object-literal
-# route configs aren't part of the generic Symbol/Edge model -- see module
-# docstring. Always tagged provenance='heuristic'.
-# ---------------------------------------------------------------------------
+# React Router heuristics use regexes tagged provenance='heuristic'.
 
 _JSX_ROUTE_RE = re.compile(
-    # Both gaps use [^<>]*? (not [^>]*?) so they CANNOT span past a '<'.
-    # That prevents the regex from escaping the current <Route ...> element
-    # and pairing an unrelated `path` with an unrelated component elsewhere
-    # in the file (the worst over-pairing on reformatted/multi-line JSX).
-    # It can still miss genuinely reformatted variants -- tagged
-    # provenance='heuristic'.
+    # Angle-bracket bounds prevent path and component pairing across Route elements.
     r"<Route\b[^<>]*?\bpath\s*=\s*[\"']([^\"']+)[\"'][^<>]*?"
     r"(?:element\s*=\s*\{\s*<\s*([A-Za-z_][\w.]*)|Component\s*=\s*\{?\s*([A-Za-z_][\w.]*))",
     re.DOTALL,
@@ -213,17 +198,8 @@ def _nextjs_segment(part: str) -> str:
 
 
 def _is_exported(sym: Symbol, source: str) -> bool:
-    """True if ``sym`` is a named or default export, inferred from raw source.
-
-    A symbol counts as exported if its declaration is preceded by ``export``
-    (named export) OR it is referenced by an ``export default <name>`` statement
-    anywhere in the file.
-    """
+    """Return whether source exports sym by declaration or default reference."""
     name = re.escape(sym.name)
-    # Named export at the declaration site:
-    #   export function Foo      /  export async function Foo
-    #   export class Foo         /  export abstract class Foo
-    #   export const Foo =
     if re.search(
         r"\bexport\b[ \t]*(?:async[ \t]+|abstract[ \t]+)?(?:function|class)[ \t]+"
         + name + r"\b",
@@ -239,12 +215,7 @@ def _is_exported(sym: Symbol, source: str) -> bool:
 
 
 def _default_exported_name(source: str) -> Optional[str]:
-    """Name carried by the file's ``export default`` statement, or None.
-
-    Covers both forms used by Next.js page components:
-      - inline declaration: ``export default function Foo()`` / ``export default class Foo``
-      - bare reference:     ``export default Foo;`` (Foo declared elsewhere in the file)
-    """
+    """Return the name declared or referenced by export default, else None."""
     m = re.search(
         r"\bexport\b[ \t]+default[ \t]*(?:async[ \t]+)?(?:function|class)[ \t]+([A-Za-z_$][\w$]*)",
         source,
@@ -262,17 +233,7 @@ def _default_exported_name(source: str) -> Optional[str]:
 
 
 def _select_handler_symbol(pf: ParsedFile, source: str) -> Optional[Symbol]:
-    """Pick the Next.js route handler symbol from the file's symbols.
-
-    A route handler is the file's default export (App Router pages REQUIRE a
-    default export; Pages Router conventionally default-exports the page).
-    Preference order:
-
-      1. the symbol named by ``export default`` (if any and present);
-      2. otherwise the first exported function/class;
-      3. otherwise the first function/class (fallback when export info
-         cannot be derived, e.g. unreadable source).
-    """
+    """Return the default export, else the first exported, then first callable."""
     candidates = [s for s in pf.symbols if s.kind in ("function", "class")]
     if not candidates:
         return None
@@ -294,11 +255,7 @@ def _detect_nextjs(pf: ParsedFile) -> Optional[RouteExtraction]:
     parts = p.parts
     lower_parts = [part.lower() for part in parts]
     try:
-        # Use the FIRST (outermost) "app"/"pages" directory as the router root.
-        # Next.js treats the top-most app/pages dir as the anchor; deeper
-        # same-named dirs (e.g. ``app/ui/app/page.tsx`` in a monorepo) are
-        # route segments, not a second router root. ``min`` picks the first
-        # occurrence where ``max`` would erroneously re-anchor on a later one.
+        # The outermost app/pages directory is the Next.js router root.
         anchor_idx = min(
             i for i, part in enumerate(lower_parts) if part in ("pages", "app")
         )

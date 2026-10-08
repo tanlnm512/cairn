@@ -126,10 +126,9 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
             return
 
         if not result.passed:
-            # The deterministic body is built entirely from graph facts (filenames,
-            # symbols, cross-deps all come from SQLite queries), so it should always
-            # pass the critic. A failure here indicates a generator/critic bug or a
-            # stale graph — don't ship a broken file; surface the errors instead.
+            # The body is built from graph facts, so a critic failure means a
+            # generator/critic bug or stale graph — surface the errors, never
+            # write the file.
             click.echo(f"Compass rejected by critic (quality={result.quality_score:.2f}, "
                        f"{len(result.errors)} error(s)) — not written.")
             for e in result.errors:
@@ -236,13 +235,7 @@ def compass_gaps(db, knowledge):
 @click.option("--use-llm", is_flag=True,
               help="Queue the flow for agent-decoupled LLM synthesis (file-queue).")
 def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm):
-    """Generate a compass for a business FLOW, traced from an entry-point symbol.
-
-    Traces the downward call chain from an entry point (HTTP handler, CLI
-    command, Activity.onCreate, etc.) across module boundaries and synthesizes
-    a narrative. Use ``--as-workflow`` to also generate a Knowledge-workflow
-    doc, or ``--use-llm`` to queue for agent-decoupled synthesis.
-    """
+    """Generate a compass for a business FLOW traced from an entry-point symbol; --use-llm queues agent-decoupled synthesis."""
     from ..compass.generator import _gather_flow_facts, generate_flow_compass, generate_flow_workflow
     from ..compass.critic import critic_concept
     from ..okf.bundle import OKFBundle
@@ -260,10 +253,8 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm)
             click.echo("Verify the symbol exists and has resolved callees (run `cairn build` first).")
             sys.exit(1)
 
-        # --use-llm: queue the flow for agent-decoupled synthesis (file-queue).
-        # Mirrors `compass generate --use-llm`: gathers facts, enqueues a task,
-        # returns immediately. An agent session later processes it via the
-        # skill's task-queue loop (cairn task list/show/claim/complete).
+        # --use-llm enqueues a flow-synthesize task and returns immediately,
+        # mirroring `compass generate --use-llm`.
         if use_llm:
             from ..llm.tasks import create_task
             t = create_task(bundle, "flow-synthesize", entry, facts=facts)
@@ -356,11 +347,7 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm)
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def compass_flow_gaps(min_edges, generate, limit, dry_run, db, knowledge):
-    """Find business flows that lack a flow compass.
-
-    Lists functions and methods with >= --min-edges resolved outgoing calls that
-    lack a compass/flow-* concept. Use --generate to batch-generate flow compasses.
-    """
+    """Find functions with >= --min-edges resolved calls lacking a flow compass; --generate batch-writes them."""
     from ..compass.flow_gaps import detect_flow_gaps
     from ..okf.bundle import OKFBundle
 
@@ -458,4 +445,3 @@ def compass_flow_gaps(min_edges, generate, limit, dry_run, db, knowledge):
         for entry in covered:
             fname = entry["file"].split("/")[-1]
             click.echo(f"  {entry['name']:40} out={entry['out_edges']:3}  {fname}  [DONE]")
-

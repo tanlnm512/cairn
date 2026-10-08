@@ -20,10 +20,7 @@ from .base import (
 
 
 def resolve_relative_objc_import(importer: Path, spec: str) -> Optional[str]:
-    """Resolve a quoted `#import "Foo.h"` to an absolute, extension-stripped
-    path if the target file exists on disk relative to the importer's
-    directory. Angle-bracket framework imports (`<Foundation/Foundation.h>`)
-    are not attempted here -- callers pass only the quoted form."""
+    """Return an existing extension-stripped path for a quoted Objective-C import."""
     base = (importer.parent / spec).resolve()
     if not base.is_file():
         return None

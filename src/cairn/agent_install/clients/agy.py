@@ -11,15 +11,7 @@ from ...paths import cairn_home_env
 
 
 def agy_config_path() -> Path:
-    """Location of agy's global MCP config file, per-OS.
-
-    agy (Antigravity CLI) reads a single global ``config/mcp_config.json``:
-
-      macOS:   ~/.gemini/config/mcp_config.json
-      Windows: %APPDATA%/gemini/config/mcp_config.json
-      Linux:   $XDG_CONFIG_HOME/gemini/config/mcp_config.json
-               (falling back to ~/.config/gemini/config/mcp_config.json)
-    """
+    """Return agy's per-OS global MCP config path."""
     if sys.platform.startswith("win"):
         base = Path(os.environ.get("APPDATA", str(Path.home())))
         return base / "gemini" / "config" / "mcp_config.json"
@@ -32,18 +24,7 @@ def agy_config_path() -> Path:
 
 
 def agy_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
-    """MCP server config in agy (Antigravity) format.
-
-    agy nests servers under ``mcpServers`` like Claude/Cursor, but its
-    transport fields differ: remote servers use ``serverUrl`` and there is
-    no ``type`` field — the transport is implied by which field is present
-    (per https://antigravity.google/docs/mcp/, legacy ``url``/``httpUrl``
-    fields are NOT supported). stdio servers use ``command``/``args``
-    like the shared shape.
-
-    stdio entries embed ``env: {CAIRN_HOME: <expanded path>}`` when the
-    resolved CAIRN_HOME is non-default; the default home adds no env key.
-    """
+    """Return an AGY MCP entry using serverUrl for remote transports."""
     if transport == "sse":
         return {"mcpServers": {"cairn": {"serverUrl": default_sse_url(sse_url)}}}
     cmd = resolve_cg_command()
@@ -71,10 +52,5 @@ def install_agy(workspace: str, force: bool, dry_run: bool,
 
 
 def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
-    """Remove cairn entries for agy.
-
-    agy is single-scope (one global config file), so ``scope`` is accepted
-    only for signature parity with the other uninstallers and ignored: the
-    global mcp_config.json is always stripped.
-    """
+    """Remove cairn from agy's single global MCP config."""
     _strip_mcp(agy_config_path(), res)

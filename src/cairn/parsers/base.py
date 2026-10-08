@@ -18,10 +18,7 @@ class Symbol:
     qualified_name: Optional[str] = None
     docstring: Optional[str] = None
     modifiers: List[str] = field(default_factory=list)
-    # Structured extras for symbol kinds that need more than
-    # name/kind/modifiers -- e.g. routes (kind='route') carry
-    # {"http_method", "path", "framework", "handler", "provenance"}. None for
-    # other kinds; stored as JSON in the symbols.metadata column.
+    # Symbol-kind-specific JSON payload stored in symbols.metadata.
     metadata: Optional[Dict[str, Any]] = None
     # Embedding context (TEXT columns on `symbols`). All default to None;
     # parsers only set the ones they know. `parent_scope` and
@@ -39,18 +36,12 @@ class Symbol:
 @dataclass
 class Edge:
     source_name: str  # name of the enclosing symbol that owns this edge
-    # Canonical kinds: calls | extends | implements | embeds | with |
-    # references | decorates | imports | contains. Only calls and
-    # extends/implements are structural (traversal); the rest are display
-    # and resolution signals.
+    # Structural traversal uses calls and extends/implements; other kinds inform display and resolution.
     kind: str
     target_name: str  # unresolved name (resolved to symbol_id later by builder)
     line: int
     column: int = 0
-    # Bare type name of the call receiver, if the parser could infer one
-    # (local var -> type, `this`, constructor call, static/companion call).
-    # None means "unknown" -- the resolver's type-aware tier simply abstains
-    # and falls through to same-repo/global.
+    # Bare receiver type; None makes the type-aware resolver abstain.
     receiver_type: Optional[str] = None
     # Count of call-site arguments when the parser could count them;
     # None = unknown.
@@ -104,13 +95,7 @@ class BaseParser(abc.ABC):
 
 
 class TreeSitterParserBase:
-    """Mixin with shared helpers for tree-sitter-based parsers.
-
-    Provides _node_text, _qualified_name, _child_of_type/_find_name (AST-shape
-    helpers), and scope stack management (_scope, _callable_scope).
-
-    Subclasses provide `language` and `_visit`; the shared _walk relies on both.
-    """
+    """Provide shared AST helpers and scope tracking for tree-sitter parsers."""
 
     language: str = ""
 
@@ -128,32 +113,20 @@ class TreeSitterParserBase:
         return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
 
     def _qualified_name(self, name: str) -> str:
-        """Build a qualified name using the current scope stack.
-
-        Most languages use dot-qualified names (e.g., Outer.Inner.name).
-        Some parsers override this for file-stem prefix (TypeScript/Dart/ObjC).
-        """
+        """Qualify name with the current dot-separated scope, if any."""
         if self._scope:
             return ".".join(self._scope + [name])
         return name
 
     def _child_of_type(self, node, types):
-        """Return the first direct child of ``node`` whose type is in ``types``.
-
-        Single-level scan only (not recursive).
-        """
+        """Return the first direct child whose type is in types."""
         for c in node.children:
             if c.type in types:
                 return c
         return None
 
     def _find_name(self, node, source: bytes, types=("identifier",)):
-        """Return the text of the first ``identifier`` child of ``node``.
-
-        ``types`` lets callers widen the accepted name-node kinds (e.g.
-        TypeScript also accepts ``type_identifier``). Defaults to the plain
-        ``identifier`` that most languages use.
-        """
+        """Return the text of the first direct child name node."""
         for child in node.children:
             if child.type in types:
                 return self._node_text(child, source).strip()
@@ -168,13 +141,7 @@ class TreeSitterParserBase:
         return ""
 
     def _infer_receiver_type(self, receiver_text: Optional[str]) -> Optional[str]:
-        """Best-effort receiver type for the resolver.
-
-        The receiver is often a local variable or a package qualifier; we only
-        return it when it looks like a type (Capitalized), since the resolver's
-        type-aware tier matches on receiver type. Package qualifiers like
-        ``fmt`` are lowercase and won't match a class anyway.
-        """
+        """Return a receiver text only when its capitalized shape looks like a type."""
         if not receiver_text:
             return None
         # Heuristic: a capitalized leading char suggests a type, not a package.
@@ -201,30 +168,10 @@ class TreeSitterParserBase:
             pf.rationale.append(record)
         return True
 
-    # Max body chars captured per symbol. Large enough to hold a typical
-    # method/function implementation; beyond this the embedding chunk would be
-    # truncated by chunk_for_symbol anyway, and very long bodies tend to dilute
-    # the distinctive signature/docstring signal rather than add meaning.
     BODY_MAX_CHARS = 1500
 
     def _extract_body(self, node, source: bytes, block_types=("block", "body_block")) -> Optional[str]:
-        """Extract the implementation body of a definition node.
-
-        Returns the joined text of the body block's statements (the actual
-        implementation), excluding the signature line and excluding the
-        docstring statement (which is captured separately on Symbol.docstring
-        and would otherwise be duplicated in the embedding chunk).
-
-        `node` is a tree-sitter definition node (function_definition,
-        class_definition, method_definition, ...). The body is the child whose
-        type is in `block_types`. The first statement is dropped when it is the
-        docstring. Returns None if there is no body block (e.g. an abstract
-        method, a forward declaration, or a one-liner with no implementation).
-
-        Truncated to BODY_MAX_CHARS to keep embedding chunks bounded; very long
-        bodies add noise rather than signal and would be truncated downstream
-        regardless.
-        """
+        """Return a bounded implementation body without its signature or docstring."""
         block = None
         for child in node.children:
             if child.type in block_types:
@@ -278,13 +225,7 @@ class ScopeTypeTracker:
             self._scopes.pop()
 
     def record(self, name: str, type_name: Optional[str]) -> None:
-        """Record ``name`` as having type ``type_name`` in the innermost scope.
-
-        Recording a second, different type for a name that is already
-        visible (reassignment or shadowing) makes the name ambiguous: it
-        resolves to None until the innermost scope pops. Re-recording the
-        same type is a no-op. Missing name or type is ignored.
-        """
+        """Record a scope type, making conflicting visible types ambiguous."""
         if not name or not type_name:
             return
         visible: Optional[str] = None

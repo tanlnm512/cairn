@@ -251,3 +251,16 @@ refuses growth, and a revert reduces counts, so re-derivation succeeds).
 - **Context**: FR-003 confines touches to `src/`, `docs/`, memory records, and the FR-004 wiring, yet spec.md's In-scope explicitly lists "CHANGELOG entry" and C-01 governs shipping.
 - **Decision**: Read FR-003 as governing the sweep's code/prose edits; the single CHANGELOG append in Phase 4 is release metadata named by the spec's own scope.
 - **Consequences**: No other root-level file is touched; the reconciliation is explicit rather than silent.
+
+
+## Decisions appended during execution
+
+### D-010: SCIP regen script header deferred to closeout
+- **Context**: T011 removed `_scip_pb2.py`'s 19-line provenance header, but `scripts/regen_scip_pb2.sh` (outside T011's allowlist) still emits it — a future regen would reintroduce a baseline violation.
+- **Decision**: Fold the one-line regen-script header update into T015's closeout scope so the sweep is regen-stable.
+- **Consequences**: No gate exposure before closeout (the shrink-only ratchet blocks regen-reintroduced growth loudly); fix lands with the final shrink.
+
+### D-011: Clean-sweep suspects adjudicated as hunk-heuristic false positives
+- **Context**: The delivery clean sweep flags `server.py` reads (an "8+ wall" and a "commented-out call") over the post-trim region.
+- **Decision**: The surviving notes are 1–2-line constraint statements separated by code; the wall detector counts added comment lines across the diff hunk, and `close()` in prose is not commented-out code. The comment-style ratchet — the authoritative gate — reports zero new violations. The `_scip_pb2.py` provenance line was shortened regardless.
+- **Consequences**: No further change; the ratchet remains the style authority.

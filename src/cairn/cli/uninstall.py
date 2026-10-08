@@ -107,15 +107,7 @@ def _remove_hooks(ws: str, dry_run: bool) -> None:
 
 
 def _resolve_store_target(ws: str, full: bool, allow_widen: bool) -> tuple[Path, bool] | None:
-    """What gets deleted in step 3: ``(directory, whole_home)`` or None.
-
-    The key is derived from the RESOLVED workspace path — the same form
-    registration writes — so a symlinked/unnormalized invocation still
-    targets its own store. --full targets the whole home; a missing
-    workspace store widens to the whole home only when ``allow_widen``
-    (an interactive run), so ``-y`` can never silently delete every
-    workspace's store.
-    """
+    """What gets deleted in step 3: ``(directory, whole_home)`` or None, keyed on the resolved workspace; a miss widens only interactively."""
     home = _home()
     if not full:
         store = home / store_key(Path(ws).resolve())
@@ -267,19 +259,9 @@ def _dir_size(path: Path) -> int:
 @click.option("--dry-run", is_flag=True, help="Show what would be removed; change nothing.")
 @click.option("-y", "--yes", is_flag=True, help="Skip confirmations (implied by --full).")
 def uninstall(full, agents_only, hooks_only, graph_only, package_only, clients, scope, ws_arg, dry_run, yes):
-    """Uninstall cairn: agent wiring, hooks, graph store, and the cairn binary.
-
-    By default removes everything for the CURRENT workspace. Use --full to wipe
-    the entire ~/.cairn (all workspaces' stores). CLAUDE.md / AGENTS.md and
-    your source repos are never touched.
-
-    \b
-    Examples:
-      cairn uninstall                    # interactive, current workspace
-      cairn uninstall --full             # everything, all workspaces, no prompts
-      cairn uninstall --graph-only -y    # just the store
-      cairn uninstall --dry-run          # preview only
-    """
+    """Uninstall cairn: agent wiring, hooks, graph store, and the binary.
+    Default: the current workspace only; --full wipes the entire ~/.cairn.
+    CLAUDE.md / AGENTS.md and source repos are never touched."""
     # Resolve workspace: explicit flag > env > cwd. NOT the ancestor walk
     # (which can wrongly resolve to a parent like ~/Projects).
     if ws_arg:

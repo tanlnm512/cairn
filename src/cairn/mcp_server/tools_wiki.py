@@ -17,12 +17,7 @@ def wiki_generate(
     diagrams: bool = False,
     force: bool = False,
 ) -> str:
-    """Plan the deterministic wiki for a repo and queue one wiki-page task per
-    unskipped page. With refine_catalog, queues a wiki-catalog refinement task
-    instead — re-run after completing it to queue the page tasks from the
-    validated refined outline. Returns the page plan plus the queued task ids;
-    claim those tasks through the LLM task queue (promotion is critic-gated on
-    completion)."""
+    """Plan the deterministic wiki and queue one critic-gated task per page (refine_catalog queues the catalog task instead)."""
     from cairn.wiki.catalog import WikiPlannerError
     from cairn.wiki.pipeline import run_wiki_generate
 

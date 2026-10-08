@@ -43,12 +43,7 @@ OVERLAP_RECENCY_DAYS = 7
 
 
 def validate_agent_id(agent_id: str) -> str:
-    """Validate a caller-supplied agent id for the share/check surface.
-
-    Accepts a non-empty string of at most ``AGENT_ID_MAX_LEN`` characters
-    drawn from ``[A-Za-z0-9._-]`` and returns it unchanged; anything else
-    raises ``ValueError``.
-    """
+    """Return a bounded agent id or raise ValueError."""
     if not isinstance(agent_id, str) or not agent_id:
         raise ValueError("agent id must be a non-empty string")
     if len(agent_id) > AGENT_ID_MAX_LEN:
@@ -77,15 +72,7 @@ def create_memory(
     supersedes: Optional[List[str]] = None,
     stance: Optional[str] = None,
 ) -> OKFConcept:
-    """Build a memory OKF concept with lifecycle frontmatter.
-
-    ``supersedes`` is the concept_id(s) of the prior version(s) this memory
-    replaces. When set, the new memory is marked ``memory_is_latest: true``
-    and the superseded chain is inherited + extended. Callers must flip
-    ``memory_is_latest`` to false on the old memory (see ``evolve_memory`` in
-    promotion.py). ``stance`` is a record-time prior from ``STANCES``
-    (None = unset); any other value raises ``ValueError``.
-    """
+    """Build a memory concept with lifecycle, stance, and supersession metadata."""
     if stance is not None and stance not in STANCES:
         raise ValueError(
             f"stance must be one of {'|'.join(STANCES)}, got {stance!r}"
@@ -108,10 +95,6 @@ def create_memory(
         "promotion_history": [
             {"date": ts, "action": "captured", "score": round(confidence, 3), "tier": tier}
         ],
-        # Supersession: a memory is "latest" by default. When it supersedes an
-        # older memory, memory_supersedes chains the version history. The old
-        # memory gets memory_superseded_by set and memory_is_latest flipped to
-        # false by the caller.
         "memory_is_latest": True,
         "memory_supersedes": list(supersedes) if supersedes else [],
         "memory_superseded_by": None,
@@ -139,11 +122,7 @@ def _rel_id(bundle: OKFBundle, concept_id: str) -> str:
 
 
 def parse_memory_timestamp(ts) -> Optional[datetime]:
-    """Parse a memory timestamp to an aware UTC datetime; None when malformed or naive.
-
-    Z-suffixed input is accepted down to the 3.10 floor; naive values yield
-    None so callers degrade instead of raising an aware-minus-naive TypeError.
-    """
+    """Return aware UTC time, or None for missing, naive, or malformed input."""
     if not isinstance(ts, str):
         return None
     try:
@@ -162,16 +141,7 @@ def write_validity(
     bundle: Optional[OKFBundle] = None,
     conn=None,
 ) -> None:
-    """Stamp a memory concept's validity interval and mirror the
-    ``memory_validity`` projection row.
-
-    Extensions are the source of truth; the SQL row is the indexed
-    projection. The call writes the full interval: a None bound is
-    cleared -- its extensions key is removed and the SQL column is NULL.
-    ``bundle`` persists the concept via
-    write_concept and keys the row by the bundle-relative concept_id;
-    ``conn`` upserts the projection row (caller owns the transaction).
-    """
+    """Write validity extensions and their indexed projection row."""
     if not valid_from:
         raise ValueError("valid_from is required")
     cid = concept.concept_id
@@ -207,25 +177,11 @@ def store_memory(
     old_id: Optional[str] = None,
     conn=None,
 ):
-    """Write a memory concept to its tier directory.
-
-    The tier is read from concept.extensions['memory_tier'] unless overridden.
-    When old_id is provided and differs from the new location, the old file
-    is unlinked to prevent orphan files on re-tiering. A missing
-    ``valid_from`` is stamped with the concept's creation time; an existing
-    interval is preserved. When ``conn`` is provided, the ``memory_validity``
-    projection row follows the (possibly new) concept_id; the caller owns
-    the transaction.
-    """
+    """Write a memory to its tier and move validity and old-file cleanup with it."""
     t = tier or concept.extensions.get("memory_tier", "drafts")
     slug = slugify(concept.title or "") or "memory"
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if t == "raw":
-        # Raw tier keeps the date prefix (so decay can purge by age) but now
-        # also gets a uuid suffix like every other tier — without it, two
-        # same-day captures with identically-slugified titles (common from
-        # the generic titles the auto-capture hooks produce) silently
-        # overwrite each other via bundle.write_concept.
         import uuid
         unique_suffix = uuid.uuid4().hex[:6]
         concept.concept_id = f"{TIER_DIRS['raw']}/{ts}-{slug}-{unique_suffix}"
@@ -269,17 +225,7 @@ def share_memory(
     *,
     conn,
 ) -> int:
-    """Record ``agent_id``'s share of ``symbols`` on the shared memory bus.
-
-    Inserts one ``(agent_id, symbol, memory_id, 'share', ts)`` row per
-    symbol into ``agent_symbols`` on the caller's writable ``conn``.
-    ``memory_id`` is a bare memory concept_id pointer (no existence check:
-    readers join to live memory rows). Re-sharing an already-recorded
-    (agent_id, symbol, memory_id) inserts nothing. ``agent_id`` is
-    validated per ``validate_agent_id``; symbols must be non-empty strings;
-    both raise ``ValueError`` before any insert. Returns the number of rows
-    inserted; the caller owns the transaction boundary (no commit here).
-    """
+    """Record one idempotent shared-memory pointer per validated agent and symbol."""
     validate_agent_id(agent_id)
     _validate_symbols(symbols)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -305,17 +251,7 @@ def check_overlap(
     conn,
     recency_days: int = OVERLAP_RECENCY_DAYS,
 ) -> List[tuple]:
-    """Return other agents' recent ``agent_symbols`` activity on ``symbols``.
-
-    Each result is an ``(agent_id, symbol, kind, ts)`` tuple for a row whose
-    agent differs from ``agent_id``, whose symbol is in ``symbols``, and whose
-    ``ts`` falls within ``recency_days`` days of now (UTC, inclusive). Both
-    ``share`` and ``intent`` rows count. Pure read: safe on a read-only
-    ``mode=ro`` conn; writes nothing and does not commit. ``agent_id`` is
-    validated per ``validate_agent_id``, ``symbols`` per ``_validate_symbols``;
-    an empty ``symbols`` list returns no rows. Results order by symbol, ts,
-    agent_id.
-    """
+    """Return other agents' recent activity on validated symbols."""
     validate_agent_id(agent_id)
     _validate_symbols(symbols)
     if recency_days < 1:
@@ -346,23 +282,7 @@ def shared_recall_entries(
     as_of: Optional[str] = None,
     result_ids: set,
 ) -> tuple[list, dict]:
-    """Other agents' shared memories relevant to ``query``, with attribution.
-
-    Returns ``(extra_concepts, attribution_by_concept_id)``: concepts the
-    caller's search did not already return, plus "shared by ..." lines keyed
-    by concept id for both the extra concepts and results already returned
-    by the search (``result_ids``). A memory qualifies when another agent has
-    a ``kind='share'`` ``agent_symbols`` row whose symbol appears as a whole
-    query token and the concept is live: present in the bundle, latest
-    version, and inside its validity window. ``include_superseded=True``
-    keeps non-latest versions; the default drops them. Rows pointing at
-    deleted memories are dropped. Share-row memory ids may be
-    bundle-relative or absolute; matching normalizes both sides to the
-    memory file's basename. A store whose ``agent_symbols`` table does not
-    exist yet (no writable open since the schema was added) yields no
-    entries. ``as_of`` is already validated by the caller's
-    ``search_memory`` run; a malformed value raises ``ValueError``.
-    """
+    """Return shared extra concepts and attribution keyed by concept id."""
     from .promotion import _instant_key, _parse_instant, _valid_at
 
     def _attribution(pairs) -> str:
@@ -462,25 +382,12 @@ def get_memory(bundle: OKFBundle, path: str) -> Optional[OKFConcept]:
 
 
 def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
-    """Permanently delete a memory and clean up its cross-session refs.
-
-    Refuses (returns False) when ``memory_path`` resolves to a concept
-    outside the memory/ namespace: ``get_memory``'s FileNotFoundError
-    fallback retries the raw path, which can resolve compass/wiki/knowledge
-    concepts -- without this guard ``cairn memory forget
-    compass/foo`` would unlink a compass doc. Mirrors the scope check the
-    CLI enforces upstream, at the store chokepoint so the CLI
-    and every other caller inherit it.
-    """
+    """Delete only a memory-namespaced concept and its exact reference rows."""
     cid = memory_path
     if cid.endswith(".md"):
         cid = cid[:-3]
     if not cid.startswith("memory/"):
         cid = f"memory/{cid}"
-    # get_memory -> read_concept -> _validate_concept_path raises ValueError
-    # when the concept_id escapes the bundle root. Catch it here so a
-    # traversal attempt is a controlled refusal (returns False), not an
-    # unhandled exception.
     with bundle.lock():
         try:
             concept = get_memory(bundle, memory_path)
@@ -488,10 +395,6 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
             return False
         abs_cid = cid
         if concept is not None:
-            # Namespace guard: only the memory/ fallback resolution can land
-            # here outside memory/ (the memory/-prefixed cid above is always
-            # in-namespace). Resolve both sides so symlinked roots don't
-            # false-positive the relative_to check.
             resolved = concept.concept_id
             try:
                 resolved = str(
@@ -517,12 +420,6 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
         # Unlink bypasses write_concept: drop the cached index or the deleted
         # concept stays searchable.
         bundle.invalidate_search_index()
-    # Clean up memory_refs in DB. Writers persist both id forms (search paths
-    # store the absolute concept_id read from disk; capture paths store the
-    # relative one), so delete both — exact-match per form, never a substring.
-    # Do NOT commit here -- the caller owns the transaction boundary;
-    # committing a connection we don't own can either commit an in-flight
-    # caller transaction or hit "database is locked".
     if conn is not None:
         ref_ids = [cid]
         if abs_cid != cid:
@@ -539,14 +436,7 @@ TIER_ORDER = ["tribal", "drafts", "raw", "archived"]
 
 
 def demote_memory(bundle: OKFBundle, memory_path: str, target_tier: str = "raw", conn=None) -> Optional[str]:
-    """Demote a memory to a lower tier. Returns new path or None.
-
-    Rejects promotions — target_tier must be strictly lower than current.
-
-    If ``conn`` is provided, the memory's persisted embedding row is renamed
-    from the old concept_id to the new one in place (content is unchanged by a
-    demote), avoiding a re-embed of identical text. The caller owns the commit.
-    """
+    """Move a memory to a strictly lower tier and return its new path."""
     with bundle.lock():
         concept = get_memory(bundle, memory_path)
         if concept is None:
@@ -592,10 +482,6 @@ def purge_archived(bundle: OKFBundle, max_days: int = 90) -> int:
 
 
 def _slugify(text: str) -> str:
-    # Local (not okf.utils.slugify): the consolidation paths want a richer
-    # slugifier that preserves underscores and other \w word characters and
-    # doesn't ASCII-truncate (okf.utils.slugify is ASCII-only and truncates to
-    # 60 chars, which would change consolidated concept_ids).
     import re
     text = text.lower().strip()
     text = re.sub(r"[^\w\s-]", "", text)
@@ -603,12 +489,7 @@ def _slugify(text: str) -> str:
 
 
 def consolidate_memories(bundle: OKFBundle) -> int:
-    """Consolidate redundant raw memories into unified tribal knowledge.
-
-    Groups raw memories by title tokens / key concepts, merges content,
-    promotes the consolidated memory to 'tribal', and archives raw duplicates.
-    Returns the number of memories consolidated.
-    """
+    """Merge duplicate raw memories and archive their sources."""
     with bundle.lock():
         raw_ids = bundle.list_concepts(prefix="memory/raw")
         if len(raw_ids) < 2:
@@ -661,10 +542,6 @@ def consolidate_memories(bundle: OKFBundle) -> int:
             for c in group:
                 if c.concept_id and c.concept_id != unified_concept.concept_id:
                     try:
-                        # Capture the raw-tier file before concept_id is
-                        # reassigned; archiving is a move, so the original is
-                        # unlinked after the write (same pattern as
-                        # _write_to_tier's old_id unlink).
                         old_file = Path(bundle.root) / f"{c.concept_id}.md"
                         c.extensions["memory_tier"] = "archived"
                         # UUID suffix (same format as store_memory's non-raw tier)

@@ -80,10 +80,8 @@ def knowledge_search(query: str, limit: int = 20) -> str:
             out.append(f"    affects_repos: {', '.join(r['affects_repos'])}")
         if r.get("graph_deps"):
             for repo, deps in r["graph_deps"].items():
-                # cross_repo_deps returns {dependencies: [{repo, ...}], dependents: [...]}.
-                # Extract the repo names from each dependency entry. Pre-fix this
-                # read `depends_on` (a key that never existed), so the enrichment
-                # line never rendered.
+                # cross_repo_deps returns {dependencies: [{repo, ...}], dependents:
+                # [...]}; extract the repo names for the enrichment line.
                 if isinstance(deps, dict) and deps.get("dependencies"):
                     dep_repos = [d["repo"] for d in deps["dependencies"] if d.get("repo")]
                     if dep_repos:
@@ -122,12 +120,7 @@ def knowledge_delete(doc_id: str) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False))
 @instrument
 def knowledge_status(doc_id: str, new_status: str) -> str:
-    """Update doc_status on a knowledge document (active → superseded → archived).
-
-    This is a write (update_status -> bundle.write_concept persists to disk), so
-    unlike the read-only knowledge_search it advertises readOnlyHint=False and
-    idempotentHint=False (re-applying a forward status transition can fail or be
-    a no-op depending on the current lifecycle state)."""
+    """Update doc_status on a knowledge document (active → superseded → archived); a write, not idempotent."""
     from cairn.knowledge.store import _refuse_out_of_namespace, get_document, update_status
 
     bundle = _bundle()
@@ -145,12 +138,7 @@ def knowledge_status(doc_id: str, new_status: str) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def trace_workflow(ref: str) -> str:
-    """Trace a procedural workflow's ordered steps by title, slug, or
-    concept_id. The direct analog of LeanKG's kg_trace_workflow, built on
-    top of the knowledge-docs layer (a workflow is a knowledge doc with
-    doc_type="workflow") rather than a separate live-synced ontology store.
-    Each step may carry a symbol/file — follow those into find_definition/
-    get_callers to jump from the procedure into the actual code."""
+    """Trace a workflow's ordered steps by title/slug/concept_id; steps carry symbol/file pointers into the graph."""
     from cairn.knowledge.workflow import trace_workflow as _trace
 
     bundle = _bundle()

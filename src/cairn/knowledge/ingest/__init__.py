@@ -27,13 +27,7 @@ def run_ingest(
     include_drafts: bool = False,
     repos: Iterable[Path | str] = (),
 ) -> dict:
-    """Run the stage-only pipeline over fed markdown and repo scans.
-
-    Composition: source adapters -> parse -> classify (skips recorded
-    with reasons, workspace overrides layered) -> identity ->
-    stage_outbox. Stops after staging; the knowledge store is never
-    touched (dry-run default).
-    """
+    """Stage fed and scanned documents without touching the knowledge store."""
     from cairn.knowledge.ingest.config import load_ingest_config
 
     overrides = load_ingest_config()

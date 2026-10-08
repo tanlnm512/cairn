@@ -20,11 +20,7 @@ RERANK_MAX_LENGTH = 512
 # ([CLS] query [SEP] candidate [SEP] for BERT-style encoders).
 _PAIR_SPECIAL_TOKENS = 3
 
-# The labeled section headers a chunk_for_symbol chunk can carry (variant
-# B/C shapes; see embeddings.chunk_for_symbol). Used only to *read* the
-# Signature/Docstring sections out of the stored chunk -- the chunk itself
-# is always kept intact in the pair tail, so a mis-parse can never lose
-# information, only fail to promote a field to the head.
+# Section extraction only promotes fields; the full chunk remains in the tail.
 _CHUNK_SECTION_LABELS = (
     "File:",
     "Enclosing Scope:",
@@ -36,23 +32,13 @@ _CHUNK_SECTION_LABELS = (
     "Body:",
 )
 
-# Loaded-CrossEncoder cache for long-lived processes; the lazy load is
-# reachable from concurrent search threads and must stay behind
-# _RERANKER_CACHE_LOCK (an unsynchronized load can double-load weights or
-# KeyError the eviction loser).
+# Concurrent reranker loads share one cache lock.
 _RERANKER_CACHE: dict = {}
 _RERANKER_CACHE_LOCK = threading.Lock()
 
 
 def _rerank_marker_path():
-    """Marker file (<CAIRN_HOME>/rerank_enabled) recording that
-    `cairn download-reranker` succeeded and reranking should auto-enable.
-
-    A CLI process cannot export an env var into its parent shell, so
-    `rerank_enabled()` honors the marker as if CAIRN_RERANK=1 had been set.
-    CAIRN_HOME is imported lazily so importing this module never pins the
-    home dir at import time (tests relocate it).
-    """
+    """Return the persistent marker that enables reranking after a successful download."""
     from ..paths import CAIRN_HOME
     return CAIRN_HOME / "rerank_enabled"
 
@@ -69,16 +55,7 @@ def set_rerank_enabled_persistently():
 
 
 def rerank_enabled() -> bool:
-    """Whether the rerank stage should run at all.
-
-    Enabled if ANY of:
-      - CAIRN_RERANK is set to a truthy value (1/true/on), OR
-      - the persistent auto-enable marker exists (written by a successful
-        `cairn download-reranker`).
-    Disabled if CAIRN_RERANK is set to a falsy value (0/false/off) — this
-    explicit OFF always wins, even if the marker exists, so users have a hard
-    kill switch.
-    """
+    """Whether the rerank stage should run at all."""
     env = os.environ.get("CAIRN_RERANK", "").strip().lower()
     if env in ("0", "false", "off"):
         return False
@@ -96,11 +73,7 @@ def current_rerank_model() -> str:
 
 
 def reranker_available() -> bool:
-    """True iff sentence-transformers' CrossEncoder can be imported right now.
-
-    Does not attempt to load the model itself (that can still fail later);
-    only answers "is the capability installed at all".
-    """
+    """True iff sentence-transformers' CrossEncoder can be imported right now."""
     try:
         from sentence_transformers import CrossEncoder  # noqa: F401
 
@@ -130,19 +103,7 @@ def reranker_model_is_cached(model_name: Optional[str] = None) -> bool:
 
 
 def download_reranker_model(model_name: Optional[str] = None) -> bool:
-    """Download the reranker's weights into the local HuggingFace cache if absent.
-
-    Returns True if the model is available locally after the call (already
-    cached, or successfully downloaded). Mirrors ``embeddings.download_model``
-    so ``cairn download-reranker`` and ``cairn embed --download-model`` share
-    a shape. Does not require ``CAIRN_RERANK=1`` — pre-fetching the weights
-    should not depend on the feature being enabled at download time.
-
-    The fetch runs in a child interpreter behind the quiet progress helper,
-    like ``embeddings.download_model``: constructing the CrossEncoder
-    in-process let HuggingFace print one tqdm bar per repo file straight
-    into the terminal. The child shares the parent's HF cache.
-    """
+    """Download the reranker's weights into the local HuggingFace cache if absent."""
     import subprocess
     import sys
 
@@ -192,22 +153,14 @@ def _get_reranker():
                 # Single-model cache: a model-name change evicts the stale entry.
                 if _RERANKER_CACHE and next(iter(_RERANKER_CACHE)) != model_name:
                     _RERANKER_CACHE.clear()
-                # max_length pinned explicitly: relying on the implicit
-                # resolution means a sentence-transformers/config upgrade
-                # could silently change the truncation window and shift
-                # every rerank score with no code diff.
+                # Pin max_length so dependency defaults cannot shift scores.
                 model = CrossEncoder(model_name, max_length=RERANK_MAX_LENGTH)
                 _RERANKER_CACHE[model_name] = model
     return model
 
 
 def _sigmoid(x: float) -> float:
-    """Numerically stable logistic function: unbounded logit -> [0, 1].
-
-    Raw reranker scores are unbounded logits; thresholding must go through
-    this map. The naive 1/(1+exp(-x)) overflows for x < ~-709; the
-    two-branch form is exact for all finite floats.
-    """
+    """Numerically stable logistic function: unbounded logit -> [0, 1]."""
     if x >= 0.0:
         return 1.0 / (1.0 + math.exp(-x))
     e = math.exp(x)
@@ -215,15 +168,7 @@ def _sigmoid(x: float) -> float:
 
 
 def _extract_chunk_section(chunk: str, label: str) -> str:
-    """Best-effort read of one labeled section out of a stored chunk.
-
-    A section runs from its ``label`` line ("Signature: ...") to the next
-    line carrying any known chunk label. Best-effort by design: a docstring
-    that itself contains a line like "Signature: ..." truncates the read
-    early, and any mis-parse is harmless -- the full chunk is still appended
-    to the pair tail by _structured_candidate_text, so extraction failure
-    can only fail to *promote* a field, never lose it.
-    """
+    """Best-effort read of one labeled section out of a stored chunk."""
     lines = chunk.splitlines()
     collected: List[str] = []
     inside = False
@@ -242,26 +187,7 @@ def _extract_chunk_section(chunk: str, label: str) -> str:
 
 
 def _structured_candidate_text(c: dict) -> str:
-    """Build the structured candidate side of a rerank pair.
-
-    Importance-ordered head first (kind + qualified name, file path,
-    signature, docstring -- in that order), full stored chunk appended
-    last. Because truncation eats the pair from the tail, whatever matters
-    most is guaranteed to survive and the least-important content (chunk
-    body, then the chunk's duplicate of the promoted fields) loses first.
-
-    Field sourcing: kind/qualified_name/file_path come from the candidate
-    dict itself (they are ground truth, and they exist even for BM25-only
-    candidates whose ``chunk`` is empty -- today those rerank against the
-    empty string). Signature and docstring have no dedicated candidate
-    fields; they exist only inside the chunk text (variant B/C carry
-    ``Signature:``/``Docstring:`` sections), so they are extracted
-    best-effort and degrade to absence when the chunk lacks them.
-
-    Graceful degradation: every field is optional; missing ones skip their
-    line. A candidate with no identity fields and no chunk degrades to the
-    empty string, exactly as the legacy flat format did.
-    """
+    """Build the structured candidate side of a rerank pair."""
     kind = (c.get("kind") or "").strip()
     qname = (c.get("qualified_name") or c.get("name") or "").strip()
     path = (c.get("file_path") or "").strip()
@@ -288,21 +214,7 @@ def _structured_candidate_text(c: dict) -> str:
 
 
 def _truncate_candidate(model, query: str, text: str) -> str:
-    """Query-priority truncation of one candidate text to the pair budget.
-
-    CrossEncoder.predict truncates the (query, candidate) pair jointly
-    (HF "longest_first"), which cannot express "never touch the query":
-    near the boundary it will trim either side. So the candidate TEXT is
-    pre-truncated here to the tokens left after the query, and the SDK's
-    own truncation becomes a no-op. Measurement contract: the query
-    reaches the cross-encoder verbatim; the candidate loses from its tail
-    (the least-important end of the importance-ordered text).
-
-    Tokenizer-based when the model exposes one; falls back to the chunker's
-    own ~4 chars/token approximation otherwise (stub models, tokenizer
-    access failures). A query that alone fills the window returns the text
-    untruncated -- there is no budget to protect, and the SDK decides.
-    """
+    """Query-priority truncation of one candidate text to the pair budget."""
     tokenizer = getattr(model, "tokenizer", None)
     if tokenizer is not None:
         try:
@@ -314,18 +226,7 @@ def _truncate_candidate(model, query: str, text: str) -> str:
             t_ids = encoded["input_ids"]
             if len(t_ids) <= budget:
                 return text
-            # Cut strategy, in order of fidelity:
-            # 1. offset mapping (byte-exact prefix in one call) — supported
-            #    by real fast tokenizers; silently absent in some installs
-            #    (this repo's XLMRobertaTokenizer accepts the kwarg but
-            #    returns no mapping), hence the KeyError catch;
-            # 2. binary search on the char prefix — token count is monotone
-            #    in char length, so the largest prefix within budget is a
-            #    byte-exact cut (~log2(len) tokenizer calls, only on the
-            #    rare oversized candidate);
-            # 3. decode(ids[:budget]) — token-exact but NOT byte-exact
-            #    (SentencePiece decoders drop newlines), kept as the last
-            #    resort for tokenizers that only support encode/decode.
+            # Prefer byte-exact prefix cuts; decode only as a last resort.
             try:
                 offsets = tokenizer(
                     text, add_special_tokens=False, return_offsets_mapping=True
@@ -372,28 +273,12 @@ def rerank(
     limit: int,
     structured: bool = False,
 ) -> Tuple[List[dict], bool]:
-    """Rerank a candidate shortlist; returns (results, reranked).
-
-    ``candidates`` must each have a ``"chunk"`` key. Non-fatal on any failure
-    (disabled, uninstalled, model not cached, or a `predict()` exception):
-    returns ``candidates[:limit]`` unchanged with ``reranked=False`` — i.e.
-    the hybrid (vector + BM25 + RRF) order as-is. On success, each returned
-    dict gains a raw-logit ``"rerank_score"`` (never threshold it directly)
-    plus sigmoid-mapped ``"rerank_score_norm"`` in [0, 1], and the list is
-    truncated to ``limit`` by score, descending. ``structured=True`` builds
-    the candidate pair side as importance-ordered structured text
-    (see `_structured_candidate_text`), pre-truncated with query priority to
-    ``RERANK_MAX_LENGTH`` so the query always reaches the cross-encoder
-    verbatim.
-    """
+    """Rerank a candidate shortlist; returns (results, reranked)."""
     if not candidates:
         return candidates[:limit], False
     if not rerank_enabled() or not reranker_available():
         return candidates[:limit], False
-    # Proactive guard: is the configured model actually cached locally? If not,
-    # fall back to the hybrid order rather than blocking on a download or
-    # surfacing a load error. (Auto-enable via the download marker guarantees a
-    # model was cached at enable time, but the cache can be evicted later.)
+    # An uncached model falls back without downloading.
     m_name = current_rerank_model()
     if not reranker_model_is_cached(m_name):
         logger.info(

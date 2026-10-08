@@ -467,11 +467,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 );
 """
 
-# edges.resolution column tracks HOW an edge target was resolved, so queries
-# can distinguish trusted resolutions from name-only matches. Values:
-#   'exact'      — resolved to exactly one candidate (trusted)
-#   'ambiguous'  — multiple candidates existed; left unresolved on purpose
-#   'unresolved' — no candidate found (e.g. stdlib/external call)
+# exact is trusted; ambiguous and unresolved intentionally remain name-only.
 EDGE_RESOLUTION_MIGRATION = "ALTER TABLE edges ADD COLUMN resolution TEXT"
 
 # Provenance column on edges: 'tree_sitter' or 'scip'; NULL on legacy rows
@@ -501,17 +497,8 @@ SYMBOL_IMPORTS_SUMMARY_MIGRATION = "ALTER TABLE symbols ADD COLUMN imports_summa
 SYMBOL_BODY_MIGRATION = "ALTER TABLE symbols ADD COLUMN body TEXT"
 TRANSITIVE_EDGES_TARGET_ID_MIGRATION = "ALTER TABLE transitive_edges ADD COLUMN target_id TEXT"
 
-# Provenance column on symbols: 'tree_sitter'. NULL on legacy rows
-# is treated as 'tree_sitter'. Additive ALTER is invisible to
-# the FTS5 triggers (schema.py CREATE TRIGGER only references rowid, name,
-# qualified_name, docstring), so it composes with existing migrations cleanly.
 SYMBOL_SOURCE_MIGRATION = "ALTER TABLE symbols ADD COLUMN source TEXT"
 
-# Parser-signal columns: local binding name of
-# an aliased import (`import x.y as z` -> 'z') and definition parameter
-# count. Nullable -- NULL means the parser had no evidence, never a guess.
-# Additive ALTER, invisible to the FTS5 triggers (they only reference rowid,
-# name, qualified_name, docstring).
 IMPORTS_LOCAL_ALIAS_MIGRATION = "ALTER TABLE imports ADD COLUMN local_alias TEXT"
 SYMBOLS_ARITY_MIGRATION = "ALTER TABLE symbols ADD COLUMN arity INTEGER"
 
@@ -522,19 +509,10 @@ TOOL_METRICS_REQ_CHARS_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN req_char
 TOOL_METRICS_RESP_CHARS_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN resp_chars INTEGER"
 TOOL_METRICS_ARGS_SUMMARY_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN args_summary TEXT"
 
-# Origin stamp on tool_metrics rows:
-# 'mcp' (the default -- the MCP INSERT in mcp_server/metric_buffering.py names
-# no source column and rides this default) or 'cli'
-# (stated explicitly by telemetry/cli_metrics). NOT NULL + DEFAULT makes the
-# ALTER legal on old DBs and backfills pre-migration rows as 'mcp' -- honest
-# for this table's history, so NULL never appears in the views.
+# Legacy rows default to mcp; CLI writers state cli explicitly.
 TOOL_METRICS_SOURCE_MIGRATION = "ALTER TABLE tool_metrics ADD COLUMN source TEXT NOT NULL DEFAULT 'mcp'"
 
-# Truncation-magnitude columns on tool_metrics: original vs delivered chars,
-# set only on calls whose result
-# was actually capped. Nullable by design -- NULL means no-evidence (a
-# non-truncated call or a pre-migration row), never zero, and the CLI writer
-# (which truncates nothing) needs no change.
+# NULL means no truncation evidence, never a zero-length payload.
 TOOL_METRICS_TRUNCATED_FROM_CHARS_MIGRATION = (
     "ALTER TABLE tool_metrics ADD COLUMN truncated_from_chars INTEGER"
 )
@@ -575,55 +553,19 @@ DEFAULT_DB_PATH = resolve_store().db
 
 _logger = logging.getLogger(__name__)
 
-# Process-global guard so each contention site warns at most once per process.
-# Keyed by ``site`` so distinct call points warn independently. Guarded by a
-# lock because swallow sites are reachable from flusher daemon threads
-# (metric_buffering / embed_buffering) concurrently with the main thread.
+# Warn once per site; flusher and tool threads reach this concurrently.
 _CONTENTION_WARNED: dict[str, bool] = {}
 _CONTENTION_LOCK = threading.Lock()
 
 
 def _is_lock_contention(error: Exception) -> bool:
-    """True when an ``OperationalError`` is genuinely lock contention/busy.
-
-    "database is locked"/"database is busy" mean another writer holds the DB;
-    "no such table", "no such module", "duplicate column", ... are schema- or
-    availability-shaped failures that must not pollute the ``lock_contention``
-    signal doctor and ``metrics --contention`` aggregate on.
-    """
+    """Return whether an OperationalError represents SQLite lock contention."""
     msg = str(error).lower()
     return "locked" in msg or "busy" in msg
 
 
 def note_contention(site: str, error: Exception | None = None) -> None:
-    """Emit one lock-contention warning per (process, site).
-
-    Called at ``except sqlite3.OperationalError`` swallow sites so a
-    silently-absorbed "database is locked" surfaces at least once instead of
-    vanishing. Another cairn process holds the DB; ``busy_timeout`` retried and
-    absorbed the contention (the operation completed or degraded gracefully).
-    Distinct ``site`` tags warn independently; the same site warns at most once
-    per process -- mirrors ``warn_hash_fallback_once`` (graph/embeddings.py) and
-    ``warn_ann_fallback_once`` (graph/ann_index.py).
-
-    ``error``: pass the caught exception whenever the ``except`` clause is
-    broader than pure lock contention. A non-lock-shaped OperationalError
-    ("no such table", "no such module: FTS5", "duplicate column") is a schema/
-    availability failure, not contention -- it is skipped (debug-logged) so
-    phantom contention events don't dilute the doctor/metrics signal.
-
-    ``site`` is a stable, low-cardinality ``module.function`` tag (NO line
-    numbers -- they drift). Also emits a durable ``lock_contention`` telemetry
-    event so ``cairn doctor`` / ``cairn metrics --contention`` can
-    aggregate contention trends, not just log a one-time line. The event is
-    gated by ``CAIRN_TELEMETRY`` internally; the WARNING stays unconditional
-    (an operational signal, not telemetry data) -- turning telemetry off stops
-    recording but does not silence the operational warning.
-
-    Thread-safe: the guard dict is mutated only under ``_CONTENTION_LOCK``; the
-    emit + log calls happen after the lock is released so they can't serialize
-    concurrent swallow sites.
-    """
+    """Record and warn once per process and site for real lock contention."""
     if error is not None and not _is_lock_contention(error):
         _logger.debug(
             "note_contention(%s) skipped: %r is not lock-shaped", site, error
@@ -676,21 +618,12 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
         except sqlite3.OperationalError as e:
             error_msg = str(e).lower()
             if "duplicate column" in error_msg:
-                # Idempotent: column already exists. This is the expected path on
-                # a fresh DB whose CREATE TABLE already declares the column (e.g.
-                # transitive_edges.target_id) -- the migration is retained only to
-                # upgrade pre-existing DBs. It is NOT lock contention, so it must
-                # stay silent; warning here would fire on every first-run DB init
-                # and dilute the note_contention signal with a false positive.
+                # A duplicate column is expected on fresh databases, not contention.
                 conn.execute(
                     "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
                     (migration_name, "applied")
                 )
             else:
-                # Genuine error. Surface lock contention once before
-                # propagating so the failure isn't silent; other shapes
-                # ("no such table" on a corrupt DB) are not contention and
-                # are skipped by note_contention's discrimination.
                 note_contention("schema.migration", error=e)
                 raise
 
@@ -722,11 +655,7 @@ def _extract_migration_name(migration_sql: str) -> str:
 
 
 def _maybe_backfill_fts(conn: sqlite3.Connection) -> None:
-    """Rebuild the FTS index from symbols when the token store is empty.
-
-    Guards on symbols_fts_data being empty (the FTS shadow rows can exist with
-    zero tokens if populated before triggers were wired), not the FTS row count.
-    """
+    """Backfill FTS rows only when the token store is empty."""
     try:
         token_rows = conn.execute(
             "SELECT COUNT(*) FROM symbols_fts_data"
@@ -750,22 +679,7 @@ def _maybe_backfill_memory_validity(
     db_path: Optional[Path] = None,
     knowledge_root: Optional[Path] = None,
 ) -> None:
-    """One-time backfill of memory validity intervals onto a store that
-    predates them.
-
-    Sentinel-guarded via schema_meta, so it runs at most once per DB. For
-    every memory concept in the bundle, stamps ``valid_from`` into
-    extensions and upserts the ``memory_validity`` row via write_validity;
-    ``valid_until`` stays NULL. ``valid_from`` is the concept's existing
-    extension value, else its recorded creation timestamp (the frontmatter
-    ``timestamp``, which copies and checkouts preserve where file mtimes do
-    not), else now. Intervals already present are preserved. The bundle is
-    the store-layout sibling ``<db dir>/.knowledge`` of the opened DB --
-    never a process-default path, so a ``--db`` override cannot backfill a
-    foreign bundle. A missing or unreadable bundle records the sentinel
-    (nothing to backfill); a read or write failure leaves it unrecorded so
-    the next writable connect retries.
-    """
+    """Backfill memory validity once beside the opened store."""
     try:
         done = conn.execute(
             "SELECT 1 FROM schema_meta WHERE key = ?",
@@ -844,14 +758,7 @@ def _maybe_backfill_memory_validity(
 
 
 def _unicode61_tokens(text: str):
-    """Yield the FTS5 unicode61 tokenization of ``text`` (approximate).
-
-    Case-folds and splits on non-alphanumeric runs, matching the
-    ``tokenize='unicode61'`` declaration on ``symbols_fts`` for the ASCII
-    identifiers and English docstrings this table serves (full unicode
-    diacritic folding differs only for exotic input). Used by the
-    ``rebuild_term_df`` fallback scan.
-    """
+    """Yield the ASCII-oriented unicode61 approximation of text."""
     cur: list[str] = []
     for ch in text.lower():
         if ch.isalnum():
@@ -864,16 +771,7 @@ def _unicode61_tokens(text: str):
 
 
 def _rebuild_term_df_vocab(conn: sqlite3.Connection, n_symbols: int) -> Optional[int]:
-    """term_df rebuild via the FTS5 vocabulary (primary path).
-
-    Returns the number of tokens written, or ``None`` when the fts5vocab
-    virtual table cannot be created or queried (caller falls back to the
-    aggregate scan). The vocab table lives in temp and targets main's
-    symbols_fts via the three-argument form (a temp fts5vocab may reference
-    an FTS5 table in any attached database). Row mode yields exactly one
-    row per distinct term with ``doc`` = number of FTS rows containing it,
-    which IS symbol_df -- no GROUP BY or COUNT needed.
-    """
+    """Rebuild term_df through FTS5 vocabulary or return None."""
     try:
         conn.execute("DROP TABLE IF EXISTS temp.term_df_vocab")
         conn.execute(
@@ -898,13 +796,7 @@ def _rebuild_term_df_vocab(conn: sqlite3.Connection, n_symbols: int) -> Optional
 
 
 def _rebuild_term_df_scan(conn: sqlite3.Connection, n_symbols: int) -> int:
-    """term_df rebuild via one aggregate scan of symbols (fallback path).
-
-    Tokenizes each symbol's indexed text (name, qualified_name, docstring)
-    with the unicode61 approximation in :func:`_unicode61_tokens` and counts
-    the distinct symbols per token. Deterministic: a pure function of the
-    symbols table's contents.
-    """
+    """Rebuild term_df by scanning and tokenizing indexed symbols."""
     df: dict[str, set[int]] = {}
     for rowid, name, qname, doc in conn.execute(
         "SELECT rowid, name, qualified_name, docstring FROM symbols"
@@ -921,17 +813,7 @@ def _rebuild_term_df_scan(conn: sqlite3.Connection, n_symbols: int) -> int:
 
 
 def rebuild_term_df(conn: sqlite3.Connection) -> int:
-    """Rebuild the persisted per-corpus DF table from ``symbols_fts``.
-
-    Populates one row per indexed token: ``symbol_df`` = number of distinct
-    symbols whose indexed text contains the token, ``n_symbols`` = total
-    symbol count. Reads the FTS5 vocabulary in row mode via an fts5vocab
-    virtual table; when that is unusable, falls back to one aggregate scan
-    of the symbols table. A pure function of the DB contents -- no env,
-    network, or time dependence -- so repeated runs on the same DB produce
-    identical table contents. Commits;
-    returns the number of tokens written.
-    """
+    """Rebuild deterministic per-corpus token statistics and commit."""
     n_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
     written = _rebuild_term_df_vocab(conn, n_symbols)
     if written is None or (written == 0 and n_symbols > 0):
@@ -943,10 +825,6 @@ def rebuild_term_df(conn: sqlite3.Connection) -> int:
     return written
 
 
-# Paths whose schema has already been applied+backfilled in this process.
-# Schema/backfill only need to happen once per process per db path -- guarded
-# by a lock since the metric flusher thread (server.py) can call get_db()
-# concurrently.
 _INITIALIZED_PATHS: set[str] = set()
 _INIT_LOCK = threading.Lock()
 
@@ -956,25 +834,9 @@ def get_db(
     busy_timeout_ms: int = 5000,
     read_only: bool = False,
 ) -> sqlite3.Connection:
-    """Open a SQLite connection to the graph DB, creating it if missing.
-
-    Runs idempotent schema migrations and returns a connection with Row factory
-    and foreign keys ON. When db_path is None, resolves the store for the
-    current workspace context (CAIRN_DB env > central store keyed by workspace).
-
-    read_only=True opens via the SQLite URI (`file:<path>?mode=ro`); such a
-    connection cannot contend with writers and skips schema apply / FTS backfill
-    (migrations are the writable CLI process's responsibility).
-    """
+    """Open the graph DB with migrations, Row factory, and foreign keys enabled."""
     path = Path(db_path) if db_path else resolve_store().db
     key = str(path.resolve())  # resolve() works on non-existent paths too (strict=False default)
-    # A missing store PARENT DIRECTORY yields sqlite's bare
-    # "unable to open database file", which names neither the path nor the env
-    # that resolved it. Raise the same exception type (doctor's catch formats
-    # its own "cannot open database: " prefix around it) with the resolved
-    # path, env chain, and remediation. Choke point before any connect, so
-    # read-only and writable opens both enrich. A directory that exists with
-    # the db file merely absent keeps today's behavior (sqlite creates/opens).
     if not path.parent.exists():
         raise sqlite3.OperationalError(
             f"store parent directory does not exist (db path: {path}). "
@@ -983,10 +845,6 @@ def get_db(
             f"(default ~/.cairn), then run 'cairn init && cairn build' first."
         )
     if read_only:
-        # URI form: a read-only connection. must exist -- a read-only open of
-        # a missing file is an error a writer must fix via `cairn init && cairn build`.
-        # quote(): '?', '#' and spaces in the path would otherwise parse as
-        # URI query/fragment separators and silently truncate mode=ro.
         uri = f"file:{quote(str(path.resolve()))}?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
     else:
@@ -1007,13 +865,6 @@ def get_db(
                 time.sleep(0.05)
     conn.execute("PRAGMA mmap_size = 268435456")
     conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
-    # The schema work + commit and marking the path initialized must be atomic
-    # under _INIT_LOCK so a second thread calling get_db() for the same path
-    # cannot observe the key as initialized on a connection whose migrations
-    # have not yet been applied. The flag is set AFTER the migration+commit
-    # succeed — if _apply_schema raises mid-migration (disk full, locked file),
-    # the path must NOT be marked initialized, or every later get_db(path) in
-    # this process will skip schema application permanently.
     with _INIT_LOCK:
         already_initialized = key in _INITIALIZED_PATHS
         # Only a writable connection can apply the schema (it writes). A
@@ -1059,21 +910,9 @@ def _remove_db_sidecars(db_path: str) -> None:
 
 
 def swap_db_file(tmp_path: str, db_path: str) -> None:
-    """Atomically replace ``db_path`` with ``tmp_path``, WAL-safe.
-
-    os.replace alone is NOT enough when the OLD db ran in WAL mode: its
-    "<db_path>-wal"/"-shm" survive the swap, and the next open replays the old
-    committed WAL frames over the NEW main file -- silently serving the
-    pre-build graph (or SQLITE_CORRUPT). The caller must hold ``build_lock``
-    on the real db path. Steps: checkpoint the old WAL into the old main file
-    (best-effort), unlink the old sidecars, THEN replace. Open old
-    connections keep their fds on the unlinked inodes, so they are unaffected.
-    """
+    """Atomically replace a WAL-mode database and remove stale sidecars."""
     if os.path.exists(db_path):
-        # Checkpoint so committed frames land in the old main file before the
-        # sidecars go -- any straggler that still reads the old inode finds a
-        # self-consistent DB. Best-effort: a busy TRUNCATE leaves frames in a
-        # wal that is unlinked below regardless.
+        # Checkpoint old WAL frames before unlinking sidecars.
         try:
             old = sqlite3.connect(db_path)
             try:
@@ -1091,14 +930,7 @@ def swap_db_file(tmp_path: str, db_path: str) -> None:
     _remove_db_sidecars(tmp_path)
 
 
-# Analytics tables carried across a whole-file DB swap (full rebuild /
-# staged build). The swap replaces the entire file, so without this list the
-# build history, degradation events, and tool health reset to empty on every
-# rebuild -- defeating the retention contract that makes build trends,
-# contention history, and doctor's freshness/tool-health windows useful.
-# ``pending_sync`` is deliberately NOT
-# carried: it is operational state (files with unindexed edits) tied to the
-# pre-swap graph's rows, and a full rebuild has recomputed that graph.
+# Retain durable analytics; operational pending_sync is intentionally excluded.
 _TELEMETRY_TABLE_COLUMNS = {
     "build_runs": (
         "kind, started_at, duration_s, phase_timings, repos, files, symbols, "
@@ -1115,18 +947,7 @@ _TELEMETRY_TABLE_COLUMNS = {
 
 
 def copy_telemetry_tables(dest_conn: sqlite3.Connection, old_db_path: str) -> None:
-    """Carry the analytics tables from ``old_db_path`` into ``dest_conn``.
-
-    Called inside ``build_lock`` immediately before a whole-file swap
-    (:func:`backup_to` and the staged-build swap in ``cli.core``), with the
-    freshly built DB open on ``dest_conn`` and the DB being replaced still at
-    ``old_db_path``. Rows are appended with FRESH ids (the id space of the new
-    DB is not empty on the staged path, where this build's own ``build_runs``
-    row already landed), preserving source order so time-ordered consumers
-    stay correct. Best-effort throughout: a missing old DB (first build), a
-    pre-telemetry old DB (missing tables), or any copy error degrades to
-    starting the analytics history fresh -- analytics must never fail a build.
-    """
+    """Best-effort append retained analytics history to a freshly built database."""
     if not os.path.exists(old_db_path):
         return
     try:
@@ -1171,10 +992,6 @@ def backup_to(mem_conn: sqlite3.Connection, db_path: str) -> None:
                     mem_conn.backup(dest)          # C-level page copy, no row iteration
                 dest.execute("PRAGMA foreign_keys = ON")
                 dest.execute("PRAGMA journal_mode = WAL")  # serving mode for readers
-                # Carry analytics history from the DB about to be replaced --
-                # the swap below discards the whole old file, and without
-                # this every full rebuild reset build_runs/events/tool_metrics
-                # to empty (see copy_telemetry_tables).
                 copy_telemetry_tables(dest, db_path)
                 dest.commit()
             except BaseException:
@@ -1202,23 +1019,7 @@ import contextlib
 
 @contextlib.contextmanager
 def build_lock(db_path: str):
-    """Advisory exclusive lock serializing writers of ``db_path``.
-
-    The full-rebuild path (in-memory build -> backup_to), the single-repo
-    path (init_db -> direct writes), staged CLI builds, and incremental
-    updates all write the live DB. Without this lock two of them could
-    interleave writes with only SQLite's busy_timeout as a guard. The lock
-    is non-blocking: a second writer raises RuntimeError immediately rather
-    than waiting, so the user knows to retry later.
-
-    The lock FILE is deliberately never unlinked, by winner or by loser:
-    flock is inode-based, and unlink-on-release races a third process into
-    creating a fresh inode while a waiter still blocks on the old one (two
-    concurrent holders). A stale zero-byte ``<db>.build.lock`` is harmless --
-    only flock state matters, and it dies with the holder's fd.
-
-    Raises ``RuntimeError`` if another build or update holds the lock.
-    """
+    """Acquire the non-blocking advisory writer lock for a database path."""
     lock_path = str(db_path) + ".build.lock"
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o644)

@@ -5,10 +5,7 @@ import re
 from pathlib import PurePosixPath
 from typing import Dict, List
 
-# Path patterns (matched as substrings, case-sensitive where language-conventional).
-# Kept conservative: each must be a real test convention, not a word that
-# appears in production paths. Order doesn't matter; a file is a test-file if
-# ANY matches.
+# Patterns must be unambiguous test conventions; any one match classifies.
 _TEST_PATH_PATTERNS = (
     "/src/test/",            # JVM/Gradle (Kotlin, Java)
     "/src/androidTest/",     # Android instrumentation tests
@@ -47,13 +44,7 @@ _TEST_NAME_RE = re.compile(r"(Test|Spec|Tests|Specs)$")
 
 
 def is_test_symbol(file_path: str, symbol_name: str = "", qualified_name: str = "") -> Dict:
-    """Classify whether a symbol is a test.
-
-    Returns ``{"is_test": bool, "detection_method": str}`` where
-    ``detection_method`` is one of ``"path"``, ``"name"``, ``"path+name"``,
-    or ``""`` (not a test). Designed to run as a cheap filter over an impact
-    result set; the path check is a substring scan over ~20 patterns.
-    """
+    """Classify whether a symbol is a test."""
     path_hit = bool(file_path) and (
         any(p in file_path for p in _TEST_PATH_PATTERNS)
         or _test_basename(file_path)
@@ -99,10 +90,7 @@ def is_test_symbol(file_path: str, symbol_name: str = "", qualified_name: str = 
 
 
 def filter_tests(impacted: List[Dict]) -> List[Dict]:
-    """Given an impact result list (entries with ``symbol``, ``file``, ``repo``,
-    ``depth``), return the subset that are tests, each annotated with
-    ``detection_method``. Non-test entries are excluded.
-    """
+    """Return impact entries classified as tests with their detection method."""
     out: List[Dict] = []
     for r in impacted:
         cls = is_test_symbol(r.get("file", ""), r.get("symbol", ""), r.get("qualified_name", ""))

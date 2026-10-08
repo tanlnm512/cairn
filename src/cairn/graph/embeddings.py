@@ -20,10 +20,7 @@ from .embed_backends import (
 )
 from .schema import note_contention, rebuild_term_df
 
-# ---------------------------------------------------------------------------
-# Model identity. Stored per-row so a model swap invalidates and re-embeds.
-# Bumping this string forces embed_all to re-embed every symbol on the next run.
-# ---------------------------------------------------------------------------
+# Model identity is stored per row so producer swaps invalidate stale embeddings.
 
 DEFAULT_LOCAL_MODEL = "BAAI/bge-m3"
 HASH_MODEL = "hash-256-v1"  # deterministic fallback; tests + offline smoke
@@ -37,24 +34,7 @@ _CORPUS_MODEL_ENV = {
 
 
 def current_model(corpus: str = "code") -> str:
-    """The model name rows are stamped with for the effective backend.
-
-    ``corpus`` selects between the code corpus (default) and the
-    knowledge/memory corpora, each of which can be pinned to a different
-    local model via its own env var (falls back to CAIRN_EMBED_LOCAL_MODEL).
-    Only applies to the local backend.
-
-    Server-family backends stamp ``server/{netloc}/{model}`` — the netloc
-    of the resolved base URL (scheme and path stripped) plus the request
-    model id — so staleness, purge, and vec0 table names react to producer
-    swaps with no schema change. CAIRN_EMBED_MODEL_STAMP, when
-    set, is returned verbatim: a pure override with no derivation and no
-    validation. The ladder's rung-1 session adoption (checked between the
-    env stamp and the derived stamp) pins the stored corpus stamp so an
-    adopted candidate serves the existing rows with zero re-embed.
-    One server model serves every corpus, so ``corpus`` is ignored
-    for server backends.
-    """
+    """Return the backend stamp that scopes embedding staleness and vec0 tables."""
     return resolve_embedding_backend(_effective_backend()).model(corpus)
 
 
@@ -96,15 +76,7 @@ def _model_local(corpus: str) -> str:
 
 
 def embeddings_available() -> bool:
-    """True iff an embedding backend can be loaded right now.
-
-    The default 'local' backend falls back to the hash embedder when
-    sentence_transformers is missing. Returns False when openai is selected
-    but OPENAI_API_KEY is missing, or when a server-family backend fails its
-    availability probe: GET {base}/models must return 200 AND list the
-    configured model id. The probe verdict is cached per process;
-    reset_backend_cache() invalidates it.
-    """
+    """Return whether the configured embedding backend can currently serve requests."""
     backend = resolve_embedding_backend(backend_name())
     available = backend.available()
     fallback = backend.fallback_name
@@ -136,11 +108,7 @@ def install_hint() -> str:
 # ---------------------------------------------------------------------------
 
 
-# All selectable chunking recipes (see chunk_for_symbol). Order is the
-# ablation ladder: A legacy baseline, B default, C maximal, then the
-# field-dropout variants. The identity floor (qualified name, file
-# path, signature, docstring) is present in EVERY entry; tests iterate this
-# tuple to enforce it. Values are case-normalized (upper) before matching.
+# Every chunk variant retains the identity floor enforced by tests.
 CHUNK_VARIANTS = (
     "A", "B", "C",
     "B_NO_SCOPE", "B_NO_SIG", "B_IDENTITIES", "C_TRIM",
@@ -153,28 +121,7 @@ def chunk_for_symbol(
     variant: Optional[str] = None,
     max_tokens: int = 512,
 ) -> str:
-    """Build the embedding chunk for one symbol.
-
-    Variants: A (kind + name + first signature line), B (A + docstring +
-    parameters + return_type + full signature), C (B + body + context).
-
-    Field-dropout variants of B -- each removes one field
-    family so the retrieval-quality ablation can measure its contribution;
-    the identity floor holds in every one):
-
-    * ``B_NO_SCOPE`` -- B minus ``Enclosing Scope``/``Imports`` (file path
-      stays; tests the contextual-scope fields).
-    * ``B_NO_SIG`` -- B minus ``Parameters``/``Return Type`` (``Signature``
-      stays per the floor; tests the structured signature metadata).
-    * ``B_IDENTITIES`` -- the minimal legal variant: ONLY the identity floor
-      (qualified name + file path + signature + docstring).
-    * ``C_TRIM`` -- B plus the body truncated to half the chunk budget
-      (tests whether a trimmed body keeps C's gains at lower size).
-
-    ``variant`` (explicit) overrides ``CAIRN_CHUNK_VARIANT`` (env, default B)
-    without ever mutating the environment; both are
-    case-insensitive.
-    """
+    """Return one symbol's chunk using the selected ablation variant."""
     v = (variant or os.environ.get("CAIRN_CHUNK_VARIANT", "B")).upper()
     kind = (row["kind"] or "").strip() if row["kind"] is not None else ""
     qname = (row["qualified_name"] or row["name"] or "").strip()
@@ -243,12 +190,7 @@ def chunk_for_symbol(
 
 
 def _signature_lines_for_rows(rows: Sequence[sqlite3.Row]) -> dict:
-    """Read each symbol's declaration line from disk, grouped by file.
-
-    Returns ``{symbol_id: signature_line}``. A missing/moved file or a symbol
-    with no file_path/line_start just gets no signature (chunk_for_symbol
-    falls back to kind+qname+doc), never raises.
-    """
+    """Return declaration lines keyed by symbol id, omitting unreadable symbols."""
     from ..paths import resolve_workspace
     from .scanner import resolve_file_path
 
@@ -277,20 +219,12 @@ def _signature_lines_for_rows(rows: Sequence[sqlite3.Row]) -> dict:
     return out
 
 
-# Multi-vector kinds. Deliberately NOT
-# CHUNK_VARIANTS entries: the identity-floor tests iterate
-# CHUNK_VARIANTS and would break for minimal per-kind texts. Each kind has
-# its own producer below and its own content-hash staleness over that text.
+# Multi-vector kinds track staleness independently of CHUNK_VARIANTS.
 MV_KINDS = ("name", "docstring")
 
 
 def name_text_for_symbol(row: sqlite3.Row, signature: Optional[str] = None) -> str:
-    """Name-only multi-vector text: symbol kind + qualified name + signature
-    line (the variant-A header shape minus the docstring).
-
-    Mirrors chunk_for_symbol's header construction so the two texts stay
-    consistent. Returns "" only when the symbol has neither name nor kind.
-    """
+    """Return the name-only multi-vector text for a symbol."""
     kind = (row["kind"] or "").strip() if row["kind"] is not None else ""
     qname = (row["qualified_name"] or row["name"] or "").strip()
     sig = (signature or "").strip()
@@ -303,11 +237,7 @@ def name_text_for_symbol(row: sqlite3.Row, signature: Optional[str] = None) -> s
 
 
 def docstring_text_for_symbol(row: sqlite3.Row) -> str:
-    """Docstring-only multi-vector text: the symbol's docstring, stripped.
-
-    Returns "" when the symbol has no docstring -- the caller must skip
-    embedding (and drop any stale row) for that symbol/kind pair.
-    """
+    """Return a symbol's stripped docstring, or an empty string."""
     doc = row["docstring"] if "docstring" in row.keys() else None
     return (doc or "").strip()
 
@@ -315,11 +245,7 @@ def docstring_text_for_symbol(row: sqlite3.Row) -> str:
 def mv_text_for_kind(
     row: sqlite3.Row, vector_kind: str, signature: Optional[str] = None
 ) -> str:
-    """Dispatch to the producer for ``vector_kind`` ('name' | 'docstring').
-
-    Contract: one text per (symbol, kind); unknown kinds raise ValueError so
-    a typo in a future kind can never silently produce empty vectors.
-    """
+    """Return one multi-vector text for a symbol and kind, raising ValueError otherwise."""
     if vector_kind == "name":
         return name_text_for_symbol(row, signature=signature)
     if vector_kind == "docstring":
@@ -327,19 +253,8 @@ def mv_text_for_kind(
     raise ValueError(f"unknown vector_kind: {vector_kind!r}")
 
 
-# ---------------------------------------------------------------------------
-# Backend abstraction — local (sentence-transformers) / hash / openai / server family.
-# Each backend exposes _embed(texts) -> List[bytes] (float32 BLOBs).
-# ---------------------------------------------------------------------------
-
-
 def _config_or_env(name: str, default: Optional[str] = None) -> Optional[str]:
-    """Resolution choke point for the CAIRN_EMBED_* knobs: env var > config file
-    > ``default``. Env and file values are stripped, so a blank env value
-    falls through to the file and a blank file value to the default. File
-    values live in $CAIRN_HOME/config.json under the same
-    env-var name (paths.CONFIG_FILE); no config file means env-or-default.
-    """
+    """Resolve an embedding knob from environment, config file, then default."""
     from ..paths import get_config_value
 
     env = (os.environ.get(name) or "").strip()
@@ -365,11 +280,7 @@ _SERVER_PRESET_BASE_URL = {
 }
 
 
-# Cache the loaded model so repeated calls don't reload weights.
-# Guarded by _MODEL_CACHE_LOCK: the lazy load is reachable from both the embed
-# flusher thread and tool threads, and an unsynchronized load could
-# double-load the weights or -- with two different model keys racing the
-# single-entry eviction -- KeyError the loser on the final lookup.
+# Guard lazy model loading and single-entry eviction across threads.
 _MODEL_CACHE: dict = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 
@@ -383,10 +294,7 @@ _EFFECTIVE_BACKEND_CACHE: dict[str, Optional[str]] = {"effective": None}
 # until the first probe answers.
 _SERVER_PROBE_CACHE: dict[str, Optional[bool]] = {"available": None}
 
-# Guards the check-then-act blocks over both caches above -- the resolution
-# is reachable from the embed flusher thread and tool threads alike, so a
-# first stamp wins under the lock and racing first calls settle on a single
-# consistent verdict. Also guards every read of the _SESSION_* overrides.
+# Guard check-then-stamp resolution and every session-override read.
 _BACKEND_CACHE_LOCK = threading.Lock()
 
 # The probe timeout is fixed at 2 s: a down server must fail the
@@ -399,28 +307,13 @@ _PROBE_TIMEOUT_S = 2.0
 _ALIAS_GATE_CACHE: dict = {}
 _ALIAS_GATE_LOCK = threading.Lock()
 
-# Session-scoped ladder adoptions (set only by graph.embed_ladder
-# after a parity pass): the rung-1 alias binding (stored stamp pinned so
-# reads/writes stay on the corpus while requests go through the adopted
-# model id), the adopted request model id, and the rung-2 local fallback.
-# Explicit env vars always win over these; reset_backend_cache() clears all.
-# Writes land via embed_ladder's setters as single attribute assignments
-# (GIL-atomic); every read in this module takes _BACKEND_CACHE_LOCK, so an
-# override can only swap between statements -- never in the middle of a
-# resolution that consults it alongside the caches the same lock guards.
 _SESSION_STAMP_OVERRIDE: Optional[str] = None
 _SESSION_SERVER_MODEL: Optional[str] = None
 _SESSION_BACKEND_OVERRIDE: Optional[str] = None
 
 
 def reset_backend_cache() -> None:
-    """Clear the cached effective-backend resolution, the server probe, and
-    the alias-gate verdicts, plus the ladder's cached verdict and session
-    adoptions.
-
-    Call this in test setup/teardown whenever CAIRN_EMBED_BACKEND is changed,
-    since none of these caches are invalidated mid-process.
-    """
+    """Clear backend caches, probes, aliases, and session adoptions."""
     with _BACKEND_CACHE_LOCK:
         _EFFECTIVE_BACKEND_CACHE["effective"] = None
         _SERVER_PROBE_CACHE["available"] = None
@@ -439,14 +332,7 @@ def reset_backend_cache() -> None:
 
 
 def _alias_preflight(conn: sqlite3.Connection) -> None:
-    """Alias gate: parity-verify stored rows before any writer INSERT.
-
-    Runs only for the server family with CAIRN_EMBED_MODEL_STAMP set; zero
-    stored rows under the stamp is check_parity's vacuous pass. The verdict
-    is evaluated once per process per stamp (reset_backend_cache() clears
-    it). Raises RuntimeError on failure -- measured mean cosine, or both
-    dims on a dim mismatch -- before any row is written.
-    """
+    """Parity-verify stamped server rows before any embedding write."""
     stamp = (_config_or_env("CAIRN_EMBED_MODEL_STAMP") or "").strip()
     if not stamp or _effective_backend() != "server":
         return
@@ -466,21 +352,7 @@ def _alias_preflight(conn: sqlite3.Connection) -> None:
 
 
 def _effective_backend() -> str:
-    """The backend actually used for embedding (after fallback resolution).
-
-    When CAIRN_EMBED_BACKEND is unset (default 'local') but
-    sentence_transformers isn't installed, falls back to 'hash'.
-    Otherwise returns the configured backend unchanged. The server family
-    (server/omlx/ollama) resolves to 'server' with no dependency probing,
-    so it can never coalesce into 'hash'. The ladder's rung-2 session
-    adoption switches a server-family config to local for the
-    process lifetime; it applies only while the env config stays
-    server-family and is never 'hash'.
-
-    The resolution inputs are process-stable, so the first stamp under
-    _BACKEND_CACHE_LOCK wins: racing first calls compute identical values
-    and the cache settles on one verdict.
-    """
+    """Return the effective backend after fallback and session adoption."""
     cached: Optional[str] = _EFFECTIVE_BACKEND_CACHE["effective"]
     if cached is not None:
         return cached
@@ -494,13 +366,7 @@ def _effective_backend() -> str:
 
 
 def _server_base_url() -> str:
-    """The base URL for the active server backend.
-
-    CAIRN_EMBED_BASE_URL (env or config file) overrides the
-    per-backend preset; bare 'server' has no preset and requires it.
-    Raises RuntimeError when unresolvable — at resolution time, never at
-    import.
-    """
+    """Return the active server base URL or raise RuntimeError at resolution time."""
     configured = _config_or_env("CAIRN_EMBED_BASE_URL") or ""
     if configured:
         return configured
@@ -515,13 +381,7 @@ def _server_base_url() -> str:
 
 
 def _server_model() -> str:
-    """The model id sent in server embedding requests.
-
-    The ladder's rung-1 session adoption wins over CAIRN_EMBED_SERVER_MODEL:
-    the adopted id is parity-proven against the stored corpus, while
-    the env id is the failed producer the ladder is replacing. Otherwise the
-    env-or-config-file value wins over the default preset id.
-    """
+    """Return the adopted or configured server model id."""
     with _BACKEND_CACHE_LOCK:
         adopted = _SESSION_SERVER_MODEL
     if adopted:
@@ -533,15 +393,7 @@ def _server_model() -> str:
 
 
 def _server_probe_available() -> bool:
-    """The per-process cached server-family availability verdict.
-
-    True only when GET {base}/models returns 200 AND lists the configured
-    model id. Both outcomes are cached for the process lifetime;
-    reset_backend_cache() forces the next call to re-probe. The probe
-    (network I/O) runs outside _BACKEND_CACHE_LOCK; only the check-then-stamp
-    is serialized, so racing first calls may probe twice but settle on the
-    single verdict the server actually gives.
-    """
+    """Return the process-cached availability verdict for the configured server model."""
     verdict: Optional[bool] = _SERVER_PROBE_CACHE["available"]
     if verdict is None:
         probed = _run_server_probe()
@@ -554,11 +406,7 @@ def _server_probe_available() -> bool:
 
 
 def _run_server_probe() -> bool:
-    """One uncached availability probe: GET {base}/models.
-
-    Returns False on connection failure, timeout, non-200 status, or an
-    unparseable / model-missing listing. Never raises — callers gate on it.
-    """
+    """Probe the server model endpoint once, returning False on any failure."""
     import http.client
     import json
     import urllib.request
@@ -593,13 +441,7 @@ def _run_server_probe() -> bool:
 
 
 def is_hash_fallback() -> bool:
-    """True when embeddings silently use the dep-free hash backend.
-
-    The configured backend is ``local`` (the default) but sentence-transformers
-    isn't installed, so ``_embed`` returns token-overlap-only vectors. Query
-    paths check this to flag degraded results. Returns False when the user
-    explicitly set ``CAIRN_EMBED_BACKEND=hash`` or a real backend is active.
-    """
+    """Return whether local embeddings silently degraded to the hash backend."""
     return _effective_backend() == "hash" and backend_name() == "local"
 
 
@@ -608,11 +450,7 @@ _HASH_FALLBACK_WARNED: bool = False
 
 
 def warn_hash_fallback_once(logger, context: str = "") -> None:
-    """Emit one hash-fallback warning per process.
-
-    No-op when a real backend is active or the hash backend was explicitly
-    chosen. ``context`` is a short string identifying the calling path.
-    """
+    """Warn once per process when hash embeddings are implicit."""
     global _HASH_FALLBACK_WARNED
     if not _HASH_FALLBACK_WARNED and is_hash_fallback():
         # Durable telemetry event; the WARNING below keeps the human detail.
@@ -646,15 +484,7 @@ def model_is_cached(model_name: Optional[str] = None) -> bool:
 
 
 def download_model(model_name: Optional[str] = None) -> bool:
-    """Download model weights into the local HuggingFace cache if not present.
-
-    The fetch runs in a child interpreter behind the quiet progress helper:
-    constructing the model in-process let HuggingFace print one tqdm bar
-    per repo file (plus transformers warnings) straight into the terminal
-    -- a wall of lines for an ~836 MB multi-file model. The child shares
-    the parent's HF cache, so afterwards any process (this one included)
-    loads the weights from cache.
-    """
+    """Download model weights into the shared HuggingFace cache when absent."""
     import subprocess
     import sys
 
@@ -694,11 +524,7 @@ def download_model(model_name: Optional[str] = None) -> bool:
 def _run_subprocess_with_progress(
     cmd: list[str], description: str, env: Optional[dict] = None
 ) -> str:
-    """Run a subprocess under a progress bar, draining its output.
-
-    Returns the combined stdout+stderr. Raises CalledProcessError (with the
-    captured output) when the subprocess exits non-zero.
-    """
+    """Run a subprocess with live output and return its combined output."""
     import subprocess
     import time
 
@@ -747,14 +573,7 @@ def _run_install_with_progress(cmd: list[str], lib_dir) -> None:
 
 
 def _install_cmd(packages: list[str], lib_dir) -> Optional[list[str]]:
-    """Build the pip/uv install command targeting the RUNNING interpreter.
-
-    Returns None when neither installer is available. The uv branch pins
-    ``--python sys.executable``: unpinned, uv resolves wheels for whichever
-    interpreter IT discovers (an active venv, a managed default), which can
-    be a different ABI than the one running cairn -- the install would
-    "succeed" while every import in this process keeps failing.
-    """
+    """Return an installer command pinned to the running interpreter."""
     import importlib.util
     import shutil
     import sys
@@ -777,14 +596,7 @@ def _install_cmd(packages: list[str], lib_dir) -> Optional[list[str]]:
 
 
 def _lib_pythonpath() -> str:
-    """PYTHONPATH for child interpreters: shared lib dirs first, then existing.
-
-    Mirrors the in-process sys.path order paths._inject_shared_libs
-    establishes (ABI dir, then the legacy flat dir under the default
-    layout), so a child interpreter resolves the semantic stack from the
-    same places the parent would -- the venv's site-packages still apply
-    via the child's own interpreter.
-    """
+    """Return a child PYTHONPATH matching in-process shared-library order."""
     from ..paths import SHARED_LIB, shared_lib_path
 
     dirs = [shared_lib_path()]
@@ -797,13 +609,7 @@ def _lib_pythonpath() -> str:
 
 
 def _verify_install(lib_dir) -> None:
-    """Import the fresh stack in a fresh subprocess under a progress bar.
-
-    The first import of a freshly installed stack is slow enough that an
-    in-process import would leave the CLI silently blocked; the subprocess
-    shows live progress. Raises CalledProcessError (after printing the
-    child's captured output) when the import fails.
-    """
+    """Import the semantic stack in a subprocess and print any failure output."""
     import sys
 
     print(
@@ -822,16 +628,7 @@ def _verify_install(lib_dir) -> None:
 
 
 def ensure_semantic_deps(auto_install: bool = True) -> bool:
-    """Ensure sentence-transformers is installed.
-
-    If missing and ``auto_install=True``, installs the dependency into the
-    shared lib directory (``~/.cairn/lib/cp<major><minor>``, one dir per
-    interpreter ABI -- see paths.shared_lib_path), which survives
-    reinstalls. A verification failure triggers one wipe-and-reinstall of
-    the dir: pip's --target skip-if-satisfied semantics cannot repair an
-    interrupted or foreign-ABI install in place. Model-weight downloading
-    is handled separately by ``download_model``.
-    """
+    """Return whether sentence-transformers is usable, optionally installing and repairing it."""
     try:
         import sentence_transformers  # noqa: F401
         return True
@@ -861,11 +658,7 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
         try:
             _verify_install(lib_dir)
         except subprocess.CalledProcessError:
-            # pip install --target skips any package already present at a
-            # satisfying version, so an install interrupted mid-unpack (or
-            # written by a different interpreter ABI) can NEVER be repaired
-            # by running pip over it again -- pip reports success while the
-            # dir stays broken. Wipe and reinstall once from empty.
+            # pip --target cannot repair a broken install; rebuild it from empty.
             print(
                 f"Install verification failed; wiping {lib_dir} and "
                 "reinstalling once from scratch..."
@@ -895,14 +688,7 @@ def ensure_semantic_deps(auto_install: bool = True) -> bool:
 
 
 def _get_local_model(model_name: Optional[str] = None):
-    """Lazily load the sentence-transformers model (cached per process).
-
-    Double-checked locking over _MODEL_CACHE: the load is expensive
-    (seconds) and reachable from concurrent threads, so exactly one thread
-    loads per key. The loaded model is returned via a local reference rather
-    than a final dict lookup -- a concurrent load of a DIFFERENT key evicting
-    this entry must not turn a successful load into a KeyError.
-    """
+    """Load and cache the local sentence-transformers model under lock."""
     m_name = model_name or current_model()
     key = ("local", m_name)
     model = _MODEL_CACHE.get(key)
@@ -948,10 +734,7 @@ def purge_stale_models(conn: sqlite3.Connection, active_model: Optional[str] = N
     # is created unconditionally by SCHEMA_SQL, so no try/except is needed.
     c4 = cur.execute("DELETE FROM embeddings_mv WHERE model != ?", (target_model,)).rowcount
 
-    # Both vec0 table families are model-scoped and purge together:
-    # vec_<model> (embeddings) and vecmv_<model> (embeddings_mv). '_' is a
-    # single-char LIKE wildcard and must stay escaped in both patterns so
-    # only these two families match.
+    # Escape '_' so only one model's vec_ and vecmv_ tables match.
     tables = cur.execute(
         "SELECT name FROM sqlite_master WHERE type='table' "
         "AND (name LIKE 'vec\\_%' ESCAPE '\\' OR name LIKE 'vecmv\\_%' ESCAPE '\\')"
@@ -1031,19 +814,7 @@ def _embed_openai(texts: Sequence[str]) -> Tuple[List[bytes], int]:
 
 
 def _embed_server(texts: Sequence[str]) -> Tuple[List[bytes], int]:
-    """Embed texts via an OpenAI-compatible ``/v1/embeddings`` server endpoint.
-
-    Returns (float32-LE BLOBs in input order, vector dim). Chunks into
-    CAIRN_EMBED_SERVER_BATCH-sized POSTs (default 32); retries connection
-    errors / timeouts / 5xx / 429 up to 3 times with exponential backoff
-    (0.5/1/2 s, jittered); fails other 4xx immediately with the server's
-    error message verbatim; honors CAIRN_EMBED_TIMEOUT (default 30 s);
-    sends a bearer header only when CAIRN_EMBED_API_KEY is set; rejects
-    batches whose embeddings disagree in dimensionality. The three knobs
-    resolve env > config file > default; a CAIRN_EMBED_TIMEOUT or
-    CAIRN_EMBED_SERVER_BATCH value that does not parse to a positive finite
-    number raises RuntimeError naming the knob before any request is sent.
-    """
+    """Embed texts through the configured server with bounded retries and validation."""
     if not texts:
         return [], 0
     import http.client
@@ -1055,12 +826,6 @@ def _embed_server(texts: Sequence[str]) -> Tuple[List[bytes], int]:
 
     base = _server_base_url().rstrip("/")
     model = _server_model()
-    # Both knobs are validated before the first request: a non-positive batch
-    # would make range() silently skip every chunk (a zero-vector pass
-    # reported as success) or crash it outright, and a non-finite/negative
-    # timeout would surface as an OverflowError/ValueError from
-    # socket.settimeout -- outside the retry clause -- instead of a
-    # configuration error naming the knob.
     timeout_raw = _config_or_env("CAIRN_EMBED_TIMEOUT")
     if timeout_raw:
         try:
@@ -1137,10 +902,6 @@ def _embed_server(texts: Sequence[str]) -> Tuple[List[bytes], int]:
                 f"embedding server unreachable after {max_retries} retries: "
                 f"{last_error}"
             )
-        # A 200 body is still untrusted: validate the OpenAI envelope shape
-        # before touching it, so a malformed response fails as one loud,
-        # non-retryable error carrying a body excerpt instead of a
-        # KeyError/TypeError from the middle of the write path.
         body = raw.decode("utf-8", errors="replace")
         try:
             parsed = json.loads(body)
@@ -1176,21 +937,8 @@ def _embed_server(texts: Sequence[str]) -> Tuple[List[bytes], int]:
     return blobs, dim
 
 
-# --- Hash fallback embedder (no deps; deterministic; low quality) ----------
-#
-# Maps a text to a fixed-size float32 vector via SHA-256 hashing. This is NOT a
-# real semantic embedding -- two unrelated strings may collide -- but it is
-# deterministic and dependency-free, so the wiring can be tested end-to-end
-# without torch.
-
-
 def _hash_vec(text: str, dim: int = DEFAULT_DIM) -> List[float]:
-    """Deterministic hash-based pseudo-embedding.
-
-    Produces a unit-norm vector of `dim` floats. Tokenizes on non-alphanumeric
-    boundaries so the same token contributes the same signal regardless of
-    position. Unrelated texts are largely orthogonal; identical tokens overlap.
-    """
+    """Return a deterministic unit-norm hash vector for text."""
     vec = [0.0] * dim
     seen = set()
     # Simple tokenizer: lowercase, split on non-alphanumeric.
@@ -1351,20 +1099,7 @@ def _embed_mv_kinds(
     limit: Optional[int] = None,
     progress=None,
 ) -> int:
-    """Populate/refresh ``embeddings_mv`` rows for every MV_KINDS entry.
-
-    The pass behind ``embed_all``'s ``multivector`` flag (default on;
-    ``False`` opts out). Mirrors
-    the base chunk flow's shape per kind: build the kind-specific text via
-    :func:`mv_text_for_kind`, hash it with :func:`_chunk_hash` (per-kind
-    staleness -- the name row and docstring row of one symbol refresh
-    independently), and upsert keyed ``(symbol_id, model, vector_kind)``
-    only when the stored hash is missing or different. A symbol whose
-    docstring disappeared since the last pass has its stale docstring row
-    deleted (the kind has no text to serve). Returns the number of mv rows
-    embedded; commits per batch and swallows lock contention exactly like
-    ``embed_all``'s main loop.
-    """
+    """Refresh stale multi-vector rows and delete vanished docstring rows."""
     existing = {
         (r[0], r[1]): r[2]
         for r in conn.execute(
@@ -1433,16 +1168,7 @@ def _embed_mv_kinds(
 def _purge_embedding_rows(
     conn: sqlite3.Connection, where_sql: str, params: tuple = ()
 ) -> int:
-    """Delete base ``embeddings`` rows matching where_sql and remove their
-    vec0 ANN entries in the same transaction.
-
-    Collects the doomed (model, rowid) pairs BEFORE the delete -- the DELETE
-    can't report them, and each rowid must come out of exactly its own model's
-    vec0 table, or a later rowid reuse pairs the ann_query join with an
-    unrelated vector. Collection is skipped when the ANN backend is off (the
-    vec sync would be a no-op anyway). Never commits: the caller owns the
-    transaction. Returns the number of base rows removed.
-    """
+    """Delete matching embeddings and vec0 entries without committing."""
     from .ann_index import ann_backend_enabled, delete_index_rows
 
     doomed: dict = {}
@@ -1459,22 +1185,7 @@ def _purge_embedding_rows(
 
 
 def reap_orphaned_embeddings(conn: sqlite3.Connection) -> int:
-    """Delete embedding rows whose symbol no longer exists.
-
-    Covers both the base ``embeddings`` table and the parallel
-    ``embeddings_mv`` multi-vector table: an orphaned mv row is the
-    same garbage as an orphaned base row, regardless of which pass wrote it,
-    so the mv DELETE is unconditional. The mv table has no vec0 rows of its
-    own yet, so there is nothing index-side to clean here.
-
-    Returns the number of rows removed across both tables. Safe to call any
-    time. When the ANN backend is on, the vec0 rows for the reaped embeddings
-    are deleted in the SAME transaction: a stale vec0 entry survives keyed on
-    a rowid SQLite may later reuse for a different embedding, which would
-    pair the ann_query join with an unrelated vector (wrong results, not just
-    missing ones). The vec sync itself is a no-op when no vec0 table exists
-    for a model.
-    """
+    """Delete base and multi-vector embedding rows whose symbols no longer exist."""
     reaped = _purge_embedding_rows(conn, "symbol_id NOT IN (SELECT id FROM symbols)")
     mv_cur = conn.execute(
         "DELETE FROM embeddings_mv WHERE symbol_id NOT IN (SELECT id FROM symbols)"
@@ -1492,17 +1203,7 @@ def _select_stale_symbols(
     symbol_ids: Optional[Sequence[str]] = None,
     variant: Optional[str] = None,
 ) -> tuple:
-    """Fetch symbols and return the subset whose chunk is missing or stale.
-
-    Returns ``(rows, stale, signatures)``: every fetched row (the full column
-    set ``chunk_for_symbol`` reads, so variant-B/C chunk sections are
-    populated), the rows whose chunk content hash differs from the stored one
-    as ``(symbol_id, chunk, new_hash)`` tuples, and the per-symbol declaration
-    lines keyed by id (real source for the embedder, not just an identifier).
-
-    ``symbol_ids`` restricts the corpus to those ids; None selects every
-    indexed symbol. Empty-chunk symbols are never stale.
-    """
+    """Return fetched symbol rows, stale chunks, and declaration lines."""
     if symbol_ids is None:
         where = "WHERE s.kind IS NOT NULL"
         params: tuple = (model,)
@@ -1549,39 +1250,7 @@ def embed_all(
     variant: Optional[str] = None,
     multivector: bool = True,
 ) -> dict:
-    """Embed every symbol missing or stale under the current model.
-
-    Idempotent: skips symbols whose stored ``content_hash`` still matches the
-    current chunk text. Re-embeds on a model swap (model name change) or on a
-    content edit (chunk hash change). Rows with ``content_hash IS NULL`` are
-    treated as stale and self-heal.
-
-    ``variant`` selects the chunking recipe (see ``chunk_for_symbol`` /
-    ``CHUNK_VARIANTS``). ``None`` (default) resolves via the
-    ``CAIRN_CHUNK_VARIANT`` env var exactly as before; an explicit string
-    overrides it WITHOUT touching the process environment -- this is the
-    seam per-variant sweep runs use to re-embed the corpus under each
-    recipe.
-
-    ``multivector`` (default True) additionally populates the
-    parallel ``embeddings_mv`` table with the ``name`` and ``docstring``
-    kinds, each with its own per-kind ``_chunk_hash`` staleness (see
-    ``MV_KINDS`` / ``mv_text_for_kind``). Pass ``False`` to opt out: the
-    run performs ZERO ``embeddings_mv`` writes and the ``embeddings``-table
-    flow (upserts, staleness, reaping) is byte-identical to the
-    single-vector build. ``limit`` caps stale base rows and
-    stale mv rows independently. The summary gains ``mv_embedded`` only
-    when the flag is on, so flag-off summaries keep their exact prior
-    shape.
-
-    When ``reap_orphans`` is True (default), also deletes embedding rows for
-    symbols that no longer exist. Always refreshes the persisted ``term_df``
-    DF table, so enrichment's IDF signal stays current with the
-    embedded corpus. ``progress`` is an optional
-    callable(n_done, n_total). Returns a dict summary
-    {model, embedded, attempted, failed_batches, skipped, total, reaped},
-    plus ``mv_embedded`` when ``multivector`` is on.
-    """
+    """Embed stale symbols and refresh multi-vector, orphan, and term-df state."""
     _alias_preflight(conn)
     model = current_model()
     all_rows, stale_rows, signatures = _select_stale_symbols(
@@ -1604,14 +1273,7 @@ def embed_all(
             # Decode dim from the BLOB length so a backend change is detected
             # even if current_model() didn't change.
             dim = len(blob) // 4
-            # Rowid-stable upsert: ON CONFLICT ... DO UPDATE preserves the
-            # existing rowid. LOAD-BEARING for the vec0 sync: the index
-            # keys on embeddings.rowid, and INSERT OR REPLACE (which assigns
-            # a NEW rowid) would orphan the old vec0 entry and leave the new
-            # row pointing at a vec key that doesn't exist. Bulk rows made
-            # here stay unsynced on purpose -- the wholesale rebuild at the
-            # end of `cairn embed` realigns the whole table more cheaply
-            # than per-row delete+insert (see ann_index.sync_index_row).
+            # ON CONFLICT preserves rowids keyed by vec0; bulk sync is rebuilt once.
             conn.execute(
                 "INSERT INTO embeddings "
                 "(symbol_id, model, dim, vec, chunk, content_hash, embedded_at) "
@@ -1634,10 +1296,6 @@ def embed_all(
 
     reaped = reap_orphaned_embeddings(conn) if reap_orphans else 0
 
-    # After the base flow, refresh the parallel mv table for the two extra
-    # kinds (multivector=False opts out). Reaping already ran above is fine
-    # -- it only removes rows for DEAD symbols, and the rows written here
-    # are for live ones.
     mv_embedded = (
         _embed_mv_kinds(conn, all_rows, signatures, model, batch_size, limit, progress)
         if multivector
@@ -1668,32 +1326,7 @@ def embed_symbols(
     sync_ann: bool = True,
     variant: Optional[str] = None,
 ) -> dict:
-    """(Re-)embed specific symbols now -- the per-upsert ANN sync seam.
-
-    The targeted counterpart to :func:`embed_all`: one ``_embed`` call for
-    every requested symbol, then each upsert keeps the vec0 ANN index in sync
-    via ``ann_index.sync_index_row`` INSIDE the same transaction (delete +
-    insert by the embeddings rowid; vec0 has no replace semantics). This is
-    the seam single-symbol write paths should use so a new/changed symbol is
-    visible to ``ann_query`` immediately, without waiting for the next
-    wholesale ``cairn embed`` rebuild.
-
-    Bulk passes deliberately do NOT come through here: per-row vec sync
-    costs a delete+insert per row, while the rebuild's ``INSERT ... SELECT``
-    copies wholesale -- so ``embed_all`` over thousands of rows keeps its
-    wholesale ``rebuild_index`` at the end. A handful of symbols pays the
-    per-row cost and avoids the drift outright.
-
-    Idempotent like ``embed_all``: symbols whose stored ``content_hash``
-    still matches are skipped, as are empty-chunk symbols; unknown ids are
-    dropped silently (nothing to embed). ``variant`` selects the chunking
-    recipe exactly as in ``embed_all`` (None = env resolution, explicit
-    string overrides without env mutation). Returns ``{model, embedded,
-    skipped, ann_synced}`` where
-    ``ann_synced`` is the number of rows whose vec0 entry was actually
-    written (0 when the backend is off, no index exists yet, or sync
-    failed -- each a documented no-op/best-effort, never an error).
-    """
+    """Embed selected symbols and synchronously sync their ANN rows."""
     _alias_preflight(conn)
     model = current_model()
     ids = [sid for sid in symbol_ids if sid]
@@ -1763,11 +1396,7 @@ def embed_symbols(
 
 
 def embed_query(text: str) -> Tuple[bytes, int]:
-    """Embed a natural-language query with the current backend.
-
-    Returns (blob, dim); the blob is float32 little-endian, comparable to
-    stored rows via cosine similarity.
-    """
+    """Embed one natural-language query with the active backend."""
     blobs, dim = _embed([text])
     return blobs[0], dim
 
@@ -1781,11 +1410,7 @@ def embed_count(conn: sqlite3.Connection) -> int:
 
 
 def embed_knowledge(conn, bundle, batch_size=64, progress=None):
-    """Embed all knowledge concepts not yet embedded under current model.
-
-    Reads from the OKF bundle (not symbols table). Each concept = one chunk
-    (title + description + body).
-    """
+    """Embed knowledge concepts missing under the current model."""
     _alias_preflight(conn)
     model = current_model(corpus="knowledge")
     # Get all knowledge concept IDs (trailing slash for path-segment matching).
@@ -1852,31 +1477,14 @@ def embed_knowledge_count(conn):
     return r["c"] if r else 0
 
 
-# ---------------------------------------------------------------------------
-# Memory embeddings — chunked, keyed by concept_id (see memory_embeddings
-# table). Unlike knowledge docs, a memory's concept_id is NOT stable
-# (promote/demote/decay move it to a new path with a fresh uuid suffix), so
-# rows here can go stale on a tier move; reap_orphaned_memory_embeddings
-# cleans those up periodically rather than every write path carrying the old
-# row forward.
-# ---------------------------------------------------------------------------
+# Memory concept ids move across tiers; rows follow or are reaped.
 
 _CHUNK_SPLIT_RE = re.compile(r"\n(?=Why:|How to apply:)")
 MAX_MEMORY_CHUNKS = 5
 
 
 def chunk_memory_body(concept) -> List[str]:
-    """Split a memory concept into embeddable chunks.
-
-    record_memory's own guidance asks agents to structure a memory body as
-    the fact, then a `Why:` line and a `How to apply:` line -- a natural,
-    marker-based chunk boundary that needs no NLP. Falls back to blank-line
-    paragraph splits for memories that don't follow that structure. The
-    title is prepended to the first chunk for context (description is
-    skipped: create_memory always sets it equal to title, so including both
-    would just duplicate it). Capped at MAX_MEMORY_CHUNKS so a very long body
-    can't blow up embedding cost.
-    """
+    """Split a titled memory body into bounded embeddable chunks."""
     body = concept.body or ""
     parts = [p for p in _CHUNK_SPLIT_RE.split(body) if p.strip()]
     if len(parts) < 2:
@@ -1893,18 +1501,7 @@ def chunk_memory_body(concept) -> List[str]:
 
 
 def embed_memory_concepts(conn: sqlite3.Connection, bundle, concept_ids: Sequence[str]) -> int:
-    """(Re-)embed specific memory concepts by concept_id. Returns count embedded.
-
-    Delete+reinsert rather than upsert: a re-embed of an edited memory may
-    have a different chunk count than before, so there is no stable
-    chunk_index to upsert against.
-
-    Batches the (potentially expensive) ``_embed`` call: all chunks across
-    every concept in ``concept_ids`` are embedded in a SINGLE call, then
-    sliced back out per concept for the DELETE+INSERT. Read failures are
-    still isolated per concept (a deleted/moved concept is skipped before any
-    embedding happens), so one bad concept_id can't abort the batch.
-    """
+    """Embed selected memory concepts in one batch and replace their rows."""
     _alias_preflight(conn)
     model = current_model(corpus="memory")
     now = datetime.now(timezone.utc).isoformat()
@@ -1948,12 +1545,7 @@ def embed_memory_concepts(conn: sqlite3.Connection, bundle, concept_ids: Sequenc
 
 
 def embed_memory(conn, bundle, batch_size=64, progress=None):
-    """Embed all memory concepts not yet embedded under the current model.
-
-    Batch backfill for memories captured before this feature existed, or
-    after a model swap. Ongoing capture/evolve calls embed via the buffered
-    per-concept path (embed_memory_concepts) instead of waiting for this.
-    """
+    """Backfill memory concepts missing embeddings under the current model."""
     model = current_model(corpus="memory")
     cids = bundle.list_concepts(prefix="memory/")
     if not cids:
@@ -1998,15 +1590,7 @@ def memory_is_embedded(conn: sqlite3.Connection, doc_id: str) -> bool:
 
 
 def unembedded_memory_hint(conn: sqlite3.Connection, bundle) -> str:
-    """One-line footnote for recall/digest output when some memories lack embeddings.
-
-    Returns "" when every memory is embedded (or none exist), so callers can
-    append it unconditionally. Compares the persisted embedding count against
-    the on-disk memory concept count; the ``list_concepts`` scan is cheap
-    because the curated memory corpus stays small. recall/digest use a
-    read-only conn, so this never writes -- it only tells the user to run
-    ``cairn memory embed`` on the writable side.
-    """
+    """Return a user hint for unembedded memories, or an empty string."""
     total = len(bundle.list_concepts(prefix="memory/"))
     if total == 0:
         return ""
@@ -2020,17 +1604,7 @@ def unembedded_memory_hint(conn: sqlite3.Connection, bundle) -> str:
 
 
 def rename_memory_embedding(conn: sqlite3.Connection, old_id: str, new_id: str) -> int:
-    """Move a memory's embedding row(s) from ``old_id`` to ``new_id`` in place.
-
-    Used by promote/demote, which move a memory to a new concept_id WITHOUT
-    changing its content: renaming the persisted embedding avoids re-running
-    the embedder on unchanged text (and the orphan+re-embed it would otherwise
-    leave behind). Rows for ALL models are moved so a stale prior-model row
-    travels too (harmless -- reads are model-scoped). Does NOT commit; the
-    caller owns the transaction boundary. Returns rows moved (0 when the
-    memory had no embedding yet, in which case the caller should embed at
-    ``new_id`` instead).
-    """
+    """Move every model's memory embedding rows to a new concept id."""
     cur = conn.execute(
         "UPDATE memory_embeddings SET doc_id = ? WHERE doc_id = ?",
         (new_id, old_id),
@@ -2039,12 +1613,7 @@ def rename_memory_embedding(conn: sqlite3.Connection, old_id: str, new_id: str) 
 
 
 def reap_orphaned_memory_embeddings(conn: sqlite3.Connection, bundle) -> int:
-    """Delete memory_embeddings rows whose concept no longer resolves in the bundle.
-
-    Covers rows left behind by promote/demote/decay tier moves (which change
-    a memory's concept_id without carrying its embedding forward). Safe to
-    call any time; best-effort like the rest of the embedding pipeline.
-    """
+    """Delete memory embeddings whose concepts no longer resolve."""
     doc_ids = {
         r[0] for r in conn.execute("SELECT DISTINCT doc_id FROM memory_embeddings").fetchall()
     }

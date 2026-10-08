@@ -26,10 +26,7 @@ TS_JS_MODIFIERS = {
 # Node types that declare a named type containing members (class-like).
 TYPE_DECL_NODES = {"class_declaration", "abstract_class_declaration", "interface_declaration"}
 
-# Declaration nodes whose own children include their `decorator`(s). In
-# tree-sitter-typescript, a class/method/function/field decorator is a CHILD
-# of the decorated node, so these nodes collect their decorators directly via
-# _own_decorators rather than through the pending queue.
+# Decorators are children of their target declaration in the TS grammar.
 DECL_NODES_WITH_OWN_DECORATORS = TYPE_DECL_NODES | {
     "method_definition",
     "function_declaration",
@@ -44,14 +41,7 @@ _RESOLUTION_EXTS = ("", ".ts", ".tsx", ".d.ts", ".js", ".jsx")
 
 
 def resolve_relative_import(importer: Path, spec: str) -> Optional[str]:
-    """Resolve `./foo` or `../bar` relative to `importer`'s directory.
-
-    Tries `spec` directly and `spec/index`, across `_RESOLUTION_EXTS`. Returns
-    the resolved path with its extension stripped (so its last segment is a
-    bare file stem), or
-    `None` if `spec` is a bare/package import (doesn't start with '.') or no
-    candidate file exists on disk.
-    """
+    """Return an existing extension-stripped path for a relative TS import."""
     if not spec.startswith("."):
         return None  # package import (e.g. "react") -> left unresolved/external
     base = (importer.parent / spec).resolve()
@@ -105,19 +95,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
             return  # don't descend; nothing else useful inside
 
         if t == "decorator":
-            # `@Controller('users')` etc. The full decorator text attaches to
-            # its target declaration. In tree-sitter-typescript a decorator is
-            # a CHILD of the node it decorates (class_declaration /
-            # method_definition / function_declaration), so the declaration's
-            # own _parse_* collects it via _own_decorators and we must NOT
-            # also stash it on the pending queue (that would glom it onto the
-            # next method/sibling).
-            #
-            # Decorators whose parent is NOT a declaration node (e.g. a
-            # standalone export-list decorator) fall through to the pending
-            # queue. Parameter-position decorators
-            # (`getUser(@Param('id') id: ...)`) are dropped: parameters aren't
-            # tracked as symbols.
+            # Target-owned decorators bypass the pending queue; parameter decorators are dropped.
             parent_type = node.parent.type if node.parent is not None else None
             if parent_type in ("required_parameter", "optional_parameter"):
                 return
@@ -189,12 +167,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
             sym = self._parse_field(node, source)
             if sym:
                 pf.symbols.append(sym)
-            # Descend into the initializer so call edges in field initializers
-            # (e.g. `defaultRepo = createRepo()`) are emitted. function_declaration
-            # and method_definition call _walk for the same reason; a field
-            # initializer is not a new function scope, so _callable_scope /
-            # _func_depth are left untouched. Without this, every call inside a
-            # class-field initializer was silently dropped.
+            # Field initializers can emit calls without opening a function scope.
             self._walk(node, source, pf)
             return
 
@@ -226,11 +199,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
             self._walk(node, source, pf)
             return
 
-        # JSX element usage: <UserCard/> or <UserCard>...</UserCard>. The
-        # opening element is visited for both forms (a jsx_element's open_tag
-        # child descends here); the closing element is skipped to avoid
-        # duplicate edges. Lowercase-first names are HTML host tags, not
-        # components.
+        # Opening JSX elements emit one component reference; closing tags do not.
         if t in ("jsx_opening_element", "jsx_self_closing_element"):
             edge = self._parse_jsx_ref(node, source)
             if edge:
@@ -361,14 +330,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
         )
 
     def _handle_var_decl(self, node: Node, source: bytes, pf: ParsedFile):
-        """lexical_declaration (const/let) / variable_declaration (var).
-
-        Only recorded as a Symbol when at module top level (``_func_depth ==
-        0``); block-scoped locals inside a function body are skipped. A
-        const/let initialized to an arrow/function expression becomes a
-        Symbol(kind="function") so calls inside it attribute correctly;
-        otherwise it's a Symbol(kind="variable").
-        """
+        """Record top-level declarations and function-valued variables as Symbols."""
         is_top = self._func_depth == 0
         for child in node.children:
             if child.type != "variable_declarator":
@@ -423,12 +385,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
                         )
                     )
                 if value is not None:
-                    # Visit the value node itself (not just its children) so a
-                    # call_expression / new_expression / jsx_*_element that IS
-                    # the initializer dispatches through _visit and emits its
-                    # edge. _walk only visits children, which would skip the
-                    # value node's own type and silently drop the edge (e.g.
-                    # `const x = getUser()` lost the calls edge).
+                    # Visit initializer nodes directly so their own expression type emits an edge.
                     self._visit(value, source, pf)
 
     def _parse_import(self, node: Node, source: bytes) -> Optional[Import]:
@@ -455,11 +412,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
     # --- edges ---------------------------------------------------------
 
     def _heritage_target_name(self, node: Node, source: bytes) -> Optional[str]:
-        """Bare type name of a heritage-clause target child.
-
-        Generic targets (`implements I2<T>`) wrap the name in a
-        ``generic_type`` node; the name field holds the bare identifier.
-        """
+        """Return the bare identifier from a plain or generic heritage target."""
         if node.type in ("identifier", "type_identifier"):
             return self._node_text(node, source).strip()
         if node.type == "generic_type":
@@ -469,14 +422,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _parse_heritage(self, node: Node, source: bytes, owner: str):
-        """extends/implements for class-likes (class_heritage) and interfaces
-        (extends_type_clause -- interfaces can `extends` multiple others).
-
-        The TS grammar wraps each clause in its own extends_clause/
-        implements_clause node inside class_heritage; the plain JS grammar
-        flattens `extends Base` directly into class_heritage's own children
-        (no wrapper, and no `implements` at all). Handle both shapes.
-        """
+        """Return extends and implements Edges for TS and JS heritage shapes."""
         for child in node.children:
             if child.type == "class_heritage":
                 found_wrapper = False
@@ -600,13 +546,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _member_receiver_type(self, member: Node, source: bytes) -> Optional[str]:
-        """Receiver type for a ``member_expression`` callee ``obj.prop()``.
-
-        A bare-identifier object resolves through the scope-type tracker,
-        falling back to the capitalized static-call heuristic; ``this``
-        resolves to the enclosing type. Any other object shape (chained
-        calls, nested members) is unknown.
-        """
+        """Return a member-call receiver type for tracked, this, or static objects."""
         obj = member.child_by_field_name("object")
         if obj is None:
             return None
@@ -660,13 +600,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
         return count
 
     def _import_clause_alias(self, clause: Node, source: bytes) -> Optional[str]:
-        """The import statement's single local alias, if it has exactly one.
-
-        ``import { a as x }`` and ``import * as ns`` carry one explicit
-        alias; a statement with several (or none) has no single binding to
-        represent, so it abstains. Default imports carry no alias field in
-        the grammar and record nothing.
-        """
+        """Return the sole local alias when an import has exactly one binding."""
         aliases: List[str] = []
         for child in clause.children:
             if child.type == "namespace_import":
@@ -692,14 +626,7 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _parse_jsx_ref(self, node: Node, source: bytes) -> Optional[Edge]:
-        """jsx_opening_element / jsx_self_closing_element -> Edge(references).
-
-        The component name lives in the ``name`` field (an ``identifier`` for
-        ``<UserCard/>``, a ``member_expression`` for ``<UI.Card/>``, or a
-        ``jsx_namespace_name`` for ``<foo:Bar/>``). Lowercase-first names are
-        HTML host tags (``<div>``, ``<span>``) and are skipped -- only
-        Capitalized names are React component references.
-        """
+        """Return a component reference Edge for capitalized JSX tag names."""
         name_node = node.child_by_field_name("name")
         if name_node is None:
             return None

@@ -17,10 +17,7 @@ _SKIP_STATUSES = frozenset(
 )
 _DRAFT_STATUS = "draft"
 
-# Doc-kind -> doc_type map, checked in order: the first matching
-# kind wins, so decision must precede reference ("Architecture Decision
-# Record" is a decision, not a reference doc). Tokens match whole words
-# only; phrases match hyphen/slash-normalized text (prior-art, code-standard).
+# First kind wins; tokens and normalized phrases prevent substring matches.
 _KIND_RULES: tuple[tuple[str, tuple[str, ...], frozenset[str], frozenset[str]], ...] = (
     (
         "decision",
@@ -93,12 +90,7 @@ def classify_doc(
     include_drafts: bool,
     rules: Mapping[str, str] | None = None,
 ) -> Classification:
-    """Classify one parsed document and apply the draft-status gate.
-
-    Layers: workspace title-keyword rules (checked
-    first so they refine the built-ins), then title keywords, then
-    filename/directory conventions, then the `spec` default.
-    """
+    """Classify a document and return its draft-gate disposition."""
     doc_type = DEFAULT_DOC_TYPE
     extra_tags: list[str] = []
     matched = _classify_title(parsed.title, rules)
@@ -138,13 +130,7 @@ def _classify_title(
 
 
 def _workspace_rule(title: str | None, rules: Mapping[str, str] | None) -> str | None:
-    """First workspace title-keyword rule that matches, if any.
-
-    Mirrors the built-in rules' discipline: a single keyword matches whole
-    tokens only, and a multi-word keyword matches the whole phrase in the
-    hyphen/slash-normalized title -- never a substring inside a word
-    ("arch" must not match "search").
-    """
+    """Return the first workspace rule matching a whole token or phrase."""
     if not title or not rules:
         return None
     tokens = set(_tokens(title))

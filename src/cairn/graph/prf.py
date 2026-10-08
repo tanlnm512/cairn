@@ -14,21 +14,12 @@ __all__ = ["ExpansionResult", "expand"]
 # DF-signal row: (symbol_df, n_symbols) from the term_df table.
 _DfRow = tuple[int, int]
 
-# IDF applied when no corpus DF signal exists for a token: df_lookup is
-# None, the lookup misses the token, or the row violates the
-# 1 <= symbol_df <= n_symbols contract. Must stay positive so feedback
-# frequency still ranks terms in the degraded mode.
+# Degraded PRF IDF stays positive so term frequency still ranks.
 _UNIFORM_IDF = 1.0
 
 
 def _idf(df_row: Optional[_DfRow]) -> float:
-    """Corpus-aware IDF for one ``(symbol_df, n_symbols)`` row.
-
-    ``ln(n_symbols / symbol_df)`` -- zero for a token in every symbol,
-    growing as the token gets rarer. Rows outside the
-    ``1 <= symbol_df <= n_symbols`` contract resolve to the uniform IDF
-    (degraded-but-usable, never raises).
-    """
+    """Corpus-aware IDF for one ``(symbol_df, n_symbols)`` row."""
     if df_row is None:
         return _UNIFORM_IDF
     symbol_df, n_symbols = df_row
@@ -54,13 +45,7 @@ def expand(
     fb_terms: int = 10,
     fb_lambda: float = 0.5,
 ) -> ExpansionResult:
-    """Deterministically expand ``query`` with RM3-style feedback terms.
-
-    Pure and hermetic: no LLM, network, randomness, time, or
-    environment reads; the corpus DF signal arrives only via
-    ``df_lookup``. ``df_lookup(token)`` returns ``(symbol_df, n_symbols)``
-    or None; the algorithm runs in five commented steps below.
-    """
+    """Deterministically expand ``query`` with RM3-style feedback terms."""
     if not 0.0 <= fb_lambda <= 1.0:
         raise ValueError(f"fb_lambda must be within [0, 1], got {fb_lambda!r}")
 

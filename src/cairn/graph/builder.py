@@ -37,11 +37,7 @@ def _new_id() -> str:
 def _scan_workspace_with_skips(
     workspace: str, repo_filter: Optional[str] = None
 ) -> tuple[list, list]:
-    """Scan the workspace, returning (files_to_index, skips).
-
-    Records skips in the skipped_files table; falls back to scan_workspace if
-    a repo has no source files.
-    """
+    """Return workspace files to index and their skip records."""
 
     all_files = []
     all_skips = []
@@ -60,11 +56,7 @@ def _scan_workspace_with_skips(
 
 
 def _record_skips(cur, skips: list) -> int:
-    """Insert SkipInfo rows into skipped_files. Returns count recorded.
-
-    Called after _clear_repo so a rebuild doesn't leave stale skip rows.
-    Best-effort: a skip insert failure must not abort the build.
-    """
+    """Return the number of skip rows recorded without failing the build."""
     recorded = 0
     for s in skips:
         try:
@@ -143,10 +135,7 @@ def _insert_results(
     in_memory: bool,
     progress=None,
 ) -> tuple[int, int, int, int, Dict[str, Dict[str, List[tuple]]]]:
-    """Insert parsed results into the database.
-
-    Returns (file_count, symbol_count, edge_count, import_count, repo_edges_by_file).
-    """
+    """Insert parsed files and return counts plus unresolved repo edges."""
     cur = conn.cursor()
     log = _log if verbose else lambda *a: None
     emit = progress or (lambda *a, **k: None)
@@ -219,10 +208,7 @@ def _insert_results(
             continue
 
         file_count += 1
-        # No periodic commit for in-memory builds (nothing to fsync mid-build;
-        # the single backup_to() at the end is the durability boundary). The
-        # on-disk path commits every 500 files to bound WAL lock hold time and
-        # let concurrent readers make progress.
+        # In-memory builds persist once; disk commits bound WAL lock hold time.
         if not in_memory and file_count % 500 == 0:
             conn.commit()
         if file_count % 100 == 0:
@@ -242,10 +228,7 @@ def _resolve_all(
     verbose: bool,
     progress=None,
 ) -> dict:
-    """Resolve all edge targets per repo.
-
-    Returns resolution_stats dict with keys: exact, ambiguous, unresolved.
-    """
+    """Resolve queued edges per repository and return resolution counts."""
     log = _log if verbose else lambda *a: None
     emit = progress or (lambda *a, **k: None)
 
@@ -296,20 +279,7 @@ def _apply_scip_overlay(
     verbose: bool,
     generate_missing: bool = True,
 ) -> Optional[Dict[str, int]]:
-    """Apply configured SCIP indexes as an edges-only overlay over the resolved graph.
-
-    A configured-but-absent index for a registered language is generated once
-    (bounded, never an existing file) and then imported; generation failures
-    record a scip_gen_* skipped_files row and never block another language.
-    With ``generate_missing=False`` an absent index only records
-    scip_index_missing (the incremental path never invokes indexers).
-
-    Returns the aggregated {'edges', 'disagreements', 'upgrades',
-    'join_anomalies'} report, or None when no index is configured. Never
-    raises: a missing runtime or a corrupt index degrades to tree-sitter with
-    a skipped_files record (never a rollback on the live build connection);
-    every degradation prints via _log regardless of verbose.
-    """
+    """Apply configured SCIP indexes and return a degradation-safe report."""
     try:
         from .config import load_config
 
@@ -410,10 +380,7 @@ def _build_graph_impl(
     lsp: bool = False,
     lsp_transport: object = _AUTO_LSP_TRANSPORT,
 ) -> dict:
-    """Build (or rebuild) the graph into ``conn`` (opened by the caller).
-
-    See ``build_graph`` for the full contract (repo_filter, verbose, progress).
-    """
+    """Build or rebuild the graph in the caller-owned connection."""
     resolved_db = db_path or str(_resolve_store().db)
     in_memory = repo_filter is None
     cur = conn.cursor()
@@ -449,11 +416,7 @@ def _build_graph_impl(
             repos_seen[f.repo] = f
         files_by_repo.setdefault(f.repo, []).append(f)
 
-    # Insert repo records (or update indexed_at).
-    # repos.path is stored WORKSPACE-relative (e.g. "." for single-repo, or the
-    # repo dir name for multi-repo) so the .kg file is portable across machines.
-    # The absolute root is reconstructed at read time via resolve_repo_path()
-    # (see scanner.resolve_file_path).
+    # Workspace-relative repos.path keeps the graph store portable.
     ws_root = Path(workspace).resolve()
     for repo_name, sample in repos_seen.items():
         from ..utils.git import get_remote_url
@@ -483,18 +446,8 @@ def _build_graph_impl(
         )
     conn.commit()
 
-    # Clear existing data before (re)building. For a single-repo build, only
-    # that repo is cleared; for a full-workspace build, each discovered repo is
-    # cleared so file rows don't collide on the UNIQUE(repo_id, path) constraint.
-    # A fresh in-memory DB starts empty, so the full-rebuild path can skip
-    # clearing entirely -- there is nothing to clear.
     if repo_filter:
-        # Crash-window marker: durable BEFORE _clear_repo commits, so a crash
-        # at any later commit boundary (clear, periodic 500-file commits,
-        # resolve, imports materialization) leaves a detectable 'building'
-        # row instead of a silently partial repo. Cleared after the build's
-        # last write; `cairn doctor` surfaces a stale marker as an
-        # interrupted rebuild.
+        # The marker must survive every later commit and clear after the last write.
         _set_repo_build_state(conn, repo_filter)
         _clear_repo(conn, repo_filter)  # on-disk, single repo: still needed
     elif not in_memory:
@@ -539,10 +492,6 @@ def _build_graph_impl(
             resolution_stats["exact"] += upgraded
             resolution_stats["ambiguous"] -= upgraded
 
-    # Fourth pass: materialize module->module imports edges from the imports
-    # table (needs every file's module symbol present, so it runs after the
-    # insert+resolve passes; kind='imports' stays outside
-    # STRUCTURAL_EDGE_KINDS, so traversal semantics are unchanged).
     try:
         import_edges = materialize_import_edges(conn)
         log(f"  materialized {import_edges} module imports edges")
@@ -555,12 +504,6 @@ def _build_graph_impl(
     scip_report = _apply_scip_overlay(conn, workspace, repos_seen, verbose)
 
     if repo_filter:
-        # Single-repo rebuild complete and committed (insert final commit +
-        # per-repo resolve commits + imports materialization above): out of
-        # the crash window, clear the marker. An exception anywhere above
-        # leaves it in place -- the repo really is partial. The clear is the
-        # build path's last write so a crash during any earlier write stays
-        # detectable.
         _clear_repo_build_state(conn, repo_filter)
 
     if in_memory:
@@ -599,31 +542,7 @@ def build_graph(
     lsp: bool = False,
     lsp_transport: object = _AUTO_LSP_TRANSPORT,
 ) -> dict:
-    """Build (or rebuild) the graph. Returns summary stats.
-
-    A full-workspace rebuild (repo_filter is None) builds in an in-memory
-    SQLite database with bulk-load pragmas, then persists to disk once at the
-    end via backup_to(). A single-repo rebuild (repo_filter set) keeps the
-    on-disk path so it doesn't clobber the other repos already in the DB.
-
-    ``verbose``: when True, per-file detail (parse errors, route-detection
-    failures, per-batch insert counts) is logged. Default False -- most
-    callers want the high-level progress, not per-file noise.
-
-    ``progress``: optional callable receiving phase events the caller can
-    render as a progress bar or themed log. Event shapes (first arg is the
-    phase name, the rest are kwargs/values specific to that phase):
-
-        progress("scan", files=N, skips=M)
-        progress("parse_progress", done=k, total=N)
-        progress("parse_done", parsed=P, errors=E)
-        progress("insert_progress", done=k, total=N, symbols=S, edges=E)
-        progress("resolve_start", repo=R)
-        progress("resolve_done", repo=R, stats={...})
-        progress("persist")
-
-    A no-op default (None) preserves the silent contract for library callers.
-    """
+    """Build or rebuild the graph and return summary and phase timing stats."""
     resolved_db = db_path or str(_resolve_store().db)
     in_memory = repo_filter is None
     if (
@@ -634,11 +553,6 @@ def build_graph(
 
         prepare_worktree_graph(workspace)
 
-    # Capture phase timings from the progress callbacks. First-seen timestamp
-    # for phase-start markers, last-seen
-    # for done markers, so a multi-repo resolve span covers the whole window.
-    # The caller's own progress callback still receives every event unchanged
-    # (the golden progress-event test continues to pass).
     started_epoch = time.time()
     phase_ts: dict[str, float] = {}
     user_progress = progress
@@ -685,11 +599,6 @@ def build_graph(
             finally:
                 conn.close()
 
-    # Persist a build_runs row on the resolved (on-disk) DB. For an in-memory
-    # build backup_to() has already swapped the graph to disk by now, so the
-    # row lands in the same DB as the rest of the graph. Best-effort: a
-    # telemetry write must never fail a build (record_build_run swallows all
-    # errors and logs at DEBUG -- analytics, not correctness).
     duration_s = time.time() - started_epoch
     _record_build(resolved_db, "build", summary, started_epoch, duration_s, phase_ts)
     return summary
@@ -703,12 +612,7 @@ def _record_build(
     duration_s: float,
     phase_ts: dict[str, float],
 ) -> None:
-    """Extract count/resolution columns from a build summary and persist them.
-
-    Thin adapter so ``build_graph`` stays readable; the other entry points
-    (embed/sync/incremental) call :func:`record_build_run` directly with the
-    fewer columns they have.
-    """
+    """Persist build summary counts without raising."""
     resolution = summary.get("resolution") or {}
     phase_timings = _phase_durations(phase_ts, started_epoch, started_epoch + duration_s)
     record_build_run(
@@ -743,12 +647,7 @@ def _record_phase_ts(phase_ts: dict[str, float], phase: str, ts: float) -> None:
 
 
 def _phase_durations(phase_ts: dict[str, float], started: float, ended: float) -> dict:
-    """Best-available per-phase durations in seconds, keyed by phase name.
-
-    Returns only the phases whose boundary markers actually fired (a single-repo
-    build emits no ``persist``; an empty workspace emits nothing). Each value is
-    rounded to milliseconds -- good enough for trending, avoids float noise.
-    """
+    """Return millisecond-rounded durations for observed build phases."""
     scan = phase_ts.get("scan")
     parse_done = phase_ts.get("parse_done")
     resolve_start = phase_ts.get("resolve_start")
@@ -769,11 +668,7 @@ def _phase_durations(phase_ts: dict[str, float], started: float, ended: float) -
 
 
 def _cairn_workers() -> Optional[int]:
-    """Resolved worker count from CAIRN_WORKERS, or None when unset/invalid.
-
-    Mirrors the clamping in ``_parse_all`` so the recorded value reflects the
-    parse fan-out that actually ran.
-    """
+    """Return the effective parse worker count, or None when unset."""
     raw = os.environ.get("CAIRN_WORKERS")
     if not raw:
         return None
@@ -809,26 +704,7 @@ def record_build_run(
     workers: Optional[int] = None,
     session_id: Optional[str] = None,
 ) -> None:
-    """Persist one ``build_runs`` row. Best-effort: never raises.
-
-    ``build_runs`` is a structured per-run record (not a low-cardinality
-    event), so this writes a direct INSERT on a short-lived connection rather
-    than routing through the buffered telemetry sink. Telemetry is analytics,
-    not correctness: every failure is swallowed and logged at DEBUG so a
-    metrics write can never fail a build/sync/embed/incremental pass.
-
-    ``db_path`` None resolves to the central store for the workspace (mirrors
-    ``schema.get_db``). Count columns are all optional -- each entry point
-    populates what it cheaply has and leaves the rest NULL.
-
-    ``workers`` and ``session_id`` default from the environment
-    (``CAIRN_WORKERS`` / ``CAIRN_SESSION``) so callers don't repeat that logic.
-    """
-    # CAIRN_TELEMETRY=off stops build-run recording too ("Set off to stop all
-    # event and build-run recording", docs/configuration.md). Lazy
-    # import mirrors schema.note_contention's gating so the telemetry package
-    # stays out of builder's import graph; a gating failure must not fail the
-    # write (analytics, not correctness).
+    """Persist one best-effort build-run row and never raise."""
     try:
         from ..telemetry import sink as _sink
 
@@ -872,11 +748,7 @@ def record_build_run(
 
 
 def _parse_file_worker(args: tuple[str, str, str, str]) -> tuple[str, str, str, str, Optional[ParsedFile], Optional[str], Optional[str]]:
-    """Worker: parse a single file in a separate process.
-
-    ``args`` is (file_path, file_rel_path, file_language, file_repo); returns
-    those plus (parsed_file, error_msg, stack_trace).
-    """
+    """Parse one worker argument tuple and return its result tuple."""
     import traceback
     path, rel_path, language, repo = args
     try:
@@ -912,12 +784,7 @@ def insert_parsed_file(
     name_to_symbol_ids: Dict[str, List[tuple]],
     repo_edges_by_file: Dict[str, Dict[str, List[tuple]]],
 ) -> tuple[int, int, int]:
-    """Insert a single parsed file's symbols, imports, and raw edges.
-
-    ``rel_path`` is the repo-relative path stored in ``files.path`` (portable);
-    ``abs_path`` is the absolute path used only to stat for size/mtime.
-    Returns (symbol_count, edge_count, import_count).
-    """
+    """Insert one parsed file and return symbol, edge, and import counts."""
     ensure_repo_row(cur, repo)
     file_id = _new_id()
     # Populate size and mtime for catch-up reconciliation.
@@ -980,12 +847,7 @@ def insert_parsed_file(
         ))
         name_to_symbol_ids.setdefault(sym.name, []).append((sym_id, repo, file_id))
 
-    # --- module symbol: one per file ----------------------------------------
-    # Owns module-level code (edges with no enclosing symbol) and the file's
-    # import edges materialized post-resolution. Name is the file stem;
-    # qualified name is the dotted repo-relative path so import statements
-    # can be mapped onto it. Appended AFTER the declared symbols so a code
-    # symbol sharing the stem name wins edge ownership (first-wins lookup).
+        # Append after declared symbols so a same-stem code symbol wins edges.
     module_id = _new_id()
     module_name = Path(rel_path).stem
     module_qname = _module_dotted(rel_path)
@@ -1015,12 +877,7 @@ def insert_parsed_file(
     for imp in pf.imports:
         imp_rows.append((_new_id(), file_id, imp.imported_path, None, imp.line, imp.local_alias))
 
-    # Same-file symbol-name lookup for edge *source* resolution. Built from the
-    # symbols inserted for THIS file only, rather than scanning the global
-    # name_to_symbol_ids accumulator (which would make this O(total_symbols)
-    # per file -> O(N^2) overall). The keys are exactly the names this file
-    # declared, and the values are their symbol ids in this file.
-    # (zip stops at pf.symbols, so the module row appended above is excluded.)
+        # Keep lookup file-local to avoid quadratic global symbol scans.
     in_file: Dict[str, List[str]] = {}
     for sym, row in zip(pf.symbols, sym_rows):
         in_file.setdefault(sym.name, []).append(row[0])
@@ -1028,10 +885,6 @@ def insert_parsed_file(
     # keeps first-wins ownership of that name's edges.
     in_file.setdefault(module_name, []).append(module_id)
 
-    # --- contains edges: parent -> nested, module -> top-level --------------
-    # Targets are pinned in-file (qualified-name keyed, bare-name fallback),
-    # so these rows skip the resolver round-trip entirely (resolution='exact')
-    # and never enter repo_edges_by_file.
     for sym, row in zip(pf.symbols, sym_rows):
         child_id = row[0]
         if sym.parent_scope:
@@ -1064,10 +917,7 @@ def insert_parsed_file(
             edge_id, source_id, None, edge.target_name, edge.kind,
             edge.line, edge.column, None,
         ))
-        # Carry the parser's in-memory-only signals on the tuple for the
-        # resolver: receiver_type (6th element, type-aware tier), call_arity
-        # (7th, the within-tier arity tiebreak), and generic_tier (8th, no
-        # exact-target promotion); absent signals are abstain-safe.
+        # Tuple slots 6-8 carry resolver signals; missing values abstain.
         file_edges.append((
             edge_id, source_id, edge.target_name, edge.line, edge.column,
             getattr(edge, "receiver_type", None),
@@ -1118,11 +968,7 @@ def _rationale_rows(pf: ParsedFile, file_id: str, sym_rows: List[tuple]) -> List
 
 
 def _module_dotted(rel_path: str) -> str:
-    """Dotted form of a repo-relative file path ("src/a/b.py" -> "src.a.b").
-
-    Package initializer files ("__init__.py") collapse to their directory
-    ("pkg/__init__.py" -> "pkg") so package imports match the module.
-    """
+    """Return a package-aware dotted module path."""
     parts = list(Path(rel_path).with_suffix("").parts)
     if len(parts) > 1 and parts[-1] == "__init__":
         parts = parts[:-1]
@@ -1130,12 +976,7 @@ def _module_dotted(rel_path: str) -> str:
 
 
 def _norm_module_token(token: str) -> str:
-    """Normalize one import path token to a dotted module path.
-
-    Separators become dots and relative markers ("./", "../") drop out:
-    "../utils/heap" -> "utils.heap", "cairn/graph/queries" ->
-    "cairn.graph.queries".
-    """
+    """Normalize an import token to a dotted module path."""
     t = token.strip().strip("'\"").replace("\\", ".")
     segs = [s for s in t.replace("/", ".").split(".") if s]
     return ".".join(segs)
@@ -1148,15 +989,7 @@ def _dotted_suffixes(dotted: str) -> List[str]:
 
 
 def _import_module_bases(raw: str) -> List[str]:
-    """Base module paths derived from one raw import statement/path.
-
-    Handles the shapes the parsers store verbatim: Python
-    "from X import a, b" (bases X.a, X.b, X), "import X.Y" (base X.Y);
-    TypeScript/JS "import {a} from './m'" and "import x from './m'"
-    (bases m.a/m.x, m); Java/Kotlin "import x.y.Z" / "import static x.y.Z"
-    (base x.y.Z); bare paths for Go and C-family includes. Alias suffixes
-    ("a as b") and brace noise are stripped.
-    """
+    """Return normalized import bases across supported parser dialects."""
     text = raw.strip().rstrip(";").strip()
     bases: List[str] = []
 
@@ -1194,22 +1027,7 @@ def materialize_import_edges(
     repo: Optional[str] = None,
     file_ids: Optional[List[str]] = None,
 ) -> int:
-    """(Re)build ``kind='imports'`` module-to-module edges from the imports table.
-
-    Every indexed file carrying a module symbol (kind='module') indexes its
-    dotted path suffixes; each import row's normalized module bases match
-    longest-suffix-first, and the first candidate matching exactly one indexed
-    file wins. Ambiguous matches and external/unmatched imports are skipped
-    (single-segment candidates can false-positive onto same-named files; they
-    stay because a unique same-named file is usually the right target).
-    Existing imports edges sourced from the affected module symbols are
-    deleted first, so the pass is idempotent per rebuild. Scope with ``repo``
-    or an explicit ``file_ids`` list: edge SOURCES and import rows are scoped,
-    but the candidate universe stays store-wide so cross-repo targets resolve
-    exactly as a full build would.
-
-    Returns the number of edges inserted.
-    """
+    """Rebuild import edges and return the number inserted."""
     module_rows = conn.execute(
         """SELECT s.id AS mid, f.id AS fid, f.path, f.repo_id
            FROM symbols s JOIN files f ON s.file_id = f.id
@@ -1319,14 +1137,7 @@ def _clear_repo_build_state(conn, repo_name: str) -> None:
 
 
 def repo_build_in_progress(conn, repo: str) -> bool:
-    """True when ``repo`` carries a marker from an interrupted on-disk rebuild.
-
-    Such a repo is cleared-but-partial: the on-disk path commits every 500
-    files (a deliberate WAL-lock trade-off), so a crash mid-rebuild leaves
-    committed partial state with no error on later opens. Recovery contract:
-    re-run ``cairn build --repo <repo>``. False on DBs predating the
-    ``repo_build_state`` table -- no marker can exist there.
-    """
+    """Return whether a repo has an interrupted on-disk rebuild marker."""
     try:
         row = conn.execute(
             "SELECT 1 FROM repo_build_state WHERE repo_id = ? AND state = 'building'",
@@ -1338,11 +1149,7 @@ def repo_build_in_progress(conn, repo: str) -> bool:
 
 
 def _clear_repo(conn, repo_name: str):
-    """Delete all files/symbols/edges/imports/errors for a repo (for rebuild).
-
-    Must null out cross-repo edges that point at this repo's symbols BEFORE
-    deleting the symbols, or the FK constraint on edges.target_id fails.
-    """
+    """Delete one repo graph while preserving incoming edge names."""
     cur = conn.cursor()
     repo_symbol_ids_subquery = (
         "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.repo_id = ?"
@@ -1352,13 +1159,7 @@ def _clear_repo(conn, repo_name: str):
     # 0b. Delete recorded skips for this repo so a rebuild doesn't accumulate
     #     stale skip rows.
     cur.execute("DELETE FROM skipped_files WHERE repo_id = ?", (repo_name,))
-    # 1. Null target_id on any edge (from any repo) pointing at this repo's symbols.
-    #    Preserve the target name so callers() by name still works. Reset
-    #    resolution to 'unresolved' — the orphaned edge no longer has a pinned
-    #    target, so precise-mode queries (get_callers, impact_analysis) must
-    #    not treat it as resolved. Mirrors graph/incremental.py's equivalent
-    #    UPDATE (without this, dangling edges keep resolution='exact' and
-    #    silently pollute blast-radius results after a single-repo rebuild).
+    # Preserve target names while demoting resolution for deleted symbols.
     cur.execute(
         f"UPDATE edges SET target_name = "
         f"COALESCE(target_name, (SELECT name FROM symbols WHERE id = edges.target_id)), "
@@ -1376,11 +1177,7 @@ def _clear_repo(conn, repo_name: str):
         "DELETE FROM imports WHERE file_id IN (SELECT id FROM files WHERE repo_id = ?)",
         (repo_name,),
     )
-    # 3b. Delete embeddings for this repo's symbols BEFORE the symbols go, so
-    # the FKs (embeddings/embeddings_mv.symbol_id -> symbols.id) don't leave
-    # orphans. The incremental path deletes embeddings explicitly; a full repo
-    # rebuild must too or it leaves dangling embedding rows pointing at
-    # deleted symbols.
+    # ANN rows must die with relational rows to avoid stale rowid reuse.
     try:
         # Sync the vec0 index for the doomed rowids (same rationale as the
         # incremental path): a stale vec entry can pair a REUSED rowid with an

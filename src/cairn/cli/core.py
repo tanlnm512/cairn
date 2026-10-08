@@ -11,12 +11,7 @@ from ._helpers import _human_bytes
 
 
 def _build_progress_handler(r):
-    """Build a build_graph progress callback that renders phase events on
-    rail ``r`` (shared by init and build).
-
-    The caller opens the "Scanning files" sub-step itself: scan completes
-    before the first progress event fires.
-    """
+    """Build a build_graph progress callback on rail ``r``; the caller opens the "Scanning files" sub-step itself."""
     phase_state = {"scan_done": False, "resolve_started": False}
 
     def on_progress(phase, **kw):
@@ -57,15 +52,7 @@ def _build_progress_handler(r):
 @click.option("--with-hooks", is_flag=True,
               help="Install cairn git hooks (post-commit, post-checkout) in discovered repos.")
 def init(ws_arg, legacy_dir, no_build, import_docs, with_hooks):
-    """Register this workspace with cairn's central store.
-
-    Creates ~/.cairn/<key>/.kg and .knowledge/ for this workspace and
-    records cwd -> key in the registry, so subsequent `cairn` commands (and the
-    MCP server) find the right store from anywhere inside the workspace.
-
-    If a legacy cairn/.kg exists under the workspace, it is migrated into
-    the central store (moved, not copied) so you don't rebuild the graph.
-    """
+    """Register this workspace with cairn's central store, migrating a legacy cairn/.kg store when present."""
     import shutil
     import time
 
@@ -249,10 +236,8 @@ def config(list_all, mcp_config, db_only, as_json):
     click.echo(f"  .knowledge:  {store.knowledge}")
     click.echo(f"home:       {store.home.parent}  (override with CAIRN_HOME)")
 
-    # Show the resolved embedding backend + model so the user can see, right
-    # after install, whether they're getting real embeddings (bge-m3) or the
-    # dep-free hash fallback. This is the earliest visibility point — it
-    # surfaces the state before the user ever runs `cairn embed`.
+    # Earliest visibility point: show the effective embedding backend/model
+    # (real vs hash fallback) before the user ever runs `cairn embed`.
     from ..graph.embeddings import _effective_backend, is_hash_fallback, current_model
 
     eff = _effective_backend()
@@ -331,11 +316,8 @@ def build(repo, workspace, db, verbose, staging, lsp, with_closure):
     import time
     t0 = time.time()
 
-    # A staging build must serialize against non-staging writers of the REAL
-    # db (single-repo builds and incremental updates lock <db>.build.lock,
-    # not <db>.tmp.build.lock); otherwise a concurrent build's live-DB writes
-    # would be silently clobbered by the swap below. Held across build +
-    # derived indexes + swap.
+    # A staging build must serialize against non-staging writers of the real
+    # DB: hold <db>.build.lock across build, derived indexes, and the swap.
     import contextlib
 
     from ..graph.schema import build_lock, swap_db_file
@@ -366,21 +348,16 @@ def build(repo, workspace, db, verbose, staging, lsp, with_closure):
             # settle it before the derived-index phases.
             r.finish("done")
 
-            # Derived indexes: dataflow always; transitive closure only under
-            # --with-closure. Dataflow calls impact_analysis per public symbol
-            # and can be slow on large workspaces, so it gets its own animated
-            # sub-step. Transitive closure is pure SQL.
+            # Derived indexes: dataflow always (slow, animated sub-step);
+            # transitive closure only under --with-closure (pure SQL).
             df_count = tc_count = None
             df_error = None
             conn = None
             try:
                 conn = get_db(target_db)
             except sqlite3.OperationalError as e:
-                # An unopenable store here means the persist phase had
-                # nothing to write: the build produced no store. Fail the
-                # command — the exit code is the "store exists" contract
-                # scripting keys on; reporting it as a "dataflow skipped"
-                # note with exit 0 makes that skip silent.
+                # An unopenable store means the build produced no store: fail
+                # the command rather than skip dataflow with exit 0.
                 raise click.ClickException(f"build produced no store: {e}") from e
             try:
                 from ..graph.dataflow import build_dataflow_index, build_transitive_closure
@@ -416,10 +393,8 @@ def build(repo, workspace, db, verbose, staging, lsp, with_closure):
         elapsed = time.time() - t0
 
         if staging:
-            # Carry analytics history from the DB about to be replaced before
-            # the swap (build_runs/events/tool_metrics -- same rationale as
-            # backup_to; the staged build only recorded its OWN build_runs row
-            # into the temp DB so far). Still inside build_lock.
+            # Carry analytics history from the DB being replaced (still inside
+            # build_lock) before the swap.
             from ..graph.schema import copy_telemetry_tables
 
             stage_conn = get_db(target_db)
@@ -601,16 +576,7 @@ def stats(db):
 @main.command()
 @click.option("--db", default=None, help="SQLite DB path (default: central store for this workspace).")
 def checkpoint(db):
-    """Checkpoint the graph DB's WAL back into the main file (TRUNCATE).
-
-    The cairn server runs in WAL mode. With multiple processes (or a
-    long-lived daemon) the WAL file grows and can't be reclaimed until a
-    checkpoint runs. This command forces TRUNCATE, shrinking the -wal file
-    to zero. Safe to run any time; no data loss.
-
-    Run this after `cairn serve stop` to reclaim space, or as recovery if the
-    -wal file has grown large (check with `ls -la <store>/.kg*`).
-    """
+    """Checkpoint the graph DB's WAL into the main file (TRUNCATE); safe any time, no data loss."""
     from . import display
 
     import sqlite3
@@ -628,4 +594,3 @@ def checkpoint(db):
     after = Path(path + "-wal").stat().st_size if Path(path + "-wal").exists() else 0
     display.kv("checkpoint", f"busy={result[0]} log_frames={result[1]} checkpointed={result[2]}")
     display.kv("wal size", f"{_human_bytes(before)} -> {_human_bytes(after)}")
-

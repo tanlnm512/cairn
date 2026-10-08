@@ -45,10 +45,7 @@ def install_droid(workspace: str, force: bool, dry_run: bool,
     _write_file(ws / ".factory" / "droids" / "knowledge-steward.md",
                 _claude_agent_md("cursor/knowledge-steward.json"), force, res, dry_run=dry_run)
 
-    # MCP: prefer `droid mcp add` if the CLI is available; a failed CLI add
-    # falls back to the .factory/mcp.json file so the registration lands
-    # either way (droid reads both; uninstall strips both). Dry-run reports
-    # the registration a real run would perform instead of skipping it.
+    # Prefer droid mcp add, with .factory/mcp.json as the file fallback.
     if shutil.which("droid"):
         if dry_run:
             res.notes.append(
@@ -59,11 +56,7 @@ def install_droid(workspace: str, force: bool, dry_run: bool,
                 url = default_sse_url(sse_url)
                 argv = ["droid", "mcp", "add", "cairn", url, "--type", "sse"]
             else:
-                # Documented stdio shape: the full server command arrives as ONE
-                # argument (droid splits it), so server-command flags are never
-                # parsed as droid options. `--env` entries persist into the
-                # registration; a non-default home must ride along or the
-                # spawned server resolves the default store.
+                # Droid expects the complete server command as one argument after --.
                 argv = ["droid", "mcp", "add", "cairn",
                         " ".join([*resolve_cg_command(), "serve"]),
                         "--type", "stdio"]
@@ -100,14 +93,7 @@ def install_droid(workspace: str, force: bool, dry_run: bool,
 
 
 def _mcp_remove_droid(res: InstallResult) -> None:
-    """Undo install's ``droid mcp add`` registration when the CLI is present.
-
-    The registration lives outside the workspace (droid's own user config), so
-    stripping ``.factory/`` alone leaves a stale server entry. Mirrors the
-    install subprocess pattern (list-args, capture_output, timeout,
-    check=False); a missing CLI means install never registered (it wrote the
-    file fallback instead), so there is nothing to remove.
-    """
+    """Best-effort removal of Droid's user-scope cairn registration."""
     if not shutil.which("droid"):
         return
     try:
@@ -129,17 +115,7 @@ def _mcp_remove_droid(res: InstallResult) -> None:
 
 
 def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
-    """Remove cairn files/entries for Droid/Factory.
-
-    Droid's file wiring is workspace-scoped (install ignores ``scope`` for
-    files), so ``scope`` is accepted only for signature parity with the other
-    clients. The MCP registration is NOT file-scoped -- install runs
-    ``droid mcp add`` at any scope when the CLI is present -- so the matching
-    ``droid mcp remove`` runs at any scope too.
-
-    Commands/droids are only removed when byte-identical to what the
-    installer writes, so a user's own file at the same path survives.
-    """
+    """Remove Droid files and its scope-independent MCP registration."""
     _rm_tree_if_cairn(ws / ".factory" / "skills" / "cairn", res)
     for n in _SLASH_COMMANDS:
         _rm_if_ours(ws / ".factory" / "commands" / f"{n}.md",

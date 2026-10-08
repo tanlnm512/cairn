@@ -70,25 +70,14 @@ def claude_hooks_block() -> dict:
 def install_claude(workspace: str, force: bool, dry_run: bool,
                    transport: str = "stdio", sse_url: str | None = None,
                    scope: str = "workspace") -> InstallResult:
-    """Wire cairn into Claude Code (.mcp.json, .claude/, CLAUDE.md).
-
-    ``scope="workspace"`` writes to ``<workspace>/.claude/`` and
-    ``<workspace>/.mcp.json`` (default). ``scope="global"`` writes to
-    ``~/.claude/`` so all projects inherit cairn's skills/commands/agents
-    without per-workspace installation. Global MCP registration uses
-    ``claude mcp add --scope user``.
-    """
+    """Install Claude Code assets and MCP registration for the selected scope."""
     ws = Path(workspace)
     res = InstallResult("claude")
 
     # Base dir: workspace root (default) or home (global scope).
     base = ws if scope == "workspace" else Path.home()
 
-    # --- MCP registration -------------------------------------------------
-    # Claude Code only reads a *workspace* `.mcp.json`; a global `~/.mcp.json`
-    # is NOT picked up. For workspace scope we write the file; for global scope
-    # we register via `claude mcp add --scope user`. The subprocess is
-    # best-effort: if the `claude` CLI is absent we record a warning.
+    # Claude reads workspace .mcp.json only; global registration uses user scope.
     if scope == "workspace":
         _merge_json_file(base / ".mcp.json", mcp_config_json(transport, sse_url), force, res, dry_run=dry_run)
     else:
@@ -100,12 +89,7 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
                 argv = ["claude", "mcp", "add", "--transport", "sse",
                         "--scope", "user", "cairn", url]
             else:
-                # `claude mcp add <name> [-e KEY=value] -- <command> [args...]`:
-                # `--` ends option parsing; everything after it is the server
-                # command stored verbatim as the registration argv. `-e`
-                # entries persist into the user-scope registration's env
-                # block; a non-default home must ride along or the spawned
-                # server resolves the default store.
+                # -- ends CLI options; -e persists a non-default home in the registration.
                 argv = ["claude", "mcp", "add", "cairn", "--scope", "user"]
                 for key, value in cairn_home_env().items():
                     argv += ["-e", f"{key}={value}"]
@@ -167,12 +151,7 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
 
 
 def _mcp_remove_user_scope(res: InstallResult) -> None:
-    """Undo the user-scope MCP registration a global install created.
-
-    Mirrors install's ``claude mcp add --scope user`` subprocess pattern
-    (list-args, capture_output, timeout, check=False). Best-effort: a missing
-    CLI or a failed call is recorded as a note, never a crash.
-    """
+    """Best-effort removal of Claude's user-scope cairn MCP registration."""
     if not shutil.which("claude"):
         res.notes.append(
             "NOTE: could not remove a user-scope MCP registration -- the "
@@ -193,18 +172,7 @@ def _mcp_remove_user_scope(res: InstallResult) -> None:
 
 
 def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
-    """Remove cairn files/entries for Claude Code.
-
-    ``scope="workspace"`` (the default, and the historical behavior) strips
-    only ``<ws>/.mcp.json`` and ``<ws>/.claude/`` entries. ``scope="global"``
-    strips the home-dir tree a global install wrote (``~/.claude/`` skills,
-    commands, agents, hooks) and removes the user-scope MCP registration via
-    ``claude mcp remove --scope user``. ``scope="all"`` does both.
-
-    Commands/agents are only removed when byte-identical to what the
-    installer writes -- a user's own file at the same path (which install
-    skipped) survives.
-    """
+    """Remove Claude Code files and registrations for the selected scope."""
     from ..merge import _strip_mcp
 
     for base in _uninstall_bases(ws, scope):

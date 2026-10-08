@@ -25,10 +25,7 @@ def _wiki_not_found() -> Response:
 
 
 def _wiki(request: Request, context: DashboardContext) -> Response:
-    # Catalog filters, read like every other view's params: absent or
-    # blank means no filter; ``state`` outside the derived vocabulary
-    # falls back to no filter (silent fallback, matching the
-    # scope/window fallbacks).
+    # Blank filters mean no filter; unknown state silently falls back too.
     from ...wiki.lifecycle import DERIVED_STATES as PAGE_STATES
     from ..data import get_wiki_pages
 
@@ -41,10 +38,7 @@ def _wiki(request: Request, context: DashboardContext) -> Response:
     try:
         pages = get_wiki_pages(selected_knowledge, repo=repo)
     except ValueError as exc:
-        # A malformed manifest renders the explicit unreadable state —
-        # the CLI's clean error mirrored, never a 500. The context keeps
-        # the catalog's shape (pages empty, manifest_error set) so both
-        # templates branch on the error alone.
+        # A malformed manifest renders the explicit unreadable state, never a 500.
         page_context: dict = {
             "pages": [],
             "page_states": PAGE_STATES,
@@ -113,11 +107,7 @@ def _wiki_page(request: Request, context: DashboardContext) -> Response:
 
 
 def _wiki_page_repo(request: Request, context: DashboardContext) -> Response:
-    # The canonical URL: repo-qualified, so multi-repo workspaces can
-    # reach every page even when repos plan colliding page ids (every
-    # repo plans an "overview"). prev/next walk the repo's promoted
-    # pages in manifest (plan) order — non-promoted rows have no
-    # readable concept, so linking to them would be a dead end.
+    # Repo-qualified URLs disambiguate colliding page ids; navigation stays promoted.
     from ..data import get_wiki_page, get_wiki_pages
 
     _, selected_knowledge, store_key = context.resolve_selection(

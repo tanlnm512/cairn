@@ -28,11 +28,7 @@ TASK_STATUSES = ("pending", "in-progress", "done", "failed", "dropped")
 # filter's allowed values.
 MEMORY_TYPES = ("decision", "pattern", "mistake", "workaround")
 
-# The ingest classifier's doc families (knowledge/ingest/classifier.py)
-# — the /knowledge family filter's seed vocabulary. Rows carry whatever
-# family their concept id names (knowledge/<family>/<slug>), so a doc
-# under a custom type still lists; the route extends the options with
-# any family the corpus actually contains.
+# Seed knowledge families; route options add families found in the corpus.
 KNOWLEDGE_FAMILIES = ("business-rule", "decision", "spec", "workflow")
 
 # Traffic-view time-window presets — the ``window`` param's
@@ -85,10 +81,7 @@ def _human_ts(value) -> str:
 
 
 def _human_iso(value) -> str:
-    """ISO-8601 timestamp string as a UTC wall-clock string (``—`` when
-    absent or unparseable). Status views render stored ISO columns
-    (build_runs.started_at, embeddings.embedded_at) through this so a
-    raw ISO-8601 timestamps never reach the page."""
+    """ISO-8601 timestamp as a UTC wall-clock string, or ``—`` when unparseable."""
     try:
         dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError):
@@ -143,25 +136,14 @@ def _fmt_mean(value) -> str:
 
 
 def _resolve_window(window: str | None) -> tuple[str, float | None]:
-    """Validated ``window`` param plus its ``since`` epoch cutoff.
-
-    Unknown values silently fall back to ``"all"``, matching the graph
-    handler's scope fallback; ``since`` is None (unbounded) for ``"all"``.
-    """
+    """Validated window preset plus its epoch cutoff (None means unbounded)."""
     preset = window if window in WINDOW_PRESETS else "all"
     seconds = _WINDOW_SECONDS.get(preset)
     return preset, time.time() - seconds if seconds is not None else None
 
 
 def is_hx_request(request: "Request") -> bool:
-    """True when htmx issued this request and wants a fragment (its
-    HX-Request: true header rides every htmx-initiated call). The
-    full-page-vs-fragment seam: handlers render the complete template on
-    a page load and the fragment variant — a template extending no base,
-    covering only the swapped region — on an htmx call, sharing one
-    route and one data fetch. HX-History-Restore-Request vetoes the
-    fragment: a back/forward restore must re-render the whole page,
-    though htmx stamps HX-Request on that request too."""
+    """True when this htmx request wants a fragment; history restores veto it."""
     if (
         (request.headers.get("HX-History-Restore-Request") or "")
         .strip()
@@ -181,14 +163,7 @@ EXPORT_ROW_LIMIT = 1_000_000
 def create_app(
     db_path: str | None = None, knowledge_dir: str | None = None
 ) -> Starlette:
-    """Build the dashboard app over a read-only connection to ``db_path``.
-
-    ``db_path=None`` defers store resolution to the data layer;
-    ``knowledge_dir=None`` defers to the workspace's default knowledge dir
-    (resolved per request — a pure path computation). Either way the factory
-    itself performs no filesystem work beyond locating its own templates
-    and static assets.
-    """
+    """Build the dashboard app without resolving stores or probing at factory time."""
     from starlette.applications import Starlette
     from starlette.routing import Mount
     from starlette.staticfiles import StaticFiles
@@ -196,10 +171,7 @@ def create_app(
 
     static_dir = _PACKAGE_DIR / "static"
     templates = Jinja2Templates(directory=str(_PACKAGE_DIR / "templates"))
-    # Asset version = newest static-file mtime, so template URLs carry
-    # ?v=<version> and any browser holding a stale cached app.js/app.css
-    # (heuristic caching predating the no-cache header, or an old
-    # install) fetches fresh the moment the files change.
+    # Asset version makes stale cached assets refetch when files change.
     templates.env.globals["asset_version"] = max(
         (p.stat().st_mtime_ns for p in static_dir.rglob("*") if p.is_file()),
         default=0,
@@ -228,24 +200,13 @@ def create_app(
     from ..graph import embed_ladder, embeddings
     from ..paths import default_knowledge_path
 
-    # The embed-degradation banner reflects THIS process's observability only: the
-    # ladder cache is per-process and nothing in this read-only app evaluates
-    # it, so the first page render adds one uncached server probe (the
-    # 2 s discipline) whose failure seeds the ladder here; later requests
-    # read that cached verdict. The status view shares the same one-probe
-    # seam for its probe-health row.
+    # Probe verdicts are process-local and shared by the banner and status view.
     _probe_lock = threading.Lock()
     _probed = False
     _probe_ok = None
 
     def _server_probe_once():
-        """One uncached server probe per dashboard process, shared by the
-        banner and the status view. None when the backend is not
-        server-family (nothing probes); a failed probe seeds this process's
-        ladder verdict, exactly as the banner always has. The lock is held
-        across the probe AND the verdict assignment: a concurrent first
-        request blocks (worst case the probe's ~2 s timeout — a localhost
-        tool) instead of racing past an unassigned verdict."""
+        """Run one uncached server probe per process; hold the lock through verdict assignment."""
         nonlocal _probed, _probe_ok
         if embeddings.backend_name() not in embeddings.SERVER_FAMILY:
             return None
@@ -270,11 +231,7 @@ def create_app(
     def render(
         request: Request, name: str, context: dict, status_code: int = 200
     ) -> Response:
-        """TemplateResponse carrying the banner and shell context on every
-        page. The selector's options come from enumerate_stores (stat-only,
-        never probed — probe_stores and its 100-open budget stay exclusive
-        to the workspaces overview) and cost one registry read plus one
-        directory scan per render."""
+        """Render a template with shell context while keeping store enumeration stat-only."""
         context["embed_banner"] = embed_banner()
         if "shell" not in context:
             context["shell"] = shell_context(
@@ -293,20 +250,7 @@ def create_app(
         knowledge_dir: str | None,
         form=None,
     ) -> tuple[str | None, str, str]:
-        """This request's ``(db, knowledge_root, store_key)``.
-
-        No ``store`` param keeps the launch store — today's behavior,
-        byte-identical (``db`` may stay None for the data layer to resolve).
-        A present param must name a populated key from
-        :func:`enumerate_stores` — the param is a registry key, never a raw
-        path (no arbitrary-file-open vector). An unknown, empty, or missing
-        key raises MissingDatabaseError so the app-level handler renders
-        the missing-DB page: the friendly missing state, never an error.
-
-        ``form`` is the already-parsed body of a POST whose form carries the
-        hidden store input (settings): the body store is a fallback for the
-        query param only — one seam, two transports, same validation.
-        """
+        """Resolve request/form input to a validated registry store selection."""
         store_key = request.query_params.get("store", "").strip()
         if not store_key and form is not None:
             raw = form.get("store")
