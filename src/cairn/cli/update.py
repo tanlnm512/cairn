@@ -117,14 +117,9 @@ def update(repo, file_path, workspace, db, knowledge, diff_ref):
         # Don't fail the whole update if decay has an issue
         display.warning(f"Memory decay failed (non-critical): {e}")
 
-    # Memory-anchored-file hints (Phase 3.2): if a reindex changed symbols that
-    # a memory cites, the memory may now be stale. Scan all memory tiers
-    # (raw/drafts/tribal/archived) for any whose backtick refs no longer fully
-    # resolve (refs_verified < 1.0) and warn -- the graph just changed, so
-    # surface memories that may have drifted. Warning, not a block: `cairn
-    # update` must not fail on memory state. Only considers explicit backtick
-    # refs (never loose mentions), so a file named in prose alone is not an
-    # anchor.
+    # Memory staleness hints: warn when a reindex leaves a memory's backtick
+    # refs unresolved (prose mentions are never anchors); never block the
+    # update on memory state.
     if result.get("files_reindexed", 0) > 0 or result.get("files_deleted", 0) > 0:
         try:
             from ..memory.scoring import _graph_verification
@@ -156,6 +151,5 @@ def update(repo, file_path, workspace, db, knowledge, diff_ref):
         except Exception as e:
             # Memory hints are advisory; never fail the update over them.
             display.warning(f"Memory staleness scan failed (non-critical): {e}")
-
 
 

@@ -23,11 +23,7 @@ def _tokenizer_model() -> str:
 
 
 def _probe_tokenizer() -> Optional[Any]:
-    """The locally cached tokenizer, or None when unavailable.
-
-    Unavailability is normal: the semantic extra not installed, or the
-    tokenizer not yet cached, both mean the heuristic mode.
-    """
+    """Return a locally cached tokenizer or None when exact mode is unavailable."""
     try:
         import cairn.paths  # noqa: F401  (injects ~/.cairn/lib into sys.path)
         from transformers import AutoTokenizer

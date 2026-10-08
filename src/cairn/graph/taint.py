@@ -49,12 +49,7 @@ def build_registry(
     source_overrides: Optional[Mapping[str, Iterable[str]]] = None,
     sink_overrides: Optional[Mapping[str, Iterable[str]]] = None,
 ) -> TaintRegistry:
-    """Merge override categories into the default tables.
-
-    An override category replaces the same-named default category (an
-    empty override disables it); a new category extends the table. The
-    defaults are copied, never mutated.
-    """
+    """Merge override categories into the default tables."""
     return TaintRegistry(
         sources=_merged(DEFAULT_SOURCES, source_overrides),
         sinks=_merged(DEFAULT_SINKS, sink_overrides),
@@ -128,21 +123,7 @@ def find_paths(
     fuzzy: bool = False,
     max_depth: int = CLOSURE_MAX_DEPTH,
 ) -> list[TaintPath]:
-    """Trace inter-procedural taint paths over the call graph.
-
-    ``from_pattern``/``to_pattern`` each name a registry category token or a
-    single exact call name; an unmatched pattern yields no paths. Entry
-    symbols are functions whose call edges hit a source name; terminators are
-    functions whose call edges hit a sink name. The walk is a depth-capped
-    BFS over ``edges`` -- never the ``transitive_edges`` closure, which
-    carries no resolution column. Only ``resolution='exact'`` edges are
-    followed unless ``fuzzy`` also follows ambiguous/unresolved edges by
-    their preserved target name. ``max_depth`` is the edge budget between
-    entry and terminator, so a path carries at most ``max_depth + 1`` hops;
-    the default cap is the analysis precision boundary. One shortest path is
-    returned per (entry, sink) pair; a sink terminates its path and is never
-    expanded through.
-    """
+    """Trace inter-procedural taint paths over the call graph."""
     from_names = _pattern_names(from_pattern, registry.sources)
     to_names = _pattern_names(to_pattern, registry.sinks)
     if not from_names or not to_names:
@@ -156,12 +137,7 @@ def intersect_seeds(
     seeds: set[str],
     fuzzy: bool = False,
 ) -> list[TaintPath]:
-    """Taint paths whose entry or sink symbol name is in ``seeds``.
-
-    The explore/blast warning intersection: a changed or queried symbol on a
-    path endpoint touches a known source-to-sink flow. Runs over the full
-    default registry at the default depth cap.
-    """
+    """Taint paths whose entry or sink symbol name is in ``seeds``."""
     if not seeds:
         return []
     paths = _discover_paths(
@@ -185,14 +161,7 @@ def find_symbol_paths(
     fuzzy: bool = False,
     max_depth: int = CLOSURE_MAX_DEPTH,
 ) -> list[SymbolPath]:
-    """Shortest structural path per (from, to) symbol-id pair over ``edges``.
-
-    Seeds are resolved symbol ids; an empty or unknown seed set yields no
-    paths. Only exact-resolution edges are followed unless ``fuzzy`` also
-    follows ambiguous/unresolved edges by their preserved target name.
-    ``max_depth`` is the edge budget between endpoints and the walk is
-    deterministic for an unchanged graph.
-    """
+    """Shortest structural path per (from, to) symbol-id pair over ``edges``."""
     if not from_ids or not to_ids:
         return []
     entries = _seed_rows(conn, from_ids)
@@ -259,11 +228,7 @@ def _discover_paths(
 
 
 def _symbols_calling(conn: sqlite3.Connection, names: set[str]) -> list[sqlite3.Row]:
-    """Symbols with a call edge to one of ``names``, in stable (file, name) order.
-
-    The call name is the resolved symbol name on exact edges, the preserved
-    attribute tail on ambiguous/unresolved edges.
-    """
+    """Symbols with a call edge to one of ``names``, in stable (file, name) order."""
     name_ph = ",".join("?" * len(names))
     kind_ph = ",".join("?" * len(_CALL_EDGE_KINDS))
     return conn.execute(
@@ -307,12 +272,7 @@ def _paths_from_entry(
     fuzzy: bool,
     max_depth: int,
 ) -> list[list[TaintHop]]:
-    """Shortest hop chain per terminator reachable from one entry symbol.
-
-    The entry hop is labeled ``exact``: registry matching is exact by
-    construction. Each later hop carries the resolution of the edge that
-    reached it.
-    """
+    """Shortest hop chain per terminator reachable from one entry symbol."""
     paths: list[list[TaintHop]] = []
     # hop id -> (previous hop id or None, rendered hop)
     parent: dict[str, tuple[Optional[str], TaintHop]] = {
@@ -359,12 +319,7 @@ def _paths_from_seed(
     fuzzy: bool,
     max_depth: int,
 ) -> list[list[PathHop]]:
-    """Shortest hop chain per terminator reachable from one seed symbol.
-
-    Unlike the taint walk, a terminator is expanded through after its path
-    is recorded, so pairs whose shortest route crosses another destination
-    still resolve at their true depth.
-    """
+    """Shortest hop chain per terminator reachable from one seed symbol."""
     paths: list[list[PathHop]] = []
     # hop id -> (previous hop id or None, rendered hop)
     parent: dict[str, tuple[Optional[str], PathHop]] = {
@@ -452,12 +407,7 @@ def _exact_neighbors(
 def _fuzzy_neighbors(
     conn: sqlite3.Connection, source_ids: list[str]
 ) -> list[sqlite3.Row]:
-    """Ambiguous/unresolved edges hopped by their preserved target name.
-
-    An ambiguous name hops to every same-repo definition (the fuzzy
-    candidate list); an unresolved name has no same-repo definition and
-    yields no hop.
-    """
+    """Ambiguous/unresolved edges hopped by their preserved target name."""
     id_ph = ",".join("?" * len(source_ids))
     kind_ph = ",".join("?" * len(STRUCTURAL_EDGE_KINDS))
     return conn.execute(
@@ -487,13 +437,7 @@ def _chunked(ids: list[str]) -> Iterator[list[str]]:
 
 
 def format_taint_warning(paths: list[TaintPath]) -> str:
-    """Render taint paths as the warning text the explore/blast surfaces
-    display verbatim.
-
-    One line per path: ``Taint path: file:symbol [resolution-label] -> ...``;
-    an empty list yields an empty string. The text never contains the
-    ``degraded: rung`` substring.
-    """
+    """Render taint paths as the warning text the explore/blast surfaces display verbatim."""
     return "\n".join(
         "Taint path: "
         + " -> ".join(

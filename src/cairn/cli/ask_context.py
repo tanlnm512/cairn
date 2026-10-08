@@ -24,12 +24,7 @@ def _echo_route_result(result):
 
 
 def _ask_all_repos(question, as_json):
-    """Route the question across every registered workspace store and
-    print one per-repo attributed answer per reachable store.
-
-    Unavailable stores are named with their state and never abort the
-    query; an empty registry is stated plainly.
-    """
+    """Route the question across every registered store, one attributed answer per reachable store; unavailable stores never abort the query."""
     from ..compass.router import route_query
     from ..graph.federation import _classify_store, iter_stores
     from ..graph.schema import get_db as open_store_db

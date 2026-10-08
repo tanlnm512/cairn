@@ -10,14 +10,7 @@ from .main import DEFAULT_DB_PATH, get_db, main
 
 
 def _memory_line(c, conn, with_tier: bool = False, with_concept_id: bool = False) -> str:
-    """One memory-listing line: '[<tier> ]<score>, refs-verified=<refs>[, stance=<s>[ peer=<id>]]' title [id].
-
-    ``refs-verified`` is the live backtick-ref fraction ('?' when ``conn`` is
-    None or the verification read fails). The stance segment renders only
-    when ``memory_stance`` is set; contested entries carry the peer id
-    inline. The flags carry the per-command column differences: search shows
-    tier + concept id, list shows tier, digest shows the score only.
-    """
+    """One memory-listing line: '[<tier> ]<score>, refs-verified=<refs>[, stance=<s>[ peer=<id>]]' title [id]."""
     if conn is None:
         refs = "?"
     else:
@@ -64,14 +57,8 @@ def memory():
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def memory_record(mtype, title, body, resource, confidence, recurrence_key, stance, db, knowledge):
     """Record a learning: decision|pattern|mistake|workaround.
-
-    For decision/mistake/workaround, structure --body as the fact/rule
-    itself, then a `Why:` line and a `How to apply:` line -- the reasoning
-    is what makes the memory useful once the original context is forgotten.
-
-    Skip anything cheaper to re-derive than recall: facts the graph already
-    answers, plain git history, or ephemeral session-only state.
-    """
+    For decision/mistake/workaround, structure --body as the fact/rule, then a
+    `Why:` line and a `How to apply:` line."""
     from ..graph.embeddings import embed_memory_concepts
     from ..memory.promotion import capture_memory
     from ..okf.bundle import OKFBundle
@@ -102,11 +89,7 @@ def memory_record(mtype, title, body, resource, confidence, recurrence_key, stan
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def memory_reflect(db, knowledge):
-    """Recompute memory stances from supersession and citation evidence.
-
-    Contested > tentative > preferred > the recorded prior; writes stance
-    frontmatter only and is idempotent on an unchanged store.
-    """
+    """Recompute memory stances from supersession and citation evidence; writes frontmatter only, idempotent."""
     from ..memory.stance import reflect_store
     from ..okf.bundle import OKFBundle
 
@@ -130,12 +113,7 @@ def memory_reflect(db, knowledge):
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def memory_evolve(memory_path, title, body, db, knowledge):
-    """Revise a memory: create a new version that supersedes the old one.
-
-    The old memory is marked superseded (hidden from search unless
-    --include-superseded) and its version chain is inherited, preserving
-    the full decision history.
-    """
+    """Revise a memory: the new version supersedes the old and inherits its version chain."""
     from ..graph.embeddings import embed_memory_concepts
     from ..memory.promotion import evolve_memory
     from ..okf.bundle import OKFBundle
@@ -189,15 +167,7 @@ def _require_agent_id(agent_id: str) -> str:
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def memory_search(query, tier, as_of, agent, db, knowledge):
-    """Search past memories. Shows a live refs-verified fraction per result.
-
-    Only memories valid at --as-of are returned; the default (now) shows
-    only currently-valid memories.
-
-    With --agent, other agents' shared memories for the queried symbols are
-    merged in, each carrying a "shared by" attribution line. Omitted, the
-    single-agent path runs: identical output, no sharing query.
-    """
+    """Search memories valid at --as-of; --agent merges other agents' shared rows with attribution."""
     from ..memory.promotion import search_memory
     from ..okf.bundle import OKFBundle
 
@@ -244,13 +214,7 @@ def memory_search(query, tier, as_of, agent, db, knowledge):
               help="Graph DB path (unused; validity renders from concept extensions).")
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def memory_timeline(symbol, db, knowledge):
-    """Temporal history of memories citing SYMBOL.
-
-    A memory matches when it cites SYMBOL in a backtick symbol ref (the same
-    extraction the stale path uses) or mentions it in plain text. Rows are
-    ordered by valid_from; each shows the validity window, recorded successor
-    link, and current tier/score.
-    """
+    """Temporal history of memories citing SYMBOL (backtick ref or plain mention), ordered by valid_from."""
     from cairn.refs import extract_symbol_refs
 
     from ..memory.store import list_memories
@@ -295,16 +259,7 @@ def memory_timeline(symbol, db, knowledge):
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def memory_capture(session_transcript, session_transcript_stdin, session_id, db, knowledge):
-    """Extract learnings from a session transcript and record them.
-
-    Used by session-end hooks. Routes through the memory-extract LLM task
-    (decoupled); if no agent is available, queues the task for later and exits.
-
-    The transcript may be passed inline via ``--session-transcript <json>``
-    or, for long sessions that would exceed ARG_MAX (~256KB on macOS) as an
-    argv element, piped on stdin with ``--session-transcript-stdin``. When
-    both are given the stdin form wins.
-    """
+    """Extract learnings from a session transcript (inline or --session-transcript-stdin, stdin wins); records or queues them."""
 
     from ..graph.embeddings import embed_memory_concepts
     from ..llm.tasks import create_task
@@ -356,10 +311,8 @@ def memory_capture(session_transcript, session_transcript_stdin, session_id, db,
     if recorded:
         click.echo(f"Captured {recorded} memories from session {session_id}.")
     else:
-        # Decoupled fallback: queue a memory-extract task for any agent.
-        # Privacy floor: the task .md persists the facts dict
-        # (body + extensions) in the bundle, so the transcript must be
-        # redacted BEFORE queueing -- truncation alone keeps a secret intact.
+        # The queued task .md persists the transcript-derived facts, so redact
+        # before queueing.
         from ..memory.privacy import strip_private_data
 
         task = create_task(
@@ -423,12 +376,7 @@ def memory_stats(knowledge):
               help="Graph DB path (enables refs-verified fractions).")
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def memory_digest(limit, db, knowledge):
-    """Top tribal memories by score -- quick session-orientation digest.
-
-    Shows a live refs-verified fraction per memory (backtick file/symbol refs
-    that still exist in the graph). A low value flags a memory citing a renamed
-    or removed symbol; verify before relying on it.
-    """
+    """Top tribal memories by score with live refs-verified fractions; low values flag stale refs."""
     from ..memory.promotion import tribal_digest
     from ..okf.bundle import OKFBundle
 
@@ -659,13 +607,7 @@ def memory_consolidate(knowledge):
               help="Comma-separated symbols the share covers.")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 def memory_share(memory_id, agent_id, symbols, db):
-    """Share MEMORY_ID with other agents for a set of symbols.
-
-    MEMORY_ID is an optional memory concept id; a share without one records
-    symbol-level sharing only. Other agents' recall for these symbols
-    surfaces the share. Re-sharing an existing (agent, symbol, memory)
-    row inserts nothing and exits 0.
-    """
+    """Share MEMORY_ID (optional) with other agents for a symbol set; re-sharing inserts nothing, exits 0."""
     from ..memory.store import share_memory
 
     memory_id = memory_id or None
@@ -693,13 +635,7 @@ def memory_share(memory_id, agent_id, symbols, db):
               help="Comma-separated symbols about to be edited.")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 def memory_check(agent_id, symbols, db):
-    """Record edit intent on a symbol set; warn on other agents' recent overlap.
-
-    Records the caller's kind='intent' rows so other agents' later checks
-    see the intent, then reports other agents' recent share/intent rows
-    intersecting the symbol set: one warning line per other agent, naming
-    the agent and the overlapping symbols. Exits 0 with or without overlap.
-    """
+    """Record edit intent on a symbol set, then warn on other agents' recent overlap; always exits 0."""
     from datetime import datetime, timezone
 
     from ..memory.store import check_overlap
@@ -747,4 +683,3 @@ def memory_check(agent_id, symbols, db):
     for other_agent, syms in by_agent.items():
         click.echo(f"Overlap warning: agent '{other_agent}' has recent "
                    f"activity on {', '.join(syms)}")
-

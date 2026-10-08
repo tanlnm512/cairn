@@ -48,13 +48,7 @@ GRAPH_SCOPES = ("symbol", "module", "impact", "deps", "repo")
 
 
 def list_projects(conn: sqlite3.Connection) -> List[dict]:
-    """One summary row per indexed project: counts, freshness, embedding status.
-
-    Freshness prefers the newest ``files.indexed_at`` and falls back to
-    ``repos.indexed_at`` for projects whose file rows carry no timestamp.
-    ``repos.path`` is workspace-relative — returned verbatim, never resolved
-    against the dashboard's cwd.
-    """
+    """Return project counts, freshness, and embedding status with workspace-relative paths."""
     rows = conn.execute(
         """
         SELECT r.id, r.name, r.path, r.language,
@@ -130,17 +124,7 @@ def get_graph(
     depth: Optional[int] = None,
     include_tests: bool = False,
 ) -> Dict:
-    """Dispatch to a viz query scope; returns its ``{nodes, edges, metadata}``
-    verbatim — the scope functions already cap result size (LIMIT 30/50,
-    ``max_nodes``), and their metadata carries the possibly-truncated counts.
-    An empty filter draws all of it, per scope: the symbol and impact scopes
-    with no focal name draw the workspace-wide overview (degree-ranked,
-    capped), the module scope's empty filter matches every path, and the
-    repo scope with no repo id buckets every repo in the store. Only a
-    filter that names nothing yields the empty graph. ``include_tests``
-    applies to the module scope and the overviews; the focus-driven scopes
-    take the user's exact word instead.
-    """
+    """Dispatch to a viz scope; empty filters draw capped overviews, not empty graphs."""
     if scope == "symbol":
         name = (focus or "").strip()
         if not name:
@@ -167,21 +151,7 @@ INSPECT_IMPACT_CAP = 15
 
 
 def inspect_symbol(conn: sqlite3.Connection, name: str) -> Dict:
-    """One-call answer payload for the graph tab's side panel: identity,
-    callers, callees, and the impact view with affected tests.
-
-    Same-name rows are possible; the first by (file path, id) is inspected
-    (deterministic, mirroring ``symbol_candidates``' ordering) and
-    ``same_name_count`` tells the panel when more definitions exist. Callers
-    and callees follow resolved edges only, capped at
-    :data:`INSPECT_NEIGHBOR_CAP` with honest ``*_truncated`` flags. Impact
-    reuses the graph engine's recursive caller traversal at depth 3 (the
-    viz impact scope's default), surfacing ``total`` plus the first
-    :data:`INSPECT_IMPACT_CAP` impacted symbols and affected tests — the
-    tests are the graph layer's ``filter_tests`` classification of the
-    impacted set, not a separate traversal. An empty/unknown name yields
-    ``{"found": False, "name": ...}`` at HTTP 200, never an error.
-    """
+    """Return one deterministic symbol panel payload with resolved neighbors and honest truncation."""
     if not name or not name.strip():
         return {"found": False, "name": name}
     name = name.strip()
@@ -274,22 +244,7 @@ CANDIDATES_LIMIT = 10
 def symbol_candidates(
     conn: sqlite3.Connection, name: str, limit: int = CANDIDATES_LIMIT
 ) -> Dict:
-    """Every exact-name symbol match with disambiguating context.
-
-    Each match carries ``name``, ``kind``, the defining ``file`` path and
-    its ``repo_id`` — the context that lets a caller disambiguate instead
-    of taking the viz layer's silent LIMIT-1 pick
-    (``get_symbol_graph``'s focal lookup). The match is exact
-    (``symbols.name = ?``, parameterized — a name is data, never SQL) and
-    ordered by file path then repo_id (symbol id as the final tiebreaker)
-    so identical queries return identical lists. A dangling ``file_id``
-    yields ``file``/``repo_id`` None rather than dropping the symbol.
-    Rows are capped at ``limit`` (bounds below 1 clamp to 1); the
-    limit+1 over-fetch decides ``truncated`` so the cap stays visible in
-    the response. An empty or whitespace-only ``name``
-    short-circuits to ``{"matches": [], "truncated": False}`` without
-    touching the database.
-    """
+    """Return exact-name matches with disambiguating context and a truncation flag."""
     if not name or not name.strip():
         return {"matches": [], "truncated": False}
     if limit < 1:
@@ -325,20 +280,7 @@ SUGGEST_LIMIT = 10
 def symbol_suggest(
     conn: sqlite3.Connection, prefix: str, limit: int = SUGGEST_LIMIT
 ) -> Dict:
-    """Symbols whose name starts with ``prefix``, for search typeahead.
-
-    Complements :func:`symbol_candidates` (exact-name disambiguation)
-    with a prefix scan so the search box can show matching options
-    while typing instead of demanding a full name first. The pattern is
-    ``prefix%`` with LIKE wildcards in the typed text escaped (a name
-    is data, never SQL), matched ASCII-case-insensitively as LIKE is.
-    Matches carry the same context (``kind``, ``file``, ``repo_id``)
-    and are ordered shortest-name-first — the closest completions
-    surface before longer names — then name/file/repo for stable
-    lists. Capping and the ``truncated`` flag follow the candidates
-    contract; an empty or whitespace-only ``prefix`` short-circuits
-    empty without touching the database.
-    """
+    """Return escaped prefix matches, shortest names first, for search typeahead."""
     if not prefix or not prefix.strip():
         return {"matches": [], "truncated": False}
     if limit < 1:
@@ -388,11 +330,7 @@ EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def _age_str(started_at) -> Optional[str]:
-    """Human-readable age of a ``build_runs.started_at`` value, or None.
-
-    Formatted exactly as ``cairn doctor``'s freshness check renders it, so
-    the panel and doctor read identically on the same database.
-    """
+    """Format build age exactly as doctor's freshness check."""
     dt = parse_ts(started_at)
     if dt is None:
         return None
@@ -467,12 +405,7 @@ def _revalidate_probes() -> None:
 def _serve_probes(
     max_wait_s: float = PROBE_WARM_WAIT_S,
 ) -> Optional[Dict[str, object]]:
-    """Probe values for get_health: the cache when populated -- fresh values
-    as-is, stale ones while a background thread revalidates
-    (stale-while-revalidate at :data:`PROBE_TTL_S`) -- and None while the
-    first population is still running after waiting at most ``max_wait_s``.
-    A cold cache with nothing running is computed right here, preserving
-    direct-call behavior for callers that never prewarm."""
+    """Return cached health probes using bounded cold waits and background revalidation."""
     global _probe_refreshing
     with _probe_cond:
         if _probe_cache is not None:
@@ -501,11 +434,7 @@ def _serve_probes(
 
 
 def prewarm_probes() -> None:
-    """Populate the probe cache via a daemon thread; app startup calls this
-    at create_app time so no /health request pays the probe imports.
-    The in-flight flag is set synchronously here -- a thread
-    merely being started is no guarantee it runs before the first request,
-    which must never take the synchronous compute path itself."""
+    """Set the synchronous probe flag and populate its cache from a daemon thread."""
     global _probe_refreshing
     with _probe_cond:
         if _probe_cache is not None or _probe_refreshing:
@@ -519,20 +448,7 @@ def prewarm_probes() -> None:
 
 
 def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
-    """Health panel data: DB size, index freshness, vector backend
-    mode, reranker status, plus the retention policy in force and the current
-    tool_metrics row count -- display only; aging runs in the
-    recording sink's flush prune, never here.
-
-    The backend probes call the same graph-layer helpers ``cairn doctor``
-    uses, so the panel's conclusions agree with doctor's on the same
-    database. Probe results are cached process-wide and revalidated in the
-    background; while the first population is still running the
-    probe keys read as None rather than blocking the request. DB reads
-    degrade to null/0 on a missing table rather than raising. ``db_path``
-    falls back to the connection's own file (empty for an in-memory DB,
-    hence size 0).
-    """
+    """Return health display data while degrading unavailable reads to null/zero."""
     if db_path is None:
         row = conn.execute("PRAGMA database_list").fetchone()
         db_path = (row["file"] if row else "") or None
@@ -561,10 +477,7 @@ def get_health(conn: sqlite3.Connection, db_path: Optional[str] = None) -> Dict:
     except sqlite3.Error:
         embedding_rows = 0
     try:
-        # The index probes are moot with no embeddings: a fresh store has no
-        # vec0 table by design, which is doctor's "no embeddings to index
-        # yet", not a missing index -- reported as None rather than False.
-        # An unknown model (probes still warming) is moot the same way.
+        # With no embeddings or resolved model, index state is unknown—not missing.
         index_present: Optional[bool] = None
         index_rows: Optional[int] = None
         if embedding_rows and model_name:
@@ -609,15 +522,7 @@ _ANN_TABLE_PREFIXES = ("vec_", "vecmv_")
 
 
 def get_database_schema(conn: sqlite3.Connection) -> Dict:
-    """Store schema as a relationship graph for the /database view.
-
-    - nodes: user tables (row/column counts, pk columns)
-    - edges: declared foreign keys (``fk``); ``*_id`` columns naming
-      another table (``inferred``; never re-inferred over a declared FK)
-    - excluded: ``sqlite_%``, FTS shadows, sqlite-vec internals
-    - a table that cannot be introspected is skipped and reported in
-      ``skipped`` as ``{name, reason}``
-    """
+    """Return the user schema as table nodes plus declared and inferred FK edges."""
     tables = sorted(
         row[0]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -695,15 +600,7 @@ def get_database_schema(conn: sqlite3.Connection) -> Dict:
 def get_recent_memories(
     knowledge_dir: str, limit: int = 20, memory_type: Optional[str] = None
 ) -> List[dict]:
-    """Recent memories, newest-first, each with type and title.
-
-    Reads the OKF bundle's ``memory/`` namespace directly; an unreadable
-    concept file is skipped, never fatal. ``memory_type`` narrows to one
-    category (decision / pattern / mistake / workaround) before the limit
-    applies, so a filtered page still shows the newest of that type.
-    Rows carry ``tier``/``slug`` — the ``/memory/{tier}/{slug}`` detail
-    href's parts.
-    """
+    """Return readable recent memories, newest first, filtered before the limit."""
     bundle = OKFBundle(knowledge_dir)
     entries: List[dict] = []
     for cid in bundle.list_concepts(prefix="memory/"):
@@ -742,12 +639,7 @@ def _memory_neighbor(bundle: "OKFBundle", memory_id: str) -> dict:
 
 
 def get_memory_detail(knowledge_dir: str, memory_id: str) -> Optional[dict]:
-    """Everything the ``/memory/{tier}/{slug}`` detail page renders: the
-    memory concept's identity (type, tier, status, score, signals, tags,
-    session origin, validity window), its promotion history, the resolved
-    supersedes/superseded-by neighbors, and the body through the
-    escape-first markdown renderer. Unknown ids and non-memory ids are
-    None (the caller's not-found); partial frontmatter renders as-is."""
+    """Return the memory detail payload, or None for an unknown/non-memory id."""
     if not memory_id.startswith("memory/"):
         return None
     bundle = OKFBundle(knowledge_dir)
@@ -806,22 +698,10 @@ def get_task_queue(knowledge_dir: str, status: Optional[str] = None) -> List[dic
     ]
 
 
-# The ingest classifier's doc families (knowledge/ingest/classifier.py)
-# live in app.py's constants block (the app's filter vocabularies): the
-# catalog filter's seed vocabulary. Rows carry whatever family their
-# concept id names (knowledge/<family>/<slug>), so a doc added under a
-# custom type still lists — the route extends the options with any
-# family the corpus actually contains.
 
 
 def _knowledge_link_counts(conn: Optional[sqlite3.Connection]) -> Dict[str, int]:
-    """Distinct related-doc counts per bare doc id from knowledge_edges.
-
-    Both edge directions count both endpoints (a neighbor is a neighbor
-    either way). A store predating the relationship index (no
-    knowledge_edges table) counts as zero links everywhere — the catalog
-    renders, never fails, on an old DB.
-    """
+    """Return distinct bidirectional link counts, zero on stores without the index."""
     if conn is None:
         return {}
     present = conn.execute(
@@ -840,10 +720,7 @@ def _knowledge_link_counts(conn: Optional[sqlite3.Connection]) -> Dict[str, int]
 
 
 def _split_doc_id(doc_id: str) -> Tuple[str, str]:
-    """``<namespace>/<family>/<slug>`` -> ``("<family>", "<slug>")`` (the
-    detail-href parts for knowledge docs and memory items alike); a
-    two-segment id (malformed for these namespaces) keeps its tail as the
-    family and an empty slug, so the row still renders."""
+    """Split a concept id into family and slug while keeping malformed rows renderable."""
     parts = doc_id.split("/")
     if len(parts) < 3:
         return parts[-1], ""
@@ -857,21 +734,7 @@ def list_knowledge_docs(
     status: Optional[str] = None,
     tag: Optional[str] = None,
 ) -> Dict:
-    """The /knowledge catalog's rows: every stored knowledge doc, once.
-
-    Joins the OKF bundle's ``knowledge/`` subtree with the derived
-    relationship index (``_knowledge_link_counts``); an unreadable
-    concept file is skipped, never fatal. Each row carries ``id`` (the
-    bare concept id), ``family``/``slug`` (the
-    ``/knowledge/{family}/{slug}`` detail href's parts), ``title``,
-    ``status``, ``tags``, ``links`` (distinct related-doc count),
-    ``source`` (the doc_source extension) and ``updated`` (concept
-    timestamp, "" when none). ``family`` / ``status`` narrow to one
-    value (None = all); ``tag`` keeps docs carrying it. ``families`` /
-    ``statuses`` total the corpus BEFORE filtering so the filters render
-    stable counts, and ``total`` is the unfiltered doc count. Rows sort
-    by family, then title.
-    """
+    """Return knowledge docs once with corpus-wide filter counts before filtering."""
     bundle = OKFBundle(knowledge_dir)
     link_counts = _knowledge_link_counts(conn)
     docs: List[dict] = []
@@ -916,15 +779,7 @@ def list_knowledge_docs(
 
 
 def get_knowledge_doc(knowledge_dir: str, doc_id: str) -> Optional[dict]:
-    """One knowledge doc for the ``/knowledge/{family}/{slug}`` detail
-    page: the concept's identity plus its body through the escape-first
-    markdown renderer (``html`` + ``toc``, the wiki page's pair). None
-    when ``doc_id`` resolves to no knowledge-namespaced concept —
-    compass/wiki/memory ids resolve nothing here, the store guard's
-    namespace refusal included. The related-docs/chain panel is the
-    relationship index's job (``related_docs``/``supersede_chain``) and
-    is joined on by the caller, not here.
-    """
+    """Return one knowledge doc and rendered body, or None outside the namespace."""
     bundle = OKFBundle(knowledge_dir)
     try:
         concept = resolve_knowledge_doc(bundle, doc_id)
@@ -974,10 +829,7 @@ def _group_related(related: List[dict]) -> List[dict]:
 
 
 def _doc_chain(conn: Optional[sqlite3.Connection], knowledge_dir: str, doc_id: str) -> List[dict]:
-    """The doc's supersede chain (oldest -> newest) with detail-href parts
-    per member. A pre-index store, an index hiccup, or a branched
-    supersede DAG renders no chain widget (the relationship panel still
-    shows the supersedes rows) — a data oddity never 500s the page."""
+    """Return the ordered supersede chain, or [] when unavailable or malformed."""
     if conn is None or not _knowledge_table_present(conn, "knowledge_edges"):
         return []
     from cairn.knowledge.index import supersede_chain
@@ -1020,11 +872,7 @@ def _doc_refs(conn: Optional[sqlite3.Connection], doc_id: str, store_key: str) -
 def _staged_manifest_reference(
     workspace: Optional[str], doc_id: str
 ) -> dict:
-    """The doc's staged-ingest manifest reference: the manifest's path
-    (``<workspace>/.cairn/ingest-outbox/manifest.json``) plus the doc's
-    own row when the manifest exists and carries it. A missing or
-    unparsable manifest reads ``exists: False`` / ``row: None`` — the
-    provenance section explains the gap, never crashes."""
+    """Return the staged manifest reference and matching row without raising."""
     if not workspace:
         return {"path": "", "exists": False, "row": None}
     path = Path(workspace) / ".cairn" / "ingest-outbox" / "manifest.json"
@@ -1043,12 +891,7 @@ def _staged_manifest_reference(
 
 
 def _doc_provenance(doc: dict, workspace: Optional[str]) -> dict:
-    """The detail page's ingest provenance: source repo + path from the
-    staged manifest row when one exists (values that match the manifest
-    by construction), else the concept's recorded resource; plus the
-    manifest reference itself and the ingest channel (``doc_source``).
-    ``staged`` marks docs with ingest lineage at all — a store-added doc
-    has none and says so."""
+    """Return ingest provenance, preferring a staged manifest row over recorded resource."""
     manifest = _staged_manifest_reference(workspace, doc["id"])
     repo, source_path = "", ""
     resource = (doc.get("resource") or "").strip()
@@ -1075,18 +918,7 @@ def get_knowledge_doc_detail(
     workspace: Optional[str] = None,
     store_key: str = "",
 ) -> Optional[dict]:
-    """Everything the ``/knowledge/{family}/{slug}`` detail page renders:
-    :func:`get_knowledge_doc`'s identity + rendered body plus the
-    relationship surfaces — related docs grouped by relation with kind
-    labels, the supersede chain (ordered oldest -> newest), the doc's
-    linked code refs with resolution status, and the ingest provenance
-    (source repo/path + the doc's staged-manifest row reference under
-    ``workspace``). Unknown doc ids are None (the caller's not-found);
-    a store predating the relationship index renders empty panels.
-
-    The panel rows are the same ``related_docs`` output the related CLI
-    prints, so the page and the CLI can never disagree.
-    """
+    """Return knowledge identity, body, relationships, refs, and provenance."""
     doc = get_knowledge_doc(knowledge_dir, doc_id)
     if doc is None:
         return None
@@ -1110,21 +942,7 @@ def get_knowledge_doc_detail(
 def get_knowledge_graph(
     conn: Optional[sqlite3.Connection], knowledge_dir: str
 ) -> Dict:
-    """The /knowledge/graph canvas data: the whole knowledge layer as
-    nodes — every stored knowledge doc (``kind: "doc"``) and every memory
-    item (``kind: "memory"``) — over every indexed relationship as a
-    directed edge: one edge per ``knowledge_edges`` row, drawn exactly as
-    stored (the index keeps a supersede pair in both directions, so the
-    pair reads as the two-way link the related CLI and the detail panels
-    report), plus each memory's frontmatter supersede pair drawn the same
-    two-way way. Edges carry ``relation`` + ``kind`` so the canvas styles
-    inferred dashed vs extracted/derived solid and the legend can chip
-    both facets. Rows naming concepts the bundle no longer resolves draw
-    nothing (never a phantom endpoint between rebuilds). Nodes carry
-    ``id`` (the bare concept id the edges join on), ``title``, ``family``
-    (doc family / memory tier), ``status`` and ``kind``; a pre-index
-    store renders the constellation with only frontmatter memory edges,
-    and an empty bundle returns empty lists."""
+    """Return resolvable knowledge/memory nodes and deduplicated relationship edges."""
     bundle = OKFBundle(knowledge_dir)
     nodes: List[dict] = []
     memories: Dict[str, "OKFConcept"] = {}
@@ -1210,11 +1028,7 @@ def get_knowledge_graph(
 def _memory_inspect(
     bundle: "OKFBundle", memory_id: str
 ) -> Optional[dict]:
-    """The inspect-panel payload for one memory node: identity plus the
-    frontmatter supersedes/superseded-by neighbors as the same row shape
-    ``related_docs`` produces (relation, kind, direction, resolved
-    titles). The panel and detail hrefs treat ``family`` as the tier.
-    Unreadable neighbors drop out — never a phantom neighbor."""
+    """Return memory identity and readable supersedes neighbors without phantoms."""
     try:
         concept = bundle.read_concept(memory_id)
     except Exception:
@@ -1263,14 +1077,7 @@ def _memory_inspect(
 def get_knowledge_graph_inspect(
     conn: Optional[sqlite3.Connection], knowledge_dir: str, doc_id: str
 ) -> Optional[dict]:
-    """The knowledge graph inspect panel's payload for one node: identity
-    (bare id, family/slug detail-href parts, title, status, tags) plus
-    the node's relationships — for a knowledge doc the same
-    ``related_docs`` rows the detail panels render, for a memory item the
-    frontmatter supersedes rows. Unknown ids are None (the route renders
-    the panel's not-found note, matching /graph/inspect's found=False
-    contract); a pre-index store renders knowledge identity with zero
-    relationships."""
+    """Return one knowledge/memory inspect payload, None for an unknown id."""
     bundle = OKFBundle(knowledge_dir)
     if doc_id.startswith("memory/"):
         return _memory_inspect(bundle, doc_id)
@@ -1318,14 +1125,7 @@ def _recorded_sha(concept: Optional["OKFConcept"]) -> Optional[str]:
 def _wiki_rows(
     knowledge_dir: str, repo: Optional[str] = None, page_id: Optional[str] = None
 ):
-    """Lazy ``(repo, page_id, manifest_row, concept, head, chain, bundle)``
-    tuples over the manifest — the one traversal ``get_wiki_pages`` and
-    ``get_wiki_page`` share (concept ids, per-repo HEAD caching, write
-    chains, and the staleness inputs live here once). ``concept`` is None
-    when the row's promoted ``Wiki-Article`` concept is absent or unreadable
-    (the gated type is the promotion check); ``head`` is the repo's current
-    HEAD (resolved once per repo per call); ``chain`` is the page's write
-    chain for lifecycle derivation."""
+    """Yield manifest rows with concepts, cached HEADs, write chains, and bundle."""
     from cairn.wiki.lifecycle import page_chains, read_page_concept
     from cairn.wiki.manifest import load_manifest
 
@@ -1353,21 +1153,7 @@ def _wiki_rows(
 
 
 def get_wiki_pages(knowledge_dir: str, repo: Optional[str] = None) -> List[dict]:
-    """Wiki manifest pages joined with their promoted content.
-
-    One plain dict per manifest row carrying ``repo``, ``page_id``,
-    ``title``, ``description``, ``state``, ``promoted``, and ``staleness``.
-    ``state`` is the derived lifecycle (never a stored verdict — the plan
-    kind keeps none) and ``promoted`` is derived from the row's gated
-    ``wiki/pages/{repo}/{page_id}`` concept being readable; ``staleness``
-    compares the content's recorded commit sha with the repo's current
-    HEAD (fresh/stale/unknown) — a page with no content is always
-    ``unknown``. A missing manifest (or knowledge dir) yields an empty
-    list; a manifest that cannot be parsed raises ``ValueError`` (the
-    routes render the explicit unreadable state from it); ``repo``
-    selects one repo's rows. Row order is manifest order
-    (plan order) — the catalog groups by ``repo`` on top of it.
-    """
+    """Return manifest pages with derived lifecycle, promotion, and staleness state."""
     from cairn.wiki.lifecycle import derived_state, staleness as wiki_staleness
 
     pages: List[dict] = []
@@ -1397,13 +1183,7 @@ def _symbol_graph_href(symbol: str, store_suffix: str) -> str:
 
 
 def _wiki_ref_map(concept, row: dict, store_suffix: str) -> dict:
-    """``code-span text -> graph deep link`` for the refs this page itself
-    vouches for: frontmatter sources plus the manifest plan's symbol seeds
-    (both already verified against the graph by the promotion gate). Only
-    mapped spans become links, so an arbitrary backticked word can never
-    link to a symbol the graph never resolved. Keys carry the same
-    html.escape(quote=False) the rendered body went through, so the
-    renderer's post-escape span lookup matches."""
+    """Map only verified symbol refs to graph links using escaped span keys."""
     refs: Dict[str, str] = {}
     for entry in concept.sources or []:
         symbol = entry.get("symbol") if isinstance(entry, dict) else None
@@ -1427,22 +1207,7 @@ def get_wiki_page(
     repo: Optional[str] = None,
     store_key: str = "",
 ) -> Optional[dict]:
-    """One wiki page: manifest row plus the rendered concept body.
-
-    ``html`` is the body through the escape-first markdown renderer and
-    ``toc`` its h2/h3 outline (anchors match the emitted heading ids);
-    ``ref_hrefs`` maps the page's vouched symbol refs (sources + plan
-    seeds) to graph deep links — the body's backticked spans and the
-    sources list linkify through it, with the selected store riding when
-    ``store_key`` is set. ``sources`` is the concept's frontmatter list
-    verbatim; ``staleness`` compares the recorded commit sha with the
-    repo's current HEAD (fresh/stale/unknown). A manifest that cannot be
-    parsed raises ``ValueError``. None when no manifest row for
-    ``page_id`` (``repo`` narrows the match when several repos plan
-    the same page id) has a readable concept. The returned ``repo`` names
-    the owning repo — the caller needs it for the repo-qualified URL
-    ``/wiki/{repo}/{page_id}``.
-    """
+    """Return one promoted wiki page with rendered body, refs, and staleness."""
     from urllib.parse import quote
 
     from cairn.wiki.lifecycle import derived_state, staleness as wiki_staleness
@@ -1494,36 +1259,7 @@ def list_history(
     after: Optional[str] = None,
     limit: int = HISTORY_PAGE_SIZE,
 ) -> Dict:
-    """One bounded page of tool-invocation history, newest-first.
-
-    ``tool_name`` is a prefix match on the stored name (exact = the whole
-    value): stored names are namespaced (``cli:<command_path>`` for CLI
-    rows), so a family prefix (``cli``) and the full stored name both
-    narrow rows, and the typed value matches literally (no wildcard
-    characters). ``session_id`` / ``source`` are exact-match filters
-    (None = no filter); a no-match filter is an empty page, never an
-    error.
-    ``since`` (epoch seconds, None = all time) windows the page — and the
-    neighbor probes that decide ``next``/``prev`` — to ``invoked_at >=
-    since``; rows with NULL ``invoked_at`` predate windowing and never
-    match a window. Paging is
-    keyset on ``(invoked_at, id)``: ``before`` yields the page strictly
-    older than that cursor, ``after`` the page strictly newer, presented in
-    the same newest-first order. A cursor is the opaque
-    ``"<invoked_at>,<id>"`` string a prior result's ``next``/``prev``
-    carried; an unparseable cursor is ignored (no filter), never an error.
-    The result carries ``rows`` (at most ``limit`` row dicts), ``next``
-    (cursor of the older page, None when exhausted) and ``prev`` (cursor
-    of the newer page, None when none). ``invoked_at`` is a raw
-    ``time.time()`` epoch float — the MCP sink writes it directly, so
-    ordering is numeric and the value is returned verbatim, never parsed
-    as ISO. Pre-migration rows carry NULL sizes; their token estimates are
-    None (unknown), not 0. Estimates divide chars by the mode-aware
-    divisor of :func:`_estimate_divisor`, calibrated over the same filters
-    and window. ``args_summary`` is returned as stored —
-    already redacted and truncated at the write chokepoint
-    (``MAX_ARGS_SUMMARY_CHARS``); this layer never expands it.
-    """
+    """Return one newest-first history page using filters, windows, and keyset cursors."""
     if limit < 1:
         limit = 1
     before_key = _parse_history_cursor(before)
@@ -1533,10 +1269,7 @@ def list_history(
     filter_clauses: List[str] = []
     filter_params: List[object] = []
     if tool_name is not None:
-        # Prefix match, exact = the whole value: stored names are
-        # namespaced ("cli:<command_path>" for CLI rows), so the family
-        # and the full stored name both narrow rows. substr compares the
-        # typed value literally — no LIKE wildcard characters.
+        # Prefix match treats typed text literally; stored names are namespaced.
         filter_clauses.append("substr(tool_name, 1, length(?)) = ?")
         filter_params.extend([tool_name, tool_name])
     if session_id is not None:
@@ -1633,12 +1366,7 @@ def list_history(
     return {"rows": rows, "next": next_cursor, "prev": prev_cursor}
 
 
-# Exact mode cannot re-tokenize the char counts already stored in rows,
-# so its divisor is calibrated instead from the queried window's own
-# stored summaries — a bounded sample, trusted only once it is large
-# enough for a stable chars-per-token ratio. Below that (and always in
-# heuristic mode) estimates stay on CHARS_PER_TOKEN, keeping dashboard
-# and bench numbers comparable.
+# Exact mode calibrates from bounded window samples; heuristic mode stays constant.
 CALIBRATION_SAMPLE_LIMIT = 200
 CALIBRATION_MIN_CHARS = 1000
 
@@ -1646,14 +1374,7 @@ CALIBRATION_MIN_CHARS = 1000
 def _estimate_divisor(
     conn: sqlite3.Connection, clauses: List[str], params: List[object]
 ) -> Tuple[int, bool]:
-    """The chars-per-token divisor for a windowed ``tool_metrics`` query,
-    and whether exact mode calibrated it from the window's own summaries.
-
-    ``clauses``/``params`` are the caller's WHERE terms (same filters and
-    window the estimates describe). Heuristic mode, or a window whose
-    non-empty summaries total under :data:`CALIBRATION_MIN_CHARS`, keeps
-    the divisor at ``CHARS_PER_TOKEN`` uncalibrated.
-    """
+    """Return the window-aware chars-per-token divisor and whether it was calibrated."""
     if active_tokenizer_mode() == HEURISTIC_MODE:
         return CHARS_PER_TOKEN, False
     sample = conn.execute(
@@ -1694,25 +1415,7 @@ class TokenEstimates(list):
 def get_tool_tokens(
     conn: sqlite3.Connection, since: Optional[float] = None
 ) -> TokenEstimates:
-    """Per-tool estimated context-token aggregates, ranked by total desc,
-    with per-tool truncation counts and the estimation
-    context for the view's mode label.
-
-    Estimates divide summed chars by the divisor :func:`_estimate_divisor`
-    picks for the window — ``CHARS_PER_TOKEN`` (the bench constant) in
-    heuristic mode or without a usable calibration sample, a
-    tokenizer-calibrated ratio otherwise. Rows with NULL sizes (recorded
-    before the size columns existed) contribute zero tokens but still
-    count as calls; ``mean_tokens`` is ``total / calls``.
-    ``truncated_calls``/``truncated_chars`` aggregate the durable
-    ``truncated_from_chars``/``truncated_to_chars`` columns (never the
-    row-capped events table): a tool with no evidence row at all reads
-    None — unknown, not zero truncation. ``since`` (epoch seconds, None =
-    all time) computes calls, sums, calibration sample and truncation
-    counts — and therefore aggregates and ranking — within the window
-    only; rows with NULL ``invoked_at`` predate windowing and
-    never match a window.
-    """
+    """Return per-tool token aggregates with mode context and unknown-safe truncation counts."""
     clauses: List[str] = []
     params: List[object] = []
     if since is not None:
@@ -1781,37 +1484,7 @@ def get_session_chains(
     calls_per_chain: int = CHAINS_CALLS_PER_CHAIN,
     expand: Optional[str] = None,
 ) -> Dict:
-    """Tool calls grouped per session as ordered chains, bounded for
-    rendering.
-
-    A session's calls are ordered by ``invoked_at`` (a raw ``time.time()``
-    epoch float — gaps are computed numerically, never parsed as ISO) and
-    a new chain starts wherever consecutive calls are more than
-    :data:`SESSION_GAP_S` seconds apart. Calls with NULL ``invoked_at``
-    never split a chain — their distance is unknowable — and stay in the
-    current one. Sessions order newest-activity-first (all-NULL sessions
-    last) and chains within a session chronologically; a single-call
-    session is still one chain. ``since`` (epoch seconds, None = all
-    time) windows the rows before grouping: sessions and chains
-    with no in-window calls vanish from the output entirely, and NULL
-    ``invoked_at`` calls predate windowing and never match a window — an
-    empty window is an empty result, never an error. ``session_id``
-    (exact value, None = no filter) reads only that session's rows
-   : it composes with the window predicate in the same WHERE,
-    and a no-match session is the empty wrapper, never an error.
-
-    The flat chain list is capped at ``max_chains`` after flattening
-    (newest sessions' chains first); each chain keeps only its newest
-    ``calls_per_chain`` calls — ``started_at`` then reflects the first
-    included call while ``ended_at`` and ``call_count`` keep the full
-    chain's truth. Every chain carries ``shown_calls`` and
-    ``truncated_calls`` (call_count > shown_calls); the returned wrapper
-    carries ``chains``, ``total_chains`` (chains in the windowed result
-    before the cap) and ``truncated`` (total_chains > len(chains)). The
-    chains of the session whose id equals ``expand`` (exact value match)
-    are exempt from the per-chain cap — the chain-list cap still applies.
-    Bounds below 1 are clamped to 1, never an error.
-    """
+    """Return bounded session chains split only on known timestamp gaps."""
     if max_chains < 1:
         max_chains = 1
     if calls_per_chain < 1:
@@ -1987,12 +1660,7 @@ class MissingDatabaseError(FileNotFoundError):
 
 
 def get_read_only_db(db_path: str | None = None) -> sqlite3.Connection:
-    """Open the graph DB read-only (SQLite ``mode=ro`` URI).
-
-    The file must already exist: a read-only open of a missing DB is an
-    error for a writer to fix (``cairn init && cairn build``), never
-    something the dashboard creates. Callers render the missing-DB state.
-    """
+    """Open an existing graph DB read-only; raise MissingDatabaseError rather than create it."""
     path = Path(db_path) if db_path else resolve_store().db
     if not path.exists():
         raise MissingDatabaseError(str(path))

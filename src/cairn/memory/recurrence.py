@@ -15,13 +15,7 @@ _WS_RE = re.compile(r"\s+")
 
 
 def failure_signature(tool_name: str, error: str) -> str:
-    """Stable 16-hex-char key for a ``(tool_name, error)`` failure shape.
-
-    Normalization collapses everything volatile out of an error string:
-    case, whitespace runs, absolute paths, UUIDs, hex runs, and digit runs
-    (pids, line numbers, timestamps). Two failures that differ only in such
-    noise hash equal.
-    """
+    """Return a stable 16-hex key for the normalized failure shape."""
     text = _WS_RE.sub(" ", str(error)).strip().lower()
     text = _UUID_RE.sub(" ", text)
     text = _PATH_RE.sub(" ", text)
@@ -34,14 +28,7 @@ def failure_signature(tool_name: str, error: str) -> str:
 
 def note_failure_signature(conn: sqlite3.Connection, sig: str,
                            tool_name: str) -> int:
-    """Register one occurrence of ``sig`` and return the count BEFORE it.
-
-    First occurrence inserts the row and returns 0; later occurrences
-    bump ``occurrences``/``last_seen`` and return the prior count. The
-    upsert is atomic on the sig PRIMARY KEY, so concurrent recorders
-    serialize instead of racing a SELECT-then-INSERT. The caller owns the
-    commit.
-    """
+    """Record one failure occurrence and return the prior occurrence count."""
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         "INSERT INTO memory_failure_signatures"

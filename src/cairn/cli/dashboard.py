@@ -36,12 +36,7 @@ def _require_loopback(host: str) -> None:
 @click.option("--host", default=DEFAULT_HOST, help=f"Bind host, loopback only (default {DEFAULT_HOST}).")
 @click.option("--port", default=DEFAULT_PORT, type=int, help=f"Bind port (default {DEFAULT_PORT}).")
 def dashboard(db, host, port):
-    """Start the local read-only web dashboard and print its URL.
-
-    Blocks until interrupted (Ctrl-C). Serves on loopback only, over a
-    read-only connection to the graph DB, so it never contends with writer
-    commands (`cairn build` / `cairn embed` / `cairn serve`).
-    """
+    """Start the loopback-only read-only web dashboard; blocks until interrupted, never contends with writers."""
     _require_loopback(host)
     path = _resolve_db(db)
     click.echo(f"cairn dashboard: http://{host}:{port}  (db: {path})")

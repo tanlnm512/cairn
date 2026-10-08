@@ -11,19 +11,7 @@ from ...paths import cairn_home_env
 
 def mcp_config_json_desktop(workspace: str, transport: str = "stdio",
                             sse_url: str | None = None) -> dict:
-    """MCP config for Claude Desktop.
-
-    IMPORTANT: Claude Desktop (the app) does NOT support SSE/HTTP transports
-    in claude_desktop_config.json — only stdio. (Claude Code, the CLI, is a
-    separate product that does support SSE via `claude mcp add --transport sse`.)
-    This function ALWAYS emits a stdio config regardless of the `transport`
-    argument, with the workspace pinned via CAIRN_WORKSPACE (the desktop
-    app has no cwd/workspace notion) and CAIRN_HOME added alongside it
-    when the home is non-default.
-
-    The `transport`/`sse_url` args are accepted for API symmetry with
-    mcp_config_json() but ignored here.
-    """
+    """Return Claude Desktop's stdio-only MCP config with workspace pinned."""
     cfg = mcp_config_json(transport="stdio")
     env = {"CAIRN_WORKSPACE": str(Path(workspace).resolve())}
     env.update(cairn_home_env())
@@ -34,12 +22,7 @@ def mcp_config_json_desktop(workspace: str, transport: str = "stdio",
 def install_claude_desktop(workspace: str, force: bool, dry_run: bool,
                            transport: str = "stdio", sse_url: str | None = None,
                            scope: str = "workspace") -> InstallResult:
-    """Wire cairn into Claude Desktop (global claude_desktop_config.json).
-
-    Always writes a stdio config (Claude Desktop is MCP-stdio-only); the
-    transport/sse_url args are accepted for symmetry but ignored. See
-    :func:`mcp_config_json_desktop`.
-    """
+    """Install Claude Desktop's global stdio MCP registration."""
     res = InstallResult("claude-desktop")
     cfg = claude_desktop_config_path()
     # transport/sse_url intentionally ignored — Claude Desktop is stdio-only.
@@ -51,10 +34,5 @@ def install_claude_desktop(workspace: str, force: bool, dry_run: bool,
 
 
 def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
-    """Remove cairn entries for Claude Desktop.
-
-    Claude Desktop is single-scope (one global config file), so ``scope`` is
-    accepted only for signature parity with the other uninstallers and
-    ignored: the global claude_desktop_config.json is always stripped.
-    """
+    """Remove cairn from Claude Desktop's single global config."""
     _strip_mcp(claude_desktop_config_path(), res)

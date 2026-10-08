@@ -128,11 +128,7 @@ def get_tree(conn: sqlite3.Connection, repo: str) -> List[Tuple[str, int]]:
 
 
 def group_by_top_level(conn: sqlite3.Connection, repo: str) -> List[Tuple[str, int]]:
-    """Group a repo's symbols by their top-level source directory.
-
-    An empty ``repo`` spans every repo in the store — the bucket view for
-    the workspace-level scopes with no repo filter.
-    """
+    """Group a repo's symbols by their top-level source directory."""
     cur = conn.cursor()
     # files.path is repo-relative; fetch repos.path to strip it if a DB row
     # still holds an absolute path.

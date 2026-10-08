@@ -8,11 +8,7 @@ from .metric_buffering import instrument
 
 
 def find_compass_concept(bundle, module: str):
-    """First compass concept matching ``module`` by resource or concept id; None when absent.
-
-    Shared matcher behind get_compass and the skillgen assembler; corrupt
-    (unreadable) concepts are skipped so one bad file can't fail the read.
-    """
+    """First compass concept matching ``module`` by resource or concept id; corrupt concepts skipped."""
     for cid in bundle.list_concepts(prefix="compass/"):
         try:
             concept = bundle.read_concept(cid)
@@ -41,12 +37,7 @@ def _render_full_body(results) -> str:
 
 
 def _critic_verdict_block(result) -> str:
-    """A machine-readable critic verdict appended to a tool's prose response.
-
-    Lets an agent parse the structured verdict (passed / errors / warnings /
-    quality) without regex-ing the human-readable lines above. Additive: the
-    prose response is unchanged; this block is always last and fenced.
-    """
+    """Machine-readable critic verdict appended last to a tool's prose response."""
     import json
     verdict = {
         "passed": bool(result.passed),
@@ -70,13 +61,7 @@ def get_compass(module: str) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def search_knowledge(query: str, type_filter: str = "", limit: int = 10, full_body: bool = False) -> str:
-    """Search the knowledge base (wiki, compass, patterns, memory). Results from
-    bundle.search(), optionally filtered by concept type prefix.
-
-    type_filter: '' (all), 'Wiki' (wiki articles), 'Pattern' (non-obvious patterns),
-                 'Compass' (module guides), 'Memory' (past decisions).
-    full_body: True returns the full concept body; False returns title + description only.
-    """
+    """Search the knowledge base (wiki, compass, patterns, memory); type_filter narrows by prefix, full_body returns bodies."""
     results = search_knowledge_data(query, type_filter=type_filter, limit=limit)
     if not results:
         label = f" {type_filter}" if type_filter else ""
@@ -94,28 +79,7 @@ def search_knowledge(query: str, type_filter: str = "", limit: int = 10, full_bo
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def ask_compass(query: str, file_path: str = "") -> str:
-    """Natural language across all layers. Routes to graph/wiki/compass/memory.
-
-    query: natural language question (e.g. 'where do we handle retries').
-    file_path: optional source file path — when set, auto-loads compass +
-               wiki + memory for that file (file-path-aware mode).
-
-    For structural questions prefer explore() (pure L1, always concrete); use
-    ask_compass when you want cross-layer context (wiki explanations, tribal
-    knowledge, past decisions). The response names the layers it queried so you
-    know what coverage it actually checked, and flags when every layer came up
-    empty (thin coverage — drill down with a specific layer tool, don't assume
-    'no info exists').
-
-    Example:
-        ask_compass("where do we handle retries")
-        ->  Intent: call_graph (routed to ALL; queried: graph, wiki, memory)
-
-            [graph]
-              ...
-            [wiki]
-              Retry & backoff policy: ...
-    """
+    """Route a natural-language query across graph/wiki/compass/memory; file_path loads file-aware context."""
     from cairn.compass.router import route_query
 
     bundle = _bundle()
@@ -211,15 +175,7 @@ def ask_compass(query: str, file_path: str = "") -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def trace_flow(entry: str, max_depth: int = 8) -> str:
-    """Trace the downward call chain from an entry-point symbol.
-
-    Returns the ordered call sequence (what happens when `entry` runs),
-    branch points (fan-out), and terminal calls (side effects). Read-only.
-
-    entry: the entry-point symbol name (HTTP handler, CLI command, ViewModel
-           handleCommand, repository method, ...).
-    max_depth: deepest call hop to follow (default 8).
-    """
+    """Trace the ordered call chain, branches, and terminal calls from an entry symbol."""
     from cairn.graph.traversal import trace_flow as _trace_flow
 
     conn = _conn()
@@ -254,17 +210,7 @@ def trace_flow(entry: str, max_depth: int = 8) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True))
 @instrument
 def generate_flow(entry: str, as_workflow: bool = False, max_steps: int = 20) -> str:
-    """Generate a flow compass (and optionally a workflow) from a call-graph trace.
-
-    Traces the downward call chain from `entry`, synthesizes a deterministic
-    5-section compass body, runs the critic gate, and writes the concept.
-    With as_workflow=True, also generates a Knowledge-workflow doc with the
-    traced steps as ordered, editable procedural knowledge.
-
-    entry: the entry-point symbol name.
-    as_workflow: also generate a Knowledge-workflow doc (default False).
-    max_steps: with as_workflow, cap workflow steps (default 20).
-    """
+    """Generate a critic-gated flow compass (and optionally a workflow) from a call-graph trace."""
     from cairn.compass.generator import (
         _gather_flow_facts, generate_flow_compass, generate_flow_workflow,
     )

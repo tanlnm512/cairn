@@ -29,11 +29,7 @@ def score_memory(
     bundle: OKFBundle,
     critic_score: Optional[float] = None,
 ) -> Dict:
-    """Score a memory concept across its verification/confidence/freshness signals.
-
-    Returns a dict with each signal (0.0-1.0) and the weighted `score`.
-    Does not mutate the concept; caller decides whether to store the new score.
-    """
+    """Return memory scoring signals and weighted score without mutating the concept."""
     signals = concept.extensions.get("memory_signals", {})
     confidence = signals.get("agent_confidence", concept.extensions.get("memory_score", 0.5))
 
@@ -146,12 +142,7 @@ DEFAULT_FRESHNESS_WINDOW_DAYS = 90
 
 
 def _freshness(concept: OKFConcept) -> float:
-    """Exponential decay: exp(-λ·age) where λ = ln(2)/half_life.
-
-    The half-life is the type-dependent freshness window, so a memory reaches
-    0.5 at the window boundary. Human-authored documents (doc_source == "manual")
-    never age out.
-    """
+    """Return exponential age decay, keeping manually sourced memories fully fresh."""
     ts = concept.timestamp or concept.extensions.get("timestamp")
     if not ts:
         return 0.5
@@ -171,12 +162,7 @@ def _freshness(concept: OKFConcept) -> float:
 
 
 def _reinforcement(concept: OKFConcept, conn: sqlite3.Connection) -> float:
-    """Reward signal from how recently and often this memory was recalled.
-
-    Driven by the memory_refs table (a row per recall hit). The boost
-    saturates at 1.0, so a frequently-recalled memory stays warm even as its
-    freshness decays. Returns 0.0 for a never-recalled memory.
-    """
+    """Return saturated recall reinforcement, or 0.0 for a never-recalled memory."""
     if not concept.concept_id:
         return 0.0
     cur = conn.cursor()

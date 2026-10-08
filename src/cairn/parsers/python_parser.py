@@ -188,10 +188,7 @@ class PythonParser(BaseParser, TreeSitterParserBase):
                 break
         if not name:
             return None
-        # A def is a method only when its enclosing scope is a class. In the
-        # tree-sitter Python grammar the function_definition's direct parent is
-        # always the wrapping `block`; the meaningful parent is that block's
-        # parent, so method iff (block's parent) is a class_definition.
+        # Python defs are nested under block; the grandparent identifies a class.
         kind = "function"
         parent = node.parent
         if parent is not None and parent.type == "block":
@@ -255,13 +252,7 @@ class PythonParser(BaseParser, TreeSitterParserBase):
         return mods
 
     def _emit_decorator_edges(self, node: Node, source: bytes, owner: str) -> None:
-        """`decorates` edges: owner -> each decorator's callable name.
-
-        `@app.route("/x")` -> target `route` (the attribute tail, matching
-        how call edges name their targets); `@functools.lru_cache` ->
-        `lru_cache`. Decorators that don't resolve to a symbol simply stay
-        unresolved edges, like builtin callees.
-        """
+        """Emit decorates Edges named by each decorator's callable tail."""
         for child in self._decorator_nodes(node):
             name = self._decorator_call_name(self._node_text(child, source))
             if name and _IDENT_RE.fullmatch(name):
@@ -275,14 +266,7 @@ class PythonParser(BaseParser, TreeSitterParserBase):
                 )
 
     def _emit_type_references(self, node: Node, source: bytes, owner: str) -> None:
-        """`references` edges: owner -> classes named in signature annotations.
-
-        Covers typed parameters and the return annotation of
-        function/method definitions. Subscripted shapes (`Optional[Foo]`,
-        `list[Bar]`) contribute their inner identifier tokens; builtin
-        typing tokens are filtered. Dotted paths contribute their segments
-        (the tail usually resolves; the qualifier usually does not).
-        """
+        """Emit references Edges for identifiers in parameter and return annotations."""
         type_nodes: List[Node] = []
         params = node.child_by_field_name("parameters")
         if params is not None:
@@ -315,16 +299,7 @@ class PythonParser(BaseParser, TreeSitterParserBase):
                 )
 
     def _parse_imports(self, node: Node, source: bytes) -> List[Import]:
-        """Imports for one import statement.
-
-        Statements without an alias keep the verbatim statement text — the
-        shape the builder's module-base parser consumes for plain imports.
-        A statement carrying an `as`-alias emits one normalized dotted row
-        per imported name (`import x.y as z` -> "x.y"/"z", `from m import n
-        as k` -> "m.n"/"k") so the resolver can rewrite the local alias to
-        the imported name. Relative markers drop out ("."-segments name
-        nothing).
-        """
+        """Return verbatim plain Imports and normalized rows for aliased Imports."""
         line = node.start_point[0] + 1
         names = [
             child
@@ -395,11 +370,7 @@ class PythonParser(BaseParser, TreeSitterParserBase):
     def _infer_call_receiver_type(
         self, callee: Node, source: bytes
     ) -> Optional[str]:
-        """Receiver type for ``obj.method()``: a bare-identifier object with
-        an unambiguous in-file binding (class name, ``self``/``cls``, typed
-        or constructor assignment, annotated parameter). Anything else —
-        chained receivers, unknown or shadowed names — abstains to None.
-        """
+        """Return the receiver type for unambiguous bare-object method calls."""
         if callee.type != "attribute":
             return None
         obj = callee.child_by_field_name("object")
@@ -445,11 +416,7 @@ class PythonParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _count_parameters(self, node: Node, source: bytes) -> Optional[int]:
-        """Parameter count of a def, conservative: defaults and
-        varargs make the accepted count a range, and a first parameter that
-        is not a recognizable ``self``/``cls`` receiver makes the call-site
-        comparison off by one — all three abstain to None.
-        """
+        """Return def arity, or None when call-site arity is not one count."""
         params = node.child_by_field_name("parameters")
         if params is None:
             return None

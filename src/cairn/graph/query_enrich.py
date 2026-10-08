@@ -6,11 +6,7 @@ from dataclasses import dataclass
 
 __all__ = ["EnrichedQuery", "ENRICH_DF_MAX_FRACTION", "enrich"]
 
-# Hard document-frequency cutoff: a query term whose
-# symbol_df/n_symbols prevalence EXCEEDS this fraction is dropped from the
-# appended identifier tail and the sparse term list. Scikit-learn's max_df
-# convention: strictly greater than 0.90 drops, exactly 0.90 keeps. 0.90 is
-# the shipped default that code and docs document.
+# Prevalence strictly above the cutoff drops; exactly-at keeps.
 ENRICH_DF_MAX_FRACTION = 0.90
 
 # --- Extraction regexes (compiled once; pure functions of the input string).
@@ -69,12 +65,7 @@ class EnrichedQuery:
 
 
 def _camel_split(word: str) -> list[str]:
-    """Split one alphanumeric word on camelCase boundaries.
-
-    ALLCAPS runs stay whole (``URL``); ``parseUnencodedURL`` ->
-    ``["parse", "Unencoded", "URL"]``; ``HTTPServer`` -> ``["HTTP",
-    "Server"]``. Words with no boundaries come back as a single element.
-    """
+    """Split one alphanumeric word on camelCase boundaries."""
     if not word:
         return []
     spaced = _CAMEL_ACRONYM_BOUNDARY.sub(r"\1 \2", word)
@@ -83,12 +74,7 @@ def _camel_split(word: str) -> list[str]:
 
 
 def _sub_tokens(candidate: str) -> list[str]:
-    """Split one candidate token into its identifier sub-tokens.
-
-    Separators (``_``, ``.``, anything non-alphanumeric) split first, then
-    camelCase boundaries within each part: ``yarl.URL.build`` ->
-    ``["yarl", "URL", "build"]``; ``split_url`` -> ``["split", "url"]``.
-    """
+    """Split one candidate token into its identifier sub-tokens."""
     parts = [p for p in _SEPARATOR_RE.split(candidate) if p]
     out: list[str] = []
     for part in parts:
@@ -97,15 +83,7 @@ def _sub_tokens(candidate: str) -> list[str]:
 
 
 def _is_identifier_shaped(candidate: str) -> bool:
-    """True iff a prose candidate token looks like code, not English.
-
-    Backticked chunks never come through here (backticks are identifiers
-    by fiat -- the user marked them as code). A candidate is code-ish if
-    it has a separator (``split_url``, ``yarl.URL.build``), a camelCase
-    compound shape, an ALLCAPS run of >= 2 letters (``URL``), or
-    letter+digit adjacency (``utf8``, ``v4``). A plain word -- even
-    sentence-capitalized like ``Where`` -- is prose, not an identifier.
-    """
+    """True iff a prose candidate token looks like code, not English."""
     if "_" in candidate or "." in candidate:
         return True
     subs = _sub_tokens(candidate)
@@ -122,16 +100,7 @@ def _is_identifier_shaped(candidate: str) -> bool:
 
 
 def _ubiquity_predicate(df_lookup):
-    """Build a memoized case-folded ubiquity test from an injected lookup.
-
-    Returns a predicate ``is_ubiquitous(token) -> bool`` that is True iff
-    the corpus marks ``token`` as ubiquitous (prevalence strictly greater
-    than :data:`ENRICH_DF_MAX_FRACTION`). The lookup is called with the
-    CASE-FOLDED token and is invoked at most once per distinct case-folded
-    token (memoized), so a query costs O(#distinct tokens) lookups.
-    With ``df_lookup`` None the predicate is constantly False
-    (no lookup is ever made).
-    """
+    """Build a memoized case-folded ubiquity test from an injected lookup."""
 
     cache: dict[str, bool] = {}
 
@@ -152,44 +121,7 @@ def _ubiquity_predicate(df_lookup):
 
 
 def enrich(query: str, df_lookup=None) -> EnrichedQuery:
-    """Deterministically enrich one query for the dense and sparse legs.
-
-    Pure function of ``query`` (and, when given, of the injected
-    ``df_lookup``): no randomness, time, environment, LLM, or network --
-    the DF signal is INJECTED, never fetched.
-    See the module docstring for the full consumer contract and
-    extraction rules.
-
-    ``df_lookup`` -- the injected per-corpus document-frequency lookup
-    (the caller at the ``semantic_search`` boundary builds it from
-    the persisted ``term_df`` table). Contract:
-
-    * a CALLABLE taking one ``str`` and returning ``None`` or a 2-tuple
-      ``(symbol_df, n_symbols)`` of non-negative ints, where ``symbol_df``
-      is the number of distinct symbols whose indexed text contains the
-      token and ``n_symbols`` the total symbol count;
-    * it receives the CASE-FOLDED token (``token.lower()``) -- ``term_df``
-      keys are FTS5 unicode61 case-folded while enrich tokens keep casing,
-      so the passed key matches the table directly;
-    * a term whose ``symbol_df / n_symbols`` is STRICTLY greater than
-      ``ENRICH_DF_MAX_FRACTION`` (0.90; exactly 0.90 keeps) is dropped
-      from ``dense_query``'s appended identifier tail and from
-      ``sparse_query`` -- never from the original text prefix and never
-      from the ``identifiers`` extraction record;
-    * ``None`` return, absent key, or ``n_symbols <= 0`` means "no DF
-      data": the term keeps full weight;
-    * it is called at most once per distinct case-folded token per
-      ``enrich`` call (memoized; O(#distinct query tokens) bound);
-    * ``df_lookup=None`` (the default) disables filtering entirely:
-      byte-identical to the single-argument behavior.
-
-    Boundary: a query with no extractable identifiers returns
-    ``identifiers == ()`` and ``dense_query == query`` (the original,
-    unmodified) -- enrichment never manufactures matches out of nothing.
-    The same holds when every extracted identifier is DF-dropped: the
-    dense query falls back to the original with NO appended tail (an
-    empty tail would only add a trailing space).
-    """
+    """Deterministically enrich one query for the dense and sparse legs."""
     identifiers: list[str] = []
     seen_ids: set[str] = set()
 
@@ -199,11 +131,7 @@ def enrich(query: str, df_lookup=None) -> EnrichedQuery:
             seen_ids.add(key)
             identifiers.append(token)
 
-    # 1. Backticked spans first: explicit code references. Their content
-    #    contributes the VERBATIM chunk plus its split sub-tokens. A span
-    #    with internal whitespace (an expression like `x == y`) is split on
-    #    whitespace and each letter-bearing chunk is treated as if it had
-    #    been backticked on its own.
+    # Backticked spans contribute verbatim chunks and split sub-tokens.
     working = _BACKTICK_RE.sub(" ", query)
     for span in _BACKTICK_RE.findall(query):
         for chunk in span.split():
@@ -221,14 +149,7 @@ def enrich(query: str, df_lookup=None) -> EnrichedQuery:
             for sub in _sub_tokens(candidate):
                 _add_identifier(sub)
 
-    # 3. Sparse terms: the query's non-stopword tokens in query order
-    #    (compounds included verbatim -- FTS5 unicode61 keeps camelCase as
-    #    one token, so the compound itself can still exact-match a name),
-    #    then the identifier tokens not already present, stopword-trimmed.
-    #    DF filtering: corpus-ubiquitous terms (prevalence
-    #    strictly > ENRICH_DF_MAX_FRACTION) are dropped from BOTH source
-    #    loops -- the dilution fix must not merely move a term from one
-    #    loop to the other.
+    # Ubiquitous terms leave both sparse source loops.
     is_ubiquitous = _ubiquity_predicate(df_lookup)
     terms: list[str] = []
     seen_terms: set[str] = set()
@@ -249,11 +170,7 @@ def enrich(query: str, df_lookup=None) -> EnrichedQuery:
         seen_terms.add(key)
         terms.append(ident)
 
-    # 4. Dense query: original plus each identifier once. The embedder sees
-    #    name-shaped tokens in isolation; nothing from the original text is
-    #    ever dropped. DF-dropped identifiers are simply not appended (the
-    #    original-text prefix still contains the term if the user typed it
-    #    -- the prefix contract); an all-dropped tail means NO tail at all.
+    # The dense query keeps the original text and appends each survivor once.
     tail = [ident for ident in identifiers if not is_ubiquitous(ident)]
     dense_query = query if not tail else f"{query} {' '.join(tail)}"
 

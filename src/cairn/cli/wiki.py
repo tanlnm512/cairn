@@ -206,11 +206,7 @@ def _load_manifest_or_exit(knowledge):
 @click.option("--repo", default=None, help="Only pages of this repo.")
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def wiki_status(repo, knowledge):
-    """Show per-page wiki state with aggregate counts.
-
-    State is derived at read time (promoted content beats the live chain;
-    a done task with no passing critic verdict derives failed), never from
-    a stored verdict — the plan kind keeps none."""
+    """Show per-page wiki state with aggregate counts; state derives at read time, never from a stored verdict."""
     from ..wiki.lifecycle import (
         DERIVED_STATES,
         derived_state,
@@ -257,10 +253,7 @@ def wiki_status(repo, knowledge):
 @click.option("--repo", default=None, help="Only pages of this repo.")
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def wiki_retry(repo, knowledge):
-    """Re-queue failed pages as fresh task chains; promoted pages untouched.
-
-    Failure is derived (a done task whose result lacks a passing critic
-    verdict counts — the zombie rescue), never read from a stored state."""
+    """Re-queue derived-failed pages as fresh task chains; promoted pages untouched."""
     from ..llm.tasks import create_task
     from ..wiki.lifecycle import derived_state, page_chains, plan_facts
     from ..wiki.manifest import save_manifest, split_page_key
@@ -363,4 +356,3 @@ def enrich(page_id, repo, enrich_all, knowledge):
                "Any agent with the cairn skill can process them:")
     click.echo("  cairn task list --kind wiki-page-enrich --status pending")
     click.echo("  cairn task claim <id> && cairn task complete <id> --result-file <path>")
-

@@ -69,12 +69,7 @@ def find_def(symbol, db, as_json, refresh):
     help="Reindex drifted files before answering.",
 )
 def callers(symbol, db, as_json, fuzzy, refresh):
-    """Find all callers of SYMBOL.
-
-    Default (precise) returns only callers of the exact resolved symbol.
-    Use --fuzzy to also include call sites matched only by name (noisier, but
-    catches unresolved/stdlib call sites).
-    """
+    """Find callers of SYMBOL; precise by default, --fuzzy adds noisier name-matched sites."""
     conn = get_db(db)
     try:
         _refresh_conn(conn, refresh)
@@ -145,12 +140,7 @@ def search(pattern, kind, db, as_json, refresh):
     "stamp matches; never changes which hits are returned.",
 )
 def federated_search(query, limit, as_json, shared_embed):
-    """Search every registered workspace store as one merged ranking.
-
-    Each hit names the workspace store it came from; stores that are
-    missing, locked, or unindexed are named in the report, never silently
-    skipped.
-    """
+    """Search every registered store as one merged ranking; missing/locked/unindexed stores are named, never skipped silently."""
     from ..graph.federation import federated_search as run_federated
 
     try:

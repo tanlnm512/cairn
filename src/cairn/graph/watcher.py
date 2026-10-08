@@ -17,11 +17,7 @@ from . import scanner as scanner_mod
 # ---------------------------------------------------------------------------
 
 def invalidate_gitignore_cache(path: str):
-    """Clear the gitignore cache for the repo containing `path`.
-
-    Called when a .gitignore file itself changes, so subsequent scans
-    pick up the new ignore rules. The cache is keyed by repo root.
-    """
+    """Clear the gitignore cache for the repo containing `path`."""
     p = Path(path)
     # Walk up to find the repo root (dir containing .git).
     for parent in p.parents:
@@ -108,10 +104,7 @@ def _repair_changed(
 
 
 def _detect_changed(conn, workspace: str) -> list[str]:
-    """Compare files table (size, mtime) against disk. Return changed paths.
-
-    The scan loop behind `ensure_fresh_force` (and `_do_catch_up` generally).
-    """
+    """Compare files table (size, mtime) against disk. Return changed paths."""
     changed: list[str] = []
 
     for repo_path in scanner_mod.discover_repos(workspace):
@@ -124,12 +117,7 @@ def _detect_changed(conn, workspace: str) -> list[str]:
         except Exception:
             continue
 
-        # If this repo has no rows, it likely hasn't been indexed yet (or its
-        # repo_id key doesn't match after a path/portability migration). Skip it
-        # rather than fall back to ALL rows: a broad fallback would mis-classify
-        # every other repo's file as "new" for this repo and trigger a full
-        # workspace reindex on every boot. The repo will be picked up by a
-        # later `cairn build`/`cairn update`.
+        # An unknown repo scope never falls back to every repo's rows.
         if not file_rows:
             continue
 
@@ -225,10 +213,7 @@ class _DebouncingHandler:
 
 
 class FileWatcherService:
-    """Monitors repository files and schedules incremental graph reindexing.
-
-    Debounces filesystem modification events and runs incremental updates on a background timer.
-    """
+    """Monitors repository files and schedules incremental graph reindexing."""
 
     def __init__(
         self,
@@ -260,13 +245,7 @@ class FileWatcherService:
     # -- lifecycle -----------------------------------------------------------
 
     def start(self) -> bool:
-        """Start watching. Idempotent. Returns True iff actually watching.
-
-        False (a no-op, never an exception) when: CAIRN_WATCH=0,
-        CAIRN_READ_ONLY is set, watchdog is not installed, or the workspace
-        has no repos to watch. The unavailable-watchdog case logs a single
-        info line telling the user about the ``[watch]`` extra.
-        """
+        """Start watching when enabled and return whether this call did."""
         if self._started:
             return True
         if not _watch_env_enabled():
@@ -332,13 +311,7 @@ class FileWatcherService:
         return True
 
     def stop(self) -> None:
-        """Stop watching and join the observer thread. Idempotent, never raises.
-
-        A flush still inside its debounce window is dropped (not run
-        synchronously): those edits are absorbed by the next boot's
-        ``ensure_fresh_force`` catch-up, same as edits made while no server
-        ran.
-        """
+        """Stop watching and join the observer thread. Idempotent, never raises."""
         with self._lock:
             self._running = False
             timer = self._timer
@@ -361,11 +334,7 @@ class FileWatcherService:
     # -- event intake (watchdog dispatch thread) ------------------------------
 
     def _on_event(self, event) -> None:
-        """Record one filesystem event. Cheap: filter + set add + maybe timer.
-
-        Directory events are skipped (a new file emits its own event); for
-        moves both src (deleted) and dest (created) sides matter.
-        """
+        """Record one filesystem event without performing IO."""
         if getattr(event, "is_directory", False):
             return
         moved_dest = getattr(event, "dest_path", None)
@@ -376,12 +345,7 @@ class FileWatcherService:
             self._offer(str(src))
 
     def _offer(self, path_str: str) -> None:
-        """Add a candidate path and arm the debounce timer if idle.
-
-        The only filtering done here is the extension gate (pure dict lookup)
-        so watchdog's dispatch thread never does IO. Full filtering
-        (gitignore, config, size) happens in the batched update pass.
-        """
+        """Add a candidate path and arm the debounce timer if idle."""
         # .gitignore is not a source extension but must be seen (cache
         # invalidation); everything else non-source is dropped here.
         if (
@@ -407,14 +371,7 @@ class FileWatcherService:
     # -- debounced flush (timer thread) ---------------------------------------
 
     def _flush(self) -> None:
-        """Drain the pending set into one update pass (timer thread).
-
-        If a previous pass is still running (an update can legitimately take
-        longer than the debounce window), the pending events are left for a
-        re-armed timer instead of overlapping — at most one update pass per
-        service runs at a time, so the build lock is only ever contended by
-        EXTERNAL processes (CLI build/update), which is the absorbed case.
-        """
+        """Drain the pending set into one update pass (timer thread)."""
         with self._lock:
             if not self._pending:
                 self._timer = None
@@ -456,10 +413,7 @@ class FileWatcherService:
             # node_modules/ was never indexed, so its deletion is a no-op.
             if scanner_mod._is_under_skip_dir(tuple(Path(rel).parts)):
                 continue
-            # Full 4-layer filter (gitignore + config + size) only while the
-            # file exists: classify_file stat()s, and a deleted file must be
-            # forwarded so reindex_paths can remove its rows. The repo root is
-            # resolved so it prefixes the (FSEvents-resolved) event path.
+            # Forward deleted files without stat-based classification.
             repo_root = Path(
                 scanner_mod.resolve_repo_path(self.workspace, repo)
             ).resolve()
@@ -472,10 +426,7 @@ class FileWatcherService:
         if not source_paths:
             return
 
-        # (a) Mark pending in BOTH path forms. pending_sync.path is the PK, so
-        # OR IGNORE dedupes repeat saves; reindex_paths deletes exactly these
-        # two forms on completion, and the staleness banner matches the
-        # repo-relative form (files.path).
+        # Pending rows use exactly the two path forms deletion consumes.
         inserts: list[tuple[str, str, str]] = []
         cleanup_paths: set[str] = set()
         for p, (repo, rel, abs_form) in source_paths:
@@ -525,11 +476,7 @@ class FileWatcherService:
             return
 
         self._failure_latched = False
-        # (c) Clear this batch's leftover rows. reindex_paths already deleted
-        # the rows for every path it reindexed; what remains are paths git
-        # diff did not report (e.g. an edit that restored identical content).
-        # Left standing they would fire the staleness banner forever on a
-        # graph that is actually current.
+        # Clear pending rows even when restored content produces no git diff.
         try:
             conn = _connect(self.db_path)
             try:
@@ -544,19 +491,7 @@ class FileWatcherService:
             _LOGGER.debug("cairn: watcher could not clear pending_sync", exc_info=True)
 
     def _path_forms(self, abs_path: str) -> tuple[str, str, str] | None:
-        """Normalize an event path to (repo_name, repo_relative, abs_form).
-
-        Event paths and workspace prefixes can disagree on symlinks (macOS
-        FSEvents always reports resolved paths like ``/private/var/...`` even
-        when the watch was scheduled on ``/var/...``), so both sides are
-        resolved before matching.
-
-        The returned ``abs_form`` is ``resolve_repo_path(workspace, repo) /
-        rel`` -- i.e. the exact string ``incremental_update``/``reindex_paths``
-        reconstruct for the same file -- and ``rel`` is byte-identical to what
-        ``reindex_paths`` computes, so the pending_sync rows this service
-        inserts are exactly the two forms its clear sites delete.
-        """
+        """Normalize an event path to (repo_name, repo_relative, abs_form)."""
         resolved = str(Path(abs_path).resolve())
         repo = scanner_mod.infer_repo_for_path(resolved, self.workspace)
         if not repo:

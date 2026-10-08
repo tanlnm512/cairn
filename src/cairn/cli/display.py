@@ -236,12 +236,7 @@ def progress_bar(
     unit: str = "files",
     transient: bool = True,
 ) -> Iterator:
-    """Yield a progress bar configured for the cairn CLI.
-
-    ``total`` None means the caller must ``.update(task_id, total=N)`` later.
-    TTY mode uses rich's animated Progress; non-TTY mode uses
-    ``_PlainTextProgress`` (one line updated via ``\\r``).
-    """
+    """Yield a CLI progress bar (rich on TTY, plain-text otherwise); ``total`` None defers the total to a later update."""
     if not is_tty():
         bar = _PlainTextProgress(description, total, unit)
         bar.start()
@@ -268,8 +263,7 @@ def progress_bar(
 
 # --- Vertical-rail flow ----------------------------------------------------
 # A clack-style continuous rail for multi-step CLI flows (init, build):
-# `┌` open, `│` spacers between groups, `◆` step markers, an animated
-# sub-step that settles in place, and a guaranteed `└` close.
+# animated sub-steps settle in place; a `└` close is guaranteed.
 
 _GLYPHS = {
     "open":      ("┌", "+"),
@@ -287,11 +281,7 @@ _NUM_RE = re.compile(r"(?<![\w./-])\d[\d,]*(?:\.\d+)?[a-z]{0,2}\b")
 
 
 def _unicode_ok() -> bool:
-    """True iff the active console's encoding can encode the rail glyphs.
-
-    Probed once per Rail instance (not at import time) so ``CliRunner`` and
-    piped output re-resolve correctly against the console they're given.
-    """
+    """True iff the console encoding can encode the rail glyphs; probed per Rail, never at import."""
     enc = (getattr(console, "encoding", None) or "utf-8").lower()
     try:
         "┌│└◆●✗".encode(enc)
@@ -301,11 +291,7 @@ def _unicode_ok() -> bool:
 
 
 def _value(s: str) -> Text:
-    """Build a Text with numbers (counts, durations) highlighted as ``number``.
-
-    Values are never passed as rich markup strings — a workspace path
-    containing ``[`` would corrupt markup, and init/build print user paths.
-    """
+    """Build a Text with numbers highlighted; never rich markup, so ``[`` in user paths cannot corrupt it."""
     t = Text(s)
     t.highlight_regex(_NUM_RE, "number")
     return t
@@ -354,12 +340,7 @@ class Rail:
             console.print(self._g["rail"], style="dim")
 
     def _settle_active(self) -> None:
-        """Settle whatever sub-step is open, defaulting its value to "done".
-
-        The implicit settle path (a depth-0 call or a new ``start()`` while a
-        sub-step is open) treats the open sub-step as ``finish()`` with its
-        default value — so callers never have to track state.
-        """
+        """Settle the open sub-step, defaulting its value to "done", so callers never track state."""
         if self._active is None:
             return
         a = self._active
@@ -501,12 +482,8 @@ class Rail:
 @contextmanager
 def rail(title: str, animate: bool = True) -> Iterator[Rail]:
     """Render a vertical-rail flow; ``└`` is written on every exit path.
-
-    Do not open a :func:`progress_bar` while a sub-step is active: rich permits
-    only one live display at a time per console. ``animate=False`` (used by
-    ``cairn build -v``) renders settled lines only, with no live region, so the
-    verbose path's raw ``print()`` output can't corrupt it.
-    """
+    Never open a progress bar while a sub-step is live (one live display per
+    console); ``animate=False`` renders settled lines only."""
     r = Rail(_unicode_ok(), animate=animate)
     r._open(title)
     try:

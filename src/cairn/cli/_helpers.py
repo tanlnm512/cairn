@@ -66,11 +66,7 @@ def _detect_install_method() -> str:
 
 
 def _shorten(path: str) -> str:
-    """Shorten an absolute path for display by stripping the workspace root.
-
-    Falls back to the path unchanged when the workspace can't be determined or
-    the path lies outside it.
-    """
+    """Shorten a path for display by stripping the workspace root; unchanged when outside it."""
     try:
         from ..paths import resolve_workspace
         ws = str(resolve_workspace())

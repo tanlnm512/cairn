@@ -26,19 +26,7 @@ from ...paths import cairn_home_env
 
 
 def zcode_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
-    """MCP server config in ZCode format (nested mcp.servers.<name> with explicit type).
-
-    ZCode reads <workspace>/.zcode/config.json and expects the nested shape
-    ``{"mcp": {"servers": {"name": {...}}}}`` with an explicit ``"type"`` field.
-    This differs from the Claude/Cursor/OpenAI format (``{"mcpServers": {...}}``).
-
-    stdio entries embed ``env: {CAIRN_HOME: <expanded path>}`` when the
-    resolved CAIRN_HOME is non-default; the default home adds no env key.
-
-    Args:
-        transport: "stdio" (default) or "sse" (shared daemon).
-        sse_url: when transport="sse", the URL clients should connect to.
-    """
+    """Return a ZCode MCP entry nested under mcp.servers.<name>."""
     if transport == "sse":
         return {"mcp": {"servers": {"cairn": {"type": "sse", "url": default_sse_url(sse_url)}}}}
     cmd = resolve_cg_command()
@@ -56,19 +44,7 @@ def zcode_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) 
 def install_zcode(workspace: str, force: bool, dry_run: bool,
                   transport: str = "stdio", sse_url: str | None = None,
                   scope: str = "workspace") -> InstallResult:
-    """Wire cairn into ZCode (.zcode/ config + skill, commands, agents).
-
-    ZCode reads ``<workspace>/.zcode/config.json`` and expects the nested shape
-    ``{"mcp": {"servers": {"cairn": {...}}}}`` — NOT the top-level
-    ``mcpServers`` format used by Claude/Cursor.
-
-    ``scope="workspace"`` writes to ``<workspace>/.zcode/`` (default).
-    ``scope="global"`` writes the MCP entry to ``~/.zcode/cli/config.json`` —
-    the ZCode CLI's user-scope MCP file — while skills/commands/agents go to
-    ``~/.zcode/`` (the CLI reads those from the top level). A legacy cairn
-    entry in ``~/.zcode/config.json`` (written by installers before this fix;
-    the CLI does not read that file for MCP) is stripped on install.
-    """
+    """Install ZCode MCP and top-level skill, command, and agent assets."""
     ws = Path(workspace)
     base = ws if scope == "workspace" else Path.home()
     res = InstallResult("zcode")
@@ -105,18 +81,7 @@ def install_zcode(workspace: str, force: bool, dry_run: bool,
 
 
 def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
-    """Remove cairn files/entries for ZCode.
-
-    ``scope="workspace"`` (the default, historical behavior) strips
-    ``<ws>/.zcode/``. ``scope="global"`` strips ``~/.zcode/`` -- where a
-    ``--scope global`` install wrote skills, commands, and agents -- plus the
-    MCP entry in ``~/.zcode/cli/config.json`` and any legacy entry in
-    ``~/.zcode/config.json``. ``scope="all"`` does both. AGENTS.md is never
-    removed (install writes it create-if-absent only).
-
-    Commands/agents are only removed when byte-identical to what the
-    installer writes, so a user's own file at the same path survives.
-    """
+    """Remove ZCode files and registrations for the selected scope."""
     for base in _uninstall_bases(ws, scope):
         _strip_mcp_zcode(base / ".zcode" / "cli" / "config.json", res)
         _strip_mcp_zcode(base / ".zcode" / "config.json", res)

@@ -17,15 +17,7 @@ from ._common import (
 # --------------------------------------------------------------------------
 
 def _atomic_write_text(path: Path, content: str) -> None:
-    """Write ``content`` to ``path`` atomically.
-
-    Writes to a sibling temp file then ``os.replace``s it into place, which is
-    atomic on POSIX (and same-volume Windows). A crash (OOM, SIGKILL, full
-    disk) between truncate and full write would otherwise leave a zero-byte or
-    truncated config file that breaks the user's agent client entirely. The
-    temp file lives in the same directory so the rename never crosses a
-    filesystem boundary.
-    """
+    """Atomically replace path with content using a same-directory temp file."""
     import os
     import tempfile
 
@@ -49,13 +41,7 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 def _load_json_or_none(path: Path):
-    """Load JSON from ``path``.
-
-    Returns the parsed value, or ``None`` if the file is missing or its JSON is
-    malformed. Callers MUST check for ``None`` and decide whether to skip,
-    back up, or raise -- silently overwriting a malformed user config with a
-    fresh cairn-only one loses their hand-edited data.
-    """
+    """Return parsed JSON at path, or None when missing or malformed."""
     if not path.exists():
         return None
     try:
@@ -66,13 +52,7 @@ def _load_json_or_none(path: Path):
 
 def _write_file(path: Path, content: str, force: bool, result: InstallResult,
                 dry_run: bool = False) -> None:
-    """Write a file unless it exists and !force. Records into result.
-
-    In dry-run mode, records the would-be action without touching the disk.
-    The exists-check runs BEFORE the dry-run decision so the report matches a
-    real run: a file that is already present (and not forced) shows up as
-    skipped, not as a phantom "would write".
-    """
+    """Write path unless it exists and force is false, recording the result."""
     if path.exists() and not force:
         result.add(path, existed=True)
         return
@@ -87,15 +67,7 @@ def _write_file(path: Path, content: str, force: bool, result: InstallResult,
 
 def _write_tree(dest_dir: Path, src_dir: Path, force: bool, result: InstallResult,
                 dry_run: bool = False) -> None:
-    """Recursively write every file under `src_dir` to the matching path under
-    `dest_dir`, so skill packages (SKILL.md + references/ + scripts/ + evals/)
-    ship as a whole instead of one hand-picked file at a time.
-
-    Each file goes through `_write_file`, so per-file force/dry-run/existed
-    semantics are unchanged -- only files that don't already exist (or when
-    `force=True`) are (re)written. Scripts (.py/.sh under a `scripts/`
-    subdirectory) get their executable bit set.
-    """
+    """Recursively install a skill package with per-file install semantics."""
     if not src_dir.is_dir():
         raise FileNotFoundError(f"template directory missing: {src_dir}")
     for src_path in sorted(src_dir.rglob("*")):
@@ -112,14 +84,7 @@ def _write_tree(dest_dir: Path, src_dir: Path, force: bool, result: InstallResul
 
 def _backup_to_bak(path: Path, reason: str, result: InstallResult,
                    dry_run: bool = False) -> dict:
-    """Back up ``path`` beside itself as ``<name>.bak`` and return ``{}``.
-
-    Used when the existing config cannot be merged into safely (malformed
-    JSON, a non-object file, or a non-object value under a top-level key the
-    merge touches): the user's data is preserved in the backup while the
-    merge starts from a fresh object. In dry-run mode nothing is written --
-    the would-be backup is only reported.
-    """
+    """Back up path beside itself and return an empty merge target."""
     backup = path.with_suffix(path.suffix + ".bak")
     if backup.exists():
         # The existing .bak may be the only preserved copy of an earlier
@@ -160,19 +125,7 @@ def _merge_keys_non_object(existing: dict, merger: dict) -> bool:
 
 def _merge_json_file(path: Path, merger: dict, force: bool, result: InstallResult, *,
                      config_key: str = "mcpServers", dry_run: bool = False) -> None:
-    """Merge `merger` into a JSON file at `path` (deep-merge top-level keys).
-
-    For .mcp.json: overwrites only the "cairn" entry (config_key="mcpServers").
-    For .zcode/config.json: overwrites the cairn server under mcp.servers
-    (config_key="zcode").
-    For .claude/settings.json: merges hooks.<Event> lists, appending cairn
-    hook entries (skipping duplicates that already mention cairn).
-
-    In dry-run mode, records the would-be action without touching the disk.
-    The idempotency checks run BEFORE the dry-run decision so the report
-    matches a real run: an already-installed (or malformed-to-be-backed-up)
-    config is reported as such, not as a blanket "would merge".
-    """
+    """Merge cairn configuration into a JSON file with dry-run fidelity."""
     existing: dict = {}
     if path.exists():
         loaded = _load_json_or_none(path)
@@ -212,15 +165,7 @@ def _merge_json_file(path: Path, merger: dict, force: bool, result: InstallResul
 # --------------------------------------------------------------------------
 
 def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpServers") -> bool:
-    """Has the cairn entry already been written into `existing` *and matches*?
-
-    For MCP (config_key="mcpServers"): checks mcpServers.cairn.
-    For ZCode (config_key="zcode"): checks mcp.servers.cairn.
-    For hooks: checks hooks.<Event> for BOTH cairn hook entrypoints
-    (post_edit AND session_end), in either on-disk shape (Claude's nested
-    entries or Cursor's flat ones). Requiring both means a partially-stripped
-    hooks config reads as absent and the next install re-heals it.
-    """
+    """Return True when every required cairn entry already exists and matches."""
     if config_key == "zcode" and "mcp" in merger:
         mcp = existing.get("mcp")
         servers = mcp.get("servers") if isinstance(mcp, dict) else None
@@ -311,15 +256,7 @@ def _entry_commands(entry: dict) -> set[str]:
 
 
 def _entry_entrypoints(entry: dict) -> set[str]:
-    """Which cairn hook entrypoints does this hook entry carry?
-
-    Handles both on-disk shapes: Claude Code's nested
-    ``{"matcher": ..., "hooks": [{"command": ...}]}`` and Cursor's flat
-    ``{"command": ..., "timeout": ...}``. Matches on the module-qualified
-    ``cairn.hooks.claude_hooks <entrypoint>`` marker (and the legacy
-    ``src.hooks.claude_hooks`` one), so the python path it was written with
-    doesn't matter.
-    """
+    """Return cairn hook entrypoint names carried by a client hook entry."""
     cmds: list[str] = []
     inner = entry.get("hooks", [])
     if isinstance(inner, list):
@@ -338,14 +275,7 @@ def _entry_entrypoints(entry: dict) -> set[str]:
 
 
 def _deep_merge(existing: dict, addition: dict, *, config_key: str = "mcpServers") -> dict:
-    """Deep-merge addition into existing. For lists under hooks.<Event>, append
-    new entries (dedup by command substring). For dicts, recurse. For mcpServers
-    or mcp.servers (ZCode), replace the named server.
-
-    Non-object values under the keys we merge into (a user's ``"mcp": true``,
-    say) are treated as absent rather than crashed on -- though
-    ``_merge_json_file`` backs such a file up before we ever get here.
-    """
+    """Deep-merge configuration while replacing named MCP servers."""
     out = dict(existing)
     for key, val in addition.items():
         if key == "mcpServers" and isinstance(val, dict):
@@ -401,15 +331,7 @@ def _rm_if_exists(path: Path, res: InstallResult) -> None:
 
 
 def _rm_tree_if_cairn(path: Path, res: InstallResult) -> None:
-    """Remove a dir tree only if it is cairn-scoped.
-
-    All callers target a directory *named* ``cairn`` (e.g.
-    ``.claude/skills/cairn``). The name check is the guard the function's name
-    promises: without it a future caller passing a broader path (say
-    ``.claude`` itself) would ``rmtree`` the user's whole directory. If the
-    final path component isn't ``cairn``, refuse and record a note rather than
-    delete something that isn't ours.
-    """
+    """Remove a cairn-named directory tree, refusing any broader path."""
     if not (path.is_dir() and path.exists()):
         return
     if path.name != "cairn":
@@ -423,15 +345,7 @@ def _rm_tree_if_cairn(path: Path, res: InstallResult) -> None:
 
 
 def _rm_if_ours(path: Path, expected: str, res: InstallResult) -> None:
-    """Remove ``path`` only if it is byte-identical to what the installer writes.
-
-    Install skips files that already exist (unless --force), so a user file
-    that merely shares a cairn filename was never ours. Comparing against the
-    installer's generated content keeps uninstall from deleting a file the
-    installer itself declined to overwrite. A mismatch (user-edited, or
-    written by an older cairn version) is left in place and recorded in
-    ``skipped`` -- remove it manually if it really is cairn's.
-    """
+    """Remove path only when its bytes equal generated installer content."""
     if not path.exists():
         return
     try:
@@ -459,11 +373,7 @@ def _strip_mcp(path: Path, res) -> None:
 
 
 def _strip_mcp_zcode(path: Path, res) -> None:
-    """Remove the cairn server from a .zcode/config.json, leaving others intact.
-
-    Cleans up empty ``mcp`` and ``servers`` keys when cairn was the only
-    server, so the file stays tidy.
-    """
+    """Remove cairn from ZCode config and prune emptied MCP containers."""
     data = _load_json_or_none(path)
     if not isinstance(data, dict):
         return
@@ -504,11 +414,7 @@ def _strip_mcp_kilo(path: Path, res) -> None:
 
 
 def _strip_mcp_opencode(path: Path, res) -> None:
-    """Remove the cairn server from an opencode.json, leaving others intact.
-
-    Also strips a stray ``.opencode/mcp.json`` if an earlier installer wrote one
-    (opencode itself does not read it).
-    """
+    """Remove cairn from OpenCode config and its legacy MCP file."""
     _strip_mcp_kilo(path, res)
     # Cleanup: remove a stray .opencode/mcp.json if it carries our server.
     stray = path.parent / ".opencode" / "mcp.json"
@@ -523,12 +429,7 @@ def _strip_mcp_opencode(path: Path, res) -> None:
 
 
 def _strip_hooks(path: Path, res: InstallResult) -> None:
-    """Remove cairn hook entries from .claude/settings.json.
-
-    Matches on `cairn.hooks.claude_hooks <entrypoint>` so it strips entries
-    regardless of how the python path was written (absolute, venv-relative,
-    cd-prefixed).
-    """
+    """Remove cairn hook entries across every historical command spelling."""
     data = _load_json_or_none(path)
     if not isinstance(data, dict):
         return

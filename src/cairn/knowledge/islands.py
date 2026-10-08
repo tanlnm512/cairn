@@ -56,12 +56,7 @@ def doc_components(conn, bundle: OKFBundle) -> List[List[str]]:
 
 
 def doc_islands(conn, bundle: OKFBundle) -> List[List[str]]:
-    """Pair-units worth a doc-link task, in deterministic order.
-
-    Two-doc components queue as themselves; singletons pair in id order
-    (first with second, third with fourth, ...). Larger components are
-    internally connected already and never queue.
-    """
+    """Return deterministic disconnected doc pairs worth linking."""
     units: List[List[str]] = []
     singletons: List[str] = []
     for component in doc_components(conn, bundle):
@@ -75,12 +70,7 @@ def doc_islands(conn, bundle: OKFBundle) -> List[List[str]]:
 
 
 def queue_doc_link_tasks(conn, bundle: OKFBundle) -> int:
-    """Queue one doc-link task per island pair without one yet.
-
-    Dedup key: the island's member set vs the facts of every existing
-    doc-link task regardless of status (a completed or dropped task still
-    covers its island). Returns the number of tasks created.
-    """
+    """Queue one doc-link task per uncovered island pair."""
     from cairn.llm.tasks import create_task
 
     covered = _queued_member_sets(bundle)

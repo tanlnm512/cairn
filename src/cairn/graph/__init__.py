@@ -34,21 +34,11 @@ def __getattr__(name):
         globals()["rrf_fuse"] = _r
         return _r
     if name == "note_contention":
-        # Cross-cutting lock-contention observability helper, called at every
-        # ``except sqlite3.OperationalError`` swallow site -- including
-        # higher-layer ones (memory/promotion.py). Exposed here so L4/L5 reach
-        # it via the graph public API rather than the internal schema submodule
-        # (enforced by test_layer_direction).
         from .schema import note_contention as _nc
 
         globals()["note_contention"] = _nc
         return _nc
     if name == "embeddings":
-        # Use import_module (not `from . import embeddings`) to avoid
-        # re-triggering this __getattr__ recursively: `from . import embeddings`
-        # looks up the `embeddings` attribute on the package, which re-enters
-        # __getattr__ before the submodule is cached. import_module resolves the
-        # submodule directly and caches it on sys.modules.
         import importlib
 
         _emb = importlib.import_module(".embeddings", __package__)

@@ -91,11 +91,7 @@ def _percentile(values: list[float], pct: float) -> float | None:
 
 
 def _latest_event_reason(conn, name: str) -> str | None:
-    """Reason attr of the most recent ``name`` event, defensively read.
-
-    Returns None when the table is missing, empty, or the attrs JSON is
-    unreadable -- callers use it only to enrich a detail string.
-    """
+    """Reason attr of the most recent ``name`` event; None when missing, empty, or unreadable."""
     if conn is None:
         return None
     try:
@@ -115,21 +111,12 @@ def _latest_event_reason(conn, name: str) -> str | None:
 
 
 # --- the 11 checks ---------------------------------------------------------
-# Each takes the live connection (None only inside _db_unavailable_results,
-# which short-circuits before these run for the DB-dependent checks) and
-# returns a result dict. Every DB read is bounded + defensive: a missing table
-# or read-only store degrades to WARN with the reason, never raises.
+# Each takes the live connection and returns a result dict; DB reads are
+# bounded and defensive — degrade to WARN with the reason, never raise.
 
 
 def _check_schema(conn) -> dict:
-    """1. Schema: bounded integrity probe (PRAGMA quick_check).
-
-    FAIL on an integrity error (corrupt DB / not-a-database); PASS otherwise.
-    ``quick_check`` is the bounded variant of integrity_check -- it skips
-    index B-tree verification, so it scales to large DBs without a full
-    re-walk. When the store itself can't be opened, this check is never
-    reached; the command-level handler FAILs it with the open error instead.
-    """
+    """1. Schema: bounded integrity probe (PRAGMA quick_check); FAIL on integrity error, PASS otherwise."""
     try:
         row = conn.execute("PRAGMA quick_check").fetchone()
     except sqlite3.DatabaseError as e:
@@ -141,14 +128,7 @@ def _check_schema(conn) -> dict:
 
 
 def _check_embeddings(conn) -> dict:
-    """2. Embeddings backend: real vs hash (degraded retrieval).
-
-    WARN when the dep-free hash backend is silently active -- configured
-    ``local`` (the default) but sentence-transformers isn't installed, so
-    vectors carry token-overlap signal, not real semantics. PASS when a real
-    backend is active OR the user explicitly chose ``hash`` (an informed
-    choice, never a degradation). Mirrors ``embeddings.is_hash_fallback()``.
-    """
+    """2. Embeddings: WARN only on the silent hash fallback; explicit hash or a real backend PASSes."""
     from ...graph.embeddings import backend_name, is_hash_fallback
 
     # Report the effective backend, including config and defaults.
@@ -164,26 +144,7 @@ def _check_embeddings(conn) -> dict:
 
 
 def _check_ann(conn) -> dict:
-    """3. ANN: sqlite-vec loaded / indexed / fresh.
-
-    PASS when sqlite-vec is explicitly disabled (``CAIRN_ANN_BACKEND=off`` --
-    an informed choice, not a degradation) or loads cleanly with a fresh
-    index. WARN when sqlite-vec is *expected* (env unset or ``=sqlite-vec``,
-    the default) but unavailable (not installed / load failed): semantic_search
-    then falls back to the slower brute-force cosine scan. Also WARNs on two
-    index-level states the load probe can't see: embeddings exist for the
-    current model but no vec0 table was ever built (the index-less state
-    emitted as ``ann_fallback reason=no_index``), and a vec0 table whose row
-    count no longer matches the embeddings table (index drift). Drift has
-    two reported directions: too FEW vec rows means recent embeddings
-    were never indexed (recall loss), too MANY means stale entries survived
-    a deletion (which can mis-pair a reused rowid with an unrelated vector).
-    Recovery is instructed, not performed -- doctor is read-only by
-    contract, so the heal is ``cairn embed``'s final ``rebuild_index``.
-    Uses ``ann_backend_enabled()`` plus live ``try_load`` / ``index_exists``
-    / ``index_row_count`` probes, and surfaces the latest ``ann_fallback``
-    event reason when one was recorded.
-    """
+    """3. ANN: sqlite-vec expected/loaded/indexed/fresh; WARN on unavailable, missing, or drifted indexes; never heals."""
     from ...graph.ann_index import (
         ann_backend_enabled,
         configured_backend,
@@ -217,10 +178,8 @@ def _check_ann(conn) -> dict:
             f"sqlite-vec importable but load failed ({reason}) -- brute-force scan in use",
             hint="install once: `cairn embed --install-deps`",
         )
-    # Extension loads fine -- probe the index itself. Both probes are moot
-    # when there are no embeddings for the current model (a fresh/unembedded
-    # store legitimately has no vec0 table; that's the embeddings check's
-    # territory, not a missing index).
+    # Extension loads fine -- probe the index itself; with no embeddings for
+    # the current model a fresh store legitimately has no vec0 table.
     try:
         emb_n = embed_count(conn) if conn is not None else 0
     except Exception:
@@ -238,12 +197,9 @@ def _check_ann(conn) -> dict:
         )
     idx_n = index_row_count(conn, model) if conn is not None else None
     if idx_n is not None and idx_n != emb_n:
-        # Direction matters. Fewer vec rows than embeddings is a recall loss
-        # (recent symbols invisible to ANN). More is worse: the stale entries
-        # were left by a delete path that didn't sync (or a crash between an
-        # embeddings write and its vec sync), and because SQLite can REUSE a
-        # freed embeddings rowid, a stale entry can pair a fresh embedding
-        # with an unrelated vector -- wrong results, not just missing ones.
+        # Fewer vec rows than embeddings is recall loss; more is worse — stale
+        # entries can pair a reused rowid with an unrelated vector (wrong
+        # results, not just missing ones).
         if idx_n < emb_n:
             detail = (
                 f"ANN index stale: {emb_n} embedding(s) vs {idx_n} indexed "
@@ -256,11 +212,8 @@ def _check_ann(conn) -> dict:
                 f"({idx_n - emb_n} stale vector(s)) -- deleted symbols can "
                 "shadow new ones via reused rowids"
             )
-        # The heal is instructed, not performed: doctor is read-only by
-        # contract (see the command docstring), so recovery stays with
-        # `cairn embed`, whose final rebuild_index realigns the whole table.
-        # Unchanged chunks are skipped by embed_all, so the "re-embed" is in
-        # practice just the rebuild.
+        # Doctor is read-only by contract: instruct the heal (`cairn embed`,
+        # whose final rebuild_index realigns the table) rather than perform it.
         return _result(
             "ann",
             _WARN,
@@ -271,23 +224,7 @@ def _check_ann(conn) -> dict:
 
 
 def _check_embed_server(conn) -> list[dict]:
-    """4. Embed server: probe / model-listing / parity sample / latency.
-
-    One informational PASS line unless a server-family backend (server, omlx,
-    ollama) is configured -- no network I/O happens and the default-configured
-    output stays byte-stable. With a server backend, doctor
-    re-evaluates by design: reset_backend_cache() drops the cached probe and
-    stamp resolution (and any session adoptions) before probing. Verdicts: an
-    unreachable server or a missing configured model FAILs with a remediation
-    hint; a failed parity sample WARNs with the measured mean (advice --
-    re-embed, not broken); otherwise PASS naming host, model, and the latency
-    bucket of one tiny embed round-trip. Zero stored rows under the current
-    stamp makes the parity arm vacuous (check_parity's contract), so a fresh
-    install still PASSes. An active ladder degradation (recorded
-    earlier in this process) surfaces as an appended WARN entry naming
-    rung/reason/remediation -- sampled before the cache reset so
-    doctor reports it instead of erasing it.
-    """
+    """4. Embed server: probe/model/parity/latency; unreachable or missing model FAILs, parity failure WARNs, else PASS."""
     from urllib.parse import urlsplit
 
     from ...graph.embed_ladder import (
@@ -435,17 +372,7 @@ def _check_embed_server(conn) -> list[dict]:
 
 
 def _check_freshness(conn) -> dict:
-    """5. Freshness: pending_sync edits, interrupted rebuilds, last build age.
-
-    WARN when ``pending_sync`` has rows (the debounce window holds unindexed
-    edits), when ``repo_build_state`` holds a stale 'building' marker (a
-    single-repo rebuild crashed mid-flight and left the repo partial --
-    recovery is ``cairn build --repo <repo>``), or the last ``build_runs``
-    row is older than ``STALE_BUILD_DAYS``. PASS otherwise, including a fresh
-    install (no symbols, no builds). A graph with symbols but no
-    ``build_runs`` row (a pre-instrumentation DB) also WARNs so the gap is
-    visible.
-    """
+    """5. Freshness: WARN on pending_sync rows, interrupted 'building' markers, or stale/missing build history."""
     now = datetime.now(timezone.utc)
     parts: list[str] = []
     status = _PASS
@@ -461,10 +388,8 @@ def _check_freshness(conn) -> dict:
         status = _WARN
         parts.append(f"{pending_n} pending-sync file(s), oldest {_age_str(now, oldest)}")
 
-    # Interrupted single-repo rebuild: a 'building' marker nobody cleared.
-    # The marker is only written by the on-disk repo path, so rows here mean
-    # that process died mid-rebuild (builder.repo_build_in_progress is the
-    # programmatic reader).
+    # Interrupted single-repo rebuild: a 'building' marker nobody cleared
+    # means the on-disk repo path died mid-rebuild.
     try:
         interrupted = [
             r[0]
@@ -517,12 +442,7 @@ def _check_freshness(conn) -> dict:
 
 
 def _check_parse_errors(conn) -> dict:
-    """6. Parse errors: count from parse_errors (newest 5 in detail).
-
-    WARN when >0 -- a parse error means a file was skipped during indexing, so
-    the graph is incomplete for that file. Closes the gap that parse_errors was
-    written by the builder/incremental but read by no command.
-    """
+    """6. Parse errors: WARN when >0 (each skipped file leaves the graph incomplete); newest 5 in detail."""
     try:
         total = conn.execute("SELECT COUNT(*) FROM parse_errors").fetchone()[0]
     except Exception:
@@ -549,14 +469,7 @@ def _check_parse_errors(conn) -> dict:
 
 
 def _check_concurrency(conn) -> dict:
-    """7. Concurrency: lock_contention events (last 7d) + stray-sweep total.
-
-    WARN when any ``lock_contention`` event was recorded in the last
-    ``CONTENTION_WINDOW_DAYS`` (cross-process lock waits absorbed by
-    busy_timeout). ``stray_swept`` totals are reported
-    in the detail but are NOT a WARN trigger: sweeping strays is the
-    stdio-leak remediation *working*, not failing.
-    """
+    """7. Concurrency: WARN on lock_contention in the window; stray_swept totals report without warning."""
     cutoff = time.time() - CONTENTION_WINDOW_DAYS * 86400
     try:
         contention = conn.execute(
@@ -586,12 +499,7 @@ def _check_concurrency(conn) -> dict:
 
 
 def _check_tool_health(conn) -> dict:
-    """8. Tool health: per-tool error rate + p95 latency (last 7d).
-
-    WARN when ANY tool's error rate exceeds ``TOOL_ERROR_RATE_WARN`` or its p95
-    latency exceeds ``TOOL_P95_LATENCY_MS_WARN``. PASS when no metrics are
-    recorded (no MCP traffic yet) or every tool is within thresholds.
-    """
+    """8. Tool health: WARN on any tool's error rate or p95 latency over threshold; PASS with no metrics."""
     cutoff = time.time() - TOOL_HEALTH_WINDOW_DAYS * 86400
     try:
         tools = [
@@ -651,13 +559,7 @@ def _check_tool_health(conn) -> dict:
 
 
 def _knob_source(name: str, default: str) -> tuple[str, str]:
-    """Effective value and supplying layer for a CAIRN_EMBED_* knob.
-
-    Mirrors embeddings._config_or_env's precedence (env > config file
-    > default, non-string file values ignored) but also reports which layer
-    supplied the value, so doctor's echo cannot diverge from dashboard
-    truth.
-    """
+    """Effective value and supplying layer for a CAIRN_EMBED_* knob (env > config > default)."""
     from ...paths import get_config_value
 
     env = (os.environ.get(name) or "").strip()
@@ -670,17 +572,7 @@ def _knob_source(name: str, default: str) -> tuple[str, str]:
 
 
 def _check_memory_staleness(conn, db: str) -> dict:
-    """9. Memory staleness: tribal memories nobody references.
-
-    Counts tribal memory files older than ``MEMORY_REF_WINDOW_DAYS`` by file
-    mtime over ``<bundle>/memory/tribal/*.md`` (a stat per file, no YAML
-    parse), and ``memory_refs`` rows recorded inside the window. WARN when old
-    memories exist and zero references were recorded in that window (the tier
-    is write-only); PASS otherwise, reporting the reference count. The bundle
-    resolves from ``db``'s parent so the check audits the store ``--db``
-    names. Read-only and never raising: a missing tribal directory is a
-    fresh-install PASS; an unreadable bundle degrades to WARN with the reason.
-    """
+    """9. Memory staleness: WARN when old tribal memories exist with zero in-window references; never raises."""
     tribal_dir = Path(db).parent / ".knowledge" / "memory" / "tribal"
     cutoff = datetime.now(timezone.utc) - timedelta(days=MEMORY_REF_WINDOW_DAYS)
     try:
@@ -725,14 +617,7 @@ def _check_memory_staleness(conn, db: str) -> dict:
 
 
 def _check_config() -> dict:
-    """10. Config echo: the CAIRN_* knobs that alter behavior (informational).
-
-    Always PASS -- a transparency echo, not a health verdict. Lists the
-    effective runtime knobs so a doctor snapshot is self-describing. The
-    embedding knobs resolve env > config file > default: each echoes its
-    effective value plus the layer that supplied it. The API key reports
-    presence only -- its value is never echoed.
-    """
+    """10. Config echo (always PASS): effective CAIRN_* knobs with source layer; API key presence only."""
     knobs = [
         ("workers", os.environ.get("CAIRN_WORKERS", "<unset>")),
         ("read_only", os.environ.get("CAIRN_READ_ONLY", "<unset>")),
@@ -764,12 +649,9 @@ def _check_config() -> dict:
 # registration, spawn-probe, and endpoint findings; only a wrong existing store or an
 # unreachable endpoint FAILs.
 
-# Per-client MCP registration files the doctor audits -- exactly the config
-# paths ``check_installed`` consults (agent_install/detect.py): the files
-# ``install-agents`` writes plus each client CLI's own registration file
-# (claude via ``claude mcp add --scope user`` -> ~/.claude.json, droid via
-# ``droid mcp add`` -> ~/.factory/mcp.json). Workspace files are
-# cwd-relative; home files are relative to Path.home().
+# Per-client MCP registration files the doctor audits -- exactly the paths
+# check_installed consults (agent_install/detect.py); workspace files are
+# cwd-relative, home files are relative to Path.home().
 _REG_WS_FILES: dict[str, str] = {
     "claude": ".mcp.json",
     "cursor": ".cursor/mcp.json",
@@ -792,16 +674,7 @@ _REG_HOME_FILES: dict[str, tuple[str, ...]] = {
 
 
 def _client_config_paths(client: str) -> list[tuple[Path, str, bool]]:
-    """Config files that may hold ``client``'s cairn MCP registration.
-
-    Mirrors the per-client paths ``check_installed`` consults (detect.py):
-    the workspace file plus the client's home-level config(s); claude-desktop
-    is global-only via ``claude_desktop_config_path``. Returns (path, display,
-    workspace_owned) triples -- the display form (workspace-relative or
-    ``~/``-prefixed) keeps doctor details scrub-safe, and ``workspace_owned``
-    marks cwd-relative registration files (repo content, untrusted in a
-    cloned checkout) apart from user-owned home files.
-    """
+    """Config files that may hold ``client``'s registration: (path, scrub-safe display, workspace_owned) triples."""
     pairs: list[tuple[Path, str, bool]] = []
     if client in _REG_WS_FILES:
         rel = _REG_WS_FILES[client]
@@ -836,19 +709,7 @@ def _enumerate_registrations() -> list[tuple[str, Path, str, dict, bool]]:
 
 
 def _spawnable_workspace_entry(entry: dict) -> bool:
-    """True when a workspace-owned stdio entry is exactly the shape
-    ``cairn install-agents`` writes.
-
-    The spawn probe executes the entry's argv verbatim with the entry's env
-    merged over the process environment, and workspace-owned registration
-    files are repo content -- their author is untrusted in a cloned checkout,
-    and unlike the MCP clients reading the same files doctor has no approval
-    step. So the entry is spawnable only when the probe reduces to the known
-    read-only invocation: the PATH-resolved cairn binary (the ``python -m``
-    fallback is never spawnable -- ``-m`` puts the untrusted cwd on
-    sys.path), args exactly ``["serve"]`` (replaced by the read-only probe
-    args), and an env block limited to ``CAIRN_HOME``.
-    """
+    """True when a workspace-owned stdio entry is exactly the shape install-agents writes (untrusted otherwise)."""
     from ...agent_install import _registration_argv
     from ...agent_install._common import resolve_cg_command
 
@@ -889,31 +750,7 @@ _TARGET_SEP = "; install target db="
 def _registration_findings(
     db: str,
 ) -> tuple[list[tuple[str, str]], list[str], list[str]]:
-    """Sub-audit (b): client-registration consistency (mixed severity).
-
-    Per installed client's cairn registration:
-
-    * stdio -- the WRITTEN env block is inspected first (the spawn
-      probe pins the intended env over the written one, so it cannot see a
-      merely-missing entry): an env-less registration, or one not carrying
-      the effective home's env, WARNs advising ``cairn install-agents``.
-      Then verify_registration spawns the registration's exact binary+env
-      with the read-only probe args (cwd = this workspace) against the
-      doctor's own store (``db``, the store every other check audits): a
-      FAIL is recorded only when it provably resolves a different EXISTING
-      store (both stores named); a probe that errors, times out, or resolves
-      a store that does not exist on disk stays a WARN. Workspace-owned
-      registration files are repo content (untrusted in a cloned checkout)
-      and doctor has no user-approval step, so only an entry exactly in the
-      shape ``cairn install-agents`` writes is spawned; any other
-      command/args/env from such a file degrades to a WARN naming the file.
-    * SSE -- ``lifecycle.sse_responds`` probes the endpoint (bounded socket
-      read, no request beyond a root GET); unreachable => FAIL naming the
-      client and the endpoint.
-
-    Returns (findings, hints, sse display paths); the SSE list feeds the
-    platform/transport sub-audit (c).
-    """
+    """Sub-audit (b): stdio env/spawn-probe and SSE endpoint findings; returns (findings, hints, sse paths)."""
     from ...agent_install import _registration_argv, verify_registration
     from ...mcp_server import lifecycle
     from ...paths import cairn_home_env
@@ -1020,36 +857,7 @@ def _registration_findings(
 
 
 def _check_environment(db: str) -> dict:
-    """11. Environment wiring: store / registrations / platform / binary.
-
-    Status is the worst sub-audit (FAIL over WARN over PASS):
-
-    (a) resolved-store existence -- WARN with the ``cairn init`` + ``cairn
-        build`` hint when missing, mirroring _run_doctor's own missing-store
-        branch (WARN, not a second FAIL for the same root cause);
-    (b) registration consistency -- enumerates installed clients via
-        ``check_installed``; stdio registrations are env-inspected (stale
-        registrations WARN) and spawn-probed against this doctor's own store
-        via ``verify_registration`` (FAIL only on a provably different
-        EXISTING store, naming both) -- except that a workspace-owned
-        registration file is spawned only when the entry is exactly the
-        shape ``cairn install-agents`` writes, any other command/args/env
-        from such a file degrading to a WARN naming it (repo content is
-        untrusted in a cloned checkout); SSE registrations are probed with
-        ``lifecycle.sse_responds`` (unreachable endpoint => FAIL). All probes
-        are read-only and timeout-bounded;
-    (c) platform/transport -- WARN when an SSE registration exists but the
-        LaunchAgent daemon lifecycle is macOS-only (read through
-        lifecycle.is_macos so tests can drive the platform);
-    (d) binary coherence -- WARN when the binary registrations resolve
-        (``resolve_cg_command``) differs from the one the daemon lifecycle
-        launches (``lifecycle.cg_bin``), naming both.
-
-    Details are scrub-safe through ``_scrub_doctor``: relative/``~`` config
-    names, client names, the doctor's own ``--db`` (which the schema check
-    already echoes), and static remediation strings; absolute store paths a
-    probe verdict carries are redacted by the report path.
-    """
+    """11. Environment wiring: store/registrations/platform/binary; worst sub-audit status, scrub-safe details."""
     from ...agent_install._common import resolve_cg_command
     from ...mcp_server import lifecycle
 
@@ -1112,14 +920,7 @@ def _check_environment(db: str) -> dict:
 
 
 def _db_unavailable_results(error: Exception | None) -> list[dict]:
-    """Result set when the store can't be opened: schema FAILs, the rest WARN.
-
-    Config echo still PASSes (env/file only, independent of the store). Embeddings/
-    ANN/embed-server are reported unavailable too: when the store is broken
-    the backend state is moot until the store is fixed. This is what makes
-    doctor crash-proof against a missing / read-only / corrupt store:
-    degrade to WARN with the reason, never crash.
-    """
+    """Results when the store can't open: schema FAILs, DB-dependent checks WARN, config stays PASS."""
     msg = f"cannot open database: {error}"
     return [
         _result("schema", _FAIL, msg),
@@ -1136,14 +937,7 @@ def _db_unavailable_results(error: Exception | None) -> list[dict]:
 
 
 def _run_doctor(db: str) -> list[dict]:
-    """Execute the 11 checks against ``db``. Never raises.
-
-    A store that can't be opened FAILs the schema check and degrades the
-    remaining DB-dependent checks to WARN. A store whose path doesn't EXIST
-    is reported the same way instead of being silently created: doctor is a
-    read-only diagnostic, and creating a fresh store would mask a typo'd
-    ``--db`` with an all-PASS "fresh install".
-    """
+    """Execute the 11 checks against ``db``; never raises and never creates a missing store."""
     conn = None
     db_error: Exception | None = None
     if not Path(db).exists():
@@ -1185,11 +979,7 @@ _FIX_TRADEOFF = (
 
 
 def _render_doctor(results: list[dict], display) -> None:
-    """Render one block per check, status-prefixed and color-coded.
-
-    Dynamic detail/name/hint text is markup-escaped so a file path containing
-    ``[`` can't corrupt rich's markup (same rationale as ``display._value``).
-    """
+    """Render one block per check; dynamic text is markup-escaped so paths cannot corrupt rich markup."""
     from rich.markup import escape
 
     for r in results:

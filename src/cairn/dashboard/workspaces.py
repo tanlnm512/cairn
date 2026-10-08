@@ -27,14 +27,7 @@ PROBE_MAX_OPENS = 100
 
 
 def _load_registry(cairn_home: Path) -> dict:
-    """Read the {workspace_abs_path: key} registry under ``cairn_home``.
-
-    Same semantics as :func:`cairn.paths._load_registry` (absent, unparseable,
-    or non-dict registry → empty dict) but parameterized by home so callers
-    and tests are never bound to the import-time CAIRN_HOME. UnicodeDecodeError
-    (a ValueError, like JSONDecodeError) is also swallowed: classifying stores
-    must never raise on a corrupt registry.
-    """
+    """Read a registry under the supplied home, degrading corrupt input to empty."""
     registry_file = cairn_home / REGISTRY_FILE.name
     if not registry_file.exists():
         return {}
@@ -46,20 +39,7 @@ def _load_registry(cairn_home: Path) -> dict:
 
 
 def enumerate_stores(cairn_home: Path) -> List[dict]:
-    """Every local store: the union of registry entries and store dirs.
-
-    Returns ``[{"key", "path", "state"}, ...]`` sorted populated-first, then
-    by key. ``path`` is the registered workspace path verbatim, or None for
-    an orphan store dir no registry entry points at.
-
-    Classification is purely filesystem-based: ``populated`` = key dir
-    exists with a ``.kg`` file; ``empty`` = key dir exists, no ``.kg``;
-    ``missing`` = registered key whose dir does not exist. The
-    ``unreadable`` refinement (a ``.kg`` that fails a read-only open) is
-    the probe's job, not the enumerator's. A missing/unlistable
-    ``cairn_home`` yields an empty list; this function never raises and
-    never writes.
-    """
+    """Return the registry/directory store union with filesystem-only classification."""
     if not cairn_home.is_dir():
         return []
 
@@ -96,12 +76,7 @@ def enumerate_stores(cairn_home: Path) -> List[dict]:
 
 
 def _stat_kg(cairn_home: Path, key: str) -> tuple:
-    """``(size_bytes, mtime)`` of ``<home>/<key>/.kg``; ``(None, None)`` if absent.
-
-    Free (no open); mtime is the freshness proxy for "last-indexed" — the
-    SQLite header does not record a trustworthy indexed-at timestamp, and
-    opening every store just to ask would defeat the open budget.
-    """
+    """Return .kg size and mtime, or Nones when absent—no DB open."""
     try:
         st = (cairn_home / key / _DB_FILENAME).stat()
     except OSError:
@@ -110,12 +85,7 @@ def _stat_kg(cairn_home: Path, key: str) -> tuple:
 
 
 def _count_tool_calls(kg_path: Path) -> Optional[int]:
-    """Tool-call count via ONE mode=ro open; ``None`` = the open/query failed.
-
-    0 vs None is load-bearing: 0 is a real count (including a store from
-    before ``tool_metrics`` existed — missing table reads as 0); None means
-    corrupt DB / unusable open and the caller reclassifies to "unreadable".
-    """
+    """Return one read-only call count: zero is valid and None means unreadable."""
     conn = None
     try:
         conn = get_db(str(kg_path), read_only=True)
@@ -133,13 +103,7 @@ def _count_tool_calls(kg_path: Path) -> Optional[int]:
 
 
 def _probe(cairn_home: Path, entry: dict, count_allowed: bool) -> dict:
-    """One store row: entry merged with size/freshness and (maybe) call count.
-
-    Only "populated" rows ever open a DB, and only when ``count_allowed``
-    (the probe_stores budget). A failed open reclassifies the state to
-    "unreadable" keeping the stat-derived fields — the row never carries
-    an exception out.
-    """
+    """Return one store row with stats and optional budgeted call count."""
     row = dict(entry)
     size_bytes, last_modified = _stat_kg(cairn_home, row["key"])
     row["size_bytes"] = size_bytes
@@ -164,25 +128,14 @@ def _probe(cairn_home: Path, entry: dict, count_allowed: bool) -> dict:
 
 
 def probe_store(cairn_home: Path, entry: dict) -> dict:
-    """Probe one :func:`enumerate_stores` row (unbudgeted single-store form).
-
-    Returns the entry merged with ``size_bytes``/``last_modified`` (os.stat
-    on the ``.kg``; None when absent), ``call_count`` (one read-only open,
-    populated rows only) and ``counts_capped`` (False — no budget applies).
-    """
+    """Probe one store row without the batch open budget."""
     return _probe(cairn_home, entry, count_allowed=True)
 
 
 def probe_stores(
     cairn_home: Path, entries: List[dict], max_opens: int = PROBE_MAX_OPENS
 ) -> List[dict]:
-    """:func:`probe_store` over ``entries`` in list order, ≤ ``max_opens`` DB opens.
-
-    Rows past the cap keep their filesystem stats with ``call_count`` None
-    and ``counts_capped`` True — the degradation stays visible.
-    Failed opens count against the budget too: the cap bounds work, not
-    just successes.
-    """
+    """Probe rows in order while bounding every attempted DB open."""
     rows: List[dict] = []
     opens_used = 0
     for entry in entries:

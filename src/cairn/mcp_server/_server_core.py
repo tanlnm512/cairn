@@ -26,42 +26,19 @@ from cairn.paths import resolve_store
 
 
 # --- Lifespan + shared state ----------------------------------------------
-#
-# Config resolution: every tool resolves the DB path, knowledge path, and
-# read-only flag through the module-level ``_conn()`` / ``_store()`` /
-# ``_read_only_mode()`` helpers below, which read ``CAIRN_*`` env vars (set by
-# ``cairn serve``) or fall back to the workspace store. This is the single
-# source of truth — there is intentionally no per-request ``AppContext``
-# threaded through ``ctx.request_context.lifespan_context``. Per-request
-# config, if ever needed, means wiring ``ctx: Context`` through the tools and
-# reviving a lifespan context.
 
 
 @asynccontextmanager
 async def app_lifespan(server: FastMCP):
-    """Minimal lifespan: FastMCP requires one for startup/shutdown hooks.
-
-    Yields nothing — tools resolve config via ``_conn()``/``_store()``, not
-    via the lifespan context (see the note above).
-    """
+    """Minimal lifespan: yields nothing; tools resolve config via module helpers."""
     try:
         yield None
     finally:
         pass
 
 
-# The single FastMCP instance every tools_*.py module decorates. Imported as
-# `from ._server_core import mcp` so @mcp.tool() decorators attach here.
-# log_level is pinned to WARNING so constructing this singleton (imported by
-# every CLI invocation) doesn't reconfigure the root logger and clobber other
-# commands' output.
-#
-# mcp's own Settings.lifespan field has an unresolved forward reference to
-# FastMCP (the mcp SDK never calls model_rebuild() after FastMCP is defined),
-# so pydantic-settings warns on every construction (on versions that define
-# IncompleteFieldDefinitionWarning). Upstream bug, harmless -- suppressed
-# narrowly so it doesn't fire on every CLI invocation. On older pydantic-
-# settings that doesn't define the warning class, the filter is skipped.
+# The single FastMCP instance every tools_*.py module decorates; log_level is
+# pinned so this import-time singleton never reconfigures the root logger.
 with warnings.catch_warnings():
     if IncompleteFieldDefinitionWarning is not None:
         warnings.filterwarnings("ignore", category=IncompleteFieldDefinitionWarning)
@@ -69,20 +46,12 @@ with warnings.catch_warnings():
 
 
 def _store():
-    """Resolve the central store for this workspace.
-
-    Honors CAIRN_DB / CAIRN_KNOWLEDGE if set; otherwise resolves from the
-    workspace context.
-    """
+    """Resolve the central store, honoring CAIRN_DB / CAIRN_KNOWLEDGE overrides."""
     return resolve_store()
 
 
 def _read_only_mode() -> bool:
-    """True if this server process is serving read-only (no write lock).
-
-    Set by `cairn serve run --read-only` via the CAIRN_READ_ONLY env var. When
-    true, _conn() opens the DB read-only so it can never contend with writers.
-    """
+    """True when this server process serves read-only via CAIRN_READ_ONLY."""
     return os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes")
 
 
@@ -137,16 +106,7 @@ def _pooling_enabled() -> bool:
 
 
 def _conn():
-    """Open a SQLite connection to the graph DB for this workspace.
-
-    Read-only when CAIRN_READ_ONLY is set; read-write otherwise. Callers that
-    MUST write real data should call _rw_conn() instead so the requirement is
-    explicit at the call site.
-
-    Pooled per (thread, db path): the returned object's ``close()`` is a
-    no-op release (see _PooledConnection). Set CAIRN_CONN_POOL=0 for the
-    unpooled per-call behaviour.
-    """
+    """Open this workspace's graph DB; pooled per thread, and write tools use _rw_conn()."""
     db_path = os.environ.get("CAIRN_DB") or str(_store().db)
     if not _pooling_enabled():
         return get_db(db_path, read_only=_read_only_mode())
@@ -190,12 +150,7 @@ def _conn():
 
 
 def _rw_conn():
-    """Open a writable SQLite connection, even in read-only server mode.
-
-    For write tools whose *purpose* is to write. In a read-only daemon this
-    will contend with the CLI writer and can fail with "database is locked",
-    surfaced as an error string.
-    """
+    """Open a writable connection even in read-only server mode (write-purpose tools only)."""
     return get_db(os.environ.get("CAIRN_DB") or str(_store().db), read_only=False)
 
 
@@ -218,20 +173,7 @@ def _repo_of(conn, name: str) -> str:
 
 
 def _staleness_banner(conn, file_paths) -> str:
-    """Return a staleness banner if any of ``file_paths`` has an unindexed edit
-    pending in the ``pending_sync`` table; empty string otherwise.
-
-    NOTE: ``pending_sync`` is populated by the live watcher
-    (``watcher.FileWatcherService``, started by ``cairn serve`` when the
-    ``[watch]`` extra's ``watchdog`` is importable): it inserts rows on
-    debounced file events and ``reindex_paths`` deletes them as each file is
-    reindexed, so this banner fires while a save is inside the debounce/
-    reindex window. Without ``watchdog`` (or with ``CAIRN_WATCH=0``) no rows
-    are ever written and the banner stays inert -- correct, just silent.
-
-    Guarded: when ``pending_sync`` is empty or the table is absent, this adds
-    effectively zero latency (a single indexed ``SELECT ... WHERE path IN (...)``).
-    """
+    """Return a staleness banner when any file path has an unindexed edit pending; empty otherwise."""
     paths = [p for p in file_paths if p]
     if not paths:
         return ""
@@ -261,12 +203,7 @@ def _staleness_banner(conn, file_paths) -> str:
 
 
 def _embed_degradation_footnote() -> str:
-    """The degradation footnote for MCP query-tool results.
-
-    Cached-state read only (zero side effects -- never evaluates the ladder);
-    "" when no degradation is active, else one line naming the rung, reason,
-    and remediation.
-    """
+    """Cached-state degradation footnote; empty when no embedding degradation is active."""
     from cairn.graph.embed_ladder import degradation_footnote
 
     return degradation_footnote()
@@ -280,13 +217,7 @@ def _append_embed_degradation_footnote(text: str) -> str:
 
 
 def _build_age_str(started_at) -> str | None:
-    """Human-readable age of a ``build_runs.started_at`` value, or None.
-
-    ``started_at`` is ISO-8601 (``builder._iso_ts``). Mirrors the doctor
-    command's ``_age_str`` (cli/system.py) but kept local so the server surface
-    doesn't pull in CLI deps. None when the value is missing or unparseable so
-    the status resource reports ``never`` rather than crashing.
-    """
+    """Human-readable age of a build_runs.started_at value; None when missing or unparseable."""
     from datetime import datetime, timezone
 
     if not started_at:
@@ -308,33 +239,13 @@ def _build_age_str(started_at) -> str | None:
 
 
 def _health_block(conn) -> dict:
-    """Compute the ``health`` block for the status resource.
-
-    Read-only + crash-proof: every probe is guarded so a missing table or
-    unresolvable backend degrades to a null/0 field rather than raising --
-    the status resource must never fail because a telemetry table is absent on
-    an unmigrated DB. Mirrors the query shape ``cairn doctor`` uses
-    (cli/system.py) but kept self-contained; the status resource is a separate
-    surface and must not import CLI code.
-
-    Fields:
-    - degradations: active backend degradations (embeddings hash fallback; ANN
-      unavailable when sqlite-vec was *expected*). Empty list when healthy.
-    - pending_sync: count of pending_sync rows (0 when the table is absent).
-    - last_build_age: age string of the newest build_runs row, or None
-      ("never") when none recorded.
-    - error_rate_24h: tool error rate over the last 24h (errors / total).
-    - tool_calls_24h / tool_errors_24h: the numerator/denominator behind the
-      rate, surfaced so the number is interpretable.
-    """
+    """Compute the crash-proof health block: degradations, pending_sync, build age, 24h tool errors."""
     import time
 
     degradations: list[str] = []
 
-    # Embeddings: silent hash fallback (configured 'local' but no
-    # sentence-transformers). An explicit CAIRN_EMBED_BACKEND=hash is an
-    # informed choice, not a degradation -- is_hash_fallback() already
-    # accounts for that.
+    # An explicit CAIRN_EMBED_BACKEND=hash is an informed choice, not a
+    # degradation; is_hash_fallback() already accounts for it.
     try:
         from cairn.graph.embeddings import is_hash_fallback
 
@@ -343,16 +254,9 @@ def _health_block(conn) -> dict:
     except Exception:
         pass
 
-    # ANN: only a degradation when sqlite-vec was *expected* (env unset or
-    # '=sqlite-vec', the default) but unavailable. An explicit
-    # CAIRN_ANN_BACKEND=off is an informed choice -- mirrors the rationale in
-    # ann_index.ann_backend_enabled() and the doctor's _check_ann. Beyond the
-    # load probe, an embeddings-populated model with no vec0 table is also a
-    # degradation (semantic queries silently run the brute-force scan) --
-    # mirrors the doctor's index_exists probe. Row-count drift is the third
-    # state, direction-aware like the doctor: unindexed rows are a recall
-    # loss; stale extra rows can pair a REUSED rowid with an unrelated vector
-    # (wrong results, not just missing ones).
+    # ANN: a degradation only when sqlite-vec was expected but unavailable,
+    # missing its vec0 table, or drifted from the embed count; an explicit
+    # CAIRN_ANN_BACKEND=off is an informed choice.
     try:
         from cairn.graph.ann_index import (
             ann_backend_enabled,
@@ -432,11 +336,7 @@ def _health_block(conn) -> dict:
 
 
 def healthz_payload() -> dict:
-    """Bounded /healthz payload: status, store_reachable, read_only, degradations count.
-
-    Crash-proof: an unreachable store degrades to status "unhealthy" rather
-    than raising, and no field beyond the documented payload is exposed.
-    """
+    """Bounded /healthz payload; an unreachable store degrades to status "unhealthy"."""
     store_reachable = False
     degradations = 0
     try:
@@ -471,13 +371,7 @@ async def healthz_response(request):
 
 @mcp.resource("cairn://status")
 def status_resource() -> str:
-    """Index freshness + build stats for the current workspace.
-
-    Returns a compact status block: symbol/edge/file counts, edges-resolved
-    fraction, files pending reindex (staleness), the DB path, and a ``health``
-    block (backend degradations, pending-sync count, last-build age, 24h tool
-    error rate).
-    """
+    """Index freshness + build stats + a health block for the current workspace."""
 
     try:
         conn = _conn()
@@ -490,11 +384,8 @@ def status_resource() -> str:
     except Exception as e:
         return f"cairn status: unavailable ({e})"
 
-    # Staleness + health: read-only probes against the same DB. ``_health_block``
-    # is computed first because it guards every table read internally (a missing
-    # pending_sync/build_runs/tool_metrics table degrades to 0/never, never
-    # raises); the bare staleness SELECT below can still raise on an unmigrated
-    # DB, but by then health is already populated, so the block stays complete.
+    # _health_block is computed first: it guards every table read, while the
+    # bare staleness SELECT below can still raise on an unmigrated DB.
     stale_count = 0
     health: dict | None = None
     try:
@@ -527,10 +418,8 @@ def status_resource() -> str:
     if stats.get("skipped_total"):
         lines.append(f"  skipped files: {stats['skipped_total']}")
 
-    # Health block: backend degradations, pending-sync count,
-    # last-build age, 24h tool error rate. ``health`` is None only when the
-    # staleness/health connection itself failed -- then report unavailable
-    # rather than omitting the block, so the surface shape stays stable.
+    # ``health`` is None only when the connection itself failed -- report
+    # unavailable so the surface shape stays stable.
     lines.append("health:")
     if health is None:
         lines.append("  unavailable")

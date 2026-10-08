@@ -103,19 +103,8 @@ def validate_paths(db, knowledge, mark):
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def verify(doc_path, db, knowledge):
-    """Run the deterministic critic on a single compass/wiki/memory concept.
-
-    DOC_PATH is a concept id relative to the .knowledge/ bundle WITHOUT the
-    .md suffix (e.g. `compass/some_module`). Prints the verdict -- passed,
-    errors (blocking, e.g. a file ref not in the graph), warnings (non-blocking,
-    e.g. an unknown symbol ref), and quality score -- with each offending
-    reference listed.
-
-    Read-only: it does not write. This is the user-facing front to the critic
-    gate that promise #2 of the verification contract rests on. (For scanning
-    all compass concepts at once, see `cairn compass validate`; for stale-path
-    detection across all types, see `cairn validate-paths`.)
-    """
+    """Run the deterministic critic on one compass/wiki/memory concept (read-only).
+    DOC_PATH is a concept id relative to .knowledge/ without the .md suffix."""
     from cairn.compass.critic import critic_concept
     from cairn.okf.bundle import OKFBundle
 
@@ -140,5 +129,4 @@ def verify(doc_path, db, knowledge):
     # Non-zero exit on blocking errors so scripts/CI can detect a failed verify.
     if not result.passed:
         sys.exit(1)
-
 

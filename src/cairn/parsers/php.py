@@ -319,10 +319,7 @@ class PhpParser(BaseParser, TreeSitterParserBase):
         )
 
     def _split_object_creation(self, node: Node, source: bytes):
-        # object_creation_expression: 'new' (name | qualified_name) arguments.
-        # The constructed class may be qualified (``new App\Models\User``);
-        # store the last ``\``-segment so the edge can match the class's bare
-        # symbol name. (new Foo() -> Foo; new A\B\Foo() -> Foo.)
+        # Store the final namespace segment so new targets match bare symbols.
         for child in node.children:
             if child.type in ("name", "qualified_name"):
                 return self._bare_ns_name(
@@ -331,12 +328,7 @@ class PhpParser(BaseParser, TreeSitterParserBase):
         return None, None
 
     def _split_function_call(self, node: Node, source: bytes):
-        # function_call_expression: (name | qualified_name) arguments.
-        # A qualified call (``App\Utils\sanitize(...)``) stores the LAST
-        # `\`-segment as the target: the resolver keys on bare symbol names
-        # (symbols.name) and its import tier splits `/` and `.` but never `\`,
-        # so the full namespace path could never match the callee's stored
-        # name (cf. Java's ``com.example.Bar`` -> ``Bar`` for `new`).
+        # Qualified calls target their final namespace segment.
         for child in node.children:
             if child.type in ("name", "qualified_name"):
                 return self._bare_ns_name(
@@ -368,10 +360,7 @@ class PhpParser(BaseParser, TreeSitterParserBase):
         names = [c for c in node.children if c.type == "name"]
         if names:
             callee = self._node_text(names[-1], source).strip()
-            # Receiver: whatever appears before '::'. May be a name,
-            # qualified_name, or variable_name. Reduce a qualified receiver
-            # (``App\Models\User::find``) to its last ``\``-segment so the
-            # inferred receiver_type can match the class's bare symbol name.
+            # Reduce qualified static receivers to the bare class name.
             receiver_text = None
             for child in node.children:
                 if child.type == "::":
@@ -422,13 +411,7 @@ class PhpParser(BaseParser, TreeSitterParserBase):
     # ------------------------------------------------------------- import parse
 
     def _parse_use_imports(self, node: Node, source: bytes) -> List[Import]:
-        """namespace_use_declaration -> Import per clause.
-
-        Handles single (``use Foo\\A;``), multi (``use Foo\\A, Bar\\B;``), and
-        grouped (``use Foo\\{A, B};``) forms. For grouped, the prefix
-        namespace_name is prepended to each inner clause name. A clause's
-        ``alias`` field (``use Foo\\A as FA``) is recorded as local_alias.
-        """
+        """Return Imports for single, multi, and grouped PHP use clauses."""
         imports: List[Import] = []
         # Grouped form: namespace_use_group contains namespace_use_clause children.
         group = self._child_of_type(node, ("namespace_use_group",))
@@ -497,24 +480,10 @@ class PhpParser(BaseParser, TreeSitterParserBase):
 
     @staticmethod
     def _strip_leading_backslash(name: str) -> str:
-        """Strip a leading ``\\`` from a fully-qualified PHP name.
-
-        ``\\array_map`` and ``App\\Lib\\foo`` are FQN forms; the leading global
-        namespace separator would break bare-name resolution against a symbol
-        defined as ``array_map``.
-        """
+        """Return a PHP name without its global-namespace prefix."""
         return name.lstrip("\\")
 
     @classmethod
     def _bare_ns_name(cls, name: str) -> str:
-        """Reduce a PHP name to its last ``\\``-segment (the bare symbol name).
-
-        The graph resolver keys call edges on bare symbol names (``symbols.name``)
-        and its import-aware tier splits import paths on ``/`` and ``.`` but
-        never ``\\``, so a multi-segment qualified name (``App\\Utils\\sanitize``,
-        ``App\\Models\\User``) can never match a callee stored as ``sanitize`` /
-        ``User``. Call edges and inferred receiver types therefore use the last
-        segment; the qualified form stays available on the symbol's
-        qualified_name for navigation.
-        """
+        """Return the final backslash segment used by graph symbol matching."""
         return cls._strip_leading_backslash(name).rsplit("\\", 1)[-1]

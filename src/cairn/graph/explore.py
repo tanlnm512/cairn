@@ -16,22 +16,7 @@ logger = logging.getLogger(__name__)
 def _read_source_spans(
     conn: sqlite3.Connection, symbol_ids, budget: int
 ) -> dict:
-    """Read verbatim source spans for the given symbol ids, grouped by file.
-
-    Joins symbols -> files, opens each file once, and slices
-    ``[line_start-1 : line_end]`` for every symbol. Stops once cumulative line
-    count hits ``budget`` (a soft cap — the file currently being read is
-    finished before stopping so a single symbol's lines aren't truncated mid-
-    span). Returns ``{file_path: [{"symbol", "kind", "line_start", "line_end",
-    "repo", "lines": [str, ...]}]}``.
-
-    The stored ``file_path`` is repo-relative (portable); it is resolved to an
-    absolute path via ``resolve_file_path`` before opening. The dict key stays
-    the stored relative path so callers (and the agent) see portable paths.
-
-    Missing files / read errors degrade gracefully: the symbol's entry is
-    omitted, never crashes the caller.
-    """
+    """Read verbatim source spans for the given symbol ids, grouped by file."""
     if not symbol_ids:
         return {}
     placeholders = ",".join("?" for _ in symbol_ids)
@@ -90,19 +75,7 @@ def _read_source_spans(
 def _ambiguous_dispatch(
     conn: sqlite3.Connection, target_names
 ) -> list:
-    """Surface ``resolution='ambiguous'`` edges grouped by target.
-
-    Ambiguous edges are left unresolved by the resolver (NULL ``target_id``)
-    when more than one candidate existed — e.g. an interface call with several
-    impls. These are invisible to precise ``get_callers`` (which filters on
-    resolved ``target_id``) and to ``impact_analysis``; this helper makes them
-    queryable so ``explore`` can show "this call could dispatch to any of
-    these impls".
-
-    Returns ``[{"dispatches_to": str, "candidates": [caller_name, ...]}]``,
-    one entry per distinct ``target_name`` that has at least one ambiguous
-    caller edge.
-    """
+    """Surface ``resolution='ambiguous'`` edges grouped by target."""
     target_names = [t for t in target_names if t]
     if not target_names:
         return []
@@ -131,31 +104,8 @@ def explore(
     max_nodes: int = 20,
     max_source_lines: int = 400,
 ) -> dict:
-    """One-call answer to "how does X work": matching source + call paths +
-    blast radius + ambiguous-dispatch hops.
-
-    A thin orchestrator over existing query primitives:
-
-    1. **Seed** via FTS5 search (bm25-ranked) — the most relevant symbols for
-       ``query``.
-    2. **Neighborhood** — for each seed, 1-hop callers + callees (precise
-       resolution; ``resolution='exact'`` edges only, by default).
-    3. **Source spans** — verbatim line-numbered source read from disk for
-       seeds + neighbors, capped at ``max_source_lines`` total lines.
-    4. **Blast radius** — shallow ``impact_analysis`` (depth 2) per seed;
-       total count + top callers.
-    5. **Ambiguous dispatch** — ``resolution='ambiguous'`` edges whose
-       ``target_name`` matches a seed; the differentiator vs grep.
-
-    Returns a dict with keys: ``seeds``, ``files``, ``call_paths``,
-    ``blast_radius`` (per seed name), ``dispatch_hops``. The MCP tool layer
-    renders this to plain text; the dict shape is stable for direct callers
-    (CLI, tests).
-    """
-    # Local import to avoid an import cycle: semantic_search imports
-    # search_symbols from this module's sibling (lexical), and at module load
-    # time that's fine, but semantic_search itself is heavy (embeddings +
-    # reranker + ann) and is only needed on the fusion path below.
+    """Return source, call paths, blast radius, and ambiguous dispatch for a query."""
+    # Semantic search loads only on the fusion path.
     from .semantic import semantic_search
 
     # Step 1: seeds via FTS5 search.
@@ -196,10 +146,7 @@ def explore(
             elif emb.embed_count(conn) <= 0:
                 _sem_off_reason = "no_embeddings"
             else:
-                # explore's quality story is "FTS5 seeds + optional semantic
-                # expansion." Under the dep-free hash fallback the semantic
-                # expansion carries only token-overlap signal -- flag it once so
-                # the caller knows the seed set may be weaker than it looks.
+                # Hash vectors make semantic expansion token-overlap only.
                 emb.warn_hash_fallback_once(logger, context="explore")
                 sem_rows = semantic_search(conn, query, limit=max_nodes)
                 seen = set(seed_ids)
@@ -234,12 +181,7 @@ def explore(
                 logger.debug("explore semantic_unavailable emit failed", exc_info=True)
 
     if not seeds:
-        # No seed symbols anywhere -> the query matched nothing. Emit a durable
-        # empty_result so the empty-result rate is measurable per
-        # query kind, not just for semantic_search. Best-effort (never raises):
-        # telemetry is analytics. explore() has a single non-bench caller (the
-        # MCP explore tool), so this engine-layer seam is per-tool -- it cannot
-        # double-count against the shared search_symbols primitive.
+        # Empty explore results emit one per-tool analytics event.
         try:
             from cairn.telemetry import EMPTY_RESULT, emit as _emit
 

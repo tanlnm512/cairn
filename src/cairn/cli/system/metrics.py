@@ -23,21 +23,7 @@ _log = logging.getLogger(__name__)
 @click.option("--tasks", "tasks_flag", is_flag=True,
               help="LLM task-queue lifecycle: events by kind and task type.")
 def metrics(db, tool_name, as_json, builds_flag, quality_flag, contention_flag, tasks_flag):
-    """Report MCP tool metrics and telemetry trends.
-
-    With no flag, aggregates ``tool_metrics`` (calls / avg ms / errors) -- the
-    original behavior, unchanged. The extension flags render from the
-    telemetry tables:
-
-      --builds      recent ``build_runs`` rows with the resolution mix
-      --quality     empty-result rate, truncations, semantic backend mix
-      --contention  ``lock_contention`` events grouped by site
-      --tasks       ``task_lifecycle`` events: counts by event (claimed /
-                    completed / revised / dropped) and by task_kind
-
-    All four accept ``--json``. Multiple flags render each section in turn
-    (and, under ``--json``, a single object keyed by section name).
-    """
+    """Report tool_metrics by default; --builds/--quality/--contention/--tasks render telemetry sections (combinable)."""
     from .. import display
 
     # The default (no flag) path is the original tool_metrics aggregation. It
@@ -63,10 +49,8 @@ def metrics(db, tool_name, as_json, builds_flag, quality_flag, contention_flag, 
         conn.close()
 
     if as_json:
-        # Single flag -> the bare value (a list for builds/contention, a dict
-        # for quality/tasks), matching the per-flag spec wording. Multiple
-        # flags -> one object keyed by section so a combined snapshot is
-        # self-describing.
+        # Single flag -> the bare value; multiple flags -> one object keyed
+        # by section so a combined snapshot is self-describing.
         if len(sections) == 1:
             click.echo(json.dumps(sections[0][1], indent=2, default=str))
         else:
@@ -87,11 +71,7 @@ def metrics(db, tool_name, as_json, builds_flag, quality_flag, contention_flag, 
 
 
 def _metrics_default(db, tool_name, as_json, display):
-    """Original tool_metrics aggregation (spec: default output unchanged).
-
-    Body preserved verbatim from the pre-extension command so callers with no
-    flag see identical output.
-    """
+    """Original tool_metrics aggregation; the no-flag output is unchanged."""
     conn = get_db(db)
     try:
         where = "WHERE tool_name = ?" if tool_name else ""
@@ -180,18 +160,7 @@ def _render_builds(rows: list[dict], display) -> None:
 
 
 def _gather_quality(conn) -> dict:
-    """Aggregate retrieval-quality signals from ``events``.
-
-    ``empty_result`` is emitted from three query kinds (semantic_search,
-    explore, search_symbols). Only the ``semantic_search``
-    empties share a denominator with ``semantic_backend`` (the population at
-    risk of an empty result), so the rate is scoped to that kind: semantic
-    empties / semantic_backend total. ``empty_by_kind`` exposes the full
-    per-kind breakdown so explore/search_symbols empties stay visible without
-    polluting the rate. backend mix counts ``backend`` across
-    ``semantic_backend`` events; truncations is the ``truncate_result`` total
-    plus a per-tool breakdown.
-    """
+    """Aggregate retrieval-quality signals: semantic-scoped empty rate, backend mix, truncations."""
     semantic_total = _count_events(conn, "semantic_backend")
     empty_total = _count_events(conn, "empty_result")
     empty_by_kind = _attr_counts(conn, "empty_result", "query_kind")
@@ -244,11 +213,7 @@ def _render_quality(data: dict, display) -> None:
 
 
 def _gather_contention(conn) -> list[dict]:
-    """``lock_contention`` events grouped by site (count + most-recent ts).
-
-    Ordered by count desc then site. An event whose ``site`` attr is missing or
-    unreadable is bucketed under ``<unknown>`` so it still counts.
-    """
+    """lock_contention events grouped by site (count + most-recent); missing sites bucket under <unknown>."""
     try:
         # ASC so the running last_ts update lands on the most-recent row.
         rows = conn.execute(
@@ -281,14 +246,7 @@ def _render_contention(rows: list[dict], display) -> None:
 
 
 def _gather_tasks(conn) -> dict:
-    """Aggregate ``task_lifecycle`` events: totals by event and by task_kind.
-
-    Makes the LLM task queue's history consumable (F5): claim/complete/revise/
-    drop transitions were recorded as events but no surface read them back.
-    ``by_event`` is the lifecycle funnel (claimed -> completed, with revised
-    re-work and dropped losses visible); ``by_kind`` shows which queue kinds
-    actually run. Reuses the defensive ``_attr_counts`` reader.
-    """
+    """Aggregate task_lifecycle events: totals by event (the funnel) and by task_kind."""
     return {
         "total": _count_events(conn, "task_lifecycle"),
         "by_event": _attr_counts(conn, "task_lifecycle", "event"),
@@ -325,12 +283,7 @@ def _count_events(conn, name: str) -> int:
 
 
 def _attr_counts(conn, name: str, attr_key: str) -> dict:
-    """Distinct-value counts of ``attr_key`` across events named ``name``.
-
-    ``attrs`` is JSON; parsed in Python so the query does not depend on
-    SQLite's JSON1 extension being compiled in. Malformed/missing attrs are
-    skipped (never raise).
-    """
+    """Distinct-value counts of ``attr_key`` across ``name`` events; attrs parsed in Python, malformed skipped."""
     counts: dict[str, int] = {}
     try:
         rows = conn.execute("SELECT attrs FROM events WHERE name = ?", (name,)).fetchall()
@@ -358,13 +311,7 @@ def _attr_value(raw, key):
 
 
 def _parse_ts(value) -> datetime | None:
-    """Parse an epoch float or ISO-8601 string (Z-suffixed included) into an aware UTC datetime; None when unparseable.
-
-    cairn stores timestamps in both shapes: ``build_runs.started_at`` is ISO
-    (``builder._iso_ts``) while ``events.ts`` and ``tool_metrics.invoked_at``
-    are raw ``time.time()`` epoch floats, so every reader routes through this
-    one parser instead of tracking each column's shape.
-    """
+    """Parse an epoch float or ISO-8601 string (Z included) into aware UTC; None when unparseable."""
     if value is None:
         return None
     if isinstance(value, (int, float)):

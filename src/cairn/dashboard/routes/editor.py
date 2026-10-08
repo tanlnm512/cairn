@@ -98,12 +98,7 @@ def _symbol_payload(
 
 
 def _compass(bundle: Any, module: str) -> dict:
-    """The module's compass excerpt; zero shape when no compass covers it.
-
-    A compass concept covers the module when its non-empty resource and the
-    module overlap as substrings (the bundle's established compass-matching
-    convention); the first match in the bundle's sorted concept order wins.
-    """
+    """Return the first sorted compass concept whose resource overlaps the module."""
     if not module:
         return {"found": False, "title": "", "body": ""}
     for cid in bundle.list_concepts(prefix="compass/"):
@@ -122,11 +117,7 @@ def _compass(bundle: Any, module: str) -> dict:
 
 
 def _relevant_memories(bundle: Any, path: str, module: str) -> list:
-    """The file's relevant memories, newest-first.
-
-    A memory is relevant when the file's path or module appears in the
-    memory's resource, title, or body; blank keys never match.
-    """
+    """Return memories mentioning the path or module, newest first."""
     from ..data import EPOCH, parse_ts
 
     needles = sorted({key for key in (path, module) if key})

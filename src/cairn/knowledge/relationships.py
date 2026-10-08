@@ -33,14 +33,7 @@ _RELATION_BY_SOURCE_KEY: Dict[str, Optional[str]] = {
 
 
 def extract_relationships(extensions: dict) -> List[Dict[str, Any]]:
-    """Normalized relationship entries from parsed source frontmatter.
-
-    Reads the relationship keys of an unknown-frontmatter dict (as carried
-    by ``ParsedDoc.extensions``) and returns ``{concept_id, relation,
-    kind, ...}`` entries in declaration order, deduplicated on
-    ``(concept_id, relation, kind)``. Entries without a resolvable
-    concept_id are dropped.
-    """
+    """Return normalized declared relationships in deterministic order."""
     entries: List[Dict[str, Any]] = []
     for key in SOURCE_KEYS:
         raw = extensions.get(key)
@@ -58,13 +51,7 @@ def extract_relationships(extensions: dict) -> List[Dict[str, Any]]:
 def normalize_relationships(
     entries: Optional[List[Any]],
 ) -> List[Dict[str, Any]]:
-    """Normalize relationship entries to ``{concept_id, relation, kind}``.
-
-    Accepts dict entries (kept verbatim plus defaulted ``relation``/``kind``)
-    or bare ids (shorthand for ``relation: relates-to``); a string holding a
-    YAML flow value is parsed first so minimal-fallback frontmatter
-    recovery round-trips. Idempotent on already-normalized entries.
-    """
+    """Normalize relationship entries and dedupe them idempotently."""
     out: List[Dict[str, Any]] = []
     for item in entries or []:
         out.extend(_normalize_entry(item))
@@ -110,12 +97,7 @@ def _as_items(raw: Any) -> list:
 
 
 def _unwrap_flow_string(value: str) -> Any:
-    """Parse a string that holds a YAML flow value (list/dict/quoted).
-
-    Minimal-fallback frontmatter recovery keeps relationship values as raw
-    strings; this recovers their structure. Anything that does not parse
-    as a flow stays a string (a bare concept id).
-    """
+    """Parse YAML flow strings while leaving bare concept ids intact."""
     text = value.strip()
     if text[:1] in ("[", "{", '"', "'"):
         try:

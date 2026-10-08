@@ -1,7 +1,4 @@
-"""Shared constants, helpers, and result types for the agent_install package.
-
-Kept separate from detect/merge/clients so no module imports a sibling client.
-"""
+"""Shared contracts and helpers for agent integration installers."""
 from __future__ import annotations
 
 import json
@@ -56,14 +53,7 @@ class InstallResult:
 # --------------------------------------------------------------------------
 
 def _uninstall_bases(ws: Path, scope: str) -> list[Path]:
-    """Base dirs an uninstall should strip for the given install scope.
-
-    Mirrors how the installers resolve their base: ``scope="workspace"`` (the
-    historical default) writes under ``<ws>``, ``scope="global"`` under
-    ``Path.home()``. ``"all"`` covers both so a full teardown also removes a
-    global install. Order is workspace-first to match the install-then-uninstall
-    reading direction; the strip helpers are idempotent so overlap is harmless.
-    """
+    """Return the workspace and home bases to strip for an install scope."""
     if scope == "global":
         return [Path.home()]
     if scope == "all":
@@ -72,11 +62,7 @@ def _uninstall_bases(ws: Path, scope: str) -> list[Path]:
 
 
 def resolve_cg_command() -> list[str]:
-    """Resolve a cairn invocation for generated configs.
-
-    Prefers the absolute path of a `cairn` binary on PATH; falls back to
-    `python -m cairn.cli.main`.
-    """
+    """Return the preferred cairn argv, falling back to ``python -m cairn``."""
     cairn_bin = shutil.which("cairn")
     if cairn_bin:
         return [cairn_bin]
@@ -84,13 +70,7 @@ def resolve_cg_command() -> list[str]:
 
 
 def opencode_format_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
-    """MCP config in the opencode/kilo schema: ``mcp.<name>`` entries whose
-    local form carries the whole invocation as one ``command`` array, plus
-    ``enabled``/``type``; remote form carries ``url``.
-
-    stdio entries embed ``env: {CAIRN_HOME: <expanded path>}`` when the
-    resolved CAIRN_HOME is non-default; the default home adds no env key.
-    """
+    """Return an OpenCode/Kilo MCP entry using a single local command array."""
     if transport == "sse":
         return {"mcp": {"cairn": {"type": "remote", "url": default_sse_url(sse_url), "enabled": True}}}
     entry: dict = {"type": "local", "command": resolve_cg_command() + ["serve"], "enabled": True}
@@ -108,21 +88,7 @@ def default_sse_url(sse_url: str | None = None) -> str:
 
 
 def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
-    """MCP server config pointing at `cairn serve` (shared mcpServers shape).
-
-    Used by claude, cursor, droid, omp, and (via mcp_config_json_desktop)
-    the Claude Desktop app. Client-specific MCP shapes (zcode, opencode,
-    agy, kilo) live in their own client modules.
-
-    Args:
-        transport: "stdio" (default, one process per client) or "sse" (one
-            shared daemon, requires `cairn serve start` to be running).
-        sse_url: when transport="sse", the URL clients should connect to.
-            Defaults to http://127.0.0.1:{lc.DEFAULT_PORT}/sse.
-
-    stdio entries embed ``env: {CAIRN_HOME: <expanded path>}`` when the
-    resolved CAIRN_HOME is non-default; the default home adds no env key.
-    """
+    """Return the shared mcpServers config for stdio or SSE transport."""
     if transport == "sse":
         url = default_sse_url(sse_url)
         # Include "type": "sse" explicitly for maximum cross-client compat.
@@ -152,19 +118,7 @@ def _python_for_hooks() -> str:
 
 
 def _claude_hook_command(entrypoint: str) -> str:
-    """Build a hook command string:
-    `[CAIRN_HOME=<path> ]<python> -m cairn.hooks.claude_hooks <entry>`.
-
-    The `CAIRN_HOME` assignment is prefixed only when the effective home is
-    non-default: clients run this string through a shell, so
-    the assignment travels to the hook process and -- env inheritance -- to
-    the cairn subprocess (claude_hooks runs it with no env kwarg). The home
-    and interpreter paths are shlex.quote()d so whitespace or shell
-    metacharacters cannot split or inject commands.
-    Uninstall/idempotency matching keys on the
-    `cairn.hooks.claude_hooks <entrypoint>` substring, which the prefix keeps
-    intact.
-    """
+    """Return a quoted Claude hook command with a non-default home prefix."""
     env = paths.cairn_home_env()
     prefix = f"CAIRN_HOME={shlex.quote(env['CAIRN_HOME'])} " if env else ""
     return (
@@ -211,13 +165,7 @@ def _claude_command_md(name: str) -> str:
 
 
 def _claude_agent_md(template_name: str = "cursor/cairn-explorer.json") -> str:
-    """Translate a Cursor subagent JSON into a Claude Code agent .md file.
-
-    Maps Cursor subagent fields to the richer Claude Code frontmatter
-    (model, tools from readonly/extra_tools, is_background -> background).
-    `skills: ["cairn"]` preloads the full cairn SKILL.md into the subagent, so
-    the Cursor `prompt` text should stay specific to the subagent's role.
-    """
+    """Convert a Cursor subagent definition into Claude Code agent markdown."""
     sub = json.loads(_read_template(template_name))
 
     model = sub.get("model", "inherit")
@@ -255,17 +203,7 @@ def _claude_agent_md(template_name: str = "cursor/cairn-explorer.json") -> str:
 
 
 def _omp_agent_md(template_name: str = "cursor/cairn-explorer.json") -> str:
-    """Translate a Cursor subagent JSON into an omp task-agent .md file.
-
-    omp's frontmatter contract (docs/subagents, task-agent-discovery.md) needs
-    only `name` and `description`; `tools` accepts a CSV list. `model` is left
-    unset so the subagent falls through to the parent session's active model
-    (omp has no "inherit" selector -- an unset frontmatter model is the third
-    step of its model-precedence chain). MCP tools are referenced by the name
-    omp's tool registry actually gives them: `mcp__<server>_<tool>` (single
-    underscore joining server and tool -- distinct from Claude Code's
-    `mcp__<server>__<tool>`).
-    """
+    """Convert a Cursor subagent definition into an omp task-agent file."""
     sub = json.loads(_read_template(template_name))
 
     mcp_tools = [f"mcp__cairn_{t}" for t in sub.get("tools", [])]

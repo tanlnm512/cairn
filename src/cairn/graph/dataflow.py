@@ -10,10 +10,7 @@ from typing import Dict, List, Optional, Sequence
 
 from .traversal import STRUCTURAL_EDGE_KINDS
 
-# The closure is materialised to this *closure distance*. impact_analysis()
-# index mode is eligible for DFS ``max_depth`` values one below it: DFS
-# records a direct caller at depth 0 (= closure distance 1), so a query at
-# ``max_depth=D`` needs ancestors up to closure distance D+1.
+# Query depth D needs closure distance D+1.
 CLOSURE_MAX_DEPTH = 4
 
 # Default cap on public symbols processed per build_dataflow_index() call;
@@ -24,11 +21,7 @@ MAX_SYMBOLS_ENV = "CAIRN_DATAFLOW_MAX_SYMBOLS"
 
 
 def resolve_max_symbols(explicit: Optional[int] = None) -> int:
-    """Resolve the dataflow symbol cap: explicit arg > env var > default.
-
-    An invalid env value (non-integer or non-positive) warns on stderr and
-    falls back to DEFAULT_MAX_SYMBOLS.
-    """
+    """Resolve the explicit, environment, or default symbol cap."""
     if explicit is not None:
         return explicit
     raw = os.environ.get(MAX_SYMBOLS_ENV, "").strip()
@@ -54,15 +47,7 @@ def resolve_max_symbols(explicit: Optional[int] = None) -> int:
 
 
 def _public_symbols(conn: sqlite3.Connection) -> List[Dict[str, str]]:
-    """Return symbols that are considered "public" / exported.
-
-    Selection heuristic:
-    - Java/Kotlin: modifiers contain 'public'
-    - Python: name does NOT start with underscore (convention for private)
-    - Other languages: all symbols (conservative default)
-
-    Returns list of {"name": str, "repo": str}.
-    """
+    """Return every public callable or type with its repository."""
     rows = conn.execute("""
         SELECT s.name, s.modifiers, r.name AS repo, r.language
         FROM symbols s
@@ -80,13 +65,7 @@ def _public_symbols(conn: sqlite3.Connection) -> List[Dict[str, str]]:
 
 
 def _row_is_public(row) -> bool:
-    """The public/exported predicate shared by _public_symbols and the
-    incremental maintainer, so a maintained dataflow table contains exactly
-    the names a full build would have indexed (no stale rows for symbols that
-    stopped being public, e.g. a rename to a ``_private`` name).
-
-    ``row`` needs ``name``, ``modifiers`` and the repo's ``language``.
-    """
+    """Return whether a symbol is public in its repository language."""
     name = row["name"]
     modifiers = row["modifiers"] or ""
     lang = row["language"] or ""
@@ -99,10 +78,7 @@ def _row_is_public(row) -> bool:
     return True
 
 
-# Keep IN () batches well under SQLite's default host-parameter limit (999 on
-# older builds) so affected-set queries work on every SQLite the CLI can ship
-# with. Sorting makes the batches deterministic (easier to reason about in
-# logs/tests) even though correctness does not depend on order.
+# Sorted bounded batches stay under older SQLite parameter limits.
 _SQLITE_IN_CHUNK = 400
 
 
@@ -124,18 +100,7 @@ def _compute_dataflow_row(
     repo: str,
     cross_cache: Optional[Dict[str, list]] = None,
 ) -> tuple[list[str], list[str]]:
-    """Compute one symbol's dataflow payload: (within_repo, cross_repo).
-
-    Shared by the full builder (:func:`build_dataflow_index`) and the
-    incremental maintainer (:func:`maintain_dataflow_index`) so the two paths
-    can never drift on semantics -- the property-parity tests diff a maintained
-    table against a fresh full build row-for-row, which only holds if both
-    call this one function.
-
-    ``cross_repo_deps`` depends only on ``repo``, so callers looping over many
-    symbols pass a ``cross_cache`` dict to memoize it per repo for the run;
-    the cached value is identical to a fresh computation.
-    """
+    """Return one symbol's within- and cross-repository dataflow payload."""
     from .queries import impact_analysis, cross_repo_deps  # avoid circular import
 
     try:
@@ -160,25 +125,7 @@ def _compute_dataflow_row(
 def build_dataflow_index(
     conn: sqlite3.Connection, progress=None, max_symbols: Optional[int] = None
 ) -> int:
-    """Build the dataflow table from scratch for all public symbols.
-
-    Iterates public symbols, computes within-repo impact (impact_analysis) and
-    cross-repo consumers (cross_repo_deps), and upserts into the dataflow table.
-
-    ``progress`` is an optional callable(n_done) for CLI progress reporting.
-
-    ``max_symbols`` caps the number of public symbols processed per call. Each
-    symbol triggers a per-symbol BFS (impact_analysis), so an unbounded loop
-    never completes for large repos; this converts a hang into bounded work.
-    None (the default) resolves the cap from the CAIRN_DATAFLOW_MAX_SYMBOLS
-    env var, falling back to DEFAULT_MAX_SYMBOLS (see resolve_max_symbols).
-    If truncated, a warning is emitted and the returned count reflects only the
-    symbols actually indexed (the dataflow table is partial but still usable).
-
-    Rows are upserted in batches (executemany); all rows commit once at the end.
-
-    Returns the number of symbols indexed.
-    """
+    """Build bounded dataflow rows for public symbols and return the count."""
     max_symbols = resolve_max_symbols(max_symbols)
     symbols = _public_symbols(conn)
     truncated = len(symbols) > max_symbols
@@ -227,15 +174,7 @@ def _run_levels(
     max_depth: int,
     before_level=None,
 ) -> List[tuple[str, str, Optional[str], int]]:
-    """Seed + per-depth level loop shared by the full and scoped closure paths.
-
-    ``(source_id, target_id, name)`` in global (kind, rowid) order;
-    ``adjacency_for(target_id)`` yields that target's ``(target_id, name)``
-    edges in rowid order; ``case2_for(unresolved_names)`` yields
-    ``(mid_name, target_id, name)`` hops for those names in the full path's
-    global edge-scan (rowid) order; ``before_level(target_ids)`` runs before
-    each level's extension (the scoped path's adjacency prefetch).
-    """
+    """Run the shared deterministic closure level loop."""
     rows: List[tuple[str, str, Optional[str], int]] = []
     level: Dict[tuple[str, str], Optional[str]] = {}
     for source_id, target_id, name in eligible:
@@ -391,20 +330,7 @@ def _closure_rows(
     max_depth: int,
     restrict_sources=None,
 ) -> List[tuple[str, str, Optional[str], int]]:
-    """Compute transitive-closure rows in memory and return them as
-    ``(source_id, target_name, target_id, distance)`` tuples.
-
-    With ``restrict_sources=None`` the graph is read in full, then the seed +
-    per-depth level loop runs over dict adjacency. First-wins per PK
-    ``(source_id, target_name, distance)``, including tie-breaks: the seed
-    walks edges kind-major then rowid order, the unique-name hop (Case 2)
-    walks the global edge-scan (rowid) order, and the resolved hop (Case 1)
-    walks the level frontier in creation order; Case 1 always precedes
-    Case 2 at a level. A subset of an ordered sequence, sorted by the same
-    key, is the global sequence restricted to that subset, so the
-    ``restrict_sources`` branch reproduces the full result restricted to
-    those sources row-for-row while reading only frontier-scoped edges.
-    """
+    """Return deterministic transitive closure rows for selected sources."""
     structural_kinds = set(STRUCTURAL_EDGE_KINDS)
     restrict = None if restrict_sources is None else {s for s in restrict_sources if s}
 
@@ -458,21 +384,7 @@ def _closure_rows(
 
 
 def build_transitive_closure(conn: sqlite3.Connection, max_depth: int = CLOSURE_MAX_DEPTH) -> int:
-    """Precompute multi-hop call graph edges into transitive_edges matrix table.
-
-    Joins on resolved target_id (resolution='exact') to avoid name collisions
-    producing spurious edges; falls back to target_name for unresolved edges.
-
-    Only **structural** edge kinds (``calls``/``call``/``extends``/
-    ``implements``, per :data:`traversal.STRUCTURAL_EDGE_KINDS`) are seeded and
-    extended, matching ``impact_analysis``'s default edge filter -- the table's
-    read path (:func:`impact_from_closure`) serves exactly those queries.
-    Service/topology edges never enter the closure; queries that opt into them
-    (``include_service_edges=True``) take the DFS path instead.
-
-    The row set comes from :func:`_closure_rows` and is written in one pass:
-    a single DELETE, then one sorted executemany.
-    """
+    """Rebuild the structural transitive closure table and return row count."""
     cur = conn.cursor()
     # Reader-side ancestor queries filter on distance; keep the index that
     # serves them materialized idempotently.
@@ -499,16 +411,7 @@ def maintain_transitive_closure(
     affected_source_ids,
     max_depth: int = CLOSURE_MAX_DEPTH,
 ) -> int:
-    """Incrementally recompute closure rows for a bounded set of sources.
-
-    Deletes every row whose ``source_id`` is in ``affected_source_ids``, then
-    re-derives exactly those sources through the same :func:`_closure_rows`
-    core the full builder uses, making the result identical to a full
-    :func:`build_transitive_closure` restricted to those ids. The caller owns
-    the affected-set capture; when the closure table is empty/never built,
-    callers must fall back to the full build. Returns the number of rows
-    inserted.
-    """
+    """Recompute closure rows for affected sources and return row count."""
     affected = sorted({i for i in affected_source_ids if i})
     if not affected:
         return 0
@@ -539,15 +442,7 @@ def maintain_transitive_closure(
 
 
 def maintain_dataflow_index(conn: sqlite3.Connection, affected_names) -> int:
-    """Incrementally refresh dataflow rows for a set of symbol names.
-
-    dataflow is keyed by symbol NAME, so an edit changes a row for X exactly
-    when X's caller chain changed; the caller (``incremental.
-    _maintain_derived_indexes``) computes that name set. Affected names with a
-    remaining public symbol are recomputed+upserted (same
-    :func:`_row_is_public` predicate as the builder); names with none lose
-    their row. Returns the number of rows written or deleted.
-    """
+    """Refresh or delete dataflow rows for affected names."""
     names = sorted({n for n in affected_names if n})
     if not names:
         return 0
@@ -556,10 +451,7 @@ def maintain_dataflow_index(conn: sqlite3.Connection, affected_names) -> int:
     cross_cache: Dict[str, list] = {}
 
     for name in names:
-        # Same selection query shape as _public_symbols, scoped to this name.
-        # Multiple (name, repo) instances reproduce the builder's one-row-per-
-        # instance INSERT OR REPLACE behavior (last write wins); for the
-        # common single-repo case the rows are identical regardless of order.
+        # Preserve one row per name and repository, last write wins.
         rows = conn.execute(
             """
             SELECT s.name, s.modifiers, r.name AS repo, r.language
@@ -600,11 +492,7 @@ def maintain_dataflow_index(conn: sqlite3.Connection, affected_names) -> int:
 
 
 def closure_available(conn: sqlite3.Connection) -> bool:
-    """True when the transitive closure table is populated and safe to read.
-
-    Cheap indexed probe. False on never-built databases (the reader then falls
-    back to DFS until the next ``cairn build``/``update`` materialises it).
-    """
+    """Return whether the closure table is populated and readable."""
     try:
         return (
             conn.execute("SELECT 1 FROM transitive_edges LIMIT 1").fetchone()
@@ -620,29 +508,7 @@ def impact_from_closure(
     max_depth: int,
     limit: int,
 ) -> Optional[dict]:
-    """Answer an impact query from the precomputed closure in one statement.
-
-    Returns the same shape as :func:`traversal.impact_analysis` --
-    ``{impacted, cycles, total, truncated}`` -- with these documented index-mode
-    semantics (the DFS path remains available for exact parity):
-
-    - ``depth`` is the **shortest** caller distance (MIN over closure rows,
-      minus the final hop into the seed so a direct caller is depth 0, matching
-      DFS's numbering), not the DFS first-visit path length: shortest ≤ DFS
-      depth for the same node, and is the more meaningful "minimum hops to a
-      caller" number.
-    - ``cycles`` is always empty -- the closure cannot attribute back-edges.
-      Callers gate on :func:`closure_has_seed_cycle` and take the DFS path
-      when a cycle exists so cycle reporting is preserved.
-    - Coverage is a **superset** of precise DFS at the same depth cap: it also
-      includes unique-name-mediated hops (closure Case 2) that precise DFS
-      prunes, and is not subject to DFS's per-node 200-caller fetch cap.
-    - Rows are ordered by (depth, symbol, file) -- deterministic.
-
-    ``seed_ids`` are the symbol ids the entry name resolves to (as
-    ``find_definition`` would return them); seeds themselves are excluded from
-    the results, matching DFS's pre-visited seed handling.
-    """
+    """Answer impact from closure with shortest depths and no cycles."""
     if not seed_ids:
         return {"impacted": [], "cycles": [], "total": 0, "truncated": False}
     seed_ph = ",".join("?" for _ in seed_ids)
@@ -680,12 +546,7 @@ def impact_from_closure(
 def closure_has_seed_cycle(
     conn: sqlite3.Connection, seed_ids: Sequence[str]
 ) -> bool:
-    """True when any seed reaches another seed through the closure.
-
-    Used as the gate that keeps cycle-reporting queries on the DFS path: the
-    closure can detect that A→…→B exists among seeds but cannot report the
-    back-edge symbol/depth pairs impact consumers get from DFS.
-    """
+    """Return whether any seed reaches another through closure."""
     if not seed_ids:
         return False
     seed_ph = ",".join("?" for _ in seed_ids)
@@ -702,11 +563,7 @@ def closure_has_seed_cycle(
 
 
 def get_dataflow(conn: sqlite3.Connection, symbol: str) -> Optional[Dict]:
-    """Look up precomputed dataflow for a symbol.
-
-    Returns dict with keys: symbol, repo, within_repo (list), cross_repo (list),
-    updated (float timestamp), or None if the symbol has no entry.
-    """
+    """Return one symbol's precomputed dataflow row or None."""
     row = conn.execute(
         "SELECT * FROM dataflow WHERE symbol = ?", (symbol,)
     ).fetchone()

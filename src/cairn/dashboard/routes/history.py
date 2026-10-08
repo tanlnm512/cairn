@@ -57,11 +57,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
             )
         return buf.getvalue()
 
-    # Exports ride the same seams the views ride: resolve_selection
-    # for the store, _resolve_window for the window, the view's filter
-    # params, and the very data functions the views render from — parity
-    # by construction. The cursor params (before/after) page the HTML view
-    # and are not filters, so the unpaginated export drops them.
+    # Exports share view seams but omit cursor params and fetch one bounded page.
 
     def _history_export_rows(request: Request):
         tool = request.query_params.get("tool", "").strip() or None
@@ -166,11 +162,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
             "store_key": store_key,
         }
         if is_hx_request(request):
-            # htmx fragment: the polled region only — one cheap region
-            # render, never the full page (the shell rides the page load).
-            # The filter form's live fields ride the request and the page
-            # cursor rides the region's hx-get URL, so the fragment
-            # re-renders exactly the slice the page shows.
+            # Render only the polled region; filters and cursor ride its request URL.
             return templates.TemplateResponse(
                 request, "history_region.html", context
             )

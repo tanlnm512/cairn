@@ -71,23 +71,12 @@ def detect_header_language(path_str: str) -> str:
 
 
 def resolve_file_language(suffix: str, abs_path: str) -> str:
-    """Map a file suffix to its indexing language.
-
-    Same as ``EXTENSION_MAP[suffix]`` for every extension except ``.h``: a
-    header sniffs as objc/cpp/c via :func:`detect_header_language` so it lands
-    on a real parser instead of the ``"header"`` sentinel (which has no parser
-    and would otherwise be recorded as a parse error). Callers that already
-    hold the looked-up language can pass it here unchanged for non-headers.
-    """
+    """Map a suffix to its parser language, sniffing ambiguous headers."""
     lang = EXTENSION_MAP.get(suffix)
     if lang == "header":
         return detect_header_language(abs_path)
     return lang or ""
 
-# Layer A: directories to never descend into. Applied even without a .gitignore.
-# Covers build output, VCS, deps, caches, and IDE state so the graph is
-# hand-written source, not third-party noise. Keep names lowercase -- matched
-# case-insensitively against the final path component below.
 DEFAULT_SKIP_DIRS = {
     # build output
     "build", "out", "dist", "target", "bin", "obj",
@@ -238,13 +227,7 @@ def discover_repo_records(workspace: str = DEFAULT_WORKSPACE) -> list[Repository
 
 
 def discover_repos(workspace: str = DEFAULT_WORKSPACE) -> List[Path]:
-    """Return repository paths; nested repositories require opt-in config.
-
-    Falls back to treating the workspace root itself as a repo if no child
-    directories contain a `.git` but the workspace root does.  This supports
-    the common single-repo use-case where ``cairn init`` is run inside the
-    repository rather than in a parent directory containing multiple repos.
-    """
+    """Return configured repository roots, falling back to the workspace root."""
     return [
         _repository_path(record)
         for record in discover_repo_records(workspace)
@@ -252,11 +235,7 @@ def discover_repos(workspace: str = DEFAULT_WORKSPACE) -> List[Path]:
 
 
 def is_single_repo_workspace(workspace: str = DEFAULT_WORKSPACE) -> bool:
-    """Return True if the workspace root itself is a git repo (no child repos).
-
-    In a multi-repo workspace, repos are subdirectories of the workspace.
-    In a single-repo workspace, the workspace root IS the repo.
-    """
+    """Return whether the workspace root itself is the repository."""
     root = Path(workspace)
     if not root.is_dir():
         return False
@@ -270,11 +249,7 @@ def is_single_repo_workspace(workspace: str = DEFAULT_WORKSPACE) -> bool:
 
 
 def resolve_repo_path(workspace: str, repo_name: str) -> Path:
-    """Map a repo name to its filesystem path under the workspace.
-
-    Multi-repo: ``workspace/repo_name``
-    Single-repo: the workspace root itself (repo_name matches root dir name).
-    """
+    """Map a repository name to its workspace path."""
     for record in discover_repo_records(workspace):
         if record.repo_id == repo_name:
             return _repository_path(record)
@@ -285,26 +260,14 @@ def resolve_repo_path(workspace: str, repo_name: str) -> Path:
 
 
 def resolve_file_path(workspace: str, repo_id: str, stored_path: str) -> str:
-    """Resolve a DB-stored file path to an absolute path for disk I/O.
-
-    The code graph stores file paths **repo-relative** so the ``.kg`` SQLite
-    file is portable across machines. At read time this reconstructs the
-    absolute path via ``resolve_repo_path(workspace, repo_id) / stored_path``.
-    Absolute paths are returned unchanged. This is the single chokepoint for
-    relative->absolute resolution: every disk-touching consumer reads a stored
-    path through here rather than ``open(row["path"])`` directly.
-    """
+    """Resolve a stored graph path to an absolute disk path."""
     if Path(stored_path).is_absolute():
         return stored_path  # absolute path stored as-is
     return str(resolve_repo_path(workspace, repo_id) / stored_path)
 
 
 def infer_repo_for_path(abs_path: str, workspace: str) -> Optional[str]:
-    """Infer the repo name for an absolute file path under the workspace.
-
-    Multi-repo: the longest matching repository root owns the path.
-    Single-repo: workspace root name is the repo name (no sub-repo directory).
-    """
+    """Return the longest owning repository name for a path."""
     root = Path(workspace).resolve()
     try:
         rel = Path(abs_path).resolve().relative_to(root)
@@ -336,21 +299,12 @@ def file_sha256(path: Path) -> str:
 # gitignore loading (Layer B)
 # ---------------------------------------------------------------------------
 
-# Cache: repo_root -> list of (dir_of_gitignore, compiled PathSpec).
-# A file's gitignore match is the union of all .gitignore files from its own
-# directory up to the repo root.
-# NOTE: the file watcher must invalidate this cache when a .gitignore changes.
+# Watchers must invalidate this cache when a gitignore changes.
 _gitignore_cache: dict[str, list[tuple[str, pathspec.PathSpec]]] = {}
 
 
 def _load_gitignores(repo_root: Path) -> list[tuple[str, pathspec.PathSpec]]:
-    """Find and compile every .gitignore under repo_root (eager full walk,
-    cached per repo_root). Returns a list of (gitignore_dir_str, spec).
-
-    Each spec is matched against paths RELATIVE TO THAT SPEC'S DIRECTORY,
-    mirroring git's semantics: a pattern in ``src/.gitignore`` applies to
-    paths under ``src/``.
-    """
+    """Return compiled nested gitignore specifications for a repository."""
     key = str(repo_root)
     cached = _gitignore_cache.get(key)
     if cached is not None:
@@ -377,11 +331,7 @@ def _load_gitignores(repo_root: Path) -> list[tuple[str, pathspec.PathSpec]]:
 
 def _is_gitignored(abs_path: Path, repo_root: Path,
                    specs: list[tuple[str, pathspec.PathSpec]]) -> bool:
-    """True if `abs_path` is ignored by any .gitignore under the repo.
-
-    Each spec is matched against the path relative to that spec's own directory,
-    so nested gitignores behave like git.
-    """
+    """Return whether any nested gitignore excludes a path."""
     abs_str = str(abs_path)
     for gi_dir, spec in specs:
         if abs_str == gi_dir or not abs_str.startswith(gi_dir + os.sep):
@@ -397,11 +347,7 @@ def _is_gitignored(abs_path: Path, repo_root: Path,
 # ---------------------------------------------------------------------------
 
 def _build_config_spec(repo_root: Path):
-    """Return (exclude_spec_or_None, include_spec_or_None) from cairn.json.
-
-    Uses graph.config.load_config; compiled into pathspec PathSpecs here so
-    the scanner can match in one pass. Patterns are repo-root-relative.
-    """
+    """Return compiled repository-root include and exclude specifications."""
     from .config import load_config
 
     cfg = load_config(repo_root)
@@ -439,13 +385,7 @@ def _is_under_skip_dir(rel_parts: tuple) -> bool:
 
 
 def _is_minified(path: Path) -> bool:
-    """Layer D: True for minified bundles (``*.min.js`` et al).
-
-    The filename marker, not the size cap, is what catches a vendored
-    bundle committed under src/ — a 400 KB min.js parses into hundreds of
-    junk symbols whose internal calls dominate every degree-ranked view
-    (the scanner's dir layers only catch vendor/ trees, not vendored
-    single files). """
+    """Return whether a filename marks a minified generated bundle."""
     return ".min." in path.name.lower()
 
 
@@ -456,13 +396,7 @@ def classify_file(
     exclude_spec,
     include_spec,
 ) -> Tuple[bool, str]:
-    """Return (should_index, reason_if_skipped) for one source file.
-
-    Runs the layers in order. `include` overrides A/B/C (Layer D size cap
-    and minified-asset skip are NOT overridable -- a 50 MB vendored blob
-    helps no one, and a minified bundle is generated noise in every view
-    regardless of what the config asks for).
-    """
+    """Return indexing eligibility and skip reason for one file."""
     try:
         rel_parts = abs_path.relative_to(repo_root).parts
     except ValueError:
@@ -509,22 +443,12 @@ def classify_file(
 
 
 def is_source_file(path: Path) -> bool:
-    """True if `path` has a known source extension. Pure extension check only.
-
-    Reused by the file watcher to decide whether a changed file is worth
-    re-indexing. Does NOT apply the full 4-layer filter -- use
-    :func:`classify_file` for that.
-    """
+    """Return whether a path has a known source extension."""
     return path.suffix in EXTENSION_MAP
 
 
 def _is_skipped(path: Path, repo_root: Path) -> bool:
-    """Convenience: would the 4-layer filter skip this file?
-
-    For the file watcher's event gate. Loads gitignores + config fresh each
-    call (acceptable for a watcher hot path that fires per-change; the heavy
-    rglob in _load_gitignores is cached per-repo).
-    """
+    """Return whether the full scan filter skips a path."""
     if not is_source_file(path):
         return True
     specs = _load_gitignores(repo_root)
@@ -568,11 +492,7 @@ def _grammar_available(language: str) -> bool:
 
 
 def iter_source_files(repo_path: Path) -> Iterator[Path]:
-    """Yield source files under a repo that pass the 4-layer filter.
-
-    Backwards-compatible signature: callers that don't need skip reporting still
-    get just the files to index. For skip reporting, use :func:`scan_repo_with_skips`.
-    """
+    """Yield repository source files that pass all scan filters."""
     repo_path = Path(repo_path)
     specs = _load_gitignores(repo_path)
     exclude_spec, include_spec = _build_config_spec(repo_path)
@@ -599,12 +519,7 @@ def iter_source_files(repo_path: Path) -> Iterator[Path]:
 
 
 def iter_files_and_skips(repo_path: Path) -> Tuple[List[FileInfo], List[SkipInfo]]:
-    """Scan a repo, returning both files-to-index and files-skipped.
-
-    Entry point used by the builder: returns the indexed FileInfos AND the
-    SkipInfos so the builder can record both (symbols/edges for the former,
-    skipped_files rows for the latter).
-    """
+    """Return repository files to index and records for skipped files."""
     repo_id = repository_id(repo_path)
     repo_path = Path(repo_path)
     specs = _load_gitignores(repo_path)
@@ -666,11 +581,7 @@ def iter_files_and_skips(repo_path: Path) -> Tuple[List[FileInfo], List[SkipInfo
 
 
 def scan_repo(repo_path: Path) -> List[FileInfo]:
-    """Enumerate all source files in a single repo (backwards-compatible).
-
-    Returns only the files to index; skips are not reported here. New callers
-    should prefer :func:`iter_files_and_skips`.
-    """
+    """Return all source files selected in one repository."""
     files, _ = iter_files_and_skips(repo_path)
     return files
 

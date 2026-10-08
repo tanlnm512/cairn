@@ -77,13 +77,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
     # -------------------------------------------------------- declaration parse
 
     def _visit_type_decl(self, node: Node, source: bytes, pf: ParsedFile):
-        """Parse a class/module, push scope, and walk its body.
-
-        The superclass subtree is skipped during the body walk: it is consumed
-        here for the ``extends`` edge, and walking it would otherwise emit
-        spurious ``calls`` edges when the superclass expression is itself a
-        call (e.g. ``class C < Factory.build``).
-        """
+        """Parse a class or module, emit its superclass edge, then walk its body."""
         name = self._type_name(node, source)
         superclass = self._superclass_name(node, source)
         if not name:
@@ -103,10 +97,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
             )
         )
         if superclass:
-            # ``source_name`` must be the bare name (matching the symbol's
-            # ``name`` field) so the builder's same-file name lookup resolves
-            # the edge's source_id. Using _qualified_name here would break for
-            # nested classes (builder.py keys on bare name).
+            # Extends source_name must stay bare to match its same-file symbol.
             self._pending_edges.append(
                 Edge(name, "extends", superclass, node.start_point[0] + 1)
             )
@@ -152,10 +143,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _parse_method(self, node: Node, source: bytes) -> Optional[Symbol]:
-        # method: 'def' <name> method_parameters? body_statement 'end'
-        # singleton_method: 'def' <receiver> '.' <name> method_parameters? ...
-        #   (receiver may be 'self' or an identifier/constant).
-        # The name is the LAST identifier/operator before method_parameters.
+        # The method name follows any singleton receiver and precedes parameters or body.
         name = self._method_name(node, source)
         if not name:
             return None
@@ -171,12 +159,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
         )
 
     def _method_name(self, node: Node, source: bytes) -> Optional[str]:
-        """Method name: the identifier/operator immediately before params/body.
-
-        For ``def foo`` -> "foo". For ``def obj.helper`` -> "helper" (skipping
-        the receiver ``obj``). For ``def self.bar`` -> "bar". For ``def +`` ->
-        "+" (operator). For ``def []`` -> "[]" (element reference).
-        """
+        """Return the method or operator name after any singleton receiver."""
         # Take the last identifier before the first method_parameters / body.
         last_id = None
         for child in node.children:
@@ -189,15 +172,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
     # ------------------------------------------------------------ call parsing
 
     def _parse_call(self, node: Node, source: bytes) -> Optional[Edge]:
-        """A ``call`` node -> Edge(calls).
-
-        Every ``call`` in tree-sitter-ruby is a real call: zero-arg
-        (``X.new``), parenless (``puts "x"``), safe-navigation (``a&.b``), and
-        block-bearing (``each do ... end``). The proc-call shorthand ``p.(1)``
-        has no method identifier and is skipped. ``obj.method`` records the
-        trailing identifier as the callee and the leading receiver for the
-        resolver's type-aware tier.
-        """
+        """Return a calls Edge for every tree-sitter-ruby call with a method name."""
         callee, receiver = self._split_call(node, source)
         if not callee:
             return None
@@ -211,29 +186,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
         )
 
     def _split_call(self, node: Node, source: bytes):
-        """Split a ``call`` node into (callee_name, receiver_text).
-
-        Shapes handled:
-          - bare call:        ``foo(args)`` or ``foo`` -> ("foo", None)
-          - method call:      ``obj.method(args)`` -> ("method", "obj")
-          - safe navigation:  ``obj&.method`` -> ("method", "obj")
-          - block call:       ``items.each do ... end`` -> ("each", "items")
-          - chained call:     ``repo.find(1).update(x)`` -> ("update", None)
-            (the receiver is itself a ``call``; its return type is unknowable
-            here, so the receiver abstains but the callee is still recorded)
-          - self receiver:    ``self.helper(x)`` -> ("helper", "self")
-          - receiver types:   identifier, constant (``X.new``), self
-          - proc shorthand:   ``p.(1)`` -> (None, None) [the single identifier
-            sits BEFORE the ``.`` with the argument_list directly after it --
-            no method identifier exists to record]
-
-        The discriminator is identifier POSITION relative to the last ``.``:
-        an identifier after the last dot is the method name; a call with no
-        identifier after the dot is the proc shorthand. Counting identifiers
-        alone cannot tell ``p.(1)`` from ``repo.find(1).update(...)`` -- both
-        have exactly one direct identifier child and an argument_list, but the
-        latter's identifier (``update``) follows the dot.
-        """
+        """Return callee and receiver from the identifier after the last dot."""
         children = node.children
         dot_idx = None
         for i, c in enumerate(children):
@@ -258,12 +211,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
         return None, None
 
     def _receiver_text(self, before_dot, source: bytes) -> Optional[str]:
-        """Receiver name from the children preceding the ``.``/``&.``.
-
-        Returns the first identifier/constant/``self`` child; a nested ``call``
-        receiver (a chained call) yields None -- its return type is not
-        inferable from the AST shape here.
-        """
+        """Return a directly inferable identifier, constant, or self receiver."""
         for c in before_dot:
             if c.type == "constant":
                 return self._node_text(c, source).strip()
@@ -274,16 +222,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
         return None
 
     def _arity(self, list_node) -> int:
-        """Positional slot count of an ``argument_list``/``method_parameters``.
-
-        Every named child occupies one slot (required, optional, rest,
-        keyword, hash-splat, destructured, splat argument, keyword pair)
-        except the block pass-throughs: ``&blk`` (block_argument) and
-        ``&param`` (block_parameter) carry the block, not an argument.
-        ``do``/``{}`` blocks are siblings of the argument_list, never
-        children, so they never count. None (no parameter list / no
-        argument list) means zero.
-        """
+        """Return positional slots, excluding block parameters and sibling blocks."""
         if list_node is None:
             return 0
         return sum(
@@ -295,13 +234,7 @@ class RubyParser(BaseParser, TreeSitterParserBase):
     # ------------------------------------------------------------- import parse
 
     def _maybe_import(self, node: Node, source: bytes) -> Optional[Import]:
-        """Map top-level require/require_relative/load calls to Import rows.
-
-        Returns None when this call isn't an import (so the caller falls
-        through to ``_parse_call``). We only treat it as an import when not
-        inside any class/module/method scope; inside a body, the same method
-        names are ordinary runtime calls.
-        """
+        """Return an Import only for require or load calls at top-level scope."""
         if self._scope or self._callable_scope:
             return None
         first = next(

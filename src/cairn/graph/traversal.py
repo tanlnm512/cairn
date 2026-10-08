@@ -5,21 +5,12 @@ import sqlite3
 from typing import List, Optional, Tuple
 
 
-# Edge kinds that represent in-codebase structural relationships. Service/
-# topology edge kinds (http_call, service_call) are excluded by default; pass
-# ``include_service_edges=True`` to follow them. Both ``"calls"`` and
-# ``"call"`` spellings are included.
+# Structural edges are followed by default; service edges require opt-in.
 STRUCTURAL_EDGE_KINDS: Tuple[str, ...] = ("calls", "call", "extends", "implements")
 
 
 def _escape_like(value: str) -> str:
-    """Escape LIKE meta-characters so ``value`` matches literally.
-
-    ``\\``, ``%`` and ``_`` are escaped by prefixing a backslash; the
-    accompanying LIKE clause must use ``ESCAPE '\\'``. This keeps a symbol
-    name like ``foo_bar`` or ``rate_50%`` from matching unintended rows
-    (``_`` is a single-char wildcard, ``%`` is a multi-char wildcard).
-    """
+    """Escape LIKE meta-characters so ``value`` matches literally."""
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
@@ -69,19 +60,7 @@ def get_callers(
     kind: Optional[str] = None,
     symbol_id: Optional[str] = None,
 ) -> List[sqlite3.Row]:
-    """Return edges whose target is a symbol named `name`.
-
-    Precise mode (default, ``fuzzy=False``): only edges whose ``target_id`` is
-    resolved to a symbol named `name` (no false positives from homonymous
-    methods). Fuzzy mode (``fuzzy=True``): also matches edges whose
-    ``target_name`` equals ``name`` (useful for tracing every call site of a
-    common name, e.g. all ``.let`` usages).
-
-    ``kind`` (optional) filters by edge kind; ``None`` returns all kinds. Each
-    row reports the caller symbol, its file:line, and repo.
-
-    ``symbol_id`` (optional) restricts precise matches to one stored symbol.
-    """
+    """Return edges whose target is a symbol named `name`."""
     cur = conn.cursor()
     kind_clause = "AND e.kind = ?" if kind else ""
     kind_params: Tuple[str, ...] = (kind,) if kind else ()
@@ -124,14 +103,7 @@ def get_callees(
     fuzzy: bool = False,
     kind: Optional[str] = None,
 ) -> List[sqlite3.Row]:
-    """Return edges whose source is a symbol named `name` (what it calls).
-
-    Precise mode (default): only edges with a resolved ``target_id``. Fuzzy
-    mode also returns unresolved outgoing calls (useful for exploring a
-    function's behavior including stdlib/external calls).
-
-    ``kind`` (optional) filters by edge kind; ``None`` returns all kinds.
-    """
+    """Return edges whose source is a symbol named `name` (what it calls)."""
     cur = conn.cursor()
     target_clause = "" if fuzzy else "AND e.target_id IS NOT NULL"
     kind_clause = "AND e.kind = ?" if kind else ""
@@ -164,36 +136,7 @@ def impact_analysis(
     use_index: Optional[bool] = None,
     seed_id: Optional[str] = None,
 ) -> dict:
-    """Recursive caller traversal with cycle detection.
-
-    Reports one row per reached symbol (keyed by symbol **id**, not name) at
-    its **shortest** seed distance: a symbol re-found at a strictly smaller
-    depth has its row relaxed and is re-expanded within the depth cap. Precise
-    mode (default) only walks resolved edges; ``fuzzy=True`` also follows
-    unresolved name-only edges. By default only **structural** edges
-    (``calls``, ``extends``, ``implements``) are followed; pass
-    ``include_service_edges=True`` to also follow ``http_call``/``service_call``.
-
-    ``limit`` caps total impacted rows; ``truncated`` in the return flags this.
-    ``seed_id`` (optional) restricts the entry symbol to one stored symbol id.
-
-    **Index mode.** When the precomputed ``transitive_edges`` closure can serve
-    the query -- precise, structural-only, ``max_depth <= 3``, the name has
-    exact-name symbol matches, the closure is materialised, and no seed reaches
-    another seed (cycle gate) -- the answer comes from
-    :func:`dataflow.impact_from_closure` in one indexed statement instead of a
-    per-visited-symbol DFS. Index mode returns the same shortest-path depths,
-    (depth, symbol, file)-ordered rows, empty ``cycles``, and may be a superset
-    of DFS coverage (unique-name hops; no per-node 200-caller cap) -- see that
-    function's docstring. ``use_index=False`` forces the classic DFS (used by
-    the golden parity tests); ``use_index=True`` genuinely forces the index
-    when technically servable -- including past the cycle gate, accepting
-    ``cycles=[]`` -- and silently takes the DFS path otherwise (fuzzy/service/
-    deep queries can never be served from the closure).
-
-    Returns {impacted: [...], cycles: [...], total: int, truncated: bool}.
-    Each impacted entry: {symbol, file, repo, depth}.
-    """
+    """Recursive caller traversal with cycle detection."""
     if fuzzy or use_index is not False:
         from .dataflow import (
             CLOSURE_MAX_DEPTH,
@@ -224,10 +167,7 @@ def impact_analysis(
                 seed_ids = [seed["id"] for seed in seeds]
                 can_use_closure = exact is not None
             if can_use_closure and closure_available(conn):
-                # use_index=True genuinely forces: the cycle gate keeps auto
-                # mode on the DFS path (cycle reporting), but a forced query
-                # accepts cycles=[] (documented) -- the escape hatch for
-                # benchmarks and debugging.
+                # Forced index mode accepts empty cycle reporting.
                 if use_index is True or not closure_has_seed_cycle(conn, seed_ids):
                     closure_result = impact_from_closure(conn, seed_ids, max_depth, limit)
                     # closure_available() said yes; a None here means the
@@ -357,31 +297,7 @@ def trace_flow(
     entry_id: Optional[str] = None,
     include_service_edges: bool = False,
 ) -> dict:
-    """Downward callee traversal from an entry symbol — the flow it executes.
-
-    The inverse of :func:`impact_analysis` (callers upward, flat set): this
-    walks callees downward and records the ordered call chain
-    (``entry -> A -> B -> C``) across files and modules. Recursive DFS keyed
-    on node identity (each node walked once; back-edges into the active path
-    record cycles) with the same ``limit`` cap as ``impact_analysis``.
-    Branch points (a symbol with >1 distinct callee) and
-    leaves (terminal callees) are surfaced separately. By default only
-    **structural** edges are followed; pass ``include_service_edges=True`` to
-    follow ``http_call``/``service_call`` too.
-
-    Args:
-        entry: the entry-point symbol name. Resolved via :func:`get_callees`.
-        max_depth: deepest call hop to follow (default 8).
-        limit: total nodes cap (default 500).
-        fuzzy: when True, also follow unresolved name-only outgoing calls.
-        entry_id: optional symbol DB ID. When set, the seed symbol is resolved
-            by ID (via :func:`find_definition_by_id`) instead of by name.
-        include_service_edges: when True, also follow ``http_call``/
-            ``service_call`` edges (default False).
-
-    Returns a dict with keys: entry, chain (ordered depth-tagged nodes),
-    branches, leaves, modules, cycles, total, truncated.
-    """
+    """Downward callee traversal from an entry symbol — the flow it executes."""
     allowed = None if include_service_edges else STRUCTURAL_EDGE_KINDS
     visited: dict[str, dict] = {}   # id -> chain entry (first-seen wins)
     on_path: set[str] = set()       # current DFS path symbol ids — cycle detection
@@ -390,10 +306,7 @@ def trace_flow(
     cycles: list[dict] = []
     cycles_seen: set[str] = set()
     truncated = False
-    # Per-call memos: callee lookup and definition resolution are both keyed
-    # by NAME, so same-named nodes (and repeated callees) re-query identical
-    # SQL. Pure caching -- walk order and results are unchanged (pinned by
-    # the golden parity tests).
+    # Per-call lookup memos do not change traversal results.
     callees_memo: dict[str, list] = {}
     defn_memo: dict[str, list] = {}
 

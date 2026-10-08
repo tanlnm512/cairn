@@ -52,16 +52,7 @@ def _prepend_banner(text: str, banner: str) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def find_definition(name: str) -> str:
-    """Find where a symbol is defined. Returns file:line, kind, qualified name.
-
-    Has a built-in 3-step fallback (exact → qualified name → substring LIKE), so
-    it works as a shortcut when you're fairly confident in the name. For an
-    ambiguous or partial name, search_symbols ranks matches by relevance instead.
-
-    Example:
-        find_definition("PaymentProcessor")
-        ->  src/payments/PaymentProcessor.kt:14  class com.example.PaymentProcessor  (app)
-    """
+    """Find where a symbol is defined (file:line, kind, qualified name) with exact→qualified→substring fallback."""
     from cairn.graph import queries
 
     conn = _conn()
@@ -89,28 +80,7 @@ def find_definition(name: str) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
 @instrument
 def get_callers(name: str, fuzzy: bool = False, limit: int = 200, structured: bool = False) -> str | GetCallersResult:
-    """Who calls this function/symbol? Returns caller symbol + file:line + repo.
-
-    Precise (default): only callers of the exact resolved symbol. Trustworthy.
-    Fuzzy: also includes call sites matched only by name across the whole
-    workspace -- can mix in unrelated symbols that merely share the name.
-
-    When to use fuzzy: only when precise returns nothing AND you suspect the
-    edge couldn't be resolved (common-name method like `get`/`invoke`/`create`,
-    or cross-language calls). Treat fuzzy results as candidates to verify, not
-    as ground truth. Empty precise results mean 'no resolvable callers', NOT
-    'no callers exist' -- if you pass fuzzy=False and precise comes up empty,
-    this tool automatically retries with fuzzy=True itself and labels those
-    rows as unverified candidates, so you don't have to remember the retry.
-
-    limit: max rows returned (default 200). Lower it for common names under
-    fuzzy=True where the raw count can run into the thousands.
-
-    structured: when True, returns a typed GetCallersResult model (FastMCP
-    derives outputSchema from it, so the response carries native
-    structuredContent -- agents read fields directly, no regex). Default False
-    preserves the existing prose return for backward compatibility (skill docs,
-    empty-result-hint invariant)."""
+    """Who calls this symbol? Precise by default, auto-retrying fuzzy when precise is empty; structured=True returns typed rows."""
     data = get_callers_data(name, fuzzy=fuzzy, limit=limit)
     if structured:
         return GetCallersResult.model_validate(data)
@@ -120,13 +90,7 @@ def get_callers(name: str, fuzzy: bool = False, limit: int = 200, structured: bo
 def _neighbor_rows(
     name: str, fuzzy: bool, limit: int, query
 ) -> tuple[list, bool, str, bool]:
-    """Shared precise-then-fuzzy edge query behind get_callers_data/get_callees_data.
-
-    ``query(conn, name, fuzzy, limit)`` runs one direction of the edge lookup.
-    Returns ``(rows, used_fallback, stale_banner, hit_limit)``; the staleness
-    banner is computed while the connection is open and only when rows exist
-    (an empty answer can't be "stale").
-    """
+    """Shared precise-then-fuzzy edge query -> (rows, used_fallback, stale_banner, hit_limit)."""
     limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
     conn = _conn()
     try:
@@ -151,12 +115,7 @@ def _neighbor_rows(
 
 
 def get_callers_data(name: str, fuzzy: bool = False, limit: int = 200) -> dict:
-    """Structured core of ``get_callers``: returns a dict, no prose.
-
-    Shared by the structuredContent and prose returns. An agent passes
-    ``structured=True`` to read these fields directly instead of regex-parsing
-    the tool's string.
-    """
+    """Structured core of ``get_callers``: dict result, no prose."""
     from cairn.graph import queries
 
     rows, used_fallback, banner, hit_limit = _neighbor_rows(
@@ -208,25 +167,7 @@ def _render_callers(data: dict) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
 @instrument
 def get_callees(name: str, fuzzy: bool = False, limit: int = 200, structured: bool = False) -> str | GetCalleesResult:
-    """What does this function/symbol call? Returns callee names + file:line.
-
-    Precise (default): only calls resolved to a workspace symbol (drops stdlib
-    and external calls like listOf, println, Retrofit.Builder).
-    Fuzzy: also includes unresolved outgoing calls, so you see the FULL set of
-    what a function invokes, including library calls shown as '(unresolved)'.
-
-    When to use fuzzy: exploring a function's behavior broadly, or when you
-    need to find calls into libraries/stdlib that precise intentionally omits.
-    Empty precise results don't mean the function calls nothing -- if you pass
-    fuzzy=False and precise comes up empty, this tool automatically retries
-    with fuzzy=True itself and labels those rows as unverified candidates.
-
-    limit: max rows returned (default 200).
-
-    structured: when True, returns a dict (``{symbol, count, used_fallback,
-    hit_limit, stale_banner, callees: [...]}``) instead of a formatted
-    string, so agents don't have to regex the prose. Default False preserves
-    the prose return."""
+    """What does this symbol call? Precise omits unresolved library calls; fuzzy includes them; auto-retries fuzzy when precise is empty."""
     data = get_callees_data(name, fuzzy=fuzzy, limit=limit)
     if structured:
         return GetCalleesResult.model_validate(data)
@@ -295,39 +236,7 @@ def impact_analysis(
     limit: int = 500,
     structured: bool = False,
 ) -> str | ImpactAnalysisResult:
-    """Recursive impact analysis: what breaks if this symbol changes?
-    Traverses callers up to `depth` (default 5). Reports total + by depth.
-
-    Precise (default): walks only resolved edges, so blast radius is NOT
-    inflated by name collisions. This is the trustworthy estimate for
-    'what breaks if I change this signature'.
-    Fuzzy: also traverses unresolved name-only edges. Much broader but noisy --
-    a common name like `create` can cascade into hundreds of unrelated symbols.
-
-    cached: when True, returns O(1) precomputed dataflow (populated during
-    `cairn build`/`cairn sync`). Falls back to live analysis if no cache entry.
-    Live analysis is the default for freshness.
-
-    limit: caps total accumulated impacted rows (default 500) so a common
-    name under fuzzy=True can't blow up the response. Traversal stops early
-    once hit, rather than just truncating the display.
-
-    structured: when True, returns a dict (``{symbol, total, truncated, fuzzy,
-    by_depth, cycles, affected_tests, cross_repo}``) instead of a formatted
-    string. The cached-path early return stays prose under both modes (it's a
-    different shape). Default False preserves the prose return.
-
-    When to use fuzzy: when precise impact seems suspiciously small for a
-    widely-used symbol.
-
-    Example:
-        impact_analysis("PaymentProcessor.create", depth=3)
-        ->  Impact of 'PaymentProcessor.create' (within-repo, precise):
-              Total: 12 impacted across depth 3
-                depth 1: 4   depth 2: 6   depth 3: 2
-            Cross-repo consumers: checkout-svc, reporting-svc
-            (within-repo only — pair with cross_repo_deps for the full picture)
-    """
+    """Recursive caller impact up to depth (precise by default; fuzzy adds unresolved edges; cached reads precomputed dataflow)."""
     from cairn.graph import queries
 
     depth = _clamp(depth, 1, 10)     # bound LLM-supplied value at the boundary
@@ -432,25 +341,7 @@ def _render_impact_analysis(data: dict, *, limit: int) -> str:
 def path(
     from_pattern: str, to_pattern: str, fuzzy: bool = False, max_depth: int = 4, limit: int = 50
 ) -> str:
-    """Trace the shortest structural path between two symbols over the live graph.
-
-    Endpoints accept name or qualified-name patterns, matched as
-    case-insensitive substrings ("Auth" matches AuthController.login). One
-    shortest path per resolved (from, to) pair, printed as the same numbered
-    hop-chain blocks the `cairn path` CLI prints. Traverses exact-resolution
-    structural edges (calls/extends/implements); fuzzy=True also follows
-    ambiguous/unresolved hops by their preserved target name. max_depth is
-    the edge budget between endpoints (default CLOSURE_MAX_DEPTH); limit caps
-    printed paths (default DEFAULT_PATH_LIMIT).
-
-    Example:
-        path("chain_a", "chain_d")
-        ->  path 1 (chain_a -> chain_d, 4 hops):
-              chain.py:4 chain_a [exact]
-              chain.py:8 chain_b [exact]
-              chain.py:12 chain_c [exact]
-              chain.py:16 chain_d [exact]
-    """
+    """Trace the shortest structural path between two symbol patterns; fuzzy follows ambiguous hops."""
     from cairn.graph.taint import find_symbol_paths, resolve_pattern_symbols
 
     max_depth = _clamp(max_depth, 1, 10)  # bound LLM-supplied value at the boundary
@@ -494,42 +385,7 @@ def path(
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def explore(query: str) -> str:
-    """Answer 'how does X work' in one call. Returns matching symbols' verbatim
-    source grouped by file, the call paths between them (including ambiguous
-    dispatch hops), a blast-radius summary, any matching tribal memory
-    (past decisions/mistakes from this workspace's memory store), marker-comment
-    rationale for the matched symbols, and a taint
-    warning when a matched symbol is the entry or sink endpoint of a known
-    source-to-sink flow. Recommended first move for any structural question;
-    reach for get_callers/impact_analysis/search_knowledge to drill down when
-    this is thin.
-
-    Example:
-        explore("how does ApiFactory create clients")
-        ->  === explore: "how does ApiFactory create clients" ===
-            2 symbol(s) matched.
-
-            === Source (1 file(s), 18 line(s)) ===
-            src/net/ApiFactory.kt
-              [class com.example.ApiFactory  lines 14-32]
-                14  class ApiFactory { ... }
-
-            === Call paths ===
-              create -> calls  buildClient  (ApiFactory.kt:22)  [exact]
-
-            === Blast radius (depth 2) ===
-              com.example.ApiFactory: 8 caller(s)
-
-            === Ambiguous dispatch ===
-              (none — all call edges were precisely resolved)
-
-            === Tribal memory (1) ===
-              Never evict numpy from sys.modules mid-process
-                How to apply: keep numpy loaded until the interpreter exits
-
-            === Rationale (1) ===
-              ApiFactory.kt:18 [note] retry budget belongs to the caller
-    """
+    """Answer 'how does X work' in one call: matching source, call paths, blast radius, memory, rationale, and taint warnings."""
     from cairn.graph import queries
     from cairn.graph.config import load_config
     from cairn.graph.taint import (
@@ -713,52 +569,7 @@ def explore(query: str) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
 @instrument
 def semantic_search(query: str, limit: int = 20, include_callers: bool = False, structured: bool = False, rerank: bool | None = None) -> str | SemanticSearchResult:
-    """Semantic (concept) search over symbols. Finds code by meaning, not just
-    exact words — 'where do we handle retries' finds backoff/recovery code even
-    when no symbol literally says 'retry'. Results are fuzzy; combine with
-    get_callers/impact_analysis for precise follow-up. Requires the 'semantic'
-    extra (pip install 'cairn-intel[semantic]'), or set CAIRN_EMBED_BACKEND=hash
-    for a dep-free smoke test.
-
-    By default (CAIRN_FUSION unset or not "0"), results blend BM25 +
-    vector via Reciprocal Rank Fusion, and the displayed score is that RRF
-    rank score (small, e.g. 0.01-0.02, tightly clustered by rank) -- NOT a
-    cosine similarity, regardless of how strong the real semantic match is.
-    Each result's provenance ('semantic', 'bm25', or 'fused(bm25+semantic)')
-    is shown alongside its score so you can tell which source it came from.
-    Trust rank order under fusion; if you need the score itself to reflect
-    match strength, set CAIRN_FUSION=0 to get true 0..1 cosine scores.
-
-    Set CAIRN_RERANK=1 to add a cross-encoder rerank stage on top of the
-    cosine/fusion scan (retrieves a wider candidate pool, re-scores with a
-    joint query/candidate model, resorts). Results show '[rerank X.XX]'
-    instead of the cosine/fusion label when the rerank stage actually ran for
-    that call -- if it's disabled or the model failed to load, results
-    silently fall back to plain ordering, so don't assume rerank ran just
-    because the env var is set. In auto mode (default) the rerank stage is
-    skipped when the fused ranking is already decisive (margin over the RRF
-    scores >= CAIRN_RERANK_MIN_MARGIN and the top hit is an exact name match),
-    since the cross-encoder cannot change such an answer and costs most of
-    the latency. The `rerank` parameter overrides that per call: None = auto
-    (gate decides), True = force the rerank stage when enabled (bypasses the
-    confidence gate; CAIRN_RERANK=0 still wins), False = never rerank.
-
-    include_callers=True attaches each hit's immediate (1-hop, precise-only)
-    callers/callees, so you get a small subgraph instead of a flat list --
-    skips the separate get_callers/get_callees follow-up call. Off by
-    default since it costs extra graph queries per result.
-
-    structured: when True, returns a dict (``{query, count, matches: [...]}``)
-    instead of a formatted string. Default False preserves the prose return.
-    The "semantic not installed" and "empty index" early-return cases stay
-    prose strings under both modes (they're error states, not result sets).
-
-    Example:
-        semantic_search("where do we handle retries")
-        ->  === semantic_search: "where do we handle retries" (3 match(es)) ===
-              [fused(bm25+semantic) 0.02] function retryWithBackoff  (Backoff.kt)
-              ...
-    """
+    """Search symbols by meaning (BM25+vector fusion by default, CAIRN_FUSION=0 for cosine; optional rerank and include_callers subgraphs)."""
     from cairn.graph import embeddings as emb
 
     limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
@@ -872,24 +683,7 @@ def _render_semantic_search(data: dict, include_callers: bool = False) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
 @instrument
 def search_symbols(pattern: str, kind: str = "", structured: bool = False) -> str | SearchSymbolsResult:
-    """Search symbols by lexical pattern (supports * wildcards). Optional kind filter.
-
-    The default discovery entry point: FTS5 + BM25 ranking, fast, handles
-    wildcards and underscore-split names. Returns up to 50 ranked matches;
-    use a qualified name from here as input to the nav tools (get_callers,
-    get_callees, impact_analysis), which take a bare name and return [] silently
-    on an ambiguous match.
-
-    structured: when True, returns a dict (``{pattern, count, truncated,
-    symbols: [...]}``) instead of a formatted string. Default False preserves
-    the prose return.
-
-    Example:
-        search_symbols("Payment*", kind="class")
-        ->  3 symbols matching 'Payment*':
-              class com.example.PaymentProcessor  src/payments/...  (app)
-              ...
-    """
+    """Lexical symbol search (FTS5/BM25, wildcards, optional kind filter) — the default discovery entry point."""
     data = search_symbols_data(pattern, kind=kind)
     if structured:
         return SearchSymbolsResult.model_validate(data)
@@ -908,11 +702,8 @@ def search_symbols_data(pattern: str, kind: str = "") -> dict:
         conn.close()
 
     if not rows:
-        # Zero matches -> emit a durable empty_result so the
-        # empty-result rate is measurable for the lexical search tool too.
-        # Emitted here at the MCP tool boundary, NOT in the search_symbols
-        # primitive (lexical.py): that primitive is shared by explore/semantic
-        # and would double-count; this wrapper has a single caller. Best-effort.
+        # Emit empty_result at the tool boundary only: the search primitive
+        # is shared by explore/semantic and would double-count.
         try:
             from cairn.telemetry import EMPTY_RESULT, emit as _emit
 
@@ -969,14 +760,7 @@ def _render_search_symbols(data: dict) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True), structured_output=True)
 @instrument
 def repo_map(structured: bool = False) -> str | dict:
-    """Return a deterministic repository orientation map.
-
-    Groups directory clusters per repository with file, symbol, and edge
-    counts; ranks hubs by incoming edges; and reports workspace hotspots.
-    Every capped array includes its dropped count.
-
-    structured: when True, returns the canonical map object instead of text.
-    """
+    """Return a deterministic repository orientation map (clusters, hubs, hotspots, dropped counts)."""
     from cairn.graph.repo_map import build_repo_map
 
     conn = _conn()
@@ -1022,15 +806,7 @@ def _render_repo_map(result: dict) -> str:
 def file_api(
     path: str, repo: str | None = None, structured: bool = False
 ) -> str | list[dict]:
-    """Return every stored symbol in one indexed file without bodies.
-
-    Each record has name, kind, qualified name, signature text or null, and
-    inclusive line span. A null signature means no signature signal was stored.
-
-    repo: repository id required when the same relative path exists in
-    multiple indexed repositories.
-    structured: when True, returns the symbol records instead of text.
-    """
+    """Return every stored symbol in one indexed file (no bodies); repo disambiguates duplicate relative paths."""
     from cairn.graph.file_api import file_api as graph_file_api
 
     conn = _conn()
@@ -1061,10 +837,7 @@ def _render_file_api(path: str, symbols: list[dict]) -> str:
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def cross_repo_deps(repo: str, limit: int = 50) -> str:
-    """Cross-repo dependency map for a repo. What it depends on, what depends on it.
-
-    limit: max rows shown per section (default 50); results are already
-    grouped/sorted by repo so this only bites in very large workspaces."""
+    """Cross-repo dependency map: what the repo depends on and what depends on it."""
     from cairn.graph import queries
 
     limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
@@ -1105,10 +878,7 @@ def visualize_graph(
     depth: int = 3,
     format: str = "mermaid",
 ) -> str:
-    """Generate a visual diagram (Mermaid/DOT/JSON) of a graph scope.
-
-    scope: symbol | module | impact | repo | deps
-    """
+    """Generate a Mermaid/DOT/JSON diagram of a graph scope (symbol|module|impact|repo|deps)."""
     from cairn.viz import query as vq
     from cairn.viz import renderers as vr
 

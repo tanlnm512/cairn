@@ -11,11 +11,7 @@ _EMPTY_EXTRACTION = "empty extraction"
 
 
 def convert_document(path: Path) -> tuple[str | None, str | None]:
-    """Convert one pdf/docx file to markdown.
-
-    Returns ``(markdown, None)`` on success or ``(None, skip_reason)``
-    when the extra is missing or the extraction is empty/garbage.
-    """
+    """Convert one supported binary document or return a skip reason."""
     suffix = path.suffix.lower()
     if suffix not in CONVERT_SUFFIXES:
         return None, f"unsupported binary type: {suffix}"

@@ -97,10 +97,7 @@ _EXECUTOR_SUMMARY_KEYS = frozenset(
 
 
 def _echo_dangling_warnings(items) -> None:
-    """Surface declared relates_to pointers that indexed to no single
-    knowledge document: they stay frontmatter-only, never index. A
-    pointer whose basename matched several resources names the
-    candidates; one matching nothing at all says so plainly."""
+    """Surface relates_to pointers that indexed to no single doc; ambiguous ones name candidates, unmatched ones say so."""
     from cairn.knowledge.index import AMBIGUOUS_POINTER_REASON
 
     for item in items or []:
@@ -127,11 +124,7 @@ def _echo_dangling_warnings(items) -> None:
 @click.option("--include-drafts", is_flag=True, help="Ingest drafts tagged 'draft' instead of skipping.")
 @click.option("--outbox", default=None, help="Staging directory (default: <workspace>/.cairn/ingest-outbox).")
 def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
-    """Stage documents for review (default dry run: nothing is written).
-
-    With --ingest, the staged manifest is approved: rows are written to the
-    knowledge store, embedded, and the post-write verify legs are printed.
-    """
+    """Stage documents for review (dry run by default); --ingest writes, embeds, and prints verify legs."""
     from cairn.knowledge.ingest import run_ingest
 
     if not files and not dirs and not repos:
@@ -166,11 +159,9 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
         click.echo(
             f"Wrote {len(report['written'])} document(s) to the store{embed_note}."
         )
-        # Verify outcome: everything in the executor report beyond the summary
-        # keys above is a verify leg (store_count, count_ok, smoke_search_hit,
-        # ...). Iterate instead of hardcoding field names so verify legs added
-        # to the executor flow through here unchanged; any leg that is
-        # explicitly False fails the ingest.
+        # Every report key beyond the summary keys is a verify leg; iterate so
+        # new executor legs flow through unchanged, and any explicitly False
+        # leg fails the ingest.
         verify_keys = [k for k in report if k not in _EXECUTOR_SUMMARY_KEYS]
         for key in verify_keys:
             click.echo(f"  {key}: {report[key]}")
@@ -210,17 +201,7 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
 @knowledge.command("rebuild")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 def knowledge_rebuild(db):
-    """Rebuild the derived knowledge_edges / knowledge_doc_refs index.
-
-    Recomputes both tables from the .knowledge bundle: declared
-    relationships (relates_to frontmatter), verified doc->code refs
-    (sources/verified families), and tag/affects_modules overlap
-    materialized as kind=derived edges. Idempotent: running it twice on an
-    unchanged bundle leaves the tables (including timestamps) identical.
-    Runs automatically after `knowledge ingest --ingest`. Island detection
-    then queues one doc-link task per unlinked island pair (deduped per
-    member set across runs).
-    """
+    """Rebuild the derived knowledge_edges / knowledge_doc_refs index (idempotent) and queue island doc-link tasks."""
     from cairn.knowledge.index import rebuild_knowledge_index
     from cairn.knowledge.islands import queue_doc_link_tasks
     from cairn.okf.bundle import OKFBundle
@@ -249,12 +230,7 @@ def knowledge_rebuild(db):
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 def knowledge_islands(as_json, db):
-    """List isolated doc components (islands) and their doc-link tasks.
-
-    Islands are doc-graph components detached from the corpus: two-doc
-    components and singleton docs (paired in id order). Read-only; the
-    queueing itself runs on `knowledge ingest --ingest`.
-    """
+    """List isolated doc components and their doc-link tasks; read-only, queueing runs on ingest."""
     from cairn.knowledge.islands import DOC_LINK_KIND, doc_islands
     from cairn.llm.tasks import list_tasks
 
@@ -336,11 +312,7 @@ def _resolve_or_exit(bundle, doc_id: str):
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 def knowledge_related(doc_id, as_json, db):
-    """List a doc's relationship neighbors (relation + kind per row).
-
-    Reads the derived knowledge_edges index in both directions; refresh it
-    with `cairn knowledge rebuild` if the bundle changed outside ingest.
-    """
+    """List a doc's relationship neighbors (relation + kind per row) in both index directions."""
     from cairn.knowledge.index import related_docs
 
     bundle = _require_store_bundle()
@@ -372,11 +344,7 @@ def knowledge_related(doc_id, as_json, db):
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 def knowledge_chain(doc_id, as_json, db):
-    """Print the supersede chain containing a doc (oldest -> newest).
-
-    Any chain member may be the argument: every member appears exactly
-    once, positioned causally (each member is superseded-by the next).
-    """
+    """Print the supersede chain containing a doc (oldest -> newest); any member may be the argument."""
     from cairn.knowledge.index import supersede_chain
 
     bundle = _require_store_bundle()
@@ -640,14 +608,9 @@ def knowledge_export(out_path):
         click.echo(f"Exported knowledge bundle directory to {dst}")
 
 
-# --------------------------------------------------------------------------
-# cairn knowledge workflow (procedural ontology -- see cairn/knowledge/workflow.py)
-# --------------------------------------------------------------------------
-# `cairn knowledge list --type workflow`, `cairn knowledge status`, `cairn knowledge
-# remove`, and `cairn knowledge search` already work for workflows unchanged --
-# a workflow is just a knowledge doc with doc_type="workflow". Only `add`
-# (needs a way to specify ordered steps) and `trace` (the ordered-steps
-# query, not a generic search) are genuinely workflow-specific.
+# --- cairn knowledge workflow (procedural ontology) ---
+# Workflows are knowledge docs (doc_type="workflow"); only `add` and `trace`
+# are workflow-specific.
 @knowledge.group("workflow")
 def knowledge_workflow():
     """Ordered procedural workflows (see cairn/knowledge/workflow.py)."""
@@ -761,19 +724,7 @@ def knowledge_workflow_trace(ref, as_json):
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def knowledge_workflow_sync(ref, sync_all, dry_run, max_steps, db, knowledge):
-    """Detect and refresh stale workflows after code changes.
-
-    Checks each workflow's step anchors (symbol/file) against the current
-    graph. With --dry-run, reports stale steps without writing. Without
-    --dry-run, re-traces the flow and rebuilds the steps from the current
-    call graph.
-
-    \b
-    Examples:
-      cairn knowledge workflow sync "Flow: login"     # sync one
-      cairn knowledge workflow sync --all              # sync all
-      cairn knowledge workflow sync --all --dry-run    # report only
-    """
+    """Detect and refresh stale workflows; --dry-run reports without writing, otherwise steps re-trace from the current graph."""
     from cairn.knowledge.workflow import (
         check_all_workflows, check_workflow_staleness, sync_workflow,
     )

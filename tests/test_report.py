@@ -16,6 +16,9 @@ open-never-raise / never-materialize glue, distinct from doctor's).
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 import sqlite3
@@ -25,6 +28,9 @@ from click.testing import CliRunner
 
 from cairn.cli import main
 from cairn.graph.schema import _apply_schema
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +96,18 @@ def _make_quality_repo(tmp_path):
 def _run(db, *extra):
     """Invoke `cairn report --db <db> [extra]` and return the CliRunner result."""
     return CliRunner().invoke(main, ["report", "--db", str(db), *extra])
+
+
+@pytest.mark.parametrize("module", ["audit_status", "comment_style"])
+def test_module_entrypoints_emit_no_runtime_warning(module):
+    proc = subprocess.run(
+        [sys.executable, "-m", f"cairn.cli.system.{module}", "--help"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "RuntimeWarning" not in proc.stderr
 
 
 # Secret-shaped values that strip_private_data redacts. Both match the regex

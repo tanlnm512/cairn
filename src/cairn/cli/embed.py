@@ -9,13 +9,7 @@ from .main import DEFAULT_DB_PATH, get_db, main, queries
 
 
 def _exit_backend_unavailable() -> None:
-    """Report an unavailable embedding backend and exit 1.
-
-    Server-family backends never fall back to hash, so a failed
-    probe exits with a server-specific remediation (base URL, the /v1/models
-    check it must pass, `cairn doctor`) instead of the sentence-transformers
-    install hint every other backend keeps. Exit code is 1 either way.
-    """
+    """Report an unavailable embedding backend and exit 1; server backends keep their own remediation, never a hash fallback."""
     from . import display
     from cairn.graph import embeddings as emb
 
@@ -76,23 +70,13 @@ def _exit_not_adoptable(requested, state) -> None:
 
 
 def _resolve_adopted_model(conn, requested):
-    """Resolve --adopt-server-model into the model alias binding.
-
-    Returns (adopted_model_id, stored_stamp) with the session pins set so the
-    embed below reads and writes the STORED stamp while requests route to the
-    adopted id — permanence of the alias binding, never a corpus restamp. A
-    bare flag reuses the ladder's active rung-1 adoption, else forces one
-    evaluation against the server; an explicit MODEL_ID is verified the same
-    honest way: it must be the candidate the ladder's parity scan proves
-    (only a passing parity gate switches producers).
-    """
+    """Resolve --adopt-server-model into the alias binding: requests route to the adopted id, the corpus keeps its stored stamp."""
     from . import display
     from cairn.graph import embed_ladder as ladder
 
-    # The binding needs a stored corpus to latch onto, so check that BEFORE
-    # evaluating the ladder: with no rows there is nothing to verify parity
-    # against (the ladder would refuse on its own verdict), and the empty
-    # table deserves its specific remediation, not the ladder's.
+    # The binding needs a stored corpus to latch onto: with no rows there is
+    # nothing to verify parity against, and the empty table gets its own
+    # remediation.
     row = conn.execute(
         "SELECT model, COUNT(*) AS n FROM embeddings GROUP BY model "
         "ORDER BY COUNT(*) DESC, model LIMIT 1"
@@ -226,10 +210,8 @@ def embed(
     elif not emb.embeddings_available():
         _exit_backend_unavailable()
 
-    # Warn when silently falling back to the hash backend. is_hash_fallback()
-    # is True only when the backend is the *default* local but
-    # sentence-transformers isn't installed (a silent fallback), not when the
-    # user explicitly set CAIRN_EMBED_BACKEND=hash.
+    # Warn only on the silent default-local-but-missing fallback; an explicit
+    # CAIRN_EMBED_BACKEND=hash is an informed choice.
     if emb.is_hash_fallback():
         display.warning(
             "Using the hash embedder (dep-free) because sentence-transformers "
@@ -305,10 +287,8 @@ def embed(
                 bar.tasks[task_id].total = None
                 bar.update(task_id, description="ANN index", completed=0)
                 idx_summary = ann.rebuild_index(conn, emb.current_model())
-                # Default-on multivector: also rebuild the mv index
-                # (its own vecmv_<model> vec0 table over
-                # embeddings_mv). --no-multivector skips it and the flow is
-                # byte-identical to the single-index build.
+                # Default-on multivector: also rebuild the mv index;
+                # --no-multivector keeps the flow identical to single-index.
                 mv_idx_summary = (
                     ann.rebuild_index(conn, emb.current_model(), source="embeddings_mv")
                     if multivector
@@ -351,10 +331,8 @@ def embed(
                     )
 
         if adopted is not None:
-            # Permanence persists the alias binding — the corpus keeps
-            # its stamp. ~/.cairn/config.json is
-            # the durable home for the pin; the env export remains for
-            # env-only setups.
+            # The alias pin persists to ~/.cairn/config.json; the env export
+            # line remains for env-only setups.
             display.success(
                 f"Adopted server model '{adopted}': this corpus keeps its "
                 f"stamp '{stored_stamp}' (no re-embed, no restamp)."
@@ -368,11 +346,8 @@ def embed(
             display.dim("Env-only setups can pin the same stamp by exporting:")
             display.dim(f"  export CAIRN_EMBED_MODEL_STAMP={stored_stamp}")
 
-        # Persist an 'embed' build_runs row (best-effort; record_build_run
-        # swallows all errors). Only the symbol/skipped counts are meaningful
-        # for an embedding pass -- repos/files/edges/resolution/phase_timings
-        # stay NULL (no scan/parse/resolve phases run here). t0 was captured
-        # at the start of the embed phase.
+        # Best-effort 'embed' build_runs row: only symbol/skipped counts are
+        # meaningful; scan/parse/resolve columns stay NULL.
         from ..graph.builder import record_build_run
         record_build_run(
             db,
@@ -403,14 +378,7 @@ def embed(
     help="Attach each hit's 1-hop callers/callees (precise-only, capped at 5 each).",
 )
 def semantic(query, db, limit, threshold, as_json, include_callers):
-    """Semantic (concept) search: find code by meaning, not just words.
-
-    Set CAIRN_RERANK=1 to add a cross-encoder rerank stage (widens the
-    candidate pool, re-scores with a joint query/candidate model). Falls back
-    to plain cosine ordering silently if the reranker isn't installed or
-    fails to load -- check the 'reranked' field (or --json output) to see
-    which path actually ran for a given call.
-    """
+    """Semantic (concept) search; reranking falls back silently to cosine order — check the 'reranked' field."""
     from cairn.graph import embeddings as emb
 
     if not emb.embeddings_available():
@@ -453,5 +421,4 @@ def semantic(query, db, limit, threshold, as_json, include_callers):
     # Plain list output -- keep the click.echo path for parseable results
     # rather than the themed console, since semantic matches are often piped.
     click.echo("\n".join(console_out))
-
 

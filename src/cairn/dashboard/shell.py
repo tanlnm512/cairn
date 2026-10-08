@@ -9,12 +9,7 @@ from urllib.parse import quote
 # path outside the store registry, so no workspace name is derivable.
 LAUNCH_LABEL = "Launch workspace"
 
-# Sidebar + palette view grouping. Order within a section is the display
-# order; the section list is the sidebar's top-to-bottom order. A None
-# label renders a standalone item group with no header — Workspaces leads
-# the nav ungrouped (overview-first contract) above the scoped
-# groups. The Overview landing stays out — it is the brand link, not a
-# nav item.
+# Sidebar order follows sections; None renders the ungrouped workspaces entry.
 NAV_SECTIONS: tuple = (
     (None, ("workspaces",)),
     ("Explore", ("projects", "graph", "communities")),
@@ -41,10 +36,7 @@ NAV_LABELS: dict = {
     "settings": "Settings",
 }
 
-# Palette-only destinations: reachable from the command palette but not
-# sidebar items (one sidebar entry per surface family; the family's
-# sub-views stay palette-only). ``(href path, label)`` tuples — the same
-# store-param composition the nav views' hrefs get.
+# Palette-only sub-views share the nav store-param composition.
 PALETTE_EXTRA_VIEWS: tuple = (("/knowledge/graph", "Knowledge Graph"),)
 
 
@@ -60,11 +52,7 @@ def workspace_label(path: Optional[str], key: str) -> str:
 
 
 def launch_option_label(stores: List[dict], launch_db: Optional[str]) -> str:
-    """Label for the selector's no-selection option: the launch
-    workspace's own name when the launch db is a registered store, so a
-    dashboard launched from one workspace never reads as
-    workspace-agnostic; ``LAUNCH_LABEL`` stands in for a custom ``--db``
-    outside the registry."""
+    """Name a registered launch store; fall back for an unregistered --db path."""
     if not launch_db:
         return LAUNCH_LABEL
     key = Path(launch_db).parent.name
@@ -89,17 +77,7 @@ def _populated_options(stores: List[dict]) -> List[dict]:
 def shell_context(
     stores: List[dict], store_key: str, path: str, launch_db: Optional[str] = None
 ) -> dict:
-    """Everything base.html's chrome renders from, for one request.
-
-    ``nav.sections`` carries the grouped sidebar (each item's ``href``
-    rides the selected store: bare hrefs when nothing is selected);
-    ``active`` flags derive from the request path by prefix match.
-    ``palette`` seeds the command palette: the same view list plus
-    the populated workspaces (the palette switches stores through the
-    same URL-rewrite behavior as the topbar selector). ``launch_db`` is
-    the app factory's launch db path; when it names a registered store,
-    the selector's no-selection option carries that workspace's name.
-    """
+    """Return nav, selector, and palette context for one request."""
     nav_query = "?store=" + quote(store_key, safe="") if store_key else ""
     options = _populated_options(stores)
     sections: List[dict] = []

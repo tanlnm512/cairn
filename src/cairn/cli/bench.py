@@ -26,27 +26,7 @@ def _profile_value(value: object) -> str:
 
 
 def _profile_class(key: str, value: object) -> object:
-    """Bucket a profile value into its comparison CLASS (rolling baselines).
-
-    The rolling CI baseline (bench-baseline.json minted on main, compared
-    PR-over-PR on the same hosted pool) must not fire the profile-mismatch
-    warning for fields that merely identify *which instance of the same class*
-    produced the number:
-
-    * ``runner_class`` -- GitHub stamps ``ci-<slug(RUNNER_NAME)>`` and the
-      hosted pool names instances with trailing digits
-      (``ci-github-actions-12`` vs ``ci-github-actions-1000001128``).
-      Strip the trailing instance number; different runner *names* still
-      mismatch, and ``reference-local`` never buckets with anything.
-    * ``os`` -- hosted runners drift kernel revisions over time
-      (``Linux-6.17.0-1022-azure...`` vs ``Linux-6.20...``). Two Linux
-      kernels are the same hosted class; macOS point releases stay exact
-      (the reference minter's OS delta is a real comparability fact).
-
-    Everything else (arch, cpu, cpu_count) stays exact-equality -- those
-    are real comparability signals. This is metadata bucketing only: the
-    TIMINGS themselves are never normalized.
-    """
+    """Bucket a profile value into its comparison class; timings are never normalized."""
     if value is _UNSTAMPED:
         return value
     text = str(value)
@@ -58,15 +38,7 @@ def _profile_class(key: str, value: object) -> object:
 
 
 def _resolve_baseline_file(version: str, suite: str) -> Path:
-    """Resolve ``benchmarks/baselines/<version>/<suite>.json`` or exit 1.
-
-    The error names the missing version, the directory searched, and any
-    versions that DO exist; a version directory without this suite's
-    artifact names the suite file it lacks. Called BEFORE any suite runs,
-    so a typo fails in milliseconds instead of after a minutes-long suite
-    ("fails promptly"). Exit 1 (usage/baseline error) stays distinct from
-    the regression signal's exit 2.
-    """
+    """Resolve ``benchmarks/baselines/<version>/<suite>.json`` or exit 1, distinct from the exit-2 regression signal."""
     from . import display
     from cairn.bench.datasource import default_baselines_root
 
@@ -98,12 +70,7 @@ SWE_BENCH_SMOKE_TASKS = 2
 
 
 def _default_swe_bench_manifest() -> Path | None:
-    """Locate the frozen swe-bench pin manifest; None when absent.
-
-    Same two-candidate precedence as the datasource defaults: the working
-    directory first (how CI and maintainers invoke ``cairn bench``), then
-    the source tree the package lives in.
-    """
+    """Locate the frozen swe-bench pin manifest (cwd first, then the package tree); None when absent."""
     name = Path("benchmarks") / "datasource" / "swe-bench-subset.json"
     candidates = [
         Path.cwd() / name,
@@ -146,18 +113,7 @@ _SWE_COMMIT_RX = re.compile(r"[0-9a-f]{7,40}")
 def _swe_bench_workspaces(
     tasks: list[dict], cache_root: Path | None = None, *, quiet: bool = False
 ) -> dict[str, str]:
-    """Map each task's instance_id to its checked-out workspace tree.
-
-    Workspaces live under ``<CAIRN_HOME>/cache/swe-bench/<repo>-<base_commit>``
-    -- keyed by the commit sha, so a directory's presence means that exact
-    content is already checked out and the clone is skipped (warm reruns
-    never touch the network). The clone stages into a pid-suffixed temp dir
-    and is renamed into place; a run that loses the rename to a concurrent
-    run uses the winner's checkout. ``quiet`` suppresses progress output
-    (machine-readable stdout). Raises ValueError when a task's
-    ``repo``/``base_commit`` fields are malformed -- they reach cache paths
-    and git args verbatim.
-    """
+    """Map each task's instance_id to its commit-keyed workspace tree; raises ValueError on malformed repo/base_commit."""
     from . import display
 
     if cache_root is None:
@@ -219,11 +175,7 @@ def _swe_bench_workspaces(
 def _swe_bench_stamp(
     base: dict, manifest: dict, manifest_path: Path, slice_label: str | None
 ) -> dict:
-    """Swe-bench artifact stamp: pinned revision + manifest digest + size.
-
-    Replaces only the ``dataset`` block of the invocation stamp; the shared
-    stamp builder's output gains no keys.
-    """
+    """Swe-bench artifact stamp: pinned revision + manifest digest + size, replacing only the dataset block."""
     from cairn.bench.swe_bench import DATASET_NAME
 
     dataset = {
@@ -239,11 +191,7 @@ def _swe_bench_stamp(
 
 
 def _persistable_swe_bench_report(report: dict) -> dict:
-    """Suite report kept for persistence: the wall-clock figures removed.
-
-    Reruns must persist identical reports, so only the deterministic call and
-    token figures are kept; ``wall_ms``/``time_ratio`` never persist.
-    """
+    """Suite report kept for persistence: deterministic figures only, wall-clock removed."""
     def arm(arm_dict: dict) -> dict:
         return {k: v for k, v in arm_dict.items() if k != "wall_ms"}
 
@@ -376,14 +324,7 @@ def _print_breaches(breaches: list, as_json: bool) -> None:
 
 
 def _render_baseline_header(version: str, path: Path, data: dict) -> None:
-    """Print the dataset-version header for a ``--baseline`` comparison.
-
-    Names the resolved baseline and its stamp facts (dataset
-    version + tree hash, cairn version, runner class) BEFORE the comparison
-    table renders, so the reader knows what the numbers are against. A
-    baseline file without stamp keys renders ``?`` placeholders rather
-    than crashing -- the header degrades the same way the stamp does.
-    """
+    """Print the baseline stamp facts before the comparison table; unstamped fields render ``?``."""
     from . import display
 
     raw_dataset = data.get("dataset")
@@ -405,22 +346,7 @@ def _render_baseline_header(version: str, path: Path, data: dict) -> None:
 
 
 def _warn_machine_profile_mismatch(current: dict, stamped: object) -> None:
-    """Loud advisory on machine-profile CLASS differences.
-
-    Every mismatched field is named with both the baseline's and
-    the current value. An exact match prints nothing (no false-warning
-    marker). The warning is advisory only -- it never gates, so the
-    exit code stays whatever the regression comparison alone decides. A
-    baseline with no machine_profile stamp at all is "unknown", not
-    "mismatched": noted, but without the MISMATCH marker.
-
-    Fields are compared at class level (``_profile_class``): the rolling
-    CI baseline runs PR-over-PR on GitHub's hosted pool, where
-    ``runner_class`` carries a per-instance suffix and ``os`` carries a
-    drifting kernel revision -- same class, not a mismatch. Cross-class
-    pairs (``reference-local`` vs ``ci-*``, macOS vs Linux, x86_64 vs
-    arm64, different CPU counts) still warn with both values.
-    """
+    """Advisory on machine-profile class differences; never gates or changes the exit code."""
     from . import display
 
     if not isinstance(stamped, dict):
@@ -644,11 +570,8 @@ def bench(
     # timestamp at every payload site below -- never inside to_dict.
     stamp = build_artifact_stamp()
 
-    # --baseline <DS-version>: resolve the baseline from
-    # the committed benchmarks/baselines/ tree instead of an explicit
-    # --compare path. Validated BEFORE any suite runs so an unknown version
-    # fails in milliseconds, not after a minutes-long suite ("fails
-    # promptly"); the diff itself reuses the --compare flow verbatim below.
+    # --baseline resolves from the committed baselines tree and is validated
+    # before any suite runs; the diff reuses the --compare flow below.
     if compare and baseline:
         display.error(
             "--baseline and --compare are mutually exclusive: pass a dataset "
@@ -809,11 +732,8 @@ def bench(
                 sys.exit(1)
             baseline_data = json.loads(baseline_path.read_text(encoding="utf-8"))
             if baseline_version is not None:
-                # Dataset-version header + machine-profile check BEFORE the
-                # comparison table: the reader
-                # sees what the numbers are against -- and any cross-machine
-                # caveat -- before reading them. Advisory only: a
-                # mismatch never changes the exit code.
+                # Header + machine-profile check precede the table so any
+                # cross-machine caveat is read first; advisory only.
                 _render_baseline_header(baseline_version, baseline_path, baseline_data)
                 _warn_machine_profile_mismatch(
                     stamp["machine_profile"], baseline_data.get("machine_profile")

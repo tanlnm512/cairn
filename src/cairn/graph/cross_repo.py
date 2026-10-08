@@ -29,37 +29,15 @@ REPO_NAMESPACES = _DEFAULT_NAMESPACES
 
 
 def _escape_like(value: str) -> str:
-    """Escape LIKE meta-characters so ``value`` matches literally.
-
-    ``\\``, ``%`` and ``_`` are escaped by prefixing a backslash; the
-    accompanying LIKE clause must use ``ESCAPE '\\'``. Namespace prefixes
-    (e.g. ``xyz.be.core_ui_v4``) contain ``_`` which would otherwise act as a
-    single-char wildcard and match unintended import paths.
-    """
+    """Escape LIKE meta-characters so ``value`` matches literally."""
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
-# Process-level cache of the resolved map, keyed by the *resolved workspace
-# path* so switching workspaces within a long-lived process (e.g. the MCP
-# server) does not serve a stale map from the previous workspace. Cleared by
-# ``_reset_namespaces_cache`` (tests / config reload).
+# Namespace cache keys use the resolved workspace path.
 _namespaces_cache: Dict[str, Dict[str, str]] = {}
 
 
 def _load_namespaces() -> Dict[str, str]:
-    """Resolve the cross-repo namespace map for the current context.
-
-    Priority (first non-empty wins):
-      1. ``CAIRN_REPO_NAMESPACES`` env var — a JSON object of prefix->repo.
-      2. ``repo_namespaces`` in the workspace's ``cairn.json``.
-      3. :data:`_DEFAULT_NAMESPACES` (the built-in be-workspace map).
-
-    The result is cached for the process, **keyed by the resolved workspace
-    path**, so a long-lived process that changes workspaces (the MCP server
-    re-pointing ``CAIRN_WORKSPACE``) re-resolves instead of reusing the prior
-    workspace's map. A malformed env var or config file is ignored with a
-    stderr warning, never raised — a bad config must not break the build
-    (same contract as :mod:`graph.config`).
-    """
+    """Resolve the cross-repo namespace map for the current context."""
     import sys
 
     from ..paths import resolve_workspace
@@ -115,11 +93,7 @@ def _reset_namespaces_cache() -> None:
 
 
 def cross_repo_deps(conn: sqlite3.Connection, repo: str) -> dict:
-    """Compute cross-repo dependencies for `repo` via import namespaces.
-
-    Returns {dependencies: [{repo, type, evidence, count}],
-             dependents:   [{repo, type, count}]}.
-    """
+    """Compute cross-repo dependencies for `repo` via import namespaces."""
     namespaces = _load_namespaces()
     cur = conn.cursor()
     # Dependencies: imports in `repo` that resolve to another repo's namespace.
@@ -137,11 +111,7 @@ def cross_repo_deps(conn: sqlite3.Connection, repo: str) -> dict:
                 d = deps.setdefault(owner, {"repo": owner, "type": "import", "evidence": ns, "count": 0})
                 d["count"] += 1
 
-    # Dependents: imports in OTHER repos referencing `repo`'s namespaces.
-    # The prefix filter is pushed into SQL rather than loading every import
-    # row into memory and filtering in Python. Namespace prefixes may contain
-    # LIKE meta-characters (``_``), so they are escaped and every LIKE uses
-    # ``ESCAPE '\\'``.
+    # Dependent namespace matching stays in SQL and escapes LIKE metacharacters.
     my_namespaces = [ns for ns, owner in namespaces.items() if owner == repo]
     dependents: dict[str, dict] = {}
     if my_namespaces:

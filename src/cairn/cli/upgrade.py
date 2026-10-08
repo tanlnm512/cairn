@@ -10,12 +10,8 @@ from ._helpers import _detect_install_method
 
 
 # --- Version helpers -------------------------------------------------------
-#
-# Version strings are PEP 440. Naive `==` comparison breaks across pre/post/
-# local segments (e.g. local "0.6.0" vs PyPI "0.6.0.post1", or "0.6.0" vs
-# "0.6.0rc1"). Use packaging.version.parse when available; degrade to string
-# equality if the import ever fails -- the upgrade command must never crash on
-# a version parse.
+# PEP 440 comparison (naive == breaks across pre/post/local segments);
+# packaging.version.parse when available, string equality as the fallback.
 
 
 def _is_up_to_date(current: str, latest: str) -> bool:
@@ -52,13 +48,7 @@ def _pypi_latest() -> str | None:
 
 
 def _reinstall(method: str, version: str) -> bool:
-    """Re-install cairn-intel using the detected method. True on success.
-
-    The installer runs behind the shared quiet progress helper (the same
-    seam `embed --install-deps` uses): one live progress line, with the
-    installer's output drained silently and shown only on failure -- an
-    inherited stdout would interleave pipx/uv/pip progress noise into it.
-    """
+    """Re-install cairn-intel via the quiet progress seam; installer output shows only on failure."""
     from . import display
     from ..graph.embeddings import _run_subprocess_with_progress
 

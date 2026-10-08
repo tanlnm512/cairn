@@ -38,11 +38,7 @@ def register(
 
 
     def favicon(request: Request) -> Response:
-        """The shell's icon, served at the conventional /favicon.ico path
-        browsers probe when no <link rel="icon"> matched — a 200 here
-        keeps the icon off the network log's error column. Same file the
-        shell links; reread per request so a swapped icon needs no
-        restart. A missing file is a plain 404, not a 500."""
+        """Serve the shell favicon at /favicon.ico, rereading it and missing as 404."""
         try:
             body = (static_dir / "favicon.svg").read_bytes()
         except FileNotFoundError:

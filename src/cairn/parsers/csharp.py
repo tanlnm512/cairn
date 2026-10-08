@@ -343,14 +343,7 @@ class CSharpParser(BaseParser, TreeSitterParserBase):
     # ------------------------------------------------------------- import parse
 
     def _parse_using(self, node: Node, source: bytes) -> Optional[Import]:
-        """using_directive -> Import.
-
-        Alias directives are structural at the pinned grammar version (no
-        ``name_equals`` node exists): an ``=`` token makes the leading
-        ``identifier`` the local alias and the ``qualified_name`` -- or the
-        trailing identifier -- the imported target. Plain and ``static``
-        directives import their single name child verbatim.
-        """
+        """Return an Import for plain, static, and grammar-flattened alias using directives."""
         line = node.start_point[0] + 1
         idents: List[Node] = []
         qualified: List[Node] = []

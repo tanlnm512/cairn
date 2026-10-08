@@ -50,10 +50,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
         )
 
     def memory_detail(request: Request) -> Response:
-        """One memory's detail page at /memory/{tier}/{slug} — the bare
-        concept id's two variable segments. get_memory_detail assembles
-        identity, rendered body, promotion history and the supersedes
-        neighbors; None = the plain not-found page."""
+        """Render one memory detail page or the plain not-found page."""
         from starlette.responses import HTMLResponse
 
         from ..data import get_memory_detail

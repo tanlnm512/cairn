@@ -14,11 +14,8 @@ _METRIC_BUFFER: collections.deque = collections.deque(maxlen=2000)
 _METRIC_LOCK = threading.Lock()
 _METRIC_FLUSHER_STARTED = False
 
-# Hard cap on any tool's returned string, enforced centrally so a caller never
-# hits the MCP client's "exceeds maximum allowed tokens" hard failure -- a
-# tool that forgets its own limit/pagination still degrades to a truncation
-# notice instead of an opaque client-side rejection. ~4 chars/token, so this
-# stays well under typical 25k-token MCP result ceilings.
+# Hard cap enforced centrally: a tool that forgets its own limit degrades to
+# a truncation notice instead of the MCP client's token-limit failure.
 MAX_RESULT_CHARS = int(os.environ.get("CAIRN_MAX_RESULT_CHARS", "60000"))
 
 # Cap on the redacted kwargs summary stored per tool_metrics row: the summary
@@ -28,12 +25,7 @@ MAX_ARGS_SUMMARY_CHARS = 200
 
 
 def _chars_bucket(n: int) -> str:
-    """Bucket a result length into a fixed low-cardinality set.
-
-    Truncation is observable analytics, not correctness: a coarse bucket
-    bounds the ``events`` row cardinality; the exact count carries no extra
-    diagnostic value.
-    """
+    """Bucket a result length into a fixed low-cardinality set."""
     if n <= 500:
         return "<=500"
     if n <= 2000:
@@ -46,13 +38,8 @@ def _chars_bucket(n: int) -> str:
 def _truncate_result(name: str, result: str) -> str:
     if len(result) <= MAX_RESULT_CHARS:
         return result
-    # Over-cap: emit a durable truncate_result event so truncation rate is
-    # measurable per tool. Emitted ONLY on the actual
-    # truncation branch, not every call. The import is lazy (mirrors the lazy
-    # cairn.telemetry.sink imports in configure_conn / _start_metric_flusher,
-    # kept lazy to avoid any boot-order cycle) and the whole block is guarded
-    # so a telemetry bug can never fail a tool call -- ``_truncate_result``
-    # runs inside ``instrument``'s try block, but telemetry is best-effort.
+    # Emit only on the truncation branch; lazy, guarded telemetry so a
+    # telemetry bug can never fail the tool call.
     try:
         from cairn.telemetry import TRUNCATE_RESULT, emit as _emit
 
@@ -74,13 +61,7 @@ def _truncate_result(name: str, result: str) -> str:
 
 
 def _kwargs_payload(kwargs: dict) -> tuple:
-    """Compact JSON form of a call's kwargs -> ``(req_chars, args_summary)``.
-
-    Never raises: this runs inside ``instrument``'s wrapper, which must not
-    fail a call that succeeded. ``default=str`` covers non-serializable
-    values; anything still pathological degrades to a missing size, not an
-    error.
-    """
+    """Compact JSON form of a call's kwargs -> ``(req_chars, args_summary)``; never raises."""
     try:
         summary = json.dumps(kwargs, default=str, separators=(",", ":"))
     except Exception:
@@ -89,12 +70,7 @@ def _kwargs_payload(kwargs: dict) -> tuple:
 
 
 def _result_chars(result: object) -> Optional[int]:
-    """Char length of a tool result: O(1) on ``str``, ``len(str(result))``
-    otherwise.
-
-    Never raises: a result object whose ``__str__`` is broken must not fail
-    a call that succeeded.
-    """
+    """Char length of a tool result; None when str() fails (never raises)."""
     try:
         return len(result) if isinstance(result, str) else len(str(result))
     except Exception:
@@ -108,14 +84,7 @@ _conn_factory: Optional[Callable[[], "object"]] = None
 
 
 def configure_conn(conn_factory: Callable[[], "object"]) -> None:
-    """Inject the connection factory used by _flush_metrics.
-
-    Called once from server.run() at boot. Also mirrors into the shared
-    telemetry sink so the single boot call wires both
-    ``tool_metrics`` (this module's table) and ``events`` (the sink's table).
-    Must come from outside so this module stays free of the schema/store
-    dependency.
-    """
+    """Inject the connection factory and mirror it into the shared telemetry sink."""
     global _conn_factory
     _conn_factory = conn_factory
     # Mirror into the shared sink so events get the same writable factory.
@@ -126,13 +95,7 @@ def configure_conn(conn_factory: Callable[[], "object"]) -> None:
 
 
 def _flush_metrics():
-    """Drain the metric buffer into tool_metrics (best-effort).
-
-    Rows are removed from the buffer atomically with the snapshot, so rows
-    appended mid-flush can never be mistaken for the batch being drained;
-    a failed flush re-queues its batch ahead of those newer rows for the
-    next attempt.
-    """
+    """Drain the metric buffer into tool_metrics (best-effort; failed batches requeue)."""
     import logging
 
     logger = logging.getLogger(__name__)
@@ -182,12 +145,7 @@ def _flush_metrics():
 
 
 def _requeue(batch: list) -> None:
-    """Return unflushed rows to the front of the buffer, FIFO order preserved.
-
-    When newer rows already fill the deque, only the newest ``room`` rows of
-    the batch are re-queued (the oldest are dropped) so the re-queue never
-    evicts rows that have not been written yet.
-    """
+    """Return unflushed rows to the buffer front, FIFO; on overflow keep the newest rows."""
     with _METRIC_LOCK:
         room = (_METRIC_BUFFER.maxlen or len(batch)) - len(_METRIC_BUFFER)
         if room <= 0:
@@ -197,12 +155,7 @@ def _requeue(batch: list) -> None:
 
 
 def _start_metric_flusher():
-    """Register this module's ``_flush_metrics`` with the shared telemetry
-    flusher thread and ensure that thread is running.
-
-    ``_METRIC_FLUSHER_STARTED`` is the idempotency flag (and what the test
-    fixture resets between tests).
-    """
+    """Register ``_flush_metrics`` with the shared telemetry flusher (idempotent)."""
     global _METRIC_FLUSHER_STARTED
     if _METRIC_FLUSHER_STARTED:
         return
@@ -229,23 +182,13 @@ def _log_metric(
     truncated_from_chars: Optional[int] = None,
     truncated_to_chars: Optional[int] = None,
 ):
-    """Record a tool invocation (buffered; flushes on a background thread).
-
-    The payload fields are optional so positional callers stay valid; a
-    caller that measures nothing leaves NULL columns, never a broken row.
-    """
-    # Read-only daemons open the DB with mode=ro, so INSERT INTO tool_metrics
-    # would fail every flush and buffer indefinitely (capped by deque maxlen).
-    # tool_metrics is analytics, not correctness -- skip the write entirely on
-    # a read-only server so the table doesn't silently stay empty and the flush
-    # thread doesn't spin on a guaranteed failure.
+    """Buffer one tool invocation row; optional payload fields leave NULLs, never break."""
+    # Read-only daemons cannot INSERT; skipping keeps the flush thread from
+    # spinning on a guaranteed failure.
     if os.environ.get("CAIRN_READ_ONLY", "").lower() in ("1", "true", "yes"):
         return
-    # CAIRN_TELEMETRY=off is the documented master kill switch ("off stops
-    # ALL recording"): tool_metrics must honor it like events do. Lazy
-    # import mirrors the sink imports in configure_conn / _start_metric_flusher
-    # (avoids any boot-order cycle); is_telemetry_off() re-reads the env
-    # every call, like the check above.
+    # CAIRN_TELEMETRY=off stops tool_metrics like events; is_telemetry_off()
+    # re-reads the env every call.
     from cairn.telemetry.sink import is_telemetry_off
 
     if is_telemetry_off():
@@ -285,15 +228,7 @@ def _log_metric(
 
 
 def instrument(fn):
-    """Decorator: wraps an MCP tool with timing, payload-size capture, error
-    capture, and metric logging.
-
-    Uses functools.wraps so ``__wrapped__`` is set and
-    inspect.signature(wrapper) resolves to the original function's real
-    parameters. FastMCP's @mcp.tool() introspects the signature of whatever
-    it decorates to build the tool's JSON schema; without ``__wrapped__`` it
-    would only see (*args, **kwargs) and generate a broken schema.
-    """
+    """Wrap an MCP tool with timing, size capture, truncation, and metric logging."""
     import logging
     import traceback
 
@@ -307,10 +242,8 @@ def instrument(fn):
         try:
             result = fn(*args, **kwargs)
             truncated_from = truncated_to = None
-            # The cap applies to every result shape: structured (non-str)
-            # results are measured via str() and degrade to the truncated
-            # string form when over cap, so no tool can bypass the client's
-            # token ceiling by returning a model instead of prose.
+            # The cap applies to every result shape: structured results
+            # degrade to their string form, so nothing bypasses the ceiling.
             original_chars = (
                 len(result) if isinstance(result, str) else _result_chars(result)
             )

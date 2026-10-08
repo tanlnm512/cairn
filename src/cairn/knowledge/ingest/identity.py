@@ -45,13 +45,7 @@ def build_identity(
     parsed: ParsedDoc,
     seen_slugs: set[str] | None = None,
 ) -> DocIdentity:
-    """Derive the identity of one source document.
-
-    ``seen_slugs`` is the caller's accumulating slug set: pass one set while
-    processing rows in sorted ``(repo, relpath)`` order and each
-    final slug is added to it, so collision suffixing stays deterministic.
-    Omitted -> no collision resolution (pure function of the inputs).
-    """
+    """Derive one document's display identity and optional collision slug."""
     stable_id = _stable_id(repo, relpath)
     title = _display_title(stable_id, parsed.title)
     slug = slugify(title)
@@ -77,14 +71,7 @@ def build_identity(
 
 
 def _stable_id(repo: str, relpath: str) -> str:
-    """``slugify(repo/relpath)``, made collision-resistant when the 60-char
-    cap bites: truncation silently discards the path tail, so distinct long
-    paths (".../design.md" vs ".../deploy.md") can slugify identically and
-    would merge identities. When the untruncated slug exceeds the cap,
-    re-anchor it with a short sha1 fragment of the full slug: identical
-    paths hash identically, distinct paths stay distinct, and the result
-    still fits the cap. Paths that fit keep the exact plain slug.
-    """
+    """Return a path slug, digest-anchored when needed to fit the cap."""
     full = _NON_ALNUM.sub("-", f"{repo}/{relpath}".lower()).strip("-")
     if len(full) <= _SLUG_MAX:
         return full
@@ -96,11 +83,7 @@ def _stable_id(repo: str, relpath: str) -> str:
 
 
 def _display_title(stable_id: str, doc_title: str | None) -> str:
-    """``"{stable ID} — {title}"`` with the title capped to the slug budget.
-
-    len(slugify(x)) <= len(x), so capping raw characters keeps the whole
-    slug <= 60 with the stable-id prefix intact.
-    """
+    """Return a stable-id-prefixed title capped to the slug budget."""
     if not doc_title:
         return stable_id
     budget = _SLUG_MAX - len(stable_id) - 1  # 1 for the joining hyphen
@@ -110,11 +93,7 @@ def _display_title(stable_id: str, doc_title: str | None) -> str:
 
 
 def _unique_slug(base: str, repo: str, seen: set[str]) -> str:
-    """First collision slug not already taken: ``-({repo})``, then
-    ``-({repo})-2``, ``-({repo})-3``... The single-suffix form can itself
-    collide (same repo/relpath/title fed three times), and a repeated slug
-    means one staged file silently overwrites another — so keep numbering
-    until the candidate is fresh."""
+    """Return the first fresh numbered repo collision slug."""
     counter = 1
     candidate = _collision_slug(base, repo)
     while candidate in seen:
@@ -149,11 +128,7 @@ def _description(repo: str, relpath: str, parsed: ParsedDoc) -> str:
 
 
 def _first_meaningful_paragraph(body: str) -> str | None:
-    """First body paragraph that is non-empty, non-heading, non-marker.
-
-    Fenced code blocks are skipped whole (open through close). The
-    paragraph's lines are joined into one line.
-    """
+    """Return the first meaningful non-fenced body paragraph, if any."""
     lines: list[str] = []
     in_fence = False
     for raw in body.splitlines():

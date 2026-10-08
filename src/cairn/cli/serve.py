@@ -45,21 +45,7 @@ from ..mcp_server import lifecycle as lc
 )
 @click.pass_context
 def serve(ctx, db, port, read_only, transport, host, api_key, stateless):
-    """Start the cairn MCP server, or manage the persistent SSE daemon.
-
-    \b
-    Run in the foreground (classic stdio / one-shot SSE / streamable HTTP):
-      cairn serve                    # stdio (MCP clients spawn this)
-      cairn serve --port N           # SSE on port N, foreground
-      cairn serve --transport http   # streamable HTTP on port 9876
-
-    \b
-    Manage a persistent SSE daemon shared by all clients (macOS launchd):
-      cairn serve start           # install + start LaunchAgent (runs forever)
-      cairn serve stop            # unload LaunchAgent + kill stray servers
-      cairn serve status          # health check
-      cairn serve restart         # stop + start
-    """
+    """Start the MCP server (stdio by default, --port/--transport for SSE/HTTP), or manage the shared daemon."""
     if ctx.invoked_subcommand is None:
         # `cairn serve` with no subcommand: foreground mode.
         _serve_foreground(
@@ -119,11 +105,7 @@ def serve_run(db, port, read_only, transport, host, api_key, stateless):
 
 
 def _serve_foreground(db, port, read_only=None, transport=None, host=None, api_key=None, stateless=False):
-    """Foreground serve: stdio unless --port (SSE) or --transport is given.
-
-    read_only tri-state: None => auto (read-only under SSE/HTTP,
-    read-write under stdio), True/False => explicit override.
-    """
+    """Foreground serve: stdio unless --port/--transport; read_only None = auto (read-only under SSE/HTTP, read-write under stdio)."""
     import os
 
     from ..mcp_server.auth import resolve_api_key
@@ -157,14 +139,7 @@ def _serve_foreground(db, port, read_only=None, transport=None, host=None, api_k
 @click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"SSE port (default {lc.DEFAULT_PORT}).")
 @click.option("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
 def serve_start(port, host):
-    """Install and start the persistent SSE daemon (macOS launchd).
-
-    The daemon auto-starts at login and restarts on crash (KeepAlive). It runs
-    one `cairn serve --port N` process shared by all MCP clients, replacing the
-    one-stdio-server-per-client model that caused "database is locked".
-
-    Idempotent: safe to run when already running.
-    """
+    """Install and start the persistent shared SSE daemon (launchd, KeepAlive); idempotent."""
     import time
 
     from ..mcp_server import lifecycle as lc

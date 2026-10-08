@@ -15,11 +15,7 @@ if TYPE_CHECKING:
 #: Filename numbering convention: a 3-4 digit prefix before a hyphen.
 _ADR_NUMBER_RE = re.compile(r"^(\d{3,4})-")
 
-#: Supersede markers in bodies and status lines. ``supersedes ADR-0001``
-#: points new -> old; ``superseded by ADR-0002`` points old -> new. The
-#: ``ADR`` prefix, a ``#``, a colon, and the hyphenated ``superseded-by``
-#: spelling are tolerated; matching is case-insensitive and each verb
-#: occurrence carries the one number that follows it.
+#: Directional supersede markers; each occurrence carries one following number.
 _SUPERSEDES_RE = re.compile(
     r"\bsupersedes?\b[\s:]+(?:adr[\s.-]*)?#?(\d{3,4})\b",
     re.IGNORECASE,
@@ -33,13 +29,7 @@ _SUPERSEDED_BY_RE = re.compile(
 def detect_supersede_relationships(
     entries: Iterable["StagedEntry"],
 ) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    """Detected supersede entries per ``(repo, relpath)``, accepted
-    entries only.
-
-    Each value holds ``{concept_id, relation, kind}`` dicts: ``supersedes``
-    on the newer document, ``superseded-by`` on the older one, kind
-    ``extracted``. Documents without detected edges are absent.
-    """
+    """Return accepted bidirectional supersede entries keyed by source row."""
     accepted = [entry for entry in entries if entry.classification.skip_reason is None]
     numbers = _number_index(accepted)
     ids = {(entry.repo, entry.relpath): _concept_id(entry) for entry in accepted}
@@ -68,14 +58,7 @@ def detect_supersede_relationships(
 def _referenced_ids(
     entry: "StagedEntry", numbers: dict[tuple[str, str, str], str]
 ) -> list[tuple[str, bool]]:
-    """``(concept_id, forward)`` targets of one document's supersede
-    markers.
-
-    ``forward`` is True when the entry supersedes the target ("supersedes
-    ADR-NNNN"), False when the target supersedes the entry ("superseded
-    by ADR-NNNN"). Numbers resolve against the same repository and
-    directory only; unresolved numbers yield nothing.
-    """
+    """Return marker targets and whether each points forward."""
     family = (entry.repo, _dir_of(entry.relpath))
     text = _marker_text(entry.parsed)
     out: list[tuple[str, bool]] = []
@@ -90,14 +73,7 @@ def _referenced_ids(
 def _number_index(
     accepted: list["StagedEntry"],
 ) -> dict[tuple[str, str, str], str]:
-    """ADR number -> concept_id, keyed ``(repo, dir, number)``.
-
-    Membership: a ``NNNN-`` numbered filename stem inside a
-    decisions/adr-family directory (the classifier's decision-directory
-    tokens), or with no parent directory (a fed directory's root is the
-    decisions directory itself). First document per number in sorted
-    ``(repo, relpath)`` order wins, keeping re-runs deterministic.
-    """
+    """Return deterministic ADR-number ids scoped by repo and directory."""
     index: dict[tuple[str, str, str], str] = {}
     for entry in sorted(accepted, key=lambda e: (e.repo, e.relpath)):
         number = _adr_number(entry)
@@ -144,12 +120,7 @@ def _marker_text(parsed: "ParsedDoc") -> str:
 
 
 def _concept_id(entry: "StagedEntry") -> str:
-    """The concept_id staging assigns this document:
-    ``knowledge/{doc_type}/{slug}``.
-
-    Uses the store's doc-type slugification so detected pointers name ids
-    ``execute_manifest`` actually creates.
-    """
+    """Return the concept id staging will assign this document."""
     doc_type = doc_type_slug(entry.classification.doc_type)
     return f"knowledge/{doc_type}/{entry.identity.slug}"
 

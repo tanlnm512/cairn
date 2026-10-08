@@ -21,33 +21,16 @@ from cairn.telemetry.sink import (
 
 logger = logging.getLogger(__name__)
 
-# Pending rows, each a tuple shaped to the tool_metrics columns named in
-# _INSERT_SQL. maxlen caps unbounded growth during a flush outage (mirrors
-# metric_buffering's deque(maxlen=2000)).
 _CLI_BUFFER: collections.deque = collections.deque(maxlen=2000)
 _CLI_LOCK = threading.Lock()
 _CLI_FLUSHER_STARTED = False
 
-# Serializes whole flush cycles (snapshot -> write -> pop): the daemon tick
-# and the atexit drain can overlap, and two concurrent runs would insert the
-# same batch twice and then popleft rows that were never written. _CLI_LOCK
-# guards individual buffer mutations only. Mirrors sink._FLUSH_LOCK.
 _FLUSH_LOCK = threading.Lock()
 
-# Cap on the redacted argv summary stored per row: the summary identifies the
-# invocation shape, it is not a payload replay -- same value/rationale as
-# metric_buffering.MAX_ARGS_SUMMARY_CHARS, re-declared locally so neither
-# module imports the other just for a constant.
 MAX_CLI_ARGS_SUMMARY_CHARS = 200
 
-# Connection factory injected once at CLI boot; None until then, in which
-# case rows stay buffered. Injectable (mirrors metric_buffering) so this
-# module stays free of the schema/store dependency.
 _conn_factory: Optional[Callable[[], "object"]] = None
 
-# Explicit column list keeps this INSERT stable against future additive
-# migrations to the table. `source` is stated explicitly ('cli');
-# MCP rows ride the table-side DEFAULT 'mcp'.
 _INSERT_SQL = (
     "INSERT INTO tool_metrics "
     "(tool_name, session_id, invoked_at, duration_ms, status, error_message, "
@@ -57,13 +40,7 @@ _INSERT_SQL = (
 
 
 def derive_session_id() -> str:
-    """Session identity for a CLI record; never ``"unknown"``.
-
-    Terminal-provided ids win so one shell's commands group together:
-    ``TERM_SESSION_ID`` -> ``term:<value>``, ``TMUX_PANE`` -> ``tmux:<value>``.
-    Otherwise each invocation is its own session: ``cli:<uuid4 hex[:12]>`` --
-    a fresh value per call, never the table's ``unknown`` default.
-    """
+    """Return a terminal session id or fresh CLI id, never ``"unknown"``."""
     term = os.environ.get("TERM_SESSION_ID")
     if term:
         return f"term:{term}"
@@ -80,38 +57,15 @@ def build_row(
     status: str,
     error_message: str = "",
 ) -> tuple:
-    """Build one ``tool_metrics`` row tuple for a CLI invocation.
-
-    Contract (positional order = ``_INSERT_SQL``'s column order):
-      ``(tool_name="cli:" + command_path, session_id=derive_session_id(),
-         invoked_at=time.time(), duration_ms, status ("ok"|"error"),
-         error_message (strip_private_data'd, [:500], else None),
-         req_chars=len(raw argv JSON) or None, resp_chars=None,
-         args_summary (strip_private_data'd, truncated to
-         MAX_CLI_ARGS_SUMMARY_CHARS, else None), source='cli')``.
-
-    Redaction happens HERE -- the write chokepoint -- so no unredacted bytes
-    are ever buffered or persisted. Never raises on pathological argv: the
-    JSON dump degrades to NULL columns, mirroring
-    ``metric_buffering._kwargs_payload`` (``default=str`` covers
-    non-serializable values; anything still pathological is a missing size,
-    not an error).
-    """
+    """Return a privacy-scrubbed, bounded ``tool_metrics`` row for a CLI call."""
     req_chars: Optional[int] = None
     raw_summary: Optional[str] = None
     try:
         raw_summary = json.dumps(argv, default=str, separators=(",", ":"))
-        # Measured on the raw (pre-redaction, pre-truncation) JSON, mirroring
-        # how _kwargs_payload sizes the request before _log_metric scrubs it.
         req_chars = len(raw_summary)
     except Exception:
         raw_summary = None
 
-    # Redact at the chokepoint, BEFORE the row is buffered:
-    # argv echoes user paths/flags/tokens, exceptions echo request payloads.
-    # Lazy import mirrors metric_buffering (avoids any boot-order cycle with
-    # the memory package; negligible cost -- the module is cached after the
-    # first CLI record).
     from cairn.memory.privacy import strip_private_data
 
     if error_message:
@@ -126,9 +80,9 @@ def build_row(
         status,
         error_message[:500] if error_message else None,
         req_chars,
-        None,  # resp_chars: a CLI invocation has no response payload
+        None,
         raw_summary[:MAX_CLI_ARGS_SUMMARY_CHARS] if raw_summary else None,
-        "cli",  # source: explicit here; MCP rows ride DEFAULT 'mcp'
+        "cli",
     )
 
 
@@ -139,13 +93,7 @@ def record_cli_invocation(
     status: str,
     error_message: str = "",
 ) -> None:
-    """Record one CLI invocation: gate, build, buffer, ensure the flusher.
-
-    Gates mirror ``metric_buffering._log_metric``: ``CAIRN_TELEMETRY=off``
-    skips everything (master kill switch), and a read-only process skips the
-    write entirely rather than buffer rows no flush could ever land. Never
-    raises -- a metrics bug must not fail a CLI command that succeeded.
-    """
+    """Buffer one gated CLI invocation and ensure its shared flusher."""
     try:
         if is_telemetry_off() or is_read_only():
             return
@@ -158,15 +106,7 @@ def record_cli_invocation(
 
 
 def _start_cli_flusher() -> None:
-    """Register ``_flush_cli_metrics`` with the shared sink and start it.
-
-    Reuses the single shared flush thread + atexit drain instead
-    of spawning a CLI-specific thread. ``_CLI_FLUSHER_STARTED`` is this
-    module's idempotency flag (double-checked under ``_CLI_LOCK``) and the
-    piece ``_reset_for_tests`` clears so suites can re-drive registration;
-    the sink's ``register_flusher`` is itself idempotent by identity, so a
-    reset + re-record cannot double-register or double-fire.
-    """
+    """Register the CLI flusher with the shared sink exactly once."""
     global _CLI_FLUSHER_STARTED
     if _CLI_FLUSHER_STARTED:
         return
@@ -179,22 +119,7 @@ def _start_cli_flusher() -> None:
 
 
 def _flush_cli_metrics():
-    """Drain the CLI buffer into ``tool_metrics`` (best-effort, never raises).
-
-    Snapshot WITHOUT clearing -- a failed flush (locked DB, missing factory,
-    missing table) leaves rows queued for the next attempt; the deque maxlen
-    caps growth meanwhile. Rows are popped only after a successful commit,
-    and only the rows actually written -- newer rows appended during the
-    flush stay buffered. The whole cycle runs under ``_FLUSH_LOCK`` so
-    concurrent flushers cannot snapshot the same batch twice or pop rows
-    another flush has not written yet.
-
-    Untyped (no annotations) deliberately, mirroring
-    ``metric_buffering._flush_metrics`` and ``sink._flush_events``: the
-    injected connection is an opaque duck-typed handle (this module stays
-    free of the sqlite3 dependency), so its attribute access is left for
-    runtime and mypy does not check this body.
-    """
+    """Drain committed CLI metric rows to ``tool_metrics`` without raising."""
     if _conn_factory is None:
         return
     with _FLUSH_LOCK:
@@ -208,9 +133,6 @@ def _flush_cli_metrics():
             conn.executemany(_INSERT_SQL, batch)
             conn.commit()
         except Exception:
-            # Couldn't flush this batch -- leave it buffered for the next
-            # attempt. Telemetry is best-effort, but log at debug so silent
-            # backlog stays observable.
             logger.debug(
                 "cli metric flush failed; %d rows remain buffered",
                 len(batch),
@@ -223,8 +145,6 @@ def _flush_cli_metrics():
                     conn.close()
                 except Exception:
                     pass
-        # Commit succeeded -> safe to drop these rows. Only remove the rows we
-        # actually wrote; newer rows appended during the flush stay.
         with _CLI_LOCK:
             for _ in range(len(batch)):
                 try:
@@ -234,31 +154,14 @@ def _flush_cli_metrics():
 
 
 def configure_conn(conn_factory: Callable[[], "object"]) -> None:
-    """Inject the writable-connection factory used by ``_flush_cli_metrics``.
-
-    Called once at CLI boot against the resolved store. Mirrors into the
-    shared sink so the single boot call wires both ``tool_metrics`` CLI rows
-    and ``events`` for the CLI process -- the same one-call-wires-both
-    pattern as ``metric_buffering.configure_conn`` on the MCP side. Must
-    come from outside so this module stays free of the schema/store
-    dependency.
-    """
+    """Inject the writable CLI and shared-sink connection factories."""
     global _conn_factory
     _conn_factory = conn_factory
     _sink_configure_conn(conn_factory)
 
 
 def _reset_for_tests() -> None:
-    """Reset module-global state between tests; never call in production.
-
-    Mirrors how the metric suites reset ``metric_buffering`` (see
-    ``tests/test_metrics.py::_reset_metric_state``): clears the buffer, drops
-    the injected factory, and clears the started flag so a suite can re-drive
-    flusher registration. The sink's own ``_FLUSHER_STARTED`` and flusher
-    list are deliberately NOT touched -- resetting those would double-start
-    the shared thread, and re-registration after this reset is a no-op
-    because ``register_flusher`` is idempotent by identity.
-    """
+    """Reset CLI-owned flush state while leaving shared sink state intact."""
     global _conn_factory, _CLI_FLUSHER_STARTED
     with _CLI_LOCK:
         _CLI_BUFFER.clear()

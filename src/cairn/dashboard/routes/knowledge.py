@@ -13,15 +13,7 @@ from . import DashboardContext
 
 def _knowledge_catalog(request: Request, context: DashboardContext) -> Response:
 
-    """The knowledge catalog: every stored doc once, filterable by
-    family/status/tag. Filters, read like every other view's params:
-    absent or blank means no filter; a value outside the vocabulary
-    the selects offer (the classifier's families + the doc statuses,
-    each unioned with what this corpus actually contains) falls back
-    to no filter (silent fallback, matching the tasks/memory/wiki
-    filters). The options always offer every family/status the corpus
-    contains, so a doc under a custom type stays reachable from the
-    filter."""
+    """Render the knowledge catalog with corpus-complete filters and silent fallbacks."""
     from ..app import KNOWLEDGE_FAMILIES
     from ..data import get_read_only_db, list_knowledge_docs
     from ...knowledge.store import DOC_STATUSES
@@ -41,10 +33,7 @@ def _knowledge_catalog(request: Request, context: DashboardContext) -> Response:
             status=None if status_param == "all" else status_param,
             tag=tag or None,
         )
-        # The corpus values ride the result's pre-filter counts, so
-        # the vocabulary is complete after the fetch; a fallback
-        # re-reads with the reset value so the rows match the select
-        # the page renders.
+        # Corpus counts complete the options; fallback refetches rows to match selection.
         family = family_param
         if family != "all" and family not in (
             set(KNOWLEDGE_FAMILIES) | set(result["families"])
@@ -88,12 +77,7 @@ def _knowledge_catalog(request: Request, context: DashboardContext) -> Response:
 
 
 def _knowledge_doc(request: Request, context: DashboardContext) -> Response:
-    """One doc's detail page at /knowledge/{family}/{slug} — the bare
-    concept id's two variable segments. get_knowledge_doc_detail
-    assembles identity, rendered body, the relationship panels
-    (related docs, supersede chain, code refs) and ingest provenance;
-    None = the plain not-found page, out-of-namespace resolutions
-    included."""
+    """Render one knowledge doc detail or the plain not-found page."""
     from starlette.responses import HTMLResponse
     from ..data import get_knowledge_doc_detail, get_read_only_db
     from ... import paths
@@ -139,15 +123,7 @@ def _knowledge_doc(request: Request, context: DashboardContext) -> Response:
 
 
 def _knowledge_graph(request: Request, context: DashboardContext) -> Response:
-    """The knowledge relationship canvas at /knowledge/graph: every
-    stored doc as a node, every indexed relationship as a directed
-    edge. The graph JSON rides the #knowledge-graph-data script tag
-    (the /graph machinery's DataSet-from-script-tag pattern) and
-    knowledge-graph.js owns the canvas: legend chips filter edge
-    kinds/relations client-side (no reload, no refetch), and a node
-    click fetches the doc's inspect fragment into the side panel.
-    Full-page only — the filters live in the client, so there is no
-    filter param for a fragment branch to serve."""
+    """Render the client-owned knowledge graph canvas and its embedded JSON."""
     from ..data import get_knowledge_graph, get_read_only_db
 
     selected_db, selected_knowledge, store_key = context.resolve_selection(
@@ -166,13 +142,7 @@ def _knowledge_graph(request: Request, context: DashboardContext) -> Response:
 
 
 def _knowledge_graph_inspect(request: Request, context: DashboardContext) -> Response:
-    """One doc's inspect-panel fragment (the canvas's node-click
-    fetch target): identity plus the same grouped ``related_docs``
-    rows the detail panels render. Inherently fragment-only — the
-    canvas script is the only client, no UI links the bare path (the
-    documented exception to the full-page/fragment seam) — and an
-    unknown doc renders the panel's not-found note at 200, matching
-    /graph/inspect's found=False contract."""
+    """Render the canvas node-click inspect fragment; unknown docs stay 200."""
     from ..data import get_knowledge_graph_inspect, get_read_only_db
 
     doc_id = request.query_params.get("doc", "").strip()
@@ -201,13 +171,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
 
     routes.extend(
         [
-            # The knowledge catalog; /knowledge/{family}/{slug} is the bare
-            # concept id's two variable segments — a single path param never
-            # matches "/", so a sibling one-segment route (/knowledge/graph)
-            # can never shadow these and vice versa. The canvas + its inspect
-            # fragment precede the two-param route on purpose: the fragment
-            # path (/knowledge/graph/inspect) WOULD match it as
-            # family=graph, slug=inspect if it followed.
+            # Fixed graph and inspect routes must precede the two-segment doc catchall.
             Route(
                 "/knowledge",
                 partial(_knowledge_catalog, context=context),
