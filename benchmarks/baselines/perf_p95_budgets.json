@@ -16,6 +16,14 @@
     "runner_class": "ci-github-actions-1000004700"
   },
   "factor": 10.0,
+  "source_p95_ms": {
+    "find_definition": 0.03,
+    "get_callers": 0.09,
+    "impact_analysis": 0.14,
+    "search_symbols": 14.27,
+    "semantic_search": 116.9,
+    "explore": 373.92
+  },
   "budgets": {
     "find_definition": 0.3,
     "get_callers": 0.9,

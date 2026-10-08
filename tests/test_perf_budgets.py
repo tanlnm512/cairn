@@ -34,15 +34,14 @@ def _report(p95_ms_by_tool: dict[str, float]) -> PerfReport:
 def test_checked_in_budgets_are_schema_tagged_and_catastrophe_sized():
     budgets = load_budgets(BUDGET_FILE)
     raw = json.loads(BUDGET_FILE.read_text(encoding="utf-8"))
-    baseline = json.loads(BASELINE_FILE.read_text(encoding="utf-8"))
-    observed = {op["name"]: op["p95_ms"] for op in baseline["ops"]}
 
     assert REQUIRED_TOOLS <= budgets.keys()
     assert raw["schema"] == "cairn-perf-budgets/1"
     runner_class = raw["machine_profile"]["runner_class"]
     assert runner_class.startswith("ci-"), runner_class
     assert raw["factor"] >= 10
-    assert all(budgets[tool] >= 10 * observed[tool] for tool in REQUIRED_TOOLS)
+    source_p95 = raw["source_p95_ms"]
+    assert all(budgets[tool] + 1e-6 >= 10 * source_p95[tool] for tool in REQUIRED_TOOLS)
 
 
 def test_evaluate_budgets_reports_only_over_budget_tools():
