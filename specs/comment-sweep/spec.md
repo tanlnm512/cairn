@@ -1,6 +1,6 @@
 # Spec: comment-sweep
 
-**Status**: active
+**Status**: done
 **Effort**: standard
 **Created**: 2026-10-07
 **Branch**: `feat/comment-sweep`
