@@ -72,6 +72,7 @@ def mint_budgets(run: dict, *, factor: Decimal) -> dict:
         "schema": BUDGET_SCHEMA,
         **{key: run[key] for key in PROVENANCE_KEYS},
         "factor": float(factor),
+        "source_p95_ms": {tool: float(p95s[tool]) for tool in BUDGETED_TOOLS},
         "budgets": budgets,
     }
 
