@@ -75,37 +75,68 @@ def _rpc_result_tools(message: dict) -> list[str]:
     return [tool["name"] for tool in message["result"]["tools"]]
 
 
+def _stdio_exchange(messages: list[dict], env: dict, deadline: float = 30.0) -> tuple[list[dict], str, str, int]:
+    """Drive one stdio JSON-RPC exchange sequentially and collect responses."""
+    import selectors
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", _BOOT, "stdio", "0"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    responses: list[dict] = []
+    waited = set()
+    try:
+        for message in messages:
+            proc.stdin.write(json.dumps(message) + "\n")
+            proc.stdin.flush()
+            if "id" not in message:
+                continue
+            sel = selectors.SelectSelector()
+            sel.register(proc.stdout, selectors.EVENT_READ)
+            expired = time.monotonic() + deadline
+            while time.monotonic() < expired:
+                if sel.select(0.25):
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    line = line.strip()
+                    if not line.startswith("{"):
+                        continue
+                    decoded = json.loads(line)
+                    responses.append(decoded)
+                    waited.add(decoded.get("id"))
+                    break
+            if message["id"] not in waited:
+                break
+    finally:
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+        stderr = proc.stderr.read() if proc.stderr else ""
+        rc = proc.wait(timeout=deadline)
+    return responses, (proc.stdout.read() if proc.stdout else ""), stderr, rc
+
+
 def _stdio_tool_catalog(env: dict) -> list[str]:
     messages = [
         _INITIALIZE,
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         _TOOLS_LIST,
     ]
-    last: subprocess.CompletedProcess | None = None
-    for _ in range(2):
-        last = subprocess.run(
-            [sys.executable, "-c", _BOOT, "stdio", "0"],
-            input="".join(json.dumps(m) + "\n" for m in messages),
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=90,
-            check=False,
-        )
-        tools = None
-        for line in last.stdout.splitlines():
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            message = json.loads(line)
-            if message.get("id") == 2 and "result" in message:
-                tools = _rpc_result_tools(message)
-        if tools is not None:
-            return tools
+    responses, stdout, stderr, rc = _stdio_exchange(messages, env)
+    for message in responses:
+        if message.get("id") == 2 and "result" in message:
+            return _rpc_result_tools(message)
     assert False, (
-        f"stdio session never answered tools/list (rc={last.returncode}); "
-        f"stdout tail: {last.stdout[-2000:]}; "
-        f"stderr tail: {last.stderr[-2000:]}"
+        f"stdio session never answered tools/list (rc={rc}); "
+        f"responses: {responses!r}; "
+        f"unread stdout tail: {stdout[-1000:]}; "
+        f"stderr tail: {stderr[-1000:]}"
     )
 
 
