@@ -68,9 +68,13 @@ workflow change.
   deterministic-build guarantee holds — LLM-free, offline).
 - **FR-004**: The before/after exact-ratio for both languages is
   published in `docs/benchmarks.md` with reproduction commands.
-- **FR-005**: [NEEDS CLARIFICATION: auto-Pyright's wall-clock cost on
-  large repos — cap the pass (edge budget or timeout) or gate it behind
-  config?]
+- **FR-005**: The auto-enabled pass runs under a dual cap — wall-clock
+  budget (default 60 s) and per-build edge budget (default 2,000 edges),
+  whichever hits first; both overridable via `cairn.json` (`lsp.budget_seconds`,
+  `lsp.edge_budget`). `--lsp` forces an unbounded pass, `--no-lsp` skips.
+  Budget stops are reported (`budget_hit`, probe count) and amortize across
+  builds: upgrades persist, the pass resumes from the remainder. *(Ruled
+  2026-10-09; defaults await calibration against a real pyright run.)*
 
 ## Quality attributes
 

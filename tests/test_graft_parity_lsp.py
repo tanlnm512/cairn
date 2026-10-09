@@ -129,11 +129,17 @@ def _edge(conn: sqlite3.Connection, target: str) -> sqlite3.Row:
 
 
 @pytest.mark.parametrize("explicit_false", [False, True], ids=["default", "false"])
-def test_language_server_pass_is_flag_gated(
+def test_language_server_pass_tri_state(
     tmp_path: Path, explicit_false: bool
 ) -> None:
-    workspace, _ = _workspace(tmp_path, "flag_gated")
-    transport = FakeJsonRpcTransport(None, None)
+    workspace, implementation = _workspace(tmp_path, "flag_gated")
+    transport = FakeJsonRpcTransport(
+        {
+            "uri": implementation.as_uri(),
+            "range": {"start": {"line": 1, "character": 0}},
+        },
+        [],
+    )
     kwargs = {"lsp_transport": transport}
     if explicit_false:
         kwargs["lsp"] = False
@@ -148,16 +154,26 @@ def test_language_server_pass_is_flag_gated(
     conn = sqlite3.connect(str(tmp_path / "flag-gated.db"))
     conn.row_factory = sqlite3.Row
     try:
-        assert _edge(conn, "resolved_target")["resolution"] == "ambiguous"
+        assert _edge(conn, "resolved_target")["resolution"] == (
+            "exact" if not explicit_false else "ambiguous"
+        )
         assert _edge(conn, "tied_target")["resolution"] == "ambiguous"
         assert _edge(conn, "guarded_target")["resolution"] == "exact"
     finally:
         conn.close()
 
-    assert "lsp" not in summary
-    assert transport.requests == []
-    assert transport.lifecycle == []
-    assert transport.closed is False
+    if explicit_false:
+        assert "lsp" not in summary
+        assert transport.requests == []
+        assert transport.lifecycle == []
+        assert transport.closed is False
+    else:
+        # The default (None) runs the pass under budgets; with pyright absent
+        # in test envs the injected fake transport answers instead.
+        assert summary["lsp"]["upgraded"] == 1
+        assert summary["lsp"]["budget_hit"] is None
+        assert transport.lifecycle == ["initialize", "shutdown"]
+        assert transport.closed
 
 
 def test_server_requests_do_not_consume_pending_responses() -> None:
@@ -328,3 +344,128 @@ def test_unavailable_or_failing_pyright_is_not_a_graph_failure(
     assert summary["files"] == 6
 
 
+
+def test_edge_budget_stops_pass_and_reports(tmp_path: Path) -> None:
+    """edge_budget caps probed edges; the remainder stays ambiguous for the next run."""
+    from cairn.graph.lsp import upgrade_ambiguous_edges
+
+    workspace, _ = _workspace(tmp_path, "budget")
+    summary = build_graph(
+        workspace=workspace, db_path=str(tmp_path / "budget.db"), verbose=False,
+        lsp=False,
+    )
+    assert "lsp" not in summary
+
+    implementation = Path(workspace) / "demo" / "implementation.py"
+    transport = FakeJsonRpcTransport(
+        {
+            "uri": implementation.as_uri(),
+            "range": {"start": {"line": 1, "character": 0}},
+        },
+        [],
+    )
+    conn = sqlite3.connect(str(tmp_path / "budget.db"))
+    conn.row_factory = sqlite3.Row
+    try:
+        report = upgrade_ambiguous_edges(
+            conn, workspace, transport=transport, edge_budget=1
+        )
+        assert report["considered"] == 2
+        assert report["probed"] == 1
+        assert report["budget_hit"] == "edges"
+        assert any("edges budget" in n for n in report["notices"])
+        assert _edge(conn, "resolved_target")["resolution"] == "exact"
+        assert _edge(conn, "tied_target")["resolution"] == "ambiguous"
+    finally:
+        conn.close()
+
+
+def test_time_budget_stops_pass_and_reports(tmp_path: Path, monkeypatch) -> None:
+    """time_budget stops the pass before the second edge probes."""
+    from cairn.graph import lsp as lsp_mod
+    from cairn.graph.lsp import upgrade_ambiguous_edges
+
+    workspace, _ = _workspace(tmp_path, "time_budget")
+    build_graph(
+        workspace=workspace, db_path=str(tmp_path / "time-budget.db"),
+        verbose=False, lsp=False,
+    )
+    transport = FakeJsonRpcTransport(None, None)
+    clock = {"now": 0.0}
+    monkeypatch.setattr(lsp_mod.time, "monotonic", lambda: clock["now"])
+    real_request = transport.request
+
+    def _advance(*args, **kwargs):
+        result = real_request(*args, **kwargs)
+        clock["now"] += 30.0
+        return result
+
+    transport.request = _advance
+
+    conn = sqlite3.connect(str(tmp_path / "time-budget.db"))
+    conn.row_factory = sqlite3.Row
+    try:
+        report = upgrade_ambiguous_edges(
+            conn, workspace, transport=transport, time_budget=30.0
+        )
+        assert report["budget_hit"] == "time"
+        assert any("time budget" in n for n in report["notices"])
+    finally:
+        conn.close()
+
+
+def test_forced_pass_runs_unbounded(tmp_path: Path) -> None:
+    """lsp=True never applies budgets, even with config present."""
+    workspace, _ = _workspace(tmp_path, "forced")
+    (Path(workspace) / "cairn.json").write_text(
+        '{"lsp": {"edge_budget": 1, "budget_seconds": 0}}', encoding="utf-8"
+    )
+    transport = FakeJsonRpcTransport(None, None)
+
+    summary = build_graph(
+        workspace=workspace,
+        db_path=str(tmp_path / "forced.db"),
+        verbose=False,
+        lsp=True,
+        lsp_transport=transport,
+    )
+
+    report = summary["lsp"]
+    assert report["budget_hit"] is None
+    assert report["probed"] == 2
+
+
+def test_config_budgets_apply_to_auto_pass(tmp_path: Path) -> None:
+    """The default (None) pass reads budgets from cairn.json's lsp section."""
+    workspace, _ = _workspace(tmp_path, "auto_cfg")
+    (Path(workspace) / "cairn.json").write_text(
+        '{"lsp": {"edge_budget": 1}}', encoding="utf-8"
+    )
+    transport = FakeJsonRpcTransport(None, None)
+
+    summary = build_graph(
+        workspace=workspace,
+        db_path=str(tmp_path / "auto-cfg.db"),
+        verbose=False,
+        lsp_transport=transport,
+    )
+
+    report = summary["lsp"]
+    assert report["budget_hit"] == "edges"
+    assert report["probed"] == 1
+
+
+def test_auto_pass_degrades_when_pyright_absent(tmp_path: Path) -> None:
+    """Default pass with no pyright and no injected transport: notice, no failure."""
+    workspace, _ = _workspace(tmp_path, "auto_absent")
+
+    summary = build_graph(
+        workspace=workspace,
+        db_path=str(tmp_path / "auto-absent.db"),
+        verbose=False,
+    )
+
+    report = summary["lsp"]
+    assert report["upgraded"] == 0
+    assert report["budget_hit"] is None
+    assert any("pyright unavailable" in n for n in report["notices"])

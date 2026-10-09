@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Union
@@ -18,6 +19,7 @@ class CairnConfig:
     taint_sources: Dict[str, Set[str]] = field(default_factory=dict)
     taint_sinks: Dict[str, Set[str]] = field(default_factory=dict)
     scip: Dict[str, object] = field(default_factory=dict)
+    lsp: Dict[str, object] = field(default_factory=dict)
     include_nested_repos: bool = False
     source: Optional[Path] = None  # the file these came from, for diagnostics
 
@@ -30,6 +32,7 @@ class CairnConfig:
             and not self.taint_sources
             and not self.taint_sinks
             and not self.scip
+            and not self.lsp
             and not self.include_nested_repos
         )
 
@@ -45,6 +48,9 @@ _TAINT_SOURCES_KEY = "sources"
 _TAINT_SINKS_KEY = "sinks"
 _SCIP_INDEXES_KEY = "indexes"
 _INCLUDE_NESTED_REPOS_KEY = "include_nested_repos"
+_LSP_KEY = "lsp"
+_LSP_BUDGET_SECONDS_KEY = "budget_seconds"
+_LSP_EDGE_BUDGET_KEY = "edge_budget"
 
 
 def load_config(root: Union[str, Path]) -> CairnConfig:
@@ -87,6 +93,7 @@ def load_config(root: Union[str, Path]) -> CairnConfig:
         scip.get(_SCIP_INDEXES_KEY), path, f"{_SCIP_KEY}.{_SCIP_INDEXES_KEY}",
         desc="language -> index path",
     )
+    lsp = _as_dict(raw.get(_LSP_KEY), path, _LSP_KEY)
     include_nested_repos = _as_bool(
         raw.get(_INCLUDE_NESTED_REPOS_KEY), path, _INCLUDE_NESTED_REPOS_KEY
     )
@@ -98,9 +105,30 @@ def load_config(root: Union[str, Path]) -> CairnConfig:
         taint_sources=taint_sources,
         taint_sinks=taint_sinks,
         scip={_SCIP_INDEXES_KEY: scip_indexes} if scip_indexes else {},
+        lsp=_lsp_settings(lsp, path),
         include_nested_repos=include_nested_repos,
         source=path,
     )
+
+
+def _lsp_settings(raw: dict, path: Path) -> Dict[str, object]:
+    """Validated ``lsp`` section: budget_seconds and edge_budget."""
+    out: Dict[str, object] = {}
+    seconds = raw.get(_LSP_BUDGET_SECONDS_KEY)
+    if seconds is not None:
+        try:
+            out[_LSP_BUDGET_SECONDS_KEY] = max(0.0, float(seconds))
+        except (TypeError, ValueError):
+            print(f"warning: {path}: lsp.{_LSP_BUDGET_SECONDS_KEY} must be a "
+                  f"number; ignoring", file=sys.stderr)
+    edges = raw.get(_LSP_EDGE_BUDGET_KEY)
+    if edges is not None:
+        try:
+            out[_LSP_EDGE_BUDGET_KEY] = max(0, int(edges))
+        except (TypeError, ValueError):
+            print(f"warning: {path}: lsp.{_LSP_EDGE_BUDGET_KEY} must be an "
+                  f"integer; ignoring", file=sys.stderr)
+    return out
 
 
 def _as_bool(value, path: Path, key: str) -> bool:
