@@ -20,6 +20,34 @@ machine-readable payload; `--save FILE` persists it; `--compare FILE` /
 `--baseline VERSION` compare against a saved report (swe-bench comparisons
 use the agent-report shape).
 
+## Resolution precision baseline (exact-edge follow-up)
+
+Ambiguous-edge mass ranked from `cairn report --json`
+(`resolution_by_language`) on the self store and the t2 corpus snapshot
+(`benchmarks/datasource/t2`, copy with a `.git` marker, fresh build):
+
+| Corpus | Language | Ambiguous | Total edges | Share |
+|---|---|---|---|---|
+| self | python | 4,584 | 48,878 | 9.4% |
+| self | typescript | 25 | 734 | 3.4% |
+| self | javascript | 19 | 602 | 3.2% |
+| self | all others | ≤3 each | — | — |
+| t2 (yarl) | python | 213 | 2,778 | 7.7% |
+
+Top two by mass: **python** and **typescript** — the targets of the
+exact-edge upgrade (spec: `specs/exact-edge-precision/`). Reproduce:
+
+```sh
+cairn report --json | jq '.resolution'
+cp -R benchmarks/datasource/t2/yarl /tmp/t2ws/workspace/yarl \
+  && mkdir /tmp/t2ws/workspace/yarl/.git
+CAIRN_DB=/tmp/t2ws/graph.db cairn build --workspace /tmp/t2ws/workspace
+CAIRN_DB=/tmp/t2ws/graph.db cairn report --json | jq '.resolution'
+```
+
+The exact-ratio delta for both languages lands here once the upgrade ships.
+
+
 ## Agent deterministic arm
 
 `cairn bench --suite agent` runs the same seven task-shaped questions through
