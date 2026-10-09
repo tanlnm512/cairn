@@ -53,7 +53,8 @@ through a decoupled task queue.
 
 ### Optional precision, Rust, and worktree behavior
 
-- `cairn build --lsp` runs pyright only for ambiguous Python call edges. A
+- `cairn build` runs a pyright pass for ambiguous Python call edges by
+  default (budget-capped; `--lsp` unbounded, `--no-lsp` off). A
   unique definition that maps to one stored Python symbol upgrades that edge to
   `exact`; missing or failing pyright is a noticed no-op, and exact edges never
   downgrade.

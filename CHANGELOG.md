@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Parser conformance matrix in `docs/indexing.md`: one row per golden-fixtured language (Rust joins as the 15th), rendered by `scripts/gen_conformance_table.py` between markers and kept fresh by a staleness test; every row is green or carries an explicit tier mark (no import/hierarchy edges).
 - Pyright upgrade pass is now budgeted and on by default: `cairn build` upgrades ambiguous Python call edges when pyright is available, capped by a wall-clock budget (60 s default) and a per-build edge budget (2,000 default), both configurable via `cairn.json` (`lsp.budget_seconds`, `lsp.edge_budget`); `--lsp` forces an unbounded pass, `--no-lsp` skips. Upgrades persist, so a budget-stopped pass resumes from the remainder on the next build, and the report carries `probed`/`budget_hit` for observability.
 - Comment sweep: the comment-style baseline fell from 1213 to 226 grandfathered violations (81% removed) across telemetry, memory, graph, mcp_server, cli, dashboard, parsers, knowledge, and agent_install, with 321 migration ledger rows landing 317 durable rationales in tribal memory (Why/How bodies, ledgered before deletion) and executable ASTs proven identical per area; `python -m cairn.cli.system.audit_status|comment_style` no longer emits the runpy double-import warning (deferred collector imports in `report.py`), and `scripts/regen_scip_pb2.sh` now emits the trimmed `_scip_pb2.py` header so regeneration cannot reintroduce debt.
 - Quality ratchet: `make audit-status` prints remaining-vs-total audit findings by priority from `docs/audits/2026-10-02.md` plus a strict `.status.json` fix sidecar, and `make comment-style` enforces the AGENTS.md comment contract over `src/` through a machine-generated shrink-only baseline (`comment-style-shrink` re-derives it after fixes; growth fails). Both gates run as the `check-comment-lengths` pre-commit hook and the `quality-ratchet` CI job, expose `ARGS=--json`, and surface as a count-only `quality_gates` section in `cairn report`. The legacy root `architecture.html` and audit report moved to `docs/diagrams/` and `docs/audits/`.
@@ -99,9 +100,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   actionable error with no partial table.
 
 ### Fixed
-- Full-codebase audit wave (2026-10-02): 141 defects and 3 systemic clusters
-  fixed across the graph, parsers, memory/LLM, MCP server, dashboard, wiki,
-  knowledge, CLI, install/uninstall and scripts surfaces.
+- A4 retro of the post-audit admin-merged PRs: `cairn build --repo` no longer
+  crashes with an IntegrityError on files containing `NOTE:`/`WHY:`/`HACK:`
+  comments and no longer strands a permanent `building` marker (the repo-scoped
+  rebuild now clears rationale rows before their foreign-key parents); the
+  dashboard Communities page renders an empty panel on stores created before
+  community indexing instead of erroring.
+- Full-codebase audit wave (2026-10-02): 141 findings and 3 systemic clusters
+  triaged; every P0, P1, and P3 finding is now closed (59 fixed, including 2
+  added by the A4 retro; the remaining 87 P2 polish findings are tracked in
+  the audit sidecar) across the graph, parsers, memory/LLM, MCP server,
+  dashboard, wiki, knowledge, CLI, install/uninstall and scripts surfaces.
 - Hooks no longer silently no-op in source checkouts: `python -m cairn.cli.main`
   runs the CLI (missing `__main__` guard), the hook fallback sites work, and the
   impact guard tolerates empty tool output.
