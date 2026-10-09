@@ -12,20 +12,24 @@ are read at process start, not per call.
 | Command | Purpose |
 |---|---|
 | `cairn init [--with-hooks]` | interactive first-time setup (runs a build); `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)) |
-| `cairn build [--lsp]` | full workspace rebuild (see [indexing.md](indexing.md)) |
-| `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
+| `cairn build [--lsp]` | full workspace rebuild (see [indexing.md](indexing.md)) || `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
 | `cairn stats` | graph statistics |
 | `cairn checkpoint` | snapshot the store |
 | `cairn config` | show effective configuration (`--json` emits `cairn_home`/`workspace`/`db`/`knowledge` as one JSON document — read-only, registers nothing; the scripting/probe surface) |
 | `cairn uninstall` | remove cairn integration artifacts |
 
-### `cairn build --lsp`
+### `cairn build` pyright upgrade pass
 
-- Runs `pyright --stdio` only when `--lsp` is present and `pyright` is on
-  `PATH`.
+- Runs `pyright --stdio` for ambiguous Python call edges by default when
+  pyright is on `PATH`, capped by a wall-clock budget (60 s default) and a
+  per-build edge budget (2,000 default) — configurable via `cairn.json`
+  (`lsp.budget_seconds`, `lsp.edge_budget`).
+- `--lsp` forces an unbounded pass; `--no-lsp` skips it entirely.
 - Candidates are Python call edges still marked `ambiguous` after normal
   resolution. Exactly one definition location mapping inside one stored Python
   symbol upgrades the edge to `exact`.
+- Budget stops report `budget_hit` and amortize: upgrades persist, so the next
+  build resumes from the remaining ambiguous edges.
 - Missing or failing pyright is a noticed no-op; failed passes roll back their
   changes.
 - Existing `exact` edges are never selected or downgraded.

@@ -65,6 +65,12 @@ Entry: `src/cairn/graph/builder.py:build_graph`. Ordered stages:
      for fuzzy queries.
    - `unresolved` — no candidates (stdlib/external).
 
+7b. **Pyright upgrade pass** — ambiguous Python call edges are probed via
+    `pyright --stdio` when available (budget-capped by default; `--lsp`
+    unbounded, `--no-lsp` off, budgets in `cairn.json`'s `lsp` section). A
+    unique definition matching one stored Python symbol upgrades the edge to
+    `exact`; upgrades persist, so budget-stopped passes resume next build.
+
 8. **Derived indexes** — `build_dataflow_index` (per-symbol impact sets) and
    `build_transitive_closure` (multi-hop calls at O(1)).
 

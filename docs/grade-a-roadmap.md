@@ -6,7 +6,8 @@ Live state after the ratchet (#149), guardrails (#150), comment-sweep
 (#160), protection/ruleset configuration (#157/#158), budget
 recalibration (#159/#161/#162), audit batches 1–4 (#163/#164/#166,
 #168-#171), the systemic-cluster flips + A4 retro (#172), the conformance
-matrix (#173), and the precision baseline + spec (#174). Scoreboards:
+matrix (#173), the precision baseline + spec (#174), and the budgeted
+auto pyright pass (#176). Scoreboards:
 `make audit-status`, `make comment-style`, `make verify-protection`.
 
 ## Done
@@ -23,12 +24,13 @@ matrix (#173), and the precision baseline + spec (#174). Scoreboards:
 | SY1/SY2/SY3 systemic clusters — verified remediated, flipped | #172 |
 | F — parser conformance matrix: 15 golden languages, tier-marked, staleness-gated | #173 |
 | E (evidence half) — ambiguous-edge baseline measured + published; spec drafted | #174 |
+| E (Python half) — FR-005 ruled; budgeted auto-pyright pass | #176 |
 
 ## Remaining
 
 | Item | State |
 |---|---|
-| E (implementation) | `specs/exact-edge-precision/` awaiting the FR-005 ruling (auto-pyright budget cap); then implement + publish the exact-ratio delta |
+| E — TypeScript/Python exact edges | FR-005 ruled and the budgeted auto-pyright pass shipped (#176); remaining: SCIP wiring for TypeScript workspaces + the measured exact-ratio delta in benchmarks.md |
 | P2 polish — 87 findings | Below the grade-A bar; opportunistically by module |
 | A3 — merges through the review gate | Standing: ruleset enforces everything except the admin override itself |
 
