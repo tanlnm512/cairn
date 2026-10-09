@@ -1177,6 +1177,15 @@ def _clear_repo(conn, repo_name: str):
         "DELETE FROM imports WHERE file_id IN (SELECT id FROM files WHERE repo_id = ?)",
         (repo_name,),
     )
+    # 3b. Delete rationale rows before their FK parents (files/symbols).
+    try:
+        cur.execute(
+            "DELETE FROM rationale WHERE file_id IN "
+            "(SELECT id FROM files WHERE repo_id = ?)",
+            (repo_name,),
+        )
+    except sqlite3.OperationalError:
+        pass  # rationale table missing on a pre-marker DB
     # ANN rows must die with relational rows to avoid stale rowid reuse.
     try:
         # Sync the vec0 index for the doomed rowids (same rationale as the
