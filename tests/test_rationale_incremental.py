@@ -32,3 +32,34 @@ def test_reindex_drops_stale_rationale_and_rederives(tmp_path, hash_backend):
         ]
     finally:
         conn.close()
+
+
+def test_repo_scoped_rebuild_clears_rationale_rows(tmp_path, hash_backend):
+    """A repo-scoped rebuild deletes the repo's rationale rows before their
+    FK parents; it completes and leaves no stuck build marker."""
+    ws = tmp_path / "ws"
+    repo = ws / "demo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "a.py").write_text("# NOTE: keep me honest\n\n\ndef f():\n    return 1\n")
+
+    db_path = str(tmp_path / "rebuild.db")
+    build_graph(workspace=str(ws), db_path=db_path, verbose=False)
+
+    conn = get_db(db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM rationale").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+    build_graph(workspace=str(ws), repo_filter="demo", db_path=db_path,
+                verbose=False)
+
+    conn = get_db(db_path)
+    try:
+        markers = conn.execute(
+            "SELECT state FROM repo_build_state WHERE repo_id = 'demo'"
+        ).fetchall()
+        assert markers == [], f"stuck build marker: {[dict(m) for m in markers]}"
+        assert conn.execute("SELECT COUNT(*) FROM rationale").fetchone()[0] == 1
+    finally:
+        conn.close()

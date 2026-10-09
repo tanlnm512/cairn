@@ -1582,7 +1582,9 @@ COMMUNITY_HUB_CAP = 3
 
 
 def get_communities(conn: sqlite3.Connection) -> List[dict]:
-    """Every persisted community with size and top hubs, in stored id order; [] when none persisted."""
+    """Persisted communities with size and top hubs in stored id order; [] when none or the tables predate the store."""
+    if not _knowledge_table_present(conn, "communities"):
+        return []
     rows = conn.execute(
         """
         SELECT c.id, c.label, c.size,
@@ -1622,6 +1624,8 @@ def get_community_members(
     conn: sqlite3.Connection, community_id: int
 ) -> Optional[dict]:
     """One community with its degree-ranked member symbols; None when the id persists no membership."""
+    if not _knowledge_table_present(conn, "communities"):
+        return None
     row = conn.execute(
         "SELECT id, label, size FROM communities WHERE id = ?", (community_id,)
     ).fetchone()

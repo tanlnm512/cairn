@@ -1068,6 +1068,31 @@ def test_database_schema_reports_skipped_tables(tmp_path):
     assert "vec0" in schema["skipped"][0]["reason"]
 
 
+def test_communities_route_renders_store_without_community_tables(tmp_path):
+    """A store predating the communities tables renders the empty panel,
+    never a 500 (listing and drill-down alike)."""
+    pytest.importorskip("httpx")
+    from starlette.testclient import TestClient
+
+    from cairn.dashboard.app import create_app
+
+    db_path = _graph_db_file(tmp_path, seed=True)
+    drop = sqlite3.connect(db_path)
+    drop.execute("DROP TABLE symbol_communities")
+    drop.execute("DROP TABLE communities")
+    drop.commit()
+    drop.close()
+
+    client = TestClient(create_app(db_path=db_path))
+    listing = client.get("/communities")
+    assert listing.status_code == 200
+    assert "No communities" in listing.text or "communities" in listing.text.lower()
+
+    drill_down = client.get("/communities", headers={"HX-Request": "true"},
+                            params={"community": "1"})
+    assert drill_down.status_code == 200
+
+
 def test_database_route_reports_each_skipped_tables_own_reason(
     tmp_path, monkeypatch
 ):
