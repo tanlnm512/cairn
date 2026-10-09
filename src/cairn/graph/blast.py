@@ -242,10 +242,10 @@ def _seed_symbols(conn, changed: list[dict]) -> tuple[list[dict], list[str]]:
                 (file_row["id"],),
             ).fetchall()
             for selected in removed:
-                seed = seeds.setdefault(
+                removed_seed = seeds.setdefault(
                     selected["id"], _seed_record(selected, file_change)
                 )
-                seed["hunks"].append(
+                removed_seed["hunks"].append(
                     {"start": selected["line_start"], "end": selected["line_end"]}
                 )
             continue
@@ -272,10 +272,8 @@ def _seed_symbols(conn, changed: list[dict]) -> tuple[list[dict], list[str]]:
                 )
             )
             selected = candidates[0]
-            seed = seeds.get(selected["id"])
-            if seed is None:
-                seed = _seed_record(selected, file_change)
-                seeds[selected["id"]] = seed
+            seed = seeds.get(selected["id"]) or _seed_record(selected, file_change)
+            seeds[selected["id"]] = seed
             seed["hunks"].append(
                 {"start": hunk["start"], "end": hunk["end"]}
             )
