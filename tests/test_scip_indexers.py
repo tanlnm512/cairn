@@ -106,6 +106,21 @@ def test_subprocess_is_bounded_by_the_recorded_timeout(tmp_path, monkeypatch):
     assert seen.get("timeout") == _INDEX_TIMEOUT_S
 
 
+def test_subprocess_runs_in_the_repo_directory(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(kw)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    _stub_which(monkeypatch)
+    _stub_run(monkeypatch, fake_run)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    generate_index_result("swift", tmp_path / "swift.scip", str(repo))
+    assert seen["cwd"] == str(repo)
+
+
 def test_spec_env_is_merged_with_the_process_env(tmp_path, monkeypatch):
     seen = {}
 
