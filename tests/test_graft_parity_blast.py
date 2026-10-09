@@ -290,6 +290,47 @@ def test_pure_deletion_hunk_seeds_the_shrunk_symbol(tmp_path, monkeypatch):
     assert {row["symbol"] for row in payload["radius"]} == {"caller"}
 
 
+def test_deleted_file_seeds_its_indexed_symbols(tmp_path, monkeypatch):
+    _workspace, repo, db_path = _prepare_workspace(
+        tmp_path,
+        monkeypatch,
+        files={
+            "removed.py": (
+                "def removed_fn():\n"
+                "    return 1\n"
+                "\n"
+                "\n"
+                "def neighbor_fn():\n"
+                "    return 2\n"
+            ),
+            "caller.py": (
+                "from removed import removed_fn\n"
+                "def caller():\n"
+                "    return removed_fn()\n"
+            ),
+        },
+        graph_files={
+            "removed.py": [
+                ("removed_fn", "function", 1, 2),
+                ("neighbor_fn", "function", 5, 6),
+            ],
+            "caller.py": [("caller", "function", 2, 3)],
+            "edges": [("caller", "removed_fn", 3)],
+        },
+    )
+    (repo / "removed.py").unlink()
+
+    result = _blast(db_path)
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert [seed["name"] for seed in payload["seeds"]] == [
+        "removed_fn",
+        "neighbor_fn",
+    ]
+    assert {row["symbol"] for row in payload["radius"]} == {"caller"}
+
+
 def test_non_ascii_path_diff_matches_indexed_file(tmp_path, monkeypatch):
     name = "café.py"
     _workspace, repo, db_path = _prepare_workspace(

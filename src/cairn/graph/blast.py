@@ -205,19 +205,49 @@ def _changed_files(conn, workspace: Path, base: str | None) -> tuple[dict, list[
     return basis, changed
 
 
+def _seed_record(row, file_change: dict) -> dict:
+    """Return a blast seed record for an indexed symbol row."""
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "qualified_name": row["qualified_name"],
+        "kind": row["kind"],
+        "file_path": file_change["path"],
+        "repo": file_change["repo"],
+        "line_start": row["line_start"],
+        "line_end": row["line_end"],
+        "hunks": [],
+    }
+
+
 def _seed_symbols(conn, changed: list[dict]) -> tuple[list[dict], list[str]]:
     seeds: dict[str, dict] = {}
     unindexed: list[str] = []
     for file_change in changed:
         rel = f"{file_change['repo']}:{file_change['path']}"
-        if file_change["deleted"]:
-            continue
         file_row = conn.execute(
             "SELECT id FROM files WHERE repo_id = ? AND path = ?",
             (file_change["repo"], file_change["path"]),
         ).fetchone()
         if file_row is None:
             unindexed.append(rel)
+            continue
+        if file_change["deleted"]:
+            removed = conn.execute(
+                """SELECT id, name, qualified_name, kind, line_start, line_end
+                   FROM symbols WHERE file_id = ?
+                   AND kind != 'module'
+                   AND line_start IS NOT NULL AND line_end IS NOT NULL
+                   ORDER BY line_start, name""",
+                (file_row["id"],),
+            ).fetchall()
+            for selected in removed:
+                seed = seeds.setdefault(
+                    selected["id"], _seed_record(selected, file_change)
+                )
+                seed["hunks"].append(
+                    {"start": selected["line_start"], "end": selected["line_end"]}
+                )
             continue
         for hunk in file_change["hunks"]:
             # count == 0 is a pure deletion: seed the boundary line so the
@@ -244,17 +274,7 @@ def _seed_symbols(conn, changed: list[dict]) -> tuple[list[dict], list[str]]:
             selected = candidates[0]
             seed = seeds.get(selected["id"])
             if seed is None:
-                seed = {
-                    "id": selected["id"],
-                    "name": selected["name"],
-                    "qualified_name": selected["qualified_name"],
-                    "kind": selected["kind"],
-                    "file_path": file_change["path"],
-                    "repo": file_change["repo"],
-                    "line_start": selected["line_start"],
-                    "line_end": selected["line_end"],
-                    "hunks": [],
-                }
+                seed = _seed_record(selected, file_change)
                 seeds[selected["id"]] = seed
             seed["hunks"].append(
                 {"start": hunk["start"], "end": hunk["end"]}
@@ -525,13 +545,44 @@ def compute_blast(
     refresh: bool | None = None,
 ) -> dict:
     """Refresh stored spans and return the reverse radius of a git diff."""
-    refresh_for_query(conn, repair=refresh)
     workspace_path = Path(workspace).resolve()
     basis, changed = _changed_files(conn, workspace_path, base)
-    seeds, unindexed = _seed_symbols(conn, changed)
-    radius, cycles, truncated = _radius(
-        conn, seeds, fuzzy=fuzzy, limit=limit
+
+    # Capture deleted symbols before refresh removes their file rows.
+    deleted_changed = [item for item in changed if item["deleted"]]
+    deleted_seeds, deleted_unindexed = _seed_symbols(conn, deleted_changed)
+    deleted_radius, deleted_cycles, deleted_truncated = _radius(
+        conn, deleted_seeds, fuzzy=fuzzy, limit=limit
     )
+
+    refresh_for_query(conn, repair=refresh)
+    live_changed = [item for item in changed if not item["deleted"]]
+    live_seeds, live_unindexed = _seed_symbols(conn, live_changed)
+    live_radius, live_cycles, live_truncated = _radius(
+        conn, live_seeds, fuzzy=fuzzy, limit=limit
+    )
+
+    seeds = sorted(
+        deleted_seeds + live_seeds,
+        key=lambda seed: (
+            seed["repo"], seed["file_path"], seed["line_start"], seed["name"]
+        ),
+    )
+    unindexed = sorted(set(deleted_unindexed + live_unindexed))
+    radius_by_key: dict[tuple[str, str, str], dict] = {}
+    for row in deleted_radius + live_radius:
+        key = (row["symbol"], row["file"], row["repo"])
+        previous = radius_by_key.get(key)
+        if previous is None or row["depth"] < previous["depth"]:
+            radius_by_key[key] = dict(row)
+    radius = sorted(
+        radius_by_key.values(),
+        key=lambda row: (row["depth"], row["repo"], row["file"], row["symbol"]),
+    )
+    cycles = {
+        cycle["symbol"]: cycle for cycle in deleted_cycles + live_cycles
+    }
+    truncated = deleted_truncated or live_truncated
     _annotate_radius(conn, seeds, radius)
     config = load_config(workspace_path)
     taint_paths = intersect_seeds(
