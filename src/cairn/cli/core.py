@@ -290,8 +290,10 @@ def config(list_all, mcp_config, db_only, as_json):
 @click.option("-v", "--verbose", is_flag=True,
               help="Verbose per-file detail (parse errors, skip reasons).")
 @click.option("--staging", is_flag=True, help="Build to temp DB and atomic-swap for zero downtime.")
-@click.option("--lsp", is_flag=True,
-              help="Upgrade ambiguous Python calls with pyright when available.")
+@click.option("--lsp/--no-lsp", "lsp", default=None,
+              help="Upgrade ambiguous Python calls with pyright. Default: run "
+                   "under the configured time/edge budgets when pyright is "
+                   "available; --lsp forces an unbounded pass; --no-lsp skips.")
 @click.option("--with-closure", is_flag=True,
               help="Materialize the transitive closure (skipped by default).")
 def build(repo, workspace, db, verbose, staging, lsp, with_closure):

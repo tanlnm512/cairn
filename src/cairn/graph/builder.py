@@ -377,7 +377,7 @@ def _build_graph_impl(
     db_path: Optional[str] = None,
     verbose: bool = False,
     progress=None,
-    lsp: bool = False,
+    lsp: Optional[bool] = None,
     lsp_transport: object = _AUTO_LSP_TRANSPORT,
 ) -> dict:
     """Build or rebuild the graph in the caller-owned connection."""
@@ -480,12 +480,23 @@ def _build_graph_impl(
     resolution_stats = _resolve_all(conn, repo_edges_by_file, in_memory, verbose, progress)
 
     lsp_report = None
-    if lsp:
+    if lsp is None or lsp:
+        # Tri-state: True forces the pass unbounded, None (the default) runs
+        # it under the configured budgets, False skips it entirely.
+        budgets: dict = {}
+        if lsp is None:
+            from .config import load_config
+
+            lsp_cfg = (load_config(workspace).lsp) or {}
+            budgets = {
+                "time_budget": lsp_cfg.get("budget_seconds", lsp_mod.DEFAULT_BUDGET_SECONDS),
+                "edge_budget": lsp_cfg.get("edge_budget", lsp_mod.DEFAULT_EDGE_BUDGET),
+            }
         if lsp_transport is _AUTO_LSP_TRANSPORT:
-            lsp_report = lsp_mod.upgrade_ambiguous_edges(conn, workspace)
+            lsp_report = lsp_mod.upgrade_ambiguous_edges(conn, workspace, **budgets)
         else:
             lsp_report = lsp_mod.upgrade_ambiguous_edges(
-                conn, workspace, transport=lsp_transport
+                conn, workspace, transport=lsp_transport, **budgets
             )
         upgraded = lsp_report.get("upgraded", 0)
         if upgraded:
@@ -539,7 +550,7 @@ def build_graph(
     db_path: Optional[str] = None,
     verbose: bool = False,
     progress=None,
-    lsp: bool = False,
+    lsp: Optional[bool] = None,
     lsp_transport: object = _AUTO_LSP_TRANSPORT,
 ) -> dict:
     """Build or rebuild the graph and return summary and phase timing stats."""

@@ -16,6 +16,7 @@ malformed files warn and fall back to defaults.
 | `include` | list of globs | force-include; overrides skip-dirs, gitignore, and `exclude` — never the 1 MB cap |
 | `repo_namespaces` | map | import-path prefix → owning repo id (cross-repo analysis) |
 | `ingest` | object | knowledge-ingestion pipeline config (classification rules, dirs) |
+| `lsp` | object | pyright upgrade-pass budgets: `budget_seconds` (wall-clock cap, default 60), `edge_budget` (edges probed per build, default 2000). `cairn build` runs the pass under these by default when pyright is available; `--lsp` forces unbounded, `--no-lsp` skips |
 
 ## Store resolution
 

@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -344,19 +345,28 @@ def _open_document(transport: Any, path: Path, opened: dict[Path, str]) -> str |
     return text
 
 
+# Default budgets for the auto-enabled pass (config: cairn.json "lsp").
+DEFAULT_BUDGET_SECONDS = 60.0
+DEFAULT_EDGE_BUDGET = 2000
+
+
 def upgrade_ambiguous_edges(
     conn,
     workspace: str,
     *,
     transport: Any = _AUTO_TRANSPORT,
     request_timeout: float = 10.0,
+    edge_budget: int | None = None,
+    time_budget: float | None = None,
 ) -> dict[str, Any]:
-    """Upgrade uniquely resolvable ambiguous Python calls without downgrades."""
+    """Upgrade uniquely resolvable ambiguous Python calls; budgets cap the pass and upgrades persist across runs."""
     edges = _ambiguous_edges(conn)
     if transport is None:
         return {
             "considered": len(edges),
             "upgraded": 0,
+            "probed": 0,
+            "budget_hit": None,
             "notices": ["pyright unavailable: language-server pass skipped"],
         }
     if transport is _AUTO_TRANSPORT:
@@ -368,16 +378,27 @@ def upgrade_ambiguous_edges(
             return {
                 "considered": len(edges),
                 "upgraded": 0,
+                "probed": 0,
+                "budget_hit": None,
                 "notices": [f"pyright unavailable: {error}; pass skipped"],
             }
 
     conn.execute("SAVEPOINT cairn_lsp_upgrade")
     upgraded = 0
+    probed = 0
+    budget_hit: str | None = None
+    started = time.monotonic()
     try:
         transport.initialize()
         symbols = _symbol_index(conn, workspace)
         opened: dict[Path, str] = {}
         for edge in edges:
+            if time_budget is not None and time.monotonic() - started >= time_budget:
+                budget_hit = "time"
+                break
+            if edge_budget is not None and probed >= edge_budget:
+                budget_hit = "edges"
+                break
             source_path = _stored_path(
                 workspace, edge["repo_path"], edge["file_path"]
             )
@@ -391,6 +412,7 @@ def upgrade_ambiguous_edges(
             if line_index >= len(lines):
                 continue
             line_text = lines[line_index]
+            probed += 1
             target_id = None
             for character in _name_positions(line_text, edge["target_name"]):
                 result = transport.request(
@@ -434,10 +456,24 @@ def upgrade_ambiguous_edges(
         return {
             "considered": len(edges),
             "upgraded": 0,
+            "probed": 0,
+            "budget_hit": None,
             "notices": [f"pyright pass failed: {error}; changes rolled back"],
         }
     finally:
         transport.close()
 
     conn.execute("RELEASE cairn_lsp_upgrade")
-    return {"considered": len(edges), "upgraded": upgraded, "notices": []}
+    notices: list[str] = []
+    if budget_hit is not None:
+        notices.append(
+            f"pyright pass stopped by {budget_hit} budget: "
+            f"{probed} probed, {upgraded} upgraded, resume on next build"
+        )
+    return {
+        "considered": len(edges),
+        "upgraded": upgraded,
+        "probed": probed,
+        "budget_hit": budget_hit,
+        "notices": notices,
+    }
