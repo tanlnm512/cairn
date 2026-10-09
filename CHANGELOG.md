@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+
+## [0.22.0] - 2026-10-10
 ### Added
 - Parser conformance matrix in `docs/indexing.md`: one row per golden-fixtured language (Rust joins as the 15th), rendered by `scripts/gen_conformance_table.py` between markers and kept fresh by a staleness test; every row is green or carries an explicit tier mark (no import/hierarchy edges).
 - Pyright upgrade pass is now budgeted and on by default: `cairn build` upgrades ambiguous Python call edges when pyright is available, capped by a wall-clock budget (60 s default) and a per-build edge budget (2,000 default), both configurable via `cairn.json` (`lsp.budget_seconds`, `lsp.edge_budget`); `--lsp` forces an unbounded pass, `--no-lsp` skips. Upgrades persist, so a budget-stopped pass resumes from the remainder on the next build, and the report carries `probed`/`budget_hit` for observability.
