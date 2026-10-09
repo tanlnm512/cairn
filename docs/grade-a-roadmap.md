@@ -1,83 +1,63 @@
-# Grade-A Roadmap
+# Grade-A Roadmap — remaining work
 
 <- [Docs index](README.md)
 
-The completion plan for the grade-A program: what shipped, what remains,
-and the acceptance criterion for each item. Scoreboards: `make
-audit-status` (debt), `make comment-style` (contract drift),
-`make verify-protection` (governance).
+Live state after the ratchet (#149), guardrails (#150), comment-sweep
+(#160), protection/ruleset configuration (#157/#158), budget
+recalibration (#159/#161/#162), and audit batches 1–3 (#163/#164/#166).
+Scoreboards: `make audit-status`, `make comment-style`,
+`make verify-protection`.
 
-## Shipped
+## Done
 
-| Capability | Delivery |
+| Gate | Delivery |
 |---|---|
-| Audit-debt counter + status sidecar | PR #149 |
-| Shrink-only comment-style ratchet (pre-commit + CI) | PR #149 |
-| Root-artifact relocation | PR #149 |
-| `cairn doctor --fix` (cairn-owned, atomic, freshness-guarded) | PR #150 |
-| Resolution-quality report (`cairn report`) | PR #150 |
-| p95 catastrophe budgets, enforcing on main/merge-group | PR #150 |
-| Weekly CLI smoke workflow | PR #150, #151 |
-| `make verify-protection` verifier + checklist | PR #150 |
-| Standards flake fix (stdio catalog retry) | PR #153 |
+| Contract — comment ratchet + sweep (1213 → 226) | #149, #160 |
+| Guardrails — budgets, weekly smoke, doctor --fix, verifier | #150, #151 |
+| Protection — 14 required checks + force-push denial, verifier green | #157, #158 |
+| Budgets — factor 10 from CI-class run, self-consistent source p95s | #161, #162 |
+| Flakes — stdio catalog root-caused (sequential exchange) | #153, #165 |
+| Audit batches 1–3 — 18 findings closed (P0 0/2, P1 36/51) | #163, #164, #166 |
 
-## Workstreams
+## D — finish the burndown (P1 36 → target ≤10; realistically 0)
 
-### A — Governance (closes D-014; the load-bearing gap)
-- **A1** Configure `main` protection: force-push denial + required checks
-  per [release-checklist.md](release-checklist.md). Owner: maintainer
-  (GitHub settings). Accept: `make verify-protection` exits 0.
-- **A2** Reconcile the verifier's `MANDATORY_CHECKS` wishlist with the
-  ruleset's configured checks (union-compare against reality). Accept: no
-  false FAIL; verifier reports the configured set.
-- **A3** No more admin merges; standing non-author review; 30 consecutive
-  reviewed PRs. Owner: maintainers.
-- **A4** Retro-review the admin-merged PRs (#149/#150/#151/#153) in one
-  batch; findings → audit sidecar.
+Verify-then-fix protocol per batch: findings predate recent fixes, so each
+is verified against current code first; real fixes ship failing-first
+regression tests; already-fixed findings get their sidecar ID flipped (and
+a pin added if none exists). Full suite green before every merge.
 
-### B — Budget recalibration + flake closure (D-017 follow-through)
-- **B1** Mint factor-10 budgets from a green CI-class perf run
-  (`scripts/mint_perf_budgets.py`); review the provenance stamp. Accept:
-  budgets carry a CI `machine_profile`; main bench stays green.
-- **B2** Close flake issue #152 after 5 consecutive green full-matrix runs
-  + 2 weekly smokes.
+| Wave | Scope | Findings |
+|---|---|---|
+| 4a | graph | C3, C8, C9, C11–C14, Q27–Q29 (10) |
+| 4b | dashboard + cli | C4, C53–C55, C65, C30 + the missed C70 sidecar flip (7) |
+| 4c | scripts, agent_install, viz | S8–S10, S17, S18, S3, S4, C17, C75 (9) |
+| 4d | long tail | bench Q1–Q2 · knowledge C68, Q40 · retrieval C15 · llm C29 · compass C40 · telemetry C69 · mcp_server C73 · memory C74 (10) |
 
-### C — `comment-sweep` spec (contract completion)
-- Reduce the comment/docstring baseline by ≥50% (1213 → ≤606) with
-  mechanical-only transforms; migrate durable rationale to `cairn memory`
-  or docs before deletion; land the parked runpy import-warning fix
-  (ratchet D-012). Accept: `make comment-style` reports ≤606; full suite
-  green throughout.
+After the P1 floor: SY2 stale-docs corrections (~13 enumerated sites),
+SY3 dedup helpers (3), then P2s opportunistically by module (75 — polish,
+below the grade-A bar).
 
-### D — Audit burndown execution
-- Work the 51 P1 findings in the audit's fix order; every fix ships a
-  failing-first regression test and flips its sidecar ID. Fold in this
-  program's own escapes (mypy local gap, omitted test file, `runner.temp`,
-  pre-commit pipe masking, stdio flake). Accept: `make audit-status`
-  reports P1 ≤ 10.
+## E — precision follow-up (evidence-first)
 
-### E — Precision follow-up (evidence-first)
-- Rank languages by ambiguous-edge mass from `cairn report`
-  (`resolution_by_language`); spec the exact-edge upgrade for the top two
-  (LSP or SCIP; `scip-indexing-v2` groundwork exists). Accept: measured
-  exact-ratio delta published in [benchmarks.md](benchmarks.md); parity
-  tests in CI.
+1. Rank languages by ambiguous-edge mass from `cairn report`
+   (`resolution_by_language`) on self + the t2 corpus; pick the top two.
+2. Spec and implement the exact-edge upgrade for those two — SCIP
+   indexers first (`scip-indexing-v2` groundwork), LSP only where SCIP
+   cannot reach.
+3. Publish the measured exact-ratio delta in [benchmarks.md](benchmarks.md).
 
-### F — Parser conformance matrix
-- Per-language golden fixtures + generated table in
-  [indexing.md](indexing.md); 15 rows green or explicitly tier-marked.
-  Feature freeze on new surfaces until C/D land. Accept: 15/15 truthful
-  rows.
+## F — parser conformance matrix
+
+Per-language golden fixtures feeding a generated 15-row table in
+[indexing.md](indexing.md); every row green or explicitly tier-marked.
+
+## A3/A4 — standing human-process items
+
+- **A4** Retro-review the admin-merged PRs in one batch; findings → audit
+  sidecar.
+- **A3** From the next PR onward, merges through the review gate; the
+  ruleset now enforces everything except the admin override itself.
 
 ## Sequencing
 
-1. Now: A1, A2, B1 (small).
-2. Next: C and D in parallel (disjoint files).
-3. Standing: A3/A4.
-4. After C/D: E, then F.
-
-## Gate mapping
-
-A → process · D → debt · C → contract · E → precision · F → hardness ·
-B → guardrails. All six "definition of A" gates from the original review
-close when their workstream closes.
+4a + 4b → 4c + 4d → A4 → E → F.
