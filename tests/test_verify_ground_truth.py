@@ -261,6 +261,28 @@ class TestVerifyPaths:
         assert report.totals["stale_grade1"] == 1
         assert report.totals["stale_grade2"] == 0
 
+    def test_l4_row_gets_its_own_summary_bucket(self, synth):
+        """An admitted L4 query lands in an L4 bucket, not a KeyError."""
+        dataset, snapshot, _t2 = synth
+        queries = [q for q in QUERIES if q["query_id"] != "l5-lore"] + [
+            {
+                "query_id": "l4-impact",
+                "level": "L4",
+                "kind": "impact",
+                "text": "What breaks if Widget changes?",
+                "rationale": "impact rows verify against the graph",
+            }
+        ]
+        expectations = [row for row in EXPECTATIONS if row[0] != "l5-lore"] + [
+            ("l4-impact", "widget.py#Widget", 2)
+        ]
+        _write_dataset(dataset, expectations=expectations, queries=queries)
+        report = vg.verify_ground_truth(dataset=dataset, snapshot=snapshot)
+        assert report.exit_code() == vg.EXIT_OK
+        assert report.summary["L4"]["impact"] == {
+            "queries": 1, "expectations": 1, "verified": 1, "stale": 0
+        }
+
 
 # ---------------------------------------------------------------------------
 # CLI surface: --json shape, human output, marker isolation
