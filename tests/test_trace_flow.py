@@ -59,6 +59,28 @@ def _seed_cycle(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _seed_diamond(conn: sqlite3.Connection) -> None:
+    """Build: entry -> left -> join, entry -> right -> join, join -> x, join -> y.
+
+    The join node is reachable on two DFS paths and is itself a branch point.
+    """
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('r1', 'app', '/repo')")
+    _row(conn, "files", id="f1", repo_id="r1", path="/repo/main.py", language="python")
+    _row(conn, "symbols", id="s1", file_id="f1", name="entry", qualified_name="m.entry", kind="function", line_start=1, line_end=10)
+    _row(conn, "symbols", id="s2", file_id="f1", name="left", qualified_name="m.left", kind="function", line_start=1, line_end=10)
+    _row(conn, "symbols", id="s3", file_id="f1", name="right", qualified_name="m.right", kind="function", line_start=1, line_end=10)
+    _row(conn, "symbols", id="s4", file_id="f1", name="join", qualified_name="m.join", kind="function", line_start=1, line_end=10)
+    _row(conn, "symbols", id="s5", file_id="f1", name="x", qualified_name="m.x", kind="function", line_start=1, line_end=10)
+    _row(conn, "symbols", id="s6", file_id="f1", name="y", qualified_name="m.y", kind="function", line_start=1, line_end=10)
+    _row(conn, "edges", id="e1", source_id="s1", target_id="s2", target_name="left", kind="call", line=5, column=0, resolution="exact")
+    _row(conn, "edges", id="e2", source_id="s1", target_id="s3", target_name="right", kind="call", line=6, column=0, resolution="exact")
+    _row(conn, "edges", id="e3", source_id="s2", target_id="s4", target_name="join", kind="call", line=5, column=0, resolution="exact")
+    _row(conn, "edges", id="e4", source_id="s3", target_id="s4", target_name="join", kind="call", line=5, column=0, resolution="exact")
+    _row(conn, "edges", id="e5", source_id="s4", target_id="s5", target_name="x", kind="call", line=5, column=0, resolution="exact")
+    _row(conn, "edges", id="e6", source_id="s4", target_id="s6", target_name="y", kind="call", line=6, column=0, resolution="exact")
+    conn.commit()
+
+
 # ─── trace_flow tests ──────────────────────────────────────────────────────
 
 class TestTraceFlow:
@@ -130,6 +152,22 @@ class TestTraceFlow:
         result = trace_flow(fresh_db, "funcA")
         assert result["total"] <= 3  # funcA + funcB, no infinite expansion
         assert result["truncated"] is False
+
+    def test_diamond_join_visited_once(self, fresh_db):
+        """A node reachable on two DFS paths appears once in the chain."""
+        _seed_diamond(fresh_db)
+        result = trace_flow(fresh_db, "entry")
+        join_nodes = [n for n in result["chain"] if n["symbol"] == "join"]
+        assert len(join_nodes) == 1
+
+    def test_diamond_join_not_rebranched(self, fresh_db):
+        """A fully-explored join is never re-walked: one branch entry, first-seen depth."""
+        _seed_diamond(fresh_db)
+        result = trace_flow(fresh_db, "entry")
+        join_branches = [b for b in result["branches"] if b["symbol"] == "join"]
+        assert len(join_branches) == 1
+        join = [n for n in result["chain"] if n["symbol"] == "join"][0]
+        assert join["depth"] == 2  # via left (first DFS path), not 2 via right
 
     def test_no_outgoing_calls(self, fresh_db):
         """An entry with no callees returns just itself."""
