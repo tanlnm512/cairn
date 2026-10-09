@@ -18,6 +18,13 @@ import pytest
 from cairn.graph.prf import ExpansionResult, expand
 
 
+def test_tokenizer_is_the_schema_tokenizer() -> None:
+    """PRF must tokenize exactly as the FTS5 index does: one shared function."""
+    from cairn.graph import prf, schema
+
+    assert prf._unicode61_tokens is schema._unicode61_tokens
+
+
 def _lookup(table: dict, n_symbols: int = 100):
     """df_lookup over an in-memory table: token -> (symbol_df, n_symbols)."""
 
