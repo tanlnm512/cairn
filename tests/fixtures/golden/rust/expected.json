@@ -1,0 +1,89 @@
+{
+  "language": "rust",
+  "symbols": [
+    {
+      "name": "Config",
+      "kind": "class",
+      "qualified_name": "Config",
+      "line_start": 12,
+      "line_end": 14,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null,
+      "arity": null
+    },
+    {
+      "name": "helper",
+      "kind": "function",
+      "qualified_name": "helper",
+      "line_start": 8,
+      "line_end": 10,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null,
+      "arity": null
+    },
+    {
+      "name": "main",
+      "kind": "function",
+      "qualified_name": "main",
+      "line_start": 3,
+      "line_end": 6,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null,
+      "arity": null
+    },
+    {
+      "name": "impl Config",
+      "kind": "implementation",
+      "qualified_name": "impl Config",
+      "line_start": 16,
+      "line_end": 20,
+      "column_start": 0,
+      "column_end": 1,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null,
+      "arity": null
+    },
+    {
+      "name": "new",
+      "kind": "method",
+      "qualified_name": "Config.new",
+      "line_start": 17,
+      "line_end": 19,
+      "column_start": 4,
+      "column_end": 5,
+      "docstring": null,
+      "modifiers": [],
+      "metadata": null,
+      "arity": null
+    }
+  ],
+  "edges": [
+    {
+      "source_name": "main",
+      "kind": "calls",
+      "target_name": "helper",
+      "line": 5,
+      "column": 4,
+      "call_arity": 1
+    },
+    {
+      "source_name": "main",
+      "kind": "calls",
+      "target_name": "new",
+      "line": 4,
+      "column": 16,
+      "call_arity": 0
+    }
+  ],
+  "imports": []
+}

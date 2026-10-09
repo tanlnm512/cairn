@@ -19,6 +19,7 @@ from cairn.parsers.php import PhpParser
 from cairn.parsers.ruby import RubyParser
 from cairn.parsers.csharp import CSharpParser
 from cairn.parsers.c_family import CParser, CppParser
+from cairn.parsers.rust import RustParser
 
 LANG_CONFIG = {
     "kotlin": (KotlinParser, "sample.kt"),
@@ -35,6 +36,7 @@ LANG_CONFIG = {
     "csharp": (CSharpParser, "sample.cs"),
     "c": (CParser, "sample.c"),
     "cpp": (CppParser, "sample.cpp"),
+    "rust": (RustParser, "sample.rs"),
 }
 
 GOLDEN_DIR = Path(__file__).parent
