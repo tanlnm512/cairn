@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import os
-import signal
 import sqlite3
 import sys
 import threading
@@ -80,42 +79,6 @@ def _drain_buffered_telemetry() -> None:
         pass
 
 
-def _watch_parent_loop() -> None:
-    """Parent-death watchdog body: drain buffers, then os._exit(0) when the parent changes."""
-    try:
-        parent = os.getppid()
-    except OSError:
-        _drain_buffered_telemetry()
-        os._exit(0)
-    if parent <= 1:
-        return  # already orphaned/unsupported (e.g. some containers) — skip
-    while True:
-        time.sleep(5.0)
-        try:
-            current = os.getppid()
-        except OSError:
-            _drain_buffered_telemetry()
-            os._exit(0)
-        if current != parent:
-            _drain_buffered_telemetry()
-            os._exit(0)
-
-
-def _install_exit_watchdog():
-    """Ensure the server dies with its parent (signals + parent-pid poll); never reads stdin."""
-    def _signal_handler(_signum, _frame):
-        raise SystemExit(0)
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            signal.signal(sig, _signal_handler)
-        except (ValueError, OSError):
-            # Non-main thread or unsupported signal — best-effort.
-            pass
-
-    threading.Thread(target=_watch_parent_loop, daemon=True).start()
-
-
 # Counts tools ACTUALLY registered on the FastMCP `mcp` instance rather than a
 # hardcoded literal, so a dropped tools_*.py import or removed @mcp.tool
 # decorator trips this guard.
@@ -138,7 +101,7 @@ def verify_tool_count() -> None:
 
 
 def _timestamped_print(msg: str, file=None) -> None:
-    """Print ``[<local time>] <msg>``; defaults to stderr (stdout is the stdio JSON-RPC channel)."""
+    """Print ``[<local time>] <msg>``; defaults to stderr."""
     from datetime import datetime
 
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -257,20 +220,18 @@ def _build_http_app(
 
 
 def run(
-    transport: str = "stdio",
     port: int | None = None,
     host: str | None = None,
     api_key: str | None = None,
     stateless: bool = False,
 ):
-    """Run the MCP server (``api_key`` pre-resolved; None means keyless), with boot catch-up."""
+    """Run the MCP server over streamable HTTP (``api_key`` pre-resolved; None means keyless), with boot catch-up."""
     # Per-process session id: metric_buffering/telemetry/builder stamp rows
     # with CAIRN_SESSION (default "unknown"); setdefault keeps an externally
     # provided id in control.
     os.environ.setdefault("CAIRN_SESSION", uuid4().hex[:12])
 
-    # Configure the `cairn` logger namespace only, with a stderr handler:
-    # stdout is the JSON-RPC channel under stdio.
+    # stderr handler only: stdout stays clean for the readiness line.
     configure_logging()
 
     # Long-running server boot: suppress non-actionable third-party noise.
@@ -278,11 +239,6 @@ def run(
 
     # Fail fast if tool registration drifted.
     verify_tool_count()
-
-    # Stdio servers die with their client: the parent-pid watchdog is wrong
-    # for SSE (launchd/zsh parent), where SIGTERM manages the daemon.
-    if transport == "stdio":
-        _install_exit_watchdog()
 
     db_path = os.environ.get("CAIRN_DB") or str(resolve_store().db)
     workspace = resolve_store().workspace
@@ -338,8 +294,6 @@ def run(
             conn = get_db(db_path)
             n = ensure_fresh_force(conn, str(workspace))
             if n:
-                # stderr only: stdout is the stdio JSON-RPC channel, and a
-                # plain-text line there corrupts the framing.
                 _timestamped_print(
                     f"cairn: caught up {n} file(s) changed while the server was down"
                 )
@@ -387,50 +341,29 @@ def run(
         live_watcher.start()
 
     try:
-        if transport == "sse":
-            # SSE-only: a stdio server is itself a potential stray and must not
-            # kill its siblings; the sweeper lets a restarted daemon self-heal.
-            _install_stray_sweeper(db_path, interval_s=60.0)
+        _install_stray_sweeper(db_path)
+        app = _build_http_app(
+            host=host, port=port, api_key=api_key, stateless=stateless
+        )
+        import uvicorn
 
-            # FastMCP.run() in mcp>=1.0 reads host/port from mcp.settings, not kwargs.
-            if port:
-                mcp.settings.port = port
-            # stdout (the default stream here): SSE has no JSON-RPC stdio
-            # framing to protect, and this line is the daemon's readiness signal.
-            _timestamped_print(
-                f"cairn: MCP server listening on "
-                f"http://{mcp.settings.host}:{mcp.settings.port}/sse",
-                file=sys.stdout,
+        # Readiness signal on stdout; uvicorn logs to stderr.
+        _timestamped_print(
+            f"cairn: MCP server listening on "
+            f"http://{mcp.settings.host}:{mcp.settings.port}/mcp",
+            file=sys.stdout,
+        )
+        server = uvicorn.Server(
+            uvicorn.Config(
+                app,
+                host=mcp.settings.host,
+                port=mcp.settings.port,
+                log_level=mcp.settings.log_level.lower(),
             )
-            mcp.run(transport="sse")
-        elif transport == "http":
-            app = _build_http_app(
-                host=host, port=port, api_key=api_key, stateless=stateless
-            )
-            import uvicorn
-
-            # Readiness signal, mirroring the SSE bind print: stdout has no
-            # JSON-RPC framing to protect under HTTP.
-            _timestamped_print(
-                f"cairn: MCP server listening on "
-                f"http://{mcp.settings.host}:{mcp.settings.port}/mcp",
-                file=sys.stdout,
-            )
-            server = uvicorn.Server(
-                uvicorn.Config(
-                    app,
-                    host=mcp.settings.host,
-                    port=mcp.settings.port,
-                    log_level=mcp.settings.log_level.lower(),
-                )
-            )
-            server.run()
-        else:
-            mcp.run()
+        )
+        server.run()
     finally:
-        # Clean shutdown of the watcher (joins the observer). The stdio
-        # parent-death watchdog's os._exit bypasses this finally -- acceptable:
-        # the observer thread is daemonized exactly for that exit path.
+        # Clean shutdown of the watcher (joins the observer).
         if live_watcher is not None:
             live_watcher.stop()
 

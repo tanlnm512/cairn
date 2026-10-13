@@ -28,20 +28,20 @@ store directory is `sha256(workspace_path)[:16]` under `CAIRN_HOME`
 `--db` / `--workspace` flags instead.
 
 **Custom `CAIRN_HOME` and agent integrations.** Resolution is
-process-relative, so every process spawned on cairn's behalf must agree on
-`CAIRN_HOME`. Generated integrations handle this automatically: with a
-non-default home, `cairn install-agents` embeds `env.CAIRN_HOME` into every
-stdio MCP registration it writes (the Claude global-scope registration uses
-`claude mcp add -e`; droid's CLI path degrades to a warning — use its
-workspace-scope file registration), prefixes generated hook commands with
-the assignment, adds an `export` line to the git hook templates, and
-`cairn serve start` propagates it into the LaunchAgent plist. With the
-default home nothing is added — generated configs are unchanged. Re-run
-`cairn install-agents` after moving the store. Verify any environment with
-`cairn config --json` (what *this* environment resolves) and
-`cairn doctor` (the `environment` check audits registration consistency,
-platform/transport supportability, and binary coherence; a missing store
-fails naming the resolved path, the env chain, and the remediation).
+process-relative, so the daemon and every process spawned on cairn's behalf
+must agree on `CAIRN_HOME`. Generated integrations handle this automatically:
+MCP registrations are URL entries into the daemon, which resolves the home at
+startup — start it from the environment that owns the store (`cairn connect`,
+or `cairn serve start`, which propagates the home into the LaunchAgent
+plist); generated hook commands are prefixed with the assignment, and the git
+hook templates carry an `export` line. With the default home nothing is
+added — generated configs are unchanged. Re-run `cairn install-agents` after
+moving the store. Verify any environment with `cairn config --json` (what
+*this* environment resolves) and `cairn doctor` (the `environment` check
+audits registration consistency — flagging cairn-owned stdio/SSE
+registrations for `--fix` repointing to the URL+key form — platform
+supportability, and binary coherence; a missing store fails naming the
+resolved path, the env chain, and the remediation).
 
 ## Environment variables
 

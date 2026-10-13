@@ -355,6 +355,12 @@ class TestIsCairnServeCmdline:
         ("/Users/x/.local/bin/cairn serve run --port 9876 --read-only", True),
         ("/usr/local/bin/cairn serve --port 8123 --read-write", True),
         ("/usr/local/bin/cairn serve --db /x/y.db", True),
+        # Shebang shape: console scripts exec as `python <path>/cairn serve ...`.
+        ("/Users/x/.venv/bin/python3 /Users/x/.venv/bin/cairn serve --port 9879", True),
+        ("/Users/x/.venv/bin/python3 /Users/x/.venv/bin/cairn serve run --port 9876", True),
+        ("/Users/x/.venv/bin/python3 /Users/x/.venv/bin/cairn serve start", False),
+        ("/usr/bin/python3 /other/binary serve --port 9879", False),
+        ("/Users/x/.venv/bin/python3 /Users/x/.venv/bin/cairn build", False),
         # Transient lifecycle subcommands -- never servers.
         ("/usr/local/bin/cairn serve start", False),
         ("/usr/local/bin/cairn serve stop", False),

@@ -11,8 +11,7 @@ from .._common import (
     _claude_agent_md,
     _claude_command_md,
     _uninstall_bases,
-    default_sse_url,
-    resolve_cg_command,
+    _url_entry,
 )
 from ..merge import (
     _merge_json_file,
@@ -22,27 +21,14 @@ from ..merge import (
     _write_file,
     _write_tree,
 )
-from ...paths import cairn_home_env
 
 
-def zcode_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
+def zcode_mcp_config_json() -> dict:
     """Return a ZCode MCP entry nested under mcp.servers.<name>."""
-    if transport == "sse":
-        return {"mcp": {"servers": {"cairn": {"type": "sse", "url": default_sse_url(sse_url)}}}}
-    cmd = resolve_cg_command()
-    if len(cmd) == 1:
-        entry: dict = {"type": "stdio", "command": cmd[0], "args": ["serve"]}
-    else:
-        command, *prefix = cmd
-        entry = {"type": "stdio", "command": command, "args": [*prefix, "serve"]}
-    env = cairn_home_env()
-    if env:
-        entry["env"] = env
-    return {"mcp": {"servers": {"cairn": entry}}}
+    return {"mcp": {"servers": {"cairn": _url_entry()}}}
 
 
 def install_zcode(workspace: str, force: bool, dry_run: bool,
-                  transport: str = "stdio", sse_url: str | None = None,
                   scope: str = "workspace") -> InstallResult:
     """Install ZCode MCP and top-level skill, command, and agent assets."""
     ws = Path(workspace)
@@ -56,7 +42,7 @@ def install_zcode(workspace: str, force: bool, dry_run: bool,
         mcp_path = base / ".zcode" / "cli" / "config.json"
         if not dry_run:
             _strip_mcp_zcode(base / ".zcode" / "config.json", res)
-    _merge_json_file(mcp_path, zcode_mcp_config_json(transport, sse_url), force, res, config_key="zcode", dry_run=dry_run)
+    _merge_json_file(mcp_path, zcode_mcp_config_json(), force, res, config_key="zcode", dry_run=dry_run)
 
     _write_tree(base / ".zcode" / "skills" / "cairn", _TEMPLATE_DIR / "skill", force, res, dry_run=dry_run)
     for name in _SLASH_COMMANDS:
@@ -72,7 +58,7 @@ def install_zcode(workspace: str, force: bool, dry_run: bool,
     # ZCode uses AGENTS.md as its instruction file.
     agents_md = ws / "AGENTS.md"
     if not agents_md.exists():
-        _write_file(agents_md, _agents_instructions(transport, sse_url), force=False, result=res, dry_run=dry_run)
+        _write_file(agents_md, _agents_instructions(), force=False, result=res, dry_run=dry_run)
     else:
         res.skipped.append(str(agents_md) + " (exists; not overwritten)")
 

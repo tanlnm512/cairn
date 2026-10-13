@@ -7,9 +7,9 @@ from .._common import InstallResult, opencode_format_mcp_config_json
 from ..merge import _merge_json_file, _strip_mcp_kilo
 
 
-def kilo_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
+def kilo_mcp_config_json() -> dict:
     """MCP server config in kilo's opencode-format schema (shared builder)."""
-    return opencode_format_mcp_config_json(transport, sse_url)
+    return opencode_format_mcp_config_json()
 
 
 def _kilo_config_path(workspace: str, scope: str = "workspace") -> Path:
@@ -20,14 +20,13 @@ def _kilo_config_path(workspace: str, scope: str = "workspace") -> Path:
 
 
 def install_kilo(workspace: str, force: bool = False, dry_run: bool = False,
-                 transport: str = "stdio", sse_url: str | None = None,
                  scope: str = "workspace") -> InstallResult:
     """Install Kilo config and shared cross-tool agent assets."""
     res = InstallResult("kilo")
     # config_key="kilo" routes the merge through the opencode-format branch
-    # of _already_installed / _deep_merge (mcp.<name>, command-as-array).
+    # of _already_installed / _deep_merge (mcp.<name>).
     p = _kilo_config_path(workspace, scope)
-    _merge_json_file(p, kilo_mcp_config_json(transport, sse_url), force, res,
+    _merge_json_file(p, kilo_mcp_config_json(), force, res,
                      config_key="kilo", dry_run=dry_run)
     res.notes.append(f"MCP server written to {p} under the `mcp` key (kilo's schema).")
     res.notes.append("Skill (golden rules + tool-behaviors) may reach kilo via the .agents/skills/ fallback.")

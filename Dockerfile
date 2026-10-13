@@ -22,4 +22,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 
 # Key comes from the CAIRN_MCP_API_KEY env var; without it the wildcard bind
 # refuses to start (keyless serving is loopback-only).
-ENTRYPOINT ["cairn", "serve", "--transport", "http", "--host", "0.0.0.0"]
+ENTRYPOINT ["cairn", "serve", "--host", "0.0.0.0"]

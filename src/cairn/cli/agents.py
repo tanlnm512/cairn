@@ -21,21 +21,11 @@ _CLIENT_CHOICES = [*CLIENTS, "all"]
 @click.option("--force", is_flag=True, help="Overwrite existing cairn files.")
 @click.option("--dry-run", is_flag=True, help="Show what would be written; change nothing.")
 @click.option("--git-hooks", is_flag=True, help="Also install git git hooks (post-commit + post-checkout) in repos.")
-@click.option("--sse", "sse", is_flag=True,
-              help="Use SSE configs (shared daemon) — this is the default; the flag is kept for explicitness. Run `cairn serve start` first.")
-@click.option("--stdio", "stdio", is_flag=True,
-              help="Use stdio configs (one process per client) instead of the SSE default. Claude Desktop is always stdio either way.")
-@click.option("--sse-url", "sse_url", default=None,
-              help="SSE URL (default http://127.0.0.1:9876/sse).")
 @click.option("--yes", "-y", is_flag=True,
               help="Skip the interactive prompt; install for detected clients that don't already have cairn.")
-def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, stdio, sse_url, yes):
-    """Wire cairn into AI coding clients (Claude Code/Desktop, Cursor, Droid, ZCode, etc.); prompts unless --client/--yes."""
+def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, yes):
+    """Wire cairn into AI coding clients (Claude Code, Cursor, Droid, ZCode, etc.); prompts unless --client/--yes."""
     from ..agent_install import install, detect_clients, check_installed
-
-    if sse and stdio:
-        click.echo("Error: --sse and --stdio are mutually exclusive.")
-        sys.exit(1)
 
     if ws_arg:
         ws = ws_arg
@@ -144,26 +134,19 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
         scope = "workspace"
 
     include_git = git_hooks or (target_clients is not None and "all" in target_clients)
-    transport = "sse" if sse else ("stdio" if stdio else None)
 
     click.echo(f"Scope: {scope}")
     report = install(ws, clients=target_clients, force=force, dry_run=dry_run,
                      include_git_hooks=include_git,
-                     transport=transport,
-                     sse_url=sse_url,
                      scope=scope)
 
-    # Transport summary.
-    tp_note = (
-        "SSE daemon (shared instance)" if report.transport == "sse"
-        else "stdio (one process per client)"
-    )
-    click.echo(f"MCP transport: {tp_note}")
-    if report.transport == "sse":
-        from ..agent_install import sse_daemon_reachable
-        if not sse_daemon_reachable(sse_url):
-            click.echo("  note: SSE daemon not reachable — run `cairn serve start` "
-                       "(installs a launchd agent), or pass --stdio for one process per client.")
+    # Daemon gate: probe healthz so registrations are traced to a live daemon.
+    from ..mcp_server.lifecycle import healthz_responds, mcp_url
+
+    url = mcp_url()
+    click.echo(f"MCP server: {url} (URL + key registrations)")
+    if not healthz_responds():
+        click.echo(f"  note: daemon at {url} unreachable — run `cairn connect` to start it.")
     click.echo("")
 
     targeted = {r.client for r in report.results}
@@ -185,8 +168,8 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
             click.echo(f"  skipped: {len(res.skipped)} (use --force to overwrite)")
         for note in res.notes:
             click.echo(f"  note: {note}")
-        # Spawn-probe verdict (set by install()'s verify loop; dry-run,
-        # SSE, and CLI-registered clients stay "skipped" and print no line).
+        # Verification verdict (set by install()'s verify loop; dry-run,
+        # URL-based, and CLI-registered clients stay "skipped" and print no line).
         if res.verification_status == "pass":
             click.echo(f"  verify: PASS ({res.verification_detail})")
         elif res.verification_status == "fail":
@@ -202,7 +185,7 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, sse, s
         click.echo(f"Git hooks installed in: {', '.join(report.git_hooks_installed)}")
 
     click.echo("")
-    click.echo("Done. The MCP server resolves its own store paths via `cairn serve`.")
+    click.echo("Done. Registrations point at the shared daemon; run `cairn connect` if it is not running.")
 
 
 @main.command(name="uninstall-agents")

@@ -20,10 +20,12 @@ and every subprocess-spawning CLI (claude/droid) is mocked -- the real
 ever executes. The one opt-in CLI integration test runs the real `claude`
 binary with HOME pointed at a throwaway dir (same guarantees).
 """
+
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,10 +36,57 @@ from click.testing import CliRunner
 
 from cairn.agent_install import check_installed, install, uninstall
 
+# Independent truth (FR-005 default port, D-007 single /mcp path).
+DAEMON_URL = "http://127.0.0.1:9876/mcp"
+
+_TEST_KEY = "test-key-k1-0123456789abcdef"
+
+# Every module the generators may bind the key reader through; patching them
+# all keeps the pins independent of the generators' import style.
+_KEY_MODULE_NAMES = [
+    "cairn.mcp_server.auth",
+    "cairn.agent_install._common",
+    *[
+        f"cairn.agent_install.clients.{n}"
+        for n in (
+            "claude",
+            "claude_desktop",
+            "cursor",
+            "droid",
+            "zcode",
+            "agy",
+            "opencode",
+            "kilo",
+            "omp",
+        )
+    ],
+]
+
+
+@pytest.fixture
+def pinned_api_key(monkeypatch):
+    """Pin the persisted-key reader so the embedded credential in every
+    generated config is exactly this key."""
+    import importlib
+
+    for name in _KEY_MODULE_NAMES:
+        monkeypatch.setattr(
+            importlib.import_module(name),
+            "persisted_api_key",
+            lambda: _TEST_KEY,
+            raising=False,
+        )
+    return _TEST_KEY
+
+
+def _bearer(key: str) -> dict:
+    return {"Authorization": f"Bearer {key}"}
+
 
 # --------------------------------------------------------------------------
 # Helpers / fixtures
 # --------------------------------------------------------------------------
+
 
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch) -> Path:
@@ -60,8 +109,11 @@ def _no_cli(monkeypatch, *names):
 
 def _cli_at(monkeypatch, name, binpath="/fake/bin"):
     """Pretend exactly one named CLI exists at a fake path."""
-    monkeypatch.setattr(shutil, "which",
-                        lambda cmd, path=None: f"{binpath}/{cmd}" if cmd == name else None)
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda cmd, path=None: f"{binpath}/{cmd}" if cmd == name else None,
+    )
 
 
 def _spy_subprocess(monkeypatch):
@@ -81,40 +133,10 @@ def _spy_subprocess(monkeypatch):
     return calls
 
 
-def _repoint_home_bindings(monkeypatch, home: Path) -> None:
-    """Re-point paths.py's import-time CAIRN_HOME bindings into the sandbox.
-
-    Same pit test_config_probe.py fixes for the probe: paths.py binds
-    CAIRN_HOME / REGISTRY_FILE from os.environ at import time (under pytest,
-    collection time), while resolve_store and _load_registry read the globals
-    at call time. Without the re-point an in-process install-time comparison
-    would use the collector's real ~/.cairn instead of the test's custom home.
-    """
-    from cairn import paths
-
-    monkeypatch.setattr(paths, "CAIRN_HOME", home)
-    monkeypatch.setattr(paths, "REGISTRY_FILE", home / "workspaces.json")
-
-
-def _shim_on_path(tmp_path: Path, monkeypatch, name: str, body: str) -> Path:
-    """Install an executable shim script called `name` first on PATH.
-
-    Real-subprocess shadowing (no subprocess patching, C-04): anything that
-    resolves `name` off PATH -- the installer's resolve_cg_command, a spawned
-    probe -- runs the shim. Returns the shim path.
-    """
-    shim_dir = tmp_path / f"_shim_{name}"
-    shim_dir.mkdir(exist_ok=True)
-    shim = shim_dir / name
-    shim.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
-    shim.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{os.environ.get('PATH', '')}")
-    return shim
-
-
 # --------------------------------------------------------------------------
 # F1: cursor hooks idempotency + both-entrypoints requirement
 # --------------------------------------------------------------------------
+
 
 class TestHookIdempotency:
     def test_cursor_reinstall_does_not_duplicate(self, tmp_path, monkeypatch):
@@ -125,7 +147,7 @@ class TestHookIdempotency:
         ws = tmp_path / "ws"
         ws.mkdir()
         for _ in range(3):
-            install(str(ws), clients=["cursor"], transport="stdio")
+            install(str(ws), clients=["cursor"])
         data = json.loads((ws / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
         assert len(data["hooks"]["afterFileEdit"]) == 1
         assert len(data["hooks"]["afterSessionEnd"]) == 1
@@ -136,12 +158,12 @@ class TestHookIdempotency:
         _no_cli(monkeypatch, "claude")
         ws = tmp_path / "ws"
         ws.mkdir()
-        install(str(ws), clients=["claude"], transport="stdio")
+        install(str(ws), clients=["claude"])
         p = ws / ".claude" / "settings.json"
         data = json.loads(p.read_text(encoding="utf-8"))
         data["hooks"]["Stop"] = []
         p.write_text(json.dumps(data))
-        install(str(ws), clients=["claude"], transport="stdio")
+        install(str(ws), clients=["claude"])
         healed = json.loads(p.read_text(encoding="utf-8"))
         assert len(healed["hooks"]["Stop"]) == 1
         assert len(healed["hooks"]["PostToolUse"]) == 2
@@ -155,7 +177,7 @@ class TestHookIdempotency:
         _no_cli(monkeypatch, "claude")
         ws = tmp_path / "ws"
         ws.mkdir()
-        install(str(ws), clients=["claude"], transport="stdio")
+        install(str(ws), clients=["claude"])
         p = ws / ".claude" / "settings.json"
         data = json.loads(p.read_text(encoding="utf-8"))
         stale = "/tmp/Cairn Application Support/bin/python"
@@ -164,10 +186,11 @@ class TestHookIdempotency:
                 for hook in entry.get("hooks", []):
                     command = hook["command"]
                     hook["command"] = command.replace(
-                        shlex.quote(sys.executable), stale)
+                        shlex.quote(sys.executable), stale
+                    )
         p.write_text(json.dumps(data))
 
-        install(str(ws), clients=["claude"], transport="stdio")
+        install(str(ws), clients=["claude"])
         healed = json.loads(p.read_text(encoding="utf-8"))
         commands = [
             hook["command"]
@@ -188,6 +211,7 @@ class TestHookIdempotency:
 # Hook command strings embed the CAIRN_HOME assignment iff non-default
 # --------------------------------------------------------------------------
 
+
 class TestHookCairnHomePrefix:
     """Hook env contract: generated hook command strings
     carry a `CAIRN_HOME=<path> ` prefix when CAIRN_HOME resolves to a
@@ -205,26 +229,35 @@ class TestHookCairnHomePrefix:
 
     # -- custom home: the prefix is present ----------------------------------
 
-    def test_custom_home_install_writes_prefixed_hook_commands(self, tmp_path, monkeypatch):
+    def test_custom_home_install_writes_prefixed_hook_commands(
+        self, tmp_path, monkeypatch
+    ):
         env = self._custom_home_env(monkeypatch)
         _no_cli(monkeypatch, "claude", "cursor")
         ws = tmp_path / "ws"
         ws.mkdir()
-        install(str(ws), clients=["claude", "cursor"], transport="stdio")
+        install(str(ws), clients=["claude", "cursor"])
 
-        claude = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        claude = json.loads(
+            (ws / ".claude" / "settings.json").read_text(encoding="utf-8")
+        )
         assert claude["hooks"]["PostToolUse"][0]["hooks"][0]["command"].startswith(
-            f"CAIRN_HOME={env['CAIRN_HOME']} ")
+            f"CAIRN_HOME={env['CAIRN_HOME']} "
+        )
         assert claude["hooks"]["Stop"][0]["hooks"][0]["command"].startswith(
-            f"CAIRN_HOME={env['CAIRN_HOME']} ")
+            f"CAIRN_HOME={env['CAIRN_HOME']} "
+        )
         cursor = json.loads((ws / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
         assert cursor["hooks"]["afterFileEdit"][0]["command"].startswith(
-            f"CAIRN_HOME={env['CAIRN_HOME']} ")
+            f"CAIRN_HOME={env['CAIRN_HOME']} "
+        )
         assert cursor["hooks"]["afterSessionEnd"][0]["command"].startswith(
-            f"CAIRN_HOME={env['CAIRN_HOME']} ")
+            f"CAIRN_HOME={env['CAIRN_HOME']} "
+        )
 
     def test_custom_home_git_hook_gains_quoted_export_line_after_shebang(
-            self, tmp_path, monkeypatch):
+        self, tmp_path, monkeypatch
+    ):
         custom = tmp_path / "custom_home"
         monkeypatch.setenv("CAIRN_HOME", str(custom))
         ws = tmp_path / "ws"
@@ -240,15 +273,17 @@ class TestHookCairnHomePrefix:
         assert lines[1] == f'export CAIRN_HOME="{custom}"', (
             "exactly one quoted export line must follow the shebang"
         )
-        assert [ln for ln in lines if "CAIRN_HOME" in ln] == [lines[1]], \
+        assert [ln for ln in lines if "CAIRN_HOME" in ln] == [lines[1]], (
             "the export line must appear exactly once"
+        )
         assert 'cairn update --repo "repo"' in hook
         assert "cairn validate-paths --mark" in hook
 
     # -- custom home: matching/idempotency survive the prefix -----------------
 
     def test_custom_home_prefixed_hooks_stay_idempotent_and_uninstallable(
-            self, tmp_path, monkeypatch):
+        self, tmp_path, monkeypatch
+    ):
         """With the prefix present in every written command (the shape this
         spec generates on a custom home), a reinstall must not duplicate
         entries and uninstall must still strip them -- matching is
@@ -257,10 +292,12 @@ class TestHookCairnHomePrefix:
         _no_cli(monkeypatch, "claude", "cursor")
         ws = tmp_path / "ws"
         ws.mkdir()
-        install(str(ws), clients=["claude", "cursor"], transport="stdio")
-        install(str(ws), clients=["claude", "cursor"], transport="stdio")
+        install(str(ws), clients=["claude", "cursor"])
+        install(str(ws), clients=["claude", "cursor"])
 
-        claude = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        claude = json.loads(
+            (ws / ".claude" / "settings.json").read_text(encoding="utf-8")
+        )
         post_tool_use = claude["hooks"]["PostToolUse"]
         assert len(post_tool_use) == 2
         entrypoints = [
@@ -273,14 +310,17 @@ class TestHookCairnHomePrefix:
         session_start = claude["hooks"]["SessionStart"]
         assert len(session_start) == 1
         assert session_start[0]["matcher"] == "startup"
-        assert (session_start[0]["hooks"][0]["command"]
-                .endswith("claude_hooks session_start"))
+        assert session_start[0]["hooks"][0]["command"].endswith(
+            "claude_hooks session_start"
+        )
         cursor = json.loads((ws / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
         assert len(cursor["hooks"]["afterFileEdit"]) == 1
         assert len(cursor["hooks"]["afterSessionEnd"]) == 1
 
         uninstall(str(ws), clients=["claude", "cursor"])
-        claude = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        claude = json.loads(
+            (ws / ".claude" / "settings.json").read_text(encoding="utf-8")
+        )
         assert "hooks" not in claude
         cursor = json.loads((ws / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
         assert "hooks" not in cursor
@@ -297,9 +337,11 @@ class TestHookCairnHomePrefix:
         from cairn.agent_install.clients.cursor import cursor_hooks_json
 
         assert _claude_hook_command("post_edit") == (
-            f"{shlex.quote(sys.executable)} -m cairn.hooks.claude_hooks post_edit")
+            f"{shlex.quote(sys.executable)} -m cairn.hooks.claude_hooks post_edit"
+        )
         assert _claude_hook_command("session_end") == (
-            f"{shlex.quote(sys.executable)} -m cairn.hooks.claude_hooks session_end")
+            f"{shlex.quote(sys.executable)} -m cairn.hooks.claude_hooks session_end"
+        )
 
         claude = claude_hooks_block()
         for event in ("PostToolUse", "Stop", "SessionStart"):
@@ -310,12 +352,12 @@ class TestHookCairnHomePrefix:
         for event in ("afterFileEdit", "afterSessionEnd"):
             assert "CAIRN_HOME" not in cursor[event][0]["command"]
 
-    def test_hook_interpreter_path_with_spaces_stays_one_shell_token(
-            self, monkeypatch):
+    def test_hook_interpreter_path_with_spaces_stays_one_shell_token(self, monkeypatch):
         import shlex
         import sys
 
         from cairn.agent_install._common import _claude_hook_command
+
         python = "/tmp/Cairn Application Support/bin/python"
         monkeypatch.delenv("CAIRN_HOME", raising=False)
         monkeypatch.setattr(sys, "executable", python)
@@ -332,14 +374,16 @@ class TestHookCairnHomePrefix:
         assert install_hooks(["repo"], str(ws)) == ["repo"]
 
         hook = (ws / ".git" / "hooks" / "post-commit").read_text(encoding="utf-8")
-        assert hook == POST_COMMIT_TEMPLATE.format(repo="repo"), \
+        assert hook == POST_COMMIT_TEMPLATE.format(repo="repo"), (
             "default home must keep the hook byte-identical to the template"
+        )
         assert "CAIRN_HOME" not in hook
 
 
 # --------------------------------------------------------------------------
 # freshness-hooks FR-002: post-commit hook diffs the committed range
 # --------------------------------------------------------------------------
+
 
 class TestPostCommitRangeHook:
     """The post-commit hook backgrounds a range-scoped update over the
@@ -369,6 +413,7 @@ class TestPostCommitRangeHook:
 # freshness-hooks FR-003: post-checkout hook updates on branch switches only
 # --------------------------------------------------------------------------
 
+
 class TestPostCheckoutGuardHook:
     """The post-checkout hook updates old..new only when git reports a branch
     checkout ($3 = 1); a file checkout ($3 = 0) runs nothing."""
@@ -385,24 +430,25 @@ class TestPostCheckoutGuardHook:
         assert (
             'cairn update --repo "repo" --diff-ref "$1..$2" > /dev/null 2>&1 &'
         ) in hook
-        assert hook.index('if [ "$3" = "1" ]; then') \
-            < hook.index('cairn update --repo "repo" --diff-ref "$1..$2"') \
-            < hook.index("fi"), "the update must run inside the branch guard"
+        assert (
+            hook.index('if [ "$3" = "1" ]; then')
+            < hook.index('cairn update --repo "repo" --diff-ref "$1..$2"')
+            < hook.index("fi")
+        ), "the update must run inside the branch guard"
 
-    def test_default_home_render_is_byte_identical_to_template(
-            self, monkeypatch):
+    def test_default_home_render_is_byte_identical_to_template(self, monkeypatch):
         monkeypatch.delenv("CAIRN_HOME", raising=False)
         from cairn.hooks.git_hooks import (
             POST_CHECKOUT_TEMPLATE,
             _render_post_checkout,
         )
 
-        assert _render_post_checkout("repo") == \
-            POST_CHECKOUT_TEMPLATE.format(repo="repo")
+        assert _render_post_checkout("repo") == POST_CHECKOUT_TEMPLATE.format(
+            repo="repo"
+        )
         assert "CAIRN_HOME" not in _render_post_checkout("repo")
 
-    def test_custom_home_export_line_follows_the_shebang(self, tmp_path,
-                                                         monkeypatch):
+    def test_custom_home_export_line_follows_the_shebang(self, tmp_path, monkeypatch):
         custom = tmp_path / "custom_home"
         monkeypatch.setenv("CAIRN_HOME", str(custom))
         from cairn.hooks.git_hooks import _render_post_checkout
@@ -416,6 +462,7 @@ class TestPostCheckoutGuardHook:
 # --------------------------------------------------------------------------
 # freshness-hooks FR-004: install/uninstall manage both hook files per repo
 # --------------------------------------------------------------------------
+
 
 class TestGitHookInstallCoverage:
     """install_hooks/uninstall_hooks manage post-commit AND post-checkout per
@@ -434,7 +481,8 @@ class TestGitHookInstallCoverage:
         return install_hooks(["repo"], str(ws))
 
     def test_install_writes_both_hooks_executable_and_uninstall_removes_both(
-            self, tmp_path, monkeypatch):
+        self, tmp_path, monkeypatch
+    ):
         import os
 
         monkeypatch.delenv("CAIRN_HOME", raising=False)
@@ -445,19 +493,22 @@ class TestGitHookInstallCoverage:
         assert self._install(ws) == ["repo"]
 
         for name in ("post-commit", "post-checkout"):
-            hook = (self._hooks_dir(ws) / name)
+            hook = self._hooks_dir(ws) / name
             assert 'cairn update --repo "repo"' in hook.read_text(encoding="utf-8")
             assert os.access(hook, os.X_OK), "hooks must be executable for git"
 
         from cairn.hooks.git_hooks import uninstall_hooks
+
         assert uninstall_hooks(["repo"], str(ws)) == ["repo"]
         assert not (self._hooks_dir(ws) / "post-commit").exists()
         assert not (self._hooks_dir(ws) / "post-checkout").exists()
-        assert uninstall_hooks(["repo"], str(ws)) == [], \
+        assert uninstall_hooks(["repo"], str(ws)) == [], (
             "a second uninstall has nothing cairn-marked left to remove"
+        )
 
     def test_foreign_post_commit_skipped_but_post_checkout_still_installed(
-            self, tmp_path, monkeypatch):
+        self, tmp_path, monkeypatch
+    ):
         monkeypatch.delenv("CAIRN_HOME", raising=False)
         ws = tmp_path / "ws"
         ws.mkdir()
@@ -466,8 +517,9 @@ class TestGitHookInstallCoverage:
         foreign = "#!/bin/sh\necho mine\n"
         (hooks / "post-commit").write_text(foreign, encoding="utf-8")
 
-        assert self._install(ws) == ["repo"], \
+        assert self._install(ws) == ["repo"], (
             "a repo with one foreign hook still gets its other cairn hook"
+        )
 
         assert (hooks / "post-commit").read_text(encoding="utf-8") == foreign
         assert "cairn" in (hooks / "post-checkout").read_text(encoding="utf-8")
@@ -502,8 +554,10 @@ class TestGitHookInstallCoverage:
         assert self._install(ws) == ["repo"]
 
         from cairn.hooks.git_hooks import POST_COMMIT_TEMPLATE
-        assert (hooks / "post-commit").read_text(encoding="utf-8") == \
-            POST_COMMIT_TEMPLATE.format(repo="repo")
+
+        assert (hooks / "post-commit").read_text(
+            encoding="utf-8"
+        ) == POST_COMMIT_TEMPLATE.format(repo="repo")
 
     def test_uninstall_removes_only_cairn_marked_files(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CAIRN_HOME", raising=False)
@@ -516,9 +570,11 @@ class TestGitHookInstallCoverage:
         self._install(ws)
 
         from cairn.hooks.git_hooks import uninstall_hooks
+
         assert uninstall_hooks(["repo"], str(ws)) == ["repo"]
-        assert (hooks / "post-commit").read_text(encoding="utf-8") == foreign, \
+        assert (hooks / "post-commit").read_text(encoding="utf-8") == foreign, (
             "a foreign hook must survive uninstall"
+        )
         assert not (hooks / "post-checkout").exists()
 
     def test_invalid_repo_name_writes_no_hooks(self, tmp_path):
@@ -533,9 +589,54 @@ class TestGitHookInstallCoverage:
         assert not (self._hooks_dir(ws) / "post-checkout").exists()
 
 
+class TestGitHooksInstallGate:
+    """install()'s git-hooks gate: hooks land only when explicitly requested
+    (include_git_hooks), a client is targeted, and the run is not a dry-run --
+    a plain or dry-run install must change nothing under .git/hooks."""
+
+    @staticmethod
+    def _git_ws(tmp_path: Path) -> Path:
+        ws = tmp_path / "ws"
+        (ws / ".git").mkdir(parents=True)
+        return ws
+
+    @staticmethod
+    def _hook_files(ws: Path) -> list[Path]:
+        return [ws / ".git" / "hooks" / name for name in ("post-commit", "post-checkout")]
+
+    def test_plain_install_without_the_flag_writes_no_git_hooks(self, tmp_path):
+        ws = self._git_ws(tmp_path)
+
+        rep = install(str(ws), clients=["cursor"])
+
+        assert rep.git_hooks_installed == []
+        assert not any(p.exists() for p in self._hook_files(ws)), (
+            "an install without --git-hooks must not touch .git/hooks"
+        )
+
+    def test_dry_run_with_a_targeted_client_writes_no_git_hooks(self, tmp_path):
+        ws = self._git_ws(tmp_path)
+
+        rep = install(str(ws), clients=["cursor"], dry_run=True)
+
+        assert rep.git_hooks_installed == []
+        assert not any(p.exists() for p in self._hook_files(ws)), (
+            "dry-run must change nothing, git hooks included"
+        )
+
+    def test_flag_with_target_outside_dry_run_installs_git_hooks(self, tmp_path):
+        ws = self._git_ws(tmp_path)
+
+        rep = install(str(ws), clients=["cursor"], include_git_hooks=True)
+
+        assert rep.git_hooks_installed == ["ws"]
+        assert all(p.exists() for p in self._hook_files(ws))
+
+
 # --------------------------------------------------------------------------
 # freshness-hooks FR-005/FR-006: init --with-hooks + non-git clean failure
 # --------------------------------------------------------------------------
+
 
 class TestInitWithHooks:
     """`cairn init --with-hooks` installs both git hooks with the same rules
@@ -573,8 +674,9 @@ class TestInitWithHooks:
         second = self._invoke(argv)
         assert second.exit_code == 0, second.output
         for name, body in contents.items():
-            assert (hooks_dir / name).read_text(encoding="utf-8") == body, \
+            assert (hooks_dir / name).read_text(encoding="utf-8") == body, (
                 "re-running init --with-hooks must not duplicate or clobber hooks"
+            )
 
     def test_hooks_install_surface_text_covers_both_hooks(self, tmp_path):
         ws = self._git_workspace(tmp_path)
@@ -589,8 +691,7 @@ class TestInitWithHooks:
             assert hook.exists()
             assert os.access(hook, os.X_OK), "hooks must be executable for git"
 
-    def test_hooks_install_non_git_exits_1_with_guidance_and_no_files(
-            self, tmp_path):
+    def test_hooks_install_non_git_exits_1_with_guidance_and_no_files(self, tmp_path):
         ws = tmp_path / "plain"
         ws.mkdir()
 
@@ -600,13 +701,13 @@ class TestInitWithHooks:
         assert "No git repositories found" in result.output
         assert list(ws.iterdir()) == [], "a failed install must write zero files"
 
-    def test_init_with_hooks_warns_and_still_completes_on_non_git(
-            self, tmp_path):
+    def test_init_with_hooks_warns_and_still_completes_on_non_git(self, tmp_path):
         ws = tmp_path / "plain"
         ws.mkdir()
 
         result = self._invoke(
-            ["init", "--no-build", "--with-hooks", "--workspace", str(ws)])
+            ["init", "--no-build", "--with-hooks", "--workspace", str(ws)]
+        )
 
         assert result.exit_code == 0
         assert "No git repositories found" in result.output
@@ -623,7 +724,8 @@ class TestInitWithHooks:
         (repo / ".git").mkdir(parents=True)
 
         result = self._invoke(
-            ["init", "--no-build", "--with-hooks", "--workspace", str(ws)])
+            ["init", "--no-build", "--with-hooks", "--workspace", str(ws)]
+        )
 
         assert result.exit_code == 0, result.output
         assert "git hooks not installed" in result.output
@@ -635,13 +737,15 @@ class TestInitWithHooks:
 # F2: global-scope uninstall
 # --------------------------------------------------------------------------
 
+
 class TestGlobalScopeUninstall:
-    def test_global_install_uninstall_removes_home_tree(self, fake_home, tmp_path, monkeypatch):
+    def test_global_install_uninstall_removes_home_tree(
+        self, fake_home, tmp_path, monkeypatch
+    ):
         _no_cli(monkeypatch, "claude", "cursor", "zcode", "droid", "opencode", "agy")
         ws = tmp_path / "ws"
         ws.mkdir()
-        install(str(ws), clients=["claude", "cursor", "zcode"], scope="global",
-                transport="stdio")
+        install(str(ws), clients=["claude", "cursor", "zcode"], scope="global")
 
         assert (fake_home / ".claude" / "skills" / "cairn").is_dir()
         assert (fake_home / ".cursor" / "hooks.json").exists()
@@ -652,62 +756,106 @@ class TestGlobalScopeUninstall:
         assert not (fake_home / ".claude" / "skills" / "cairn").exists()
         assert not any((fake_home / ".claude" / "commands").glob("*.md"))
         assert not any((fake_home / ".claude" / "agents").glob("*.md"))
-        st = json.loads((fake_home / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        assert "hooks" not in st, "cairn hooks must be stripped from ~/.claude/settings.json"
-        cur = json.loads((fake_home / ".cursor" / "hooks.json").read_text(encoding="utf-8"))
-        assert "hooks" not in cur, "cairn hooks must be stripped from ~/.cursor/hooks.json"
-        zc = json.loads((fake_home / ".zcode" / "cli" / "config.json").read_text(encoding="utf-8"))
+        st = json.loads(
+            (fake_home / ".claude" / "settings.json").read_text(encoding="utf-8")
+        )
+        assert "hooks" not in st, (
+            "cairn hooks must be stripped from ~/.claude/settings.json"
+        )
+        cur = json.loads(
+            (fake_home / ".cursor" / "hooks.json").read_text(encoding="utf-8")
+        )
+        assert "hooks" not in cur, (
+            "cairn hooks must be stripped from ~/.cursor/hooks.json"
+        )
+        zc = json.loads(
+            (fake_home / ".zcode" / "cli" / "config.json").read_text(encoding="utf-8")
+        )
         assert "cairn" not in zc.get("mcp", {}).get("servers", {})
 
-    def test_zcode_global_install_migrates_legacy_config(self, fake_home, tmp_path, monkeypatch):
-        """A pre-fix global install left cairn in ~/.zcode/config.json (which the
-        ZCode CLI does not read for MCP). Re-installing must move the entry to
-        ~/.zcode/cli/config.json and strip the legacy one."""
+    def test_zcode_global_install_migrates_legacy_config(
+        self, fake_home, tmp_path, monkeypatch, pinned_api_key
+    ):
+        """A legacy global install left a stdio cairn entry in
+        ~/.zcode/config.json (which the ZCode CLI does not read for MCP).
+        Re-installing must move the entry to ~/.zcode/cli/config.json in the
+        URL+key shape and strip the legacy one."""
         _no_cli(monkeypatch, "zcode")
         ws = tmp_path / "ws"
         ws.mkdir()
         legacy = fake_home / ".zcode" / "config.json"
         legacy.parent.mkdir(parents=True)
-        legacy.write_text(json.dumps(
-            {"mcp": {"servers": {"cairn": {"type": "stdio", "command": "/old/cairn",
-                                           "args": ["serve"]}}}}), encoding="utf-8")
+        legacy.write_text(
+            json.dumps(
+                {
+                    "mcp": {
+                        "servers": {
+                            "cairn": {
+                                "type": "stdio",
+                                "command": "/old/cairn",
+                                "args": ["serve"],
+                            }
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
 
-        install(str(ws), clients=["zcode"], scope="global", transport="sse",
-                sse_url="http://127.0.0.1:9876/sse")
+        install(str(ws), clients=["zcode"], scope="global")
 
-        new = json.loads((fake_home / ".zcode" / "cli" / "config.json").read_text(encoding="utf-8"))
-        assert new["mcp"]["servers"]["cairn"]["type"] == "sse"
+        new = json.loads(
+            (fake_home / ".zcode" / "cli" / "config.json").read_text(encoding="utf-8")
+        )
+        assert new["mcp"]["servers"]["cairn"] == {
+            "type": "http",
+            "url": DAEMON_URL,
+            "headers": _bearer(pinned_api_key),
+        }
         leg = json.loads(legacy.read_text(encoding="utf-8"))
-        assert "cairn" not in leg.get("mcp", {}).get("servers", {}), \
+        assert "cairn" not in leg.get("mcp", {}).get("servers", {}), (
             "legacy entry must be stripped so only one source of truth remains"
+        )
 
-    def test_global_uninstall_preserves_user_entries(self, fake_home, tmp_path, monkeypatch):
+    def test_global_uninstall_preserves_user_entries(
+        self, fake_home, tmp_path, monkeypatch
+    ):
         _no_cli(monkeypatch, "claude")
         ws = tmp_path / "ws"
         ws.mkdir()
         settings = fake_home / ".claude" / "settings.json"
         settings.parent.mkdir(parents=True)
-        settings.write_text(json.dumps({
-            "hooks": {"UserEvent": [{"hooks": [{"command": "echo mine"}]}]},
-        }))
-        install(str(ws), clients=["claude"], scope="global", transport="stdio")
+        settings.write_text(
+            json.dumps(
+                {
+                    "hooks": {"UserEvent": [{"hooks": [{"command": "echo mine"}]}]},
+                }
+            )
+        )
+        install(str(ws), clients=["claude"], scope="global")
         uninstall(str(ws), clients=["claude"], scope="global")
         data = json.loads(settings.read_text(encoding="utf-8"))
         assert data["hooks"]["UserEvent"][0]["hooks"][0]["command"] == "echo mine"
 
-    def test_workspace_default_uninstall_leaves_global_alone(self, fake_home, tmp_path, monkeypatch):
+    def test_workspace_default_uninstall_leaves_global_alone(
+        self, fake_home, tmp_path, monkeypatch
+    ):
         """Byte-identical workspace default: plain uninstall(ws) must not
         touch a global install (opt in with scope= to remove it)."""
         _no_cli(monkeypatch, "claude", "zcode")
         ws = tmp_path / "ws"
         ws.mkdir()
-        install(str(ws), clients=["claude"], scope="global", transport="stdio")
+        install(str(ws), clients=["claude"], scope="global")
         uninstall(str(ws), clients=["claude"])  # default scope="workspace"
         assert (fake_home / ".claude" / "skills" / "cairn").is_dir()
-        st = json.loads((fake_home / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        st = json.loads(
+            (fake_home / ".claude" / "settings.json").read_text(encoding="utf-8")
+        )
         assert "PostToolUse" in st.get("hooks", {})
 
-    def test_global_uninstall_invokes_claude_mcp_remove(self, fake_home, tmp_path, monkeypatch):
+    def test_global_uninstall_invokes_claude_mcp_remove(
+        self, fake_home, tmp_path, monkeypatch
+    ):
         _cli_at(monkeypatch, "claude")
         calls = _spy_subprocess(monkeypatch)
         ws = tmp_path / "ws"
@@ -715,7 +863,9 @@ class TestGlobalScopeUninstall:
         uninstall(str(ws), clients=["claude"], scope="global")
         assert ["claude", "mcp", "remove", "cairn", "--scope", "user"] in calls
 
-    def test_workspace_uninstall_never_invokes_claude_mcp_remove(self, fake_home, tmp_path, monkeypatch):
+    def test_workspace_uninstall_never_invokes_claude_mcp_remove(
+        self, fake_home, tmp_path, monkeypatch
+    ):
         """The historical workspace path spawns no subprocesses (it never
         registered one)."""
         _cli_at(monkeypatch, "claude")
@@ -730,6 +880,7 @@ class TestGlobalScopeUninstall:
 # F3: dry-run fidelity
 # --------------------------------------------------------------------------
 
+
 class TestDryRunFidelity:
     def test_dry_run_on_installed_workspace_reports_skips(self, tmp_path, monkeypatch):
         """A real second install would skip everything; dry-run must say so
@@ -737,7 +888,7 @@ class TestDryRunFidelity:
         _no_cli(monkeypatch, "cursor")
         ws = tmp_path / "ws"
         ws.mkdir()
-        install(str(ws), clients=["cursor"], transport="stdio")
+        install(str(ws), clients=["cursor"])
 
         from cairn.agent_install._common import _claude_hook_command
 
@@ -747,13 +898,14 @@ class TestDryRunFidelity:
         p = ws / ".cursor" / "hooks.json"
         data = json.loads(p.read_text(encoding="utf-8"))
         data["hooks"]["afterFileEdit"].append(
-            {"command": _claude_hook_command("post_tool_failure"),
-             "timeout": 10000})
+            {"command": _claude_hook_command("post_tool_failure"), "timeout": 10000}
+        )
         data["hooks"]["afterFileEdit"].append(
-            {"command": _claude_hook_command("session_start"), "timeout": 10000})
+            {"command": _claude_hook_command("session_start"), "timeout": 10000}
+        )
         p.write_text(json.dumps(data))
 
-        rep = install(str(ws), clients=["cursor"], transport="stdio", dry_run=True)
+        rep = install(str(ws), clients=["cursor"], dry_run=True)
         cur = next(r for r in rep.results if r.client == "cursor")
         assert not any("would" in w for w in cur.written), cur.written
         assert cur.skipped, "already-installed entries should be reported as skipped"
@@ -763,6 +915,7 @@ class TestDryRunFidelity:
 # F4: cross-tool .agents/ tree removal
 # --------------------------------------------------------------------------
 
+
 class TestCrossToolTreeRemoval:
     def test_uninstall_removes_whole_skill_tree(self, tmp_path, monkeypatch):
         """The skill package ships references/ + scripts/ + evals/ alongside
@@ -770,7 +923,7 @@ class TestCrossToolTreeRemoval:
         _no_cli(monkeypatch, "claude")
         ws = tmp_path / "ws"
         ws.mkdir()
-        install(str(ws), clients=["claude"], transport="stdio")
+        install(str(ws), clients=["claude"])
         skill = ws / ".agents" / "skills" / "cairn"
         subdirs = {p.name for p in skill.iterdir() if p.is_dir()}
         assert {"references", "scripts", "evals"} <= subdirs
@@ -781,6 +934,7 @@ class TestCrossToolTreeRemoval:
 # --------------------------------------------------------------------------
 # F5: uninstall only removes files the installer wrote
 # --------------------------------------------------------------------------
+
 
 class TestProvenanceCheckedRemoval:
     def test_user_command_file_survives_uninstall(self, tmp_path, monkeypatch):
@@ -793,9 +947,11 @@ class TestProvenanceCheckedRemoval:
         user_cmd.parent.mkdir(parents=True)
         user_cmd.write_text("# my own command\n\nuser-authored\n", encoding="utf-8")
 
-        rep = install(str(ws), clients=["claude"], transport="stdio")
+        rep = install(str(ws), clients=["claude"])
         claude = next(r for r in rep.results if r.client == "claude")
-        assert any(str(user_cmd) in s for s in claude.skipped), "install must skip the user file"
+        assert any(str(user_cmd) in s for s in claude.skipped), (
+            "install must skip the user file"
+        )
 
         un_rep = uninstall(str(ws), clients=["claude"])
         un_claude = next(r for r in un_rep.results if r.client == "claude")
@@ -806,7 +962,7 @@ class TestProvenanceCheckedRemoval:
         _no_cli(monkeypatch, "claude")
         ws = tmp_path / "ws"
         ws.mkdir()
-        install(str(ws), clients=["claude"], transport="stdio")
+        install(str(ws), clients=["claude"])
         ours = ws / ".claude" / "commands" / "cairn-prep.md"
         assert ours.exists()
         uninstall(str(ws), clients=["claude"])
@@ -817,6 +973,7 @@ class TestProvenanceCheckedRemoval:
 # F6: non-object values under merged keys
 # --------------------------------------------------------------------------
 
+
 class TestNonObjectKeyHandling:
     def test_zcode_non_object_mcp_backed_up(self, tmp_path, monkeypatch):
         _no_cli(monkeypatch, "claude")
@@ -826,9 +983,11 @@ class TestNonObjectKeyHandling:
         cfg.parent.mkdir(parents=True)
         cfg.write_text(json.dumps({"mcp": True}), encoding="utf-8")
 
-        install(str(ws), clients=["zcode"], transport="stdio")  # must not raise
+        install(str(ws), clients=["zcode"])  # must not raise
 
-        assert cfg.with_suffix(".json.bak").exists(), "user's broken value must be backed up"
+        assert cfg.with_suffix(".json.bak").exists(), (
+            "user's broken value must be backed up"
+        )
         data = json.loads(cfg.read_text(encoding="utf-8"))
         assert "cairn" in data["mcp"]["servers"]
 
@@ -840,7 +999,7 @@ class TestNonObjectKeyHandling:
         cfg.parent.mkdir(parents=True)
         cfg.write_text(json.dumps({"hooks": []}), encoding="utf-8")
 
-        install(str(ws), clients=["claude"], transport="stdio")  # must not raise
+        install(str(ws), clients=["claude"])  # must not raise
 
         assert cfg.with_suffix(".json.bak").exists()
         data = json.loads(cfg.read_text(encoding="utf-8"))
@@ -848,20 +1007,33 @@ class TestNonObjectKeyHandling:
 
     # -- uninstall-side strip helpers (S1) ------------------------------------
 
-    @pytest.mark.parametrize("client,relpath,payload", [
-        ("claude", ".mcp.json", {"mcpServers": "cairn"}),
-        ("claude", ".claude/settings.json", {"hooks": "nope"}),
-        ("cursor", ".cursor/hooks.json", {"hooks": 7}),
-        ("zcode", ".zcode/config.json", {"mcp": 5}),
-        ("opencode", "opencode.json", {"mcp": ["cairn"]}),
-        ("kilo", "kilo.json", {"mcp": "cairn"}),
-    ])
+    @pytest.mark.parametrize(
+        "client,relpath,payload",
+        [
+            ("claude", ".mcp.json", {"mcpServers": "cairn"}),
+            ("claude", ".claude/settings.json", {"hooks": "nope"}),
+            ("cursor", ".cursor/hooks.json", {"hooks": 7}),
+            ("zcode", ".zcode/config.json", {"mcp": 5}),
+            ("opencode", "opencode.json", {"mcp": ["cairn"]}),
+            ("kilo", "kilo.json", {"mcp": "cairn"}),
+        ],
+    )
     def test_uninstall_tolerates_non_object_values(
-            self, fake_home, tmp_path, monkeypatch, client, relpath, payload):
+        self, fake_home, tmp_path, monkeypatch, client, relpath, payload
+    ):
         """Uninstall strip helpers must no-op on non-dict values under
         mcpServers/mcp/hooks instead of crashing on them."""
-        _no_cli(monkeypatch, "claude", "cursor", "zcode", "droid",
-                "opencode", "agy", "kilo", "omp")
+        _no_cli(
+            monkeypatch,
+            "claude",
+            "cursor",
+            "zcode",
+            "droid",
+            "opencode",
+            "agy",
+            "kilo",
+            "omp",
+        )
         ws = tmp_path / "ws"
         ws.mkdir()
         cfg = ws / relpath
@@ -870,11 +1042,13 @@ class TestNonObjectKeyHandling:
 
         uninstall(str(ws), clients=[client])  # must not raise
 
-        assert json.loads(cfg.read_text(encoding="utf-8")) == payload, \
+        assert json.loads(cfg.read_text(encoding="utf-8")) == payload, (
             "nothing cairn-shaped to strip; the user's value must survive untouched"
+        )
 
     def test_zcode_install_tolerates_non_dict_mcp_servers(
-            self, fake_home, tmp_path, monkeypatch):
+        self, fake_home, tmp_path, monkeypatch
+    ):
         """_already_installed's mcp.servers chain must not crash on a
         non-dict nested value."""
         _no_cli(monkeypatch, "zcode")
@@ -884,7 +1058,7 @@ class TestNonObjectKeyHandling:
         cfg.parent.mkdir(parents=True)
         cfg.write_text(json.dumps({"mcp": {"servers": 5}}), encoding="utf-8")
 
-        install(str(ws), clients=["zcode"], transport="stdio")  # must not raise
+        install(str(ws), clients=["zcode"])  # must not raise
 
         data = json.loads(cfg.read_text(encoding="utf-8"))
         assert "cairn" in data["mcp"]["servers"]
@@ -892,7 +1066,8 @@ class TestNonObjectKeyHandling:
     # -- .bak rotation (S2) ----------------------------------------------------
 
     def test_backup_rotation_preserves_the_existing_bak(
-            self, fake_home, tmp_path, monkeypatch):
+        self, fake_home, tmp_path, monkeypatch
+    ):
         """_backup_to_bak must never overwrite an existing .bak — it may be
         the only preserved copy of the user's earlier config."""
         _no_cli(monkeypatch, "zcode")
@@ -902,21 +1077,25 @@ class TestNonObjectKeyHandling:
         cfg.parent.mkdir(parents=True)
         cfg.write_text(json.dumps({"mcp": True, "gen": 1}), encoding="utf-8")
 
-        install(str(ws), clients=["zcode"], transport="stdio")
+        install(str(ws), clients=["zcode"])
         bak = cfg.with_suffix(".json.bak")
         first = bak.read_bytes()
 
         cfg.write_text(json.dumps({"mcp": False, "gen": 2}), encoding="utf-8")
-        install(str(ws), clients=["zcode"], transport="stdio")
+        install(str(ws), clients=["zcode"])
 
         assert bak.read_bytes() == first, "the existing .bak must survive untouched"
         rotated = cfg.with_suffix(".json.bak.1")
-        assert json.loads(rotated.read_text(encoding="utf-8")) == {"mcp": False, "gen": 2}
+        assert json.loads(rotated.read_text(encoding="utf-8")) == {
+            "mcp": False,
+            "gen": 2,
+        }
 
 
 # --------------------------------------------------------------------------
 # F7: atomic workspaces.json rewrite
 # --------------------------------------------------------------------------
+
 
 class TestAtomicRegistryRewrite:
     def test_registry_prune_goes_through_atomic_write(self, tmp_path, monkeypatch):
@@ -932,7 +1111,8 @@ class TestAtomicRegistryRewrite:
         (home / key).mkdir()
         (home / key / "store.db").write_bytes(b"x")
         (home / "workspaces.json").write_text(
-            json.dumps({str(ws.resolve()): key}), encoding="utf-8")
+            json.dumps({str(ws.resolve()): key}), encoding="utf-8"
+        )
 
         seen: list[Path] = []
         orig = merge_mod._atomic_write_text
@@ -949,8 +1129,9 @@ class TestAtomicRegistryRewrite:
             env={"CAIRN_HOME": str(home)},
         )
         assert result.exit_code == 0, result.output
-        assert (home / "workspaces.json") in seen, \
+        assert (home / "workspaces.json") in seen, (
             "registry rewrite must go through _atomic_write_text"
+        )
         assert json.loads((home / "workspaces.json").read_text(encoding="utf-8")) == {}
         assert not (home / key).exists()
 
@@ -959,31 +1140,42 @@ class TestAtomicRegistryRewrite:
 # F8: opencode scope
 # --------------------------------------------------------------------------
 
+
 class TestOpencodeScope:
-    def test_global_install_lands_in_global_path(self, fake_home, tmp_path, monkeypatch):
+    def test_global_install_lands_in_global_path(
+        self, fake_home, tmp_path, monkeypatch
+    ):
         _no_cli(monkeypatch, "opencode")
         ws = tmp_path / "ws"
         ws.mkdir()
-        install(str(ws), clients=["opencode"], scope="global", transport="stdio")
+        install(str(ws), clients=["opencode"], scope="global")
 
         global_cfg = fake_home / ".config" / "opencode" / "opencode.json"
-        assert global_cfg.exists(), "scope=global must write ~/.config/opencode/opencode.json"
-        assert not (ws / "opencode.json").exists(), "scope=global must not write the workspace"
+        assert global_cfg.exists(), (
+            "scope=global must write ~/.config/opencode/opencode.json"
+        )
+        assert not (ws / "opencode.json").exists(), (
+            "scope=global must not write the workspace"
+        )
         assert "cairn" in json.loads(global_cfg.read_text(encoding="utf-8"))["mcp"]
-        assert check_installed(str(ws))["opencode"], \
+        assert check_installed(str(ws))["opencode"], (
             "a global install must be detected by check_installed (it probes the global path)"
+        )
 
 
 # --------------------------------------------------------------------------
 # CLI wiring: --scope plumbing and the --dry-run gate on `cairn uninstall`
 # --------------------------------------------------------------------------
 
-class TestCliScopeWiring:
 
-    def test_full_implies_scope_all_in_dry_run_output(self, fake_home, tmp_path, monkeypatch):
+class TestCliScopeWiring:
+    def test_full_implies_scope_all_in_dry_run_output(
+        self, fake_home, tmp_path, monkeypatch
+    ):
         """`cairn uninstall --full` must tear down global wiring too; the
         dry-run preview reports the effective agent scope."""
         from cairn.cli import main
+
         ws = tmp_path / "ws"
         ws.mkdir()
         result = CliRunner().invoke(
@@ -1000,9 +1192,10 @@ class TestCliScopeWiring:
         actually deleted agent configs."""
         _no_cli(monkeypatch, "cursor")
         from cairn.cli import main
+
         ws = tmp_path / "ws"
         ws.mkdir()
-        install(str(ws), clients=["cursor"], transport="stdio")
+        install(str(ws), clients=["cursor"])
         before = (ws / ".cursor" / "hooks.json").read_text(encoding="utf-8")
 
         result = CliRunner().invoke(
@@ -1013,13 +1206,15 @@ class TestCliScopeWiring:
         assert result.exit_code == 0, result.output
         assert "would" in result.output
         assert (ws / ".cursor" / "hooks.json").read_text(encoding="utf-8") == before
-        assert (ws / ".agents" / "skills" / "cairn").exists(), \
+        assert (ws / ".agents" / "skills" / "cairn").exists(), (
             "dry-run must not remove the cross-tool copies either"
+        )
 
 
 # --------------------------------------------------------------------------
 # Store targeting (resolved-workspace key; -y never widens a miss)
 # --------------------------------------------------------------------------
+
 
 class TestStoreTargeting:
     """`uninstall --graph-only` must key the store on the RESOLVED workspace
@@ -1028,10 +1223,10 @@ class TestStoreTargeting:
 
     def _graph_only(self, ws: Path, home: Path, extra: list[str] | None = None):
         from cairn.cli import main
+
         return CliRunner().invoke(
             main,
-            ["uninstall", "--graph-only", "-y", "--workspace", str(ws),
-             *(extra or [])],
+            ["uninstall", "--graph-only", "-y", "--workspace", str(ws), *(extra or [])],
             env={"CAIRN_HOME": str(home)},
         )
 
@@ -1054,10 +1249,12 @@ class TestStoreTargeting:
         result = self._graph_only(link, home)
 
         assert result.exit_code == 0, result.output
-        assert not (home / store_key(real)).exists(), \
+        assert not (home / store_key(real)).exists(), (
             "the symlinked workspace's own store must be removed"
-        assert (home / store_key(other)).exists(), \
+        )
+        assert (home / store_key(other)).exists(), (
             "a symlinked invocation must not widen the delete to the whole home"
+        )
 
     def test_y_skips_whole_home_fallback_on_store_miss(self, tmp_path):
         from cairn.paths import store_key
@@ -1073,8 +1270,9 @@ class TestStoreTargeting:
         assert result.exit_code == 0, result.output
         assert "nothing to remove" in result.output
         assert str(unregistered) in result.output
-        assert other.exists(), \
+        assert other.exists(), (
             "-y must not widen a store miss to every workspace's store"
+        )
 
     def test_store_miss_fails_closed_and_names_workspace(self, tmp_path):
         """A store miss never offers the whole home and names the workspace."""
@@ -1103,9 +1301,11 @@ class TestStoreTargeting:
 # agy probe path (installer and probe must resolve the same config path)
 # --------------------------------------------------------------------------
 
+
 class TestAgyProbePath:
     def test_check_installed_probes_the_installer_config_path(
-            self, fake_home, tmp_path, monkeypatch):
+        self, fake_home, tmp_path, monkeypatch
+    ):
         """The agy probe must read the path the installer writes (XDG-aware),
         not a hardcoded ~/.gemini — otherwise a Linux/XDG install reads as
         not installed."""
@@ -1114,7 +1314,7 @@ class TestAgyProbePath:
         ws = tmp_path / "ws"
         ws.mkdir()
 
-        install(str(ws), clients=["agy"], transport="stdio")
+        install(str(ws), clients=["agy"])
 
         assert check_installed(str(ws))["agy"] is True
 
@@ -1123,105 +1323,114 @@ class TestAgyProbePath:
 # Transport default: SSE everywhere except Claude Desktop (stdio-only)
 # --------------------------------------------------------------------------
 
-class TestTransportDefault:
-    def test_install_defaults_to_sse_except_claude_desktop(self, fake_home, tmp_path, monkeypatch):
-        """No explicit transport: clients get an SSE config pointing at the
-        shared daemon; Claude Desktop stays stdio (the app is stdio-only)."""
+
+class TestUrlKeyDefaultInstall:
+    def test_default_install_writes_url_key_entries(
+        self, tmp_path, monkeypatch, pinned_api_key
+    ):
+        """No transport flags exist anymore: a plain install writes the
+        URL+key registration every supported client reads."""
         _no_cli(monkeypatch, "claude", "zcode")
-        from cairn.mcp_server import lifecycle as lc
         ws = tmp_path / "ws"
         ws.mkdir()
 
-        install(str(ws), clients=["zcode", "claude", "claude-desktop"])
+        install(str(ws), clients=["zcode", "claude"])
 
-        expected_url = f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
-        # zcode (workspace scope): nested mcp.servers shape, SSE.
+        expected = {
+            "type": "http",
+            "url": DAEMON_URL,
+            "headers": _bearer(pinned_api_key),
+        }
         zc = json.loads((ws / ".zcode" / "config.json").read_text(encoding="utf-8"))
-        assert zc["mcp"]["servers"]["cairn"]["type"] == "sse"
-        assert zc["mcp"]["servers"]["cairn"]["url"] == expected_url
-        # claude code (workspace scope): flat mcpServers shape, SSE.
+        assert zc["mcp"]["servers"]["cairn"] == expected
         cl = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
-        assert cl["mcpServers"]["cairn"]["type"] == "sse"
-        assert cl["mcpServers"]["cairn"]["url"] == expected_url
-        # claude-desktop: ALWAYS stdio, even under the SSE default.
-        from cairn.agent_install.detect import claude_desktop_config_path
-        cd = json.loads(claude_desktop_config_path().read_text(encoding="utf-8"))
-        assert "command" in cd["mcpServers"]["cairn"]
-        assert "url" not in cd["mcpServers"]["cairn"]
+        assert cl["mcpServers"]["cairn"] == expected
 
-    def test_droid_cli_sse_registers_sse_type(self, tmp_path, monkeypatch):
-        """With the droid CLI present, the default SSE transport must
-        register the daemon URL via `--type sse`, not a stdio command spawn."""
+    def test_droid_cli_registers_http_url_with_key(
+        self, tmp_path, monkeypatch, pinned_api_key
+    ):
+        """With the droid CLI present, install registers the daemon URL via
+        `--type http` with the key riding along as a header."""
         _cli_at(monkeypatch, "droid")
         calls = _spy_subprocess(monkeypatch)
-        from cairn.mcp_server import lifecycle as lc
         ws = tmp_path / "ws"
         ws.mkdir()
 
         install(str(ws), clients=["droid"])
 
-        expected_url = f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
-        assert ["droid", "mcp", "add", "cairn", expected_url, "--type", "sse"] in calls
+        assert [
+            "droid",
+            "mcp",
+            "add",
+            "cairn",
+            DAEMON_URL,
+            "--type",
+            "http",
+            "--header",
+            f"Authorization: Bearer {pinned_api_key}",
+        ] in calls
 
-    def test_claude_global_stdio_keeps_stdio_registration(self, fake_home, tmp_path, monkeypatch):
-        """transport=stdio global install registers the command spawn, with
-        no --transport flag (regression pin for the pre-SSE behavior). A
-        non-default CAIRN_HOME rides along as `-e CAIRN_HOME=<abs>`; an unset
-        home keeps the argv env-less."""
-        monkeypatch.delenv("CAIRN_HOME", raising=False)
+    def test_claude_global_registers_http_url_with_key(
+        self, fake_home, tmp_path, monkeypatch, pinned_api_key
+    ):
+        """Global scope registers the daemon URL via the claude CLI's http
+        transport with the key as a header -- no command spawn, no env."""
         _cli_at(monkeypatch, "claude")
         calls = _spy_subprocess(monkeypatch)
         ws = tmp_path / "ws"
         ws.mkdir()
 
-        install(str(ws), clients=["claude"], scope="global", transport="stdio")
+        install(str(ws), clients=["claude"], scope="global")
 
         add = [c for c in calls if c[:3] == ["claude", "mcp", "add"]]
         assert len(add) == 1
-        assert "--transport" not in add[0]
-        assert add[0][3] == "cairn"  # name positional, then --scope user
-        assert "serve" in add[0]
-        assert "-e" not in add[0], "default home must stay env-less"
-
-        custom_home = tmp_path / "custom_home"
-        monkeypatch.setenv("CAIRN_HOME", str(custom_home))
-        install(str(ws), clients=["claude"], scope="global", transport="stdio")
-
-        add = [c for c in calls if c[:3] == ["claude", "mcp", "add"]]
-        assert len(add) == 2
-        # -e entries precede the `--` separator; the server command follows it.
-        assert f"CAIRN_HOME={custom_home}" in add[1]
-        assert add[1].index(f"CAIRN_HOME={custom_home}") < add[1].index("--")
-        assert add[1][-1] == "serve"
+        assert add[0] == [
+            "claude",
+            "mcp",
+            "add",
+            "--transport",
+            "http",
+            "--scope",
+            "user",
+            "cairn",
+            DAEMON_URL,
+            "--header",
+            f"Authorization: Bearer {pinned_api_key}",
+        ]
 
 
 # --------------------------------------------------------------------------
 # kilo (Kilo Code CLI): opencode-format config, kilo.json paths
 # --------------------------------------------------------------------------
 
+
 class TestKiloClient:
-    def test_sse_default_writes_remote_entry(self, fake_home, tmp_path, monkeypatch):
-        """Default transport: kilo.json gets mcp.cairn = {type: remote, url}
-        (kilo's documented remote shape — same schema as opencode)."""
-        from cairn.mcp_server import lifecycle as lc
+    def test_default_install_writes_remote_url_key_entry(
+        self, tmp_path, monkeypatch, pinned_api_key
+    ):
+        """Default install: kilo.json gets mcp.cairn = {type: remote, url at
+        /mcp, enabled, headers with the key} (kilo's documented remote shape --
+        same schema as opencode)."""
         ws = tmp_path / "ws"
         ws.mkdir()
 
         install(str(ws), clients=["kilo"])
 
         cfg = json.loads((ws / "kilo.json").read_text(encoding="utf-8"))
-        entry = cfg["mcp"]["cairn"]
-        assert entry["type"] == "remote"
-        assert entry["url"] == f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
-        assert entry["enabled"] is True
+        assert cfg["mcp"]["cairn"] == {
+            "type": "remote",
+            "url": DAEMON_URL,
+            "enabled": True,
+            "headers": _bearer(pinned_api_key),
+        }
 
 
 # --------------------------------------------------------------------------
 # omp (oh-my-pi CLI): native mcpServers config + native .omp/agents/*.md subagents
 # --------------------------------------------------------------------------
 
-class TestOmpClient:
 
+class TestOmpClient:
     def test_writes_native_subagent_files(self, fake_home, tmp_path, monkeypatch):
         """Subagents are written as omp's native .omp/agents/<name>.md task-agent
         files (not just the cross-tool .agents/ fallback), with name/description
@@ -1232,16 +1441,24 @@ class TestOmpClient:
 
         install(str(ws), clients=["omp"])
 
-        explorer = (ws / ".omp" / "agents" / "cairn-explorer.md").read_text(encoding="utf-8")
+        explorer = (ws / ".omp" / "agents" / "cairn-explorer.md").read_text(
+            encoding="utf-8"
+        )
         assert explorer.startswith("---\nname: cairn-explorer\n")
         assert "description:" in explorer
         assert "mcp__cairn_explore" in explorer
-        assert "mcp__cairn__explore" not in explorer, "omp uses single underscore, not Claude's double"
+        assert "mcp__cairn__explore" not in explorer, (
+            "omp uses single underscore, not Claude's double"
+        )
 
-        steward = (ws / ".omp" / "agents" / "knowledge-steward.md").read_text(encoding="utf-8")
+        steward = (ws / ".omp" / "agents" / "knowledge-steward.md").read_text(
+            encoding="utf-8"
+        )
         assert steward.startswith("---\nname: knowledge-steward\n")
 
-    def test_uninstall_strips_cairn_preserves_others_and_removes_agents(self, fake_home, tmp_path, monkeypatch):
+    def test_uninstall_strips_cairn_preserves_others_and_removes_agents(
+        self, fake_home, tmp_path, monkeypatch
+    ):
         ws = tmp_path / "ws"
         ws.mkdir()
         install(str(ws), clients=["omp"])
@@ -1261,164 +1478,75 @@ class TestOmpClient:
 
 
 # --------------------------------------------------------------------------
-# stdio registrations embed env.CAIRN_HOME iff the home is non-default
+# Install-time per-client verification probes /healthz, never a process
 # --------------------------------------------------------------------------
 
-class TestCairnHomeEnvBlock:
-    """stdio env-block contract: generated configs carry env.CAIRN_HOME (the
-    expanded absolute path) when CAIRN_HOME resolves to a non-default home,
-    and stay byte-identical to the env-less shapes when it is default --
-    unset, or explicitly set to Path.home()/".cairn"."""
-
-    @pytest.fixture(autouse=True)
-    def _pin_bin(self, monkeypatch):
-        _cli_at(monkeypatch, "cairn")
-
-    @staticmethod
-    def _custom_home_env(monkeypatch) -> dict[str, str]:
-        monkeypatch.setenv("CAIRN_HOME", "~/custom-cairn-home")
-        return {"CAIRN_HOME": str(Path.home() / "custom-cairn-home")}
-
-    @staticmethod
-    def _set_default_home(monkeypatch) -> None:
-        monkeypatch.setenv("CAIRN_HOME", str(Path.home() / ".cairn"))
-
-    def test_custom_home_generators_embed_env(self, monkeypatch):
-        env = self._custom_home_env(monkeypatch)
-        from cairn.agent_install._common import mcp_config_json
-        from cairn.agent_install.clients.agy import agy_mcp_config_json
-        from cairn.agent_install.clients.zcode import zcode_mcp_config_json
-
-        assert mcp_config_json(transport="stdio") == {
-            "mcpServers": {"cairn": {"command": "/fake/bin/cairn", "args": ["serve"],
-                                     "env": env}}}
-        assert zcode_mcp_config_json(transport="stdio") == {
-            "mcp": {"servers": {"cairn": {"type": "stdio", "command": "/fake/bin/cairn",
-                                          "args": ["serve"], "env": env}}}}
-        assert agy_mcp_config_json(transport="stdio") == {
-            "mcpServers": {"cairn": {"command": "/fake/bin/cairn", "args": ["serve"],
-                                     "env": env}}}
-
-    def test_default_home_generators_stay_env_less(self, monkeypatch):
-        monkeypatch.delenv("CAIRN_HOME")
-        from cairn.agent_install._common import mcp_config_json
-        from cairn.agent_install.clients.agy import agy_mcp_config_json
-        from cairn.agent_install.clients.zcode import zcode_mcp_config_json
-
-        assert mcp_config_json(transport="stdio") == {
-            "mcpServers": {"cairn": {"command": "/fake/bin/cairn", "args": ["serve"]}}}
-        assert zcode_mcp_config_json(transport="stdio") == {
-            "mcp": {"servers": {"cairn": {"type": "stdio", "command": "/fake/bin/cairn",
-                                          "args": ["serve"]}}}}
-        assert agy_mcp_config_json(transport="stdio") == {
-            "mcpServers": {"cairn": {"command": "/fake/bin/cairn", "args": ["serve"]}}}
-
-    def test_home_set_to_default_files_byte_identical_to_unset(self, tmp_path, monkeypatch):
-        from cairn.agent_install.clients.agy import agy_config_path
-
-        monkeypatch.delenv("CAIRN_HOME")
-        ws_unset = tmp_path / "ws_unset"
-        ws_unset.mkdir()
-        install(str(ws_unset), clients=["claude", "cursor", "zcode", "agy"],
-                transport="stdio")
-        unset = {
-            ".mcp.json": (ws_unset / ".mcp.json").read_bytes(),
-            ".cursor/mcp.json": (ws_unset / ".cursor" / "mcp.json").read_bytes(),
-            ".zcode/config.json": (ws_unset / ".zcode" / "config.json").read_bytes(),
-            "agy": agy_config_path().read_bytes(),
-        }
-        agy_config_path().unlink()
-
-        self._set_default_home(monkeypatch)
-        ws_default = tmp_path / "ws_default"
-        ws_default.mkdir()
-        install(str(ws_default), clients=["claude", "cursor", "zcode", "agy"],
-                transport="stdio")
-
-        assert (ws_default / ".mcp.json").read_bytes() == unset[".mcp.json"]
-        assert (ws_default / ".cursor" / "mcp.json").read_bytes() == unset[".cursor/mcp.json"]
-        assert (ws_default / ".zcode" / "config.json").read_bytes() == unset[".zcode/config.json"]
-        assert agy_config_path().read_bytes() == unset["agy"]
-
-
-# --------------------------------------------------------------------------
-# Install-time per-client verification
-# --------------------------------------------------------------------------
 
 class TestInstallVerification:
-    """Real-subprocess install verification: a healthy install marks every
-    written-client file PASS; a PATH-shadowed cairn names both stores in the
-    FAIL verdict."""
+    """Registration verification tracks daemon health: the probe targets the
+    registration's host:port /healthz endpoint and no subprocess is ever
+    spawned to verify a registration."""
 
-    def _custom_home(self, tmp_path, monkeypatch) -> tuple[Path, Path]:
-        """A custom CAIRN_HOME + workspace with the import-time bindings
-        re-pointed; returns (home, ws)."""
-        home = tmp_path / "cairn_home"
+    @staticmethod
+    def _probe(monkeypatch, healthy: bool) -> list:
+        from cairn.mcp_server import lifecycle as lc
+
+        seen: list = []
+
+        def fake(*args, **kwargs):
+            seen.append((*args, *kwargs.values()))
+            return healthy
+
+        monkeypatch.setattr(lc, "healthz_responds", fake, raising=False)
+        return seen
+
+    def test_healthy_daemon_verifies_pass_probing_registration_host_port(
+        self, tmp_path, monkeypatch, pinned_api_key
+    ):
+        seen = self._probe(monkeypatch, healthy=True)
         ws = tmp_path / "ws"
         ws.mkdir()
-        _repoint_home_bindings(monkeypatch, home)
-        monkeypatch.setenv("CAIRN_WORKSPACE", str(ws))
-        return home, ws
 
-    def test_healthy_install_marks_every_file_written_client_pass(
-            self, tmp_path, monkeypatch):
-        """A stdio install under a custom CAIRN_HOME with a built
-        store on a healthy machine verifies every file-written client PASS —
-        no client missing a verdict."""
-        from cairn.paths import store_key
-
-        real = shutil.which("cairn")
-        assert real, "verification spawns the real cairn binary; it must be on PATH"
-        home, ws = self._custom_home(tmp_path, monkeypatch)
-        key = store_key(ws.resolve())
-        (home / key).mkdir(parents=True)  # Given: a built store
-        (home / key / ".kg").write_bytes(b"")
-
-        rep = install(str(ws), clients=["claude", "cursor", "zcode"],
-                      transport="stdio")
+        rep = install(str(ws), clients=["cursor", "zcode", "opencode"])
 
         for res in rep.results:
-            assert res.written, f"{res.client}: premise — file-written stdio client"
+            assert res.written, f"{res.client}: premise -- file-written client"
             assert res.verification_status == "pass", (
-                f"{res.client}: healthy install must verify PASS, got "
-                f"{res.verification_status!r} ({res.verification_detail})")
+                f"{res.client}: healthy daemon must verify PASS, got "
+                f"{res.verification_status!r} ({res.verification_detail})"
+            )
+        probed = {v for call in seen for v in call}
+        assert {"127.0.0.1", 9876} <= probed, (
+            "verification must derive host:port from the registration's URL"
+        )
 
-    def test_path_shadowed_cairn_fails_naming_both_stores(
-            self, tmp_path, monkeypatch):
-        """A PATH-shadowed cairn that drops CAIRN_HOME makes the
-        registration resolve the default store; the affected client's verdict
-        is FAIL naming both the resolved and the intended store — per client,
-        not one overall pass/fail."""
-        from cairn.paths import store_key
+    def test_dead_daemon_verifies_unreachable(
+        self, tmp_path, monkeypatch, pinned_api_key
+    ):
+        self._probe(monkeypatch, healthy=False)
+        ws = tmp_path / "ws"
+        ws.mkdir()
 
-        real = shutil.which("cairn")
-        assert real, "the shim execs the real cairn binary; it must be on PATH"
-        home, ws = self._custom_home(tmp_path, monkeypatch)
-        key = store_key(ws.resolve())
+        rep = install(str(ws), clients=["cursor"])
 
-        # Drop CAIRN_HOME (and pin HOME so the default the probe resolves is
-        # deterministic regardless of which env the verifier passes it).
-        shim = _shim_on_path(tmp_path, monkeypatch, "cairn",
-                             f'exec env -u CAIRN_HOME HOME="{Path.home()}" '
-                             f'"{real}" "$@"\n')
+        res = next(r for r in rep.results if r.client == "cursor")
+        assert res.verification_status == "fail"
+        assert re.search(
+            r"unreach|not running|unhealthy|down|unavailable",
+            res.verification_detail,
+            re.I,
+        ), res.verification_detail
 
-        rep = install(str(ws), clients=["claude", "cursor"], transport="stdio")
+    def test_verification_spawns_no_process(
+        self, tmp_path, monkeypatch, pinned_api_key
+    ):
+        calls = _spy_subprocess(monkeypatch)
+        ws = tmp_path / "ws"
+        ws.mkdir()
 
-        written = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
-        assert written["mcpServers"]["cairn"]["command"] == str(shim), \
-            "premise: the shadow bit — registrations point at the shimmed cairn"
+        install(str(ws), clients=["cursor", "zcode", "opencode", "claude-desktop"])
 
-        intended = home / key
-        resolved = Path.home() / ".cairn" / key
-        for res in rep.results:
-            assert res.verification_status == "fail", (
-                f"{res.client}: env-dropping registration must verify FAIL, got "
-                f"{res.verification_status!r}")
-            assert str(intended) in res.verification_detail, (
-                f"{res.client}: FAIL must name the intended store {intended}")
-            assert str(resolved) in res.verification_detail, (
-                f"{res.client}: FAIL must name the store it actually "
-                f"resolved ({resolved})")
+        assert calls == [], "verification must probe healthz, never spawn"
 
 
 # --------------------------------------------------------------------------
@@ -1433,62 +1561,16 @@ _PRISTINE_WHICH = shutil.which
 class TestClaudeGlobalMcpRegistration:
     """`install-agents --scope global` registers Claude Code's MCP via the
     `claude` CLI (Claude Code reads no global ~/.mcp.json file). The spawned
-    argv must survive the CLI's own option parser and the outcome must be
-    reported honestly."""
+    argv carries the http transport, the daemon URL, and the key header; the
+    outcome must be reported honestly."""
 
-    def test_stdio_argv_ends_option_parsing_before_server_command(
-            self, fake_home, tmp_path, monkeypatch):
-        """Module-fallback command shape (`python -m cairn.cli.main serve`):
-        `--` must separate it from claude's own options, or the CLI parses
-        the server command's flags as its own and the add fails."""
-        from cairn.agent_install.clients import claude as claude_mod
-
-        monkeypatch.delenv("CAIRN_HOME", raising=False)
-        _cli_at(monkeypatch, "claude")
-        calls = _spy_subprocess(monkeypatch)
-        monkeypatch.setattr(claude_mod, "resolve_cg_command",
-                            lambda: ["/usr/bin/python3", "-m", "cairn.cli.main"])
-
-        ws = tmp_path / "ws"
-        ws.mkdir()
-        rep = install(str(ws), clients=["claude"], scope="global", transport="stdio")
-
-        assert calls == [["claude", "mcp", "add", "cairn", "--scope", "user",
-                          "--", "/usr/bin/python3", "-m", "cairn.cli.main",
-                          "serve"]]
-        res = next(r for r in rep.results if r.client == "claude")
-        assert any("Registered MCP globally" in n for n in res.notes)
-
-    def test_stdio_argv_pins_home_env_before_separator(
-            self, fake_home, tmp_path, monkeypatch):
-        """A non-default home rides along as -e entries placed before `--`;
-        everything after `--` is the server command verbatim."""
-        from cairn.agent_install.clients import claude as claude_mod
-
-        _cli_at(monkeypatch, "claude")
-        calls = _spy_subprocess(monkeypatch)
-        monkeypatch.setattr(claude_mod, "resolve_cg_command", lambda: ["/fake/cairn"])
-        monkeypatch.setattr(claude_mod, "cairn_home_env",
-                            lambda: {"CAIRN_HOME": "/custom/home"})
-
-        ws = tmp_path / "ws"
-        ws.mkdir()
-        install(str(ws), clients=["claude"], scope="global", transport="stdio")
-
-        assert calls == [["claude", "mcp", "add", "cairn", "--scope", "user",
-                          "-e", "CAIRN_HOME=/custom/home",
-                          "--", "/fake/cairn", "serve"]]
-
-    def test_stdio_nonzero_exit_reports_warning_not_success(
-            self, fake_home, tmp_path, monkeypatch):
+    def test_nonzero_exit_reports_warning_not_success(
+        self, fake_home, tmp_path, monkeypatch
+    ):
         """A failed `claude mcp add` (non-zero exit) must surface as a
         WARNING naming the exit code and the CLI's stderr -- never as the
         success note."""
-        from cairn.agent_install.clients import claude as claude_mod
-
         _cli_at(monkeypatch, "claude")
-        monkeypatch.setattr(claude_mod, "resolve_cg_command",
-                            lambda: ["/usr/bin/python3", "-m", "cairn.cli.main"])
 
         class _R:
             returncode = 1
@@ -1499,15 +1581,13 @@ class TestClaudeGlobalMcpRegistration:
 
         ws = tmp_path / "ws"
         ws.mkdir()
-        rep = install(str(ws), clients=["claude"], scope="global", transport="stdio")
+        rep = install(str(ws), clients=["claude"], scope="global")
 
         res = next(r for r in rep.results if r.client == "claude")
         assert not any("Registered MCP globally" in n for n in res.notes)
-        assert any("exited 1" in n and "unknown option '-m'" in n
-                   for n in res.notes)
+        assert any("exited 1" in n and "unknown option '-m'" in n for n in res.notes)
 
-    def test_doctor_reads_claude_user_scope_registration(
-            self, fake_home, tmp_path):
+    def test_doctor_reads_claude_user_scope_registration(self, fake_home, tmp_path):
         """The user-scope file `claude mcp add --scope user` writes
         (~/.claude.json) is one of the configs the registration audit reads,
         and it alone marks claude installed."""
@@ -1518,18 +1598,20 @@ class TestClaudeGlobalMcpRegistration:
         ws.mkdir()
         entry = {"type": "stdio", "command": "/bin/echo", "args": ["serve"]}
         user_cfg = fake_home / ".claude.json"
-        user_cfg.write_text(json.dumps({"mcpServers": {"cairn": entry}}),
-                            encoding="utf-8")
+        user_cfg.write_text(
+            json.dumps({"mcpServers": {"cairn": entry}}), encoding="utf-8"
+        )
 
         assert check_installed(str(ws))["claude"] is True
 
-        claude_hits = [(c, p, d, e, ws_owned)
-                       for c, p, d, e, ws_owned in _enumerate_registrations()
-                       if c == "claude"]
+        claude_hits = [
+            (c, p, d, e, ws_owned)
+            for c, p, d, e, ws_owned in _enumerate_registrations()
+            if c == "claude"
+        ]
         assert ("claude", user_cfg, "~/.claude.json", entry, False) in claude_hits
 
-    def test_doctor_reads_droid_user_scope_registration(
-            self, fake_home, tmp_path):
+    def test_doctor_reads_droid_user_scope_registration(self, fake_home, tmp_path):
         """The user-scope file `droid mcp add` writes (~/.factory/mcp.json)
         is one of the configs the registration audit reads, and it alone
         marks droid installed."""
@@ -1541,14 +1623,17 @@ class TestClaudeGlobalMcpRegistration:
         entry = {"type": "stdio", "command": "/bin/echo", "args": ["serve"]}
         user_cfg = fake_home / ".factory" / "mcp.json"
         user_cfg.parent.mkdir(parents=True)
-        user_cfg.write_text(json.dumps({"mcpServers": {"cairn": entry}}),
-                            encoding="utf-8")
+        user_cfg.write_text(
+            json.dumps({"mcpServers": {"cairn": entry}}), encoding="utf-8"
+        )
 
         assert check_installed(str(ws))["droid"] is True
 
-        droid_hits = [(c, p, d, e, ws_owned)
-                      for c, p, d, e, ws_owned in _enumerate_registrations()
-                      if c == "droid"]
+        droid_hits = [
+            (c, p, d, e, ws_owned)
+            for c, p, d, e, ws_owned in _enumerate_registrations()
+            if c == "droid"
+        ]
         assert ("droid", user_cfg, "~/.factory/mcp.json", entry, False) in droid_hits
 
     def test_claude_probe_reads_the_hooks_cairn_writes(self, fake_home, tmp_path):
@@ -1558,11 +1643,23 @@ class TestClaudeGlobalMcpRegistration:
         ws.mkdir()
         settings = fake_home / ".claude" / "settings.json"
         settings.parent.mkdir(parents=True)
-        settings.write_text(json.dumps(
-            {"hooks": {"Stop": [{"hooks": [
-                {"type": "command",
-                 "command": "/usr/bin/python3 -m cairn.hooks.claude_hooks session_end"},
-            ]}]}}),
+        settings.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "Stop": [
+                            {
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "/usr/bin/python3 -m cairn.hooks.claude_hooks session_end",
+                                    },
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -1573,17 +1670,20 @@ class TestClaudeGlobalMcpRegistration:
         reason="opt-in end-to-end probe (CAIRN_TEST_CLAUDE_CLI=1); needs the real claude CLI",
     )
     def test_claude_cli_global_registration_end_to_end(
-            self, tmp_path, monkeypatch):
+        self, tmp_path, monkeypatch, pinned_api_key
+    ):
         """The real `claude mcp add` accepts the spawned argv and stores the
-        full server command (with its flags) as the registration. HOME is
-        pointed at a throwaway dir, so the real ~/.claude is never touched."""
-        from cairn.agent_install._common import resolve_cg_command
-
+        http URL registration with the key header. HOME is pointed at a
+        throwaway dir, so the real ~/.claude is never touched."""
         # Unblock the hermetic fixture's which() for claude only; the
         # throwaway-HOME sandbox still applies to everything else.
         monkeypatch.setattr(
-            shutil, "which",
-            lambda name, *a, **k: _PRISTINE_WHICH(name, *a, **k) if name == "claude" else None)
+            shutil,
+            "which",
+            lambda name, *a, **k: (
+                _PRISTINE_WHICH(name, *a, **k) if name == "claude" else None
+            ),
+        )
 
         home = tmp_path / "claude_home"
         home.mkdir()
@@ -1592,71 +1692,30 @@ class TestClaudeGlobalMcpRegistration:
         monkeypatch.setattr(Path, "home", lambda *a, **k: home)
         monkeypatch.setenv("HOME", str(home))
 
-        install(str(ws), clients=["claude"], scope="global", transport="stdio")
+        install(str(ws), clients=["claude"], scope="global")
 
         cfg = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
         entry = cfg["mcpServers"]["cairn"]
-        cmd = resolve_cg_command()
-        assert entry["type"] == "stdio"
-        assert entry["command"] == cmd[0]
-        assert entry["args"] == [*cmd[1:], "serve"]
+        assert entry["type"] == "http"
+        assert entry["url"] == DAEMON_URL
+        assert entry["headers"]["Authorization"] == f"Bearer {pinned_api_key}"
 
 
 # --------------------------------------------------------------------------
 # Droid CLI registration (`droid mcp add`)
 # --------------------------------------------------------------------------
 
+
 class TestDroidCliRegistration:
     """`droid mcp add` is a subprocess whose outcome must be reported
-    honestly and whose argv must match the documented stdio shape (the full
-    server command as ONE argument). A failed add falls back to the
-    .factory/mcp.json file so the registration lands either way."""
+    honestly and whose argv registers the daemon URL with the key header. A
+    failed add falls back to the .factory/mcp.json file so the registration
+    lands either way."""
 
-    def test_stdio_argv_passes_server_command_as_one_argument(
-            self, tmp_path, monkeypatch):
-        from cairn.agent_install.clients import droid as droid_mod
-
+    def test_failed_add_warns_and_falls_back_to_url_key_file(
+        self, tmp_path, monkeypatch, pinned_api_key
+    ):
         _cli_at(monkeypatch, "droid")
-        calls = _spy_subprocess(monkeypatch)
-        monkeypatch.delenv("CAIRN_HOME", raising=False)
-        monkeypatch.setattr(droid_mod, "resolve_cg_command",
-                            lambda: ["/usr/bin/python3", "-m", "cairn.cli.main"])
-        ws = tmp_path / "ws"
-        ws.mkdir()
-
-        install(str(ws), clients=["droid"], transport="stdio")
-
-        assert calls == [["droid", "mcp", "add", "cairn",
-                          "/usr/bin/python3 -m cairn.cli.main serve",
-                          "--type", "stdio"]]
-        assert not (ws / ".factory" / "mcp.json").exists()
-
-    def test_stdio_argv_pins_home_env(self, tmp_path, monkeypatch):
-        from cairn.agent_install.clients import droid as droid_mod
-
-        _cli_at(monkeypatch, "droid")
-        calls = _spy_subprocess(monkeypatch)
-        monkeypatch.setattr(droid_mod, "resolve_cg_command", lambda: ["/fake/cairn"])
-        monkeypatch.setattr(droid_mod, "cairn_home_env",
-                            lambda: {"CAIRN_HOME": "/custom/home"})
-        ws = tmp_path / "ws"
-        ws.mkdir()
-
-        install(str(ws), clients=["droid"], transport="stdio")
-
-        add = calls[0]
-        assert add[-2:] == ["--env", "CAIRN_HOME=/custom/home"]
-
-    def test_failed_add_warns_and_falls_back_to_file(
-            self, tmp_path, monkeypatch):
-        import cairn.agent_install._common as common_mod
-        from cairn.agent_install.clients import droid as droid_mod
-
-        _cli_at(monkeypatch, "droid")
-        monkeypatch.delenv("CAIRN_HOME", raising=False)
-        # Both argv build and file fallback resolve the command independently.
-        monkeypatch.setattr(common_mod, "resolve_cg_command", lambda: ["/fake/cairn"])
-        monkeypatch.setattr(droid_mod, "resolve_cg_command", lambda: ["/fake/cairn"])
 
         class _R:
             returncode = 1
@@ -1667,33 +1726,41 @@ class TestDroidCliRegistration:
         ws = tmp_path / "ws"
         ws.mkdir()
 
-        rep = install(str(ws), clients=["droid"], transport="stdio")
+        rep = install(str(ws), clients=["droid"])
 
         res = next(r for r in rep.results if r.client == "droid")
         assert not any("Registered MCP via" in n for n in res.notes)
         assert any("exited 1" in n and "already exists" in n for n in res.notes)
-        fallback = json.loads((ws / ".factory" / "mcp.json").read_text(encoding="utf-8"))
-        assert fallback["mcpServers"]["cairn"]["command"] == "/fake/cairn"
+        fallback = json.loads(
+            (ws / ".factory" / "mcp.json").read_text(encoding="utf-8")
+        )
+        assert fallback["mcpServers"]["cairn"] == {
+            "type": "http",
+            "url": DAEMON_URL,
+            "headers": _bearer(pinned_api_key),
+        }
 
     def test_dry_run_reports_the_registration_a_real_run_performs(
-            self, tmp_path, monkeypatch):
+        self, tmp_path, monkeypatch
+    ):
         """With the droid CLI on PATH, dry-run must still report the
         `droid mcp add` registration a real run performs (and spawn nothing)."""
         _cli_at(monkeypatch, "droid")
         calls = _spy_subprocess(monkeypatch)
-        monkeypatch.delenv("CAIRN_HOME", raising=False)
         ws = tmp_path / "ws"
         ws.mkdir()
 
-        rep = install(str(ws), clients=["droid"], transport="stdio", dry_run=True)
+        rep = install(str(ws), clients=["droid"], dry_run=True)
 
         res = next(r for r in rep.results if r.client == "droid")
-        assert any("droid mcp add" in n for n in res.notes), \
+        assert any("droid mcp add" in n for n in res.notes), (
             "dry-run must report the registration a real run performs"
+        )
         assert calls == [], "dry-run must not spawn the droid CLI"
 
     def test_remove_nonzero_exit_reports_warning(
-            self, fake_home, tmp_path, monkeypatch):
+        self, fake_home, tmp_path, monkeypatch
+    ):
         _cli_at(monkeypatch, "droid")
 
         class _R:

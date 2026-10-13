@@ -59,16 +59,18 @@ Already installed? `cairn upgrade` updates in place (detects `uv tool` /
 cairn install-agents
 ```
 
-Detects which AI clients you have (Claude Code, Cursor, ZCode, Droid, Claude
-Desktop, opencode, agy, kilo, omp), shows what's already wired, and prompts for scope:
+Detects which AI clients you have (Claude Code, Cursor, ZCode, Droid,
+opencode, agy, kilo, omp), shows what's already wired, and prompts for scope:
 `workspace` (per-project `./.claude/`, `./.cursor/` …) or `global`
-(`~/.claude/` — every project inherits it). Non-interactive:
-`cairn install-agents --yes --scope global`. Manual wiring is one JSON block
-(stdio — or point clients that support SSE at `http://127.0.0.1:9876/sse`
-after `cairn serve start`, which is what install-agents does by default):
+(`~/.claude/` — every project inherits it). Every registration is a URL+key
+entry dialing one shared daemon; Claude Desktop has no URL MCP surface and is
+reported unsupported. Non-interactive: `cairn install-agents --yes --scope
+global`. Manual wiring is one JSON block (`cairn connect` starts the daemon
+if it isn't running; install-agents writes this with your generated key in
+the header):
 
 ```json
-{ "mcpServers": { "cairn": { "command": "cairn", "args": ["serve"] } } }
+{ "mcpServers": { "cairn": { "type": "http", "url": "http://127.0.0.1:9876/mcp", "headers": { "Authorization": "Bearer <key>" } } } }
 ```
 
 **3. Build the graph**
@@ -83,7 +85,7 @@ cairn build          # parse the workspace, resolve edges (first run; ~4s on cai
 cairn update         # incremental reindex — only what changed since the last build
 ```
 
-With the optional `[watch]` extra, a running `cairn serve` watches the
+With the optional `[watch]` extra, the running daemon watches the
 workspace and reindexes edits within a ~2s debounce window — no restart, no
 manual update. Pending files carry a staleness banner on results until the
 update lands.
@@ -322,7 +324,8 @@ Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
 
 | Command | What it does |
 |---------|--------------|
-| `cairn serve` | Run the stdio MCP server |
+| `cairn serve` | Run the MCP daemon in the foreground (Streamable HTTP `:9876`, read-write by default; `--read-only` opts out) |
+| `cairn connect` | Ensure the MCP daemon is running (starts it on first dial) and print its URL |
 | `cairn dashboard` | Local web console, loopback :8765 (views + Settings) |
 | `cairn build [--lsp]` / `cairn update` | Full build (`--lsp` optionally upgrades ambiguous Python calls with pyright) / incremental reindex |
 | `cairn def <symbol>` | Find a symbol's definition |
@@ -375,7 +378,7 @@ The default install is dependency-light and network-free. Opt in with extras:
 | `[ann]` | `sqlite-vec` — explicit ANN install (core since 0.14) | `CAIRN_ANN_BACKEND=sqlite-vec` |
 | `[scip]` | `protobuf` — SCIP index import/generation runtime | `cairn.json` `scip` key |
 | `[ingest]` | `pymupdf4llm` + `mammoth` + `markdownify` — PDF/DOCX conversion for `cairn knowledge ingest` | `cairn.json` `ingest` key (classification rules) |
-| `[watch]` | `watchdog` — live rebuilds while `cairn serve` runs | `CAIRN_WATCH=0` disables |
+| `[watch]` | `watchdog` — live rebuilds in the running daemon | `CAIRN_WATCH=0` disables |
 | `[otlp]` | OpenTelemetry export of local telemetry events | `CAIRN_OTEL_ENDPOINT` (unset = off) |
 | `[bench]` | `datasets` — pinned SWE-bench task loading | `cairn bench --suite swe-bench` |
 
@@ -387,8 +390,8 @@ Also: `CAIRN_HOME` (store location, default `~/.cairn`), `CAIRN_TELEMETRY=off`
 
 - **Platforms** — anywhere Python ≥ 3.10 runs; CI tests 3.10–3.14 (macOS +
   Linux; `make ci-local` replicates CI in a clean Linux container).
-- **Agents** — Claude Code, Cursor, ZCode, Droid, Claude Desktop, opencode,
-  agy, kilo, omp — wired by `cairn install-agents`, or any MCP client via the
+- **Agents** — Claude Code, Cursor, ZCode, Droid, opencode, agy, kilo, omp —
+  wired by `cairn install-agents`, or any MCP client via the
   manual JSON block above.
 
 ## Documentation

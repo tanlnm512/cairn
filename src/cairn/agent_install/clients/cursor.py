@@ -34,14 +34,13 @@ def cursor_hooks_json() -> dict:
 
 
 def install_cursor(workspace: str, force: bool, dry_run: bool,
-                   transport: str = "stdio", sse_url: str | None = None,
                    scope: str = "workspace") -> InstallResult:
     """Install Cursor configuration, rules, subagents, and hooks."""
     ws = Path(workspace)
     base = ws if scope == "workspace" else Path.home()
     res = InstallResult("cursor")
 
-    _merge_json_file(base / ".cursor" / "mcp.json", mcp_config_json(transport, sse_url), force, res, dry_run=dry_run)
+    _merge_json_file(base / ".cursor" / "mcp.json", mcp_config_json(), force, res, dry_run=dry_run)
     _write_file(base / ".cursor" / "rules" / "cairn.mdc",
                 _read_template("cursor/cairn.mdc"), force, res, dry_run=dry_run)
     _write_file(base / ".cursor" / "subagents" / "cairn-explorer.json",

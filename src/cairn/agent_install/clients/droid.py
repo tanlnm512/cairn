@@ -11,9 +11,9 @@ from .._common import (
     _SLASH_COMMANDS,
     _claude_agent_md,
     _read_template,
-    default_sse_url,
+    auth_headers,
+    daemon_mcp_url,
     mcp_config_json,
-    resolve_cg_command,
 )
 from ..merge import (
     _merge_json_file,
@@ -24,11 +24,9 @@ from ..merge import (
     _write_file,
     _write_tree,
 )
-from ...paths import cairn_home_env
 
 
 def install_droid(workspace: str, force: bool, dry_run: bool,
-                  transport: str = "stdio", sse_url: str | None = None,
                   scope: str = "workspace") -> InstallResult:
     """Wire cairn into Droid/Factory (.factory/ tree + droid mcp add)."""
     ws = Path(workspace)
@@ -52,16 +50,10 @@ def install_droid(workspace: str, force: bool, dry_run: bool,
                 "Would register MCP via `droid mcp add` "
                 "(falls back to .factory/mcp.json on failure).")
         else:
-            if transport == "sse":
-                url = default_sse_url(sse_url)
-                argv = ["droid", "mcp", "add", "cairn", url, "--type", "sse"]
-            else:
-                # Droid expects the complete server command as one argument after --.
-                argv = ["droid", "mcp", "add", "cairn",
-                        " ".join([*resolve_cg_command(), "serve"]),
-                        "--type", "stdio"]
-                for key, value in cairn_home_env().items():
-                    argv += ["--env", f"{key}={value}"]
+            argv = ["droid", "mcp", "add", "cairn", daemon_mcp_url(),
+                    "--type", "http"]
+            for name, value in auth_headers().items():
+                argv += ["--header", f"{name}: {value}"]
             registered = False
             try:
                 proc = subprocess.run(argv, capture_output=True, timeout=10, check=False,
@@ -78,14 +70,14 @@ def install_droid(workspace: str, force: bool, dry_run: bool,
                 res.notes.append(f"WARNING: `droid mcp add` failed ({e}).")
             if not registered:
                 _merge_json_file(ws / ".factory" / "mcp.json",
-                                 mcp_config_json(transport, sse_url), force, res,
+                                 mcp_config_json(), force, res,
                                  dry_run=False)
                 res.notes.append(
                     "Wrote .factory/mcp.json so the registration is present on "
                     "the next droid run.")
     else:
         # No droid CLI: write a .factory/mcp.json so it's present when droid is installed.
-        _merge_json_file(ws / ".factory" / "mcp.json", mcp_config_json(transport, sse_url), force, res, dry_run=dry_run)
+        _merge_json_file(ws / ".factory" / "mcp.json", mcp_config_json(), force, res, dry_run=dry_run)
         res.notes.append("droid CLI not found; wrote .factory/mcp.json (registers on next droid run).")
 
     res.notes.append("Cron automation (e.g. `droid cron create`) requires the droid CLI on PATH.")

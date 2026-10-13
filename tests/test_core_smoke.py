@@ -10,8 +10,8 @@ function, chosen from the redundancy audit as the case most likely to catch a
 regression. Fixtures are kept local (no cross-file coupling) so a failure
 points at exactly one function.
 
-The transport-layer `core` tests (read-only mode, stray sweeper, sse_responds)
-close a real gap: those code paths had ZERO coverage before this file.
+The transport-layer `core` tests (boot guard, read-only boot gating, healthz
+liveness) pin the serving path's highest-signal invariants.
 """
 from __future__ import annotations
 
@@ -278,7 +278,7 @@ def test_compass_router_accuracy_on_golden_queries():
 
 
 # ===========================================================================
-# TRANSPORT LAYER (5 tests) — incl. 3 NEW coverage gaps
+# TRANSPORT LAYER (4 tests)
 # ===========================================================================
 
 def test_server_boot_guard_exits_on_empty_store(monkeypatch, tmp_path):
@@ -293,7 +293,7 @@ def test_server_boot_guard_exits_on_empty_store(monkeypatch, tmp_path):
     with patch("cairn.mcp_server.server.mcp"), \
          patch("cairn.mcp_server.server.verify_tool_count"):
         with pytest.raises(SystemExit) as exc:
-            server.run(transport="stdio")
+            server.run(port=0)
         assert exc.value.code == 1
 
 
@@ -325,33 +325,88 @@ def test_read_only_mode_blocks_db_writes(monkeypatch, tmp_path):
     assert _read_only_mode() is True
 
 
-def test_sse_responds_detects_live_vs_dead(monkeypatch):
-    """NEW: sse_responds must distinguish a server that answers HTTP from a
-    dead/unreachable port -- the hardening that replaced the bare TCP-accept
-    false-positive ('responds True but curl times out mid-stream')."""
-    from cairn.mcp_server import lifecycle as lc
+def test_read_only_boot_gates_boot_time_writes(monkeypatch, tmp_path):
+    """A bare server boot under CAIRN_READ_ONLY must skip the write-side boot
+    work (catch-up, memory decay); a default boot runs both."""
+    # One boot helper shared with the robustness suite (single definition).
+    from tests.test_server_robustness import _bare_http_boot
 
-    # Dead port: socket.connect raises -> False
-    with patch("socket.create_connection", side_effect=OSError("refused")):
-        assert lc.sse_responds(port=19999, timeout=0.5) is False
+    monkeypatch.setenv("CAIRN_READ_ONLY", "1")
+    _, boot_work = _bare_http_boot(monkeypatch, tmp_path)
+    assert boot_work == []
 
-    # Live server: connect ok, recv returns a status-line byte -> True
-    fake_sock = MagicMock()
-    fake_sock.recv.return_value = b"H"  # first byte of "HTTP/1.1 ..."
-    fake_recv_ctx = MagicMock()
-    fake_recv_ctx.__enter__.return_value = fake_sock
-    fake_recv_ctx.__exit__.return_value = False
-    with patch("socket.create_connection", return_value=fake_recv_ctx):
-        assert lc.sse_responds(port=9876, timeout=0.5) is True
+    monkeypatch.delenv("CAIRN_READ_ONLY")
+    _, boot_work = _bare_http_boot(monkeypatch, tmp_path)
+    assert boot_work == ["catch-up", "decay"]
 
-    # Wedged server: connect ok but recv returns empty -> False
-    wedged_sock = MagicMock()
-    wedged_sock.recv.return_value = b""
-    wedged_ctx = MagicMock()
-    wedged_ctx.__enter__.return_value = wedged_sock
-    wedged_ctx.__exit__.return_value = False
-    with patch("socket.create_connection", return_value=wedged_ctx):
-        assert lc.sse_responds(port=9876, timeout=0.5) is False
+
+def test_healthz_liveness_answers_through_http_app(monkeypatch, tmp_path):
+    """GET /healthz through the built HTTP app must answer 200 with a
+    live-store payload -- the daemon's liveness surface."""
+    import asyncio
+    import json
+
+    from cairn.graph.schema import _apply_schema
+    from cairn.mcp_server import server
+    from cairn.mcp_server._server_core import mcp
+
+    db_path = tmp_path / "liveness.db"
+    conn = sqlite3.connect(str(db_path))
+    _apply_schema(conn)
+    conn.close()
+    monkeypatch.setenv("CAIRN_DB", str(db_path))
+
+    settings = mcp.settings
+    saved = (
+        settings.host,
+        settings.port,
+        settings.stateless_http,
+        settings.transport_security,
+    )
+    try:
+        app = server._build_http_app(
+            host="127.0.0.1", port=0, api_key=None, stateless=False
+        )
+        sent: list[dict] = []
+
+        async def _drive():
+            scope = {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/healthz",
+                "raw_path": b"/healthz",
+                "query_string": b"",
+                "root_path": "",
+                "headers": [(b"host", b"127.0.0.1")],
+                "client": ("127.0.0.1", 60000),
+                "server": ("127.0.0.1", 0),
+            }
+
+            async def receive():
+                return {"type": "http.disconnect"}
+
+            async def send(message):
+                sent.append(message)
+
+            await app(scope, receive, send)
+
+        asyncio.run(_drive())
+    finally:
+        (settings.host, settings.port, settings.stateless_http,
+         settings.transport_security) = saved
+
+    assert sent and sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 200
+    body = b"".join(
+        m.get("body", b"") for m in sent if m["type"] == "http.response.body"
+    )
+    payload = json.loads(body)
+    assert payload["status"] == "ok"
+    assert payload["store_reachable"] is True
+    assert "read_only" in payload
 
 
 # ---------------------------------------------------------------------------
