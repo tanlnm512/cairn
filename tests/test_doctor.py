@@ -6,8 +6,8 @@ model-listing / parity sample / latency when a server backend is configured,
 otherwise one informational line), graph freshness, parse errors,
 lock contention, per-tool error/latency health, tribal-memory reference
 staleness, and a config echo, plus the
-environment-wiring audit (store resolution, client
-registration consistency, platform/transport, binary coherence). It is
+environment-wiring audit (store presence, registration transport
+classes). It is
 read-only and crash-proof (a missing/corrupt store degrades to WARN/FAIL,
 never raises).
 
@@ -1097,14 +1097,13 @@ def test_embed_server_active_degradation_warn_entry(
 
 # ---------------------------------------------------------------------------
 # Environment wiring: one `environment` check appended
-# to BOTH doctor return paths, auditing (a) resolved-store existence, (b)
-# client-registration consistency, (c) platform/transport supportability, and
-# (d) binary coherence. Each test here pins the `environment` row in
+# to BOTH doctor return paths, auditing (a) resolved-store existence and
+# (b) registration transport classes (stdio spawn-shaped, SSE endpoint,
+# unsupported desktop). Each test here pins the `environment` row in
 # doctor's check list -- the same convention as tests/test_config_probe.py.
-# Fixtures shape the machine with
-# tmp homes + monkeypatched bindings/env (never global subprocess patching);
-# the platform arm is driven through lifecycle.is_macos -- the function the
-# doctor reads -- never sys.platform.
+# Fixtures shape the machine with tmp homes + monkeypatched bindings/env
+# (never global subprocess patching); registrations are seeded as literal
+# pre-HTTP-era shapes so the classification under test stays fixed.
 # ---------------------------------------------------------------------------
 
 
@@ -1138,29 +1137,12 @@ def _dead_sse_url():
     return f"http://{host}:{port}/sse"
 
 
-def _force_non_macos(monkeypatch):
-    """Drive the platform/transport sub-audit off-darwin on any host.
-
-    The audit reads the platform through lifecycle.is_macos; patch THAT (the
-    function the doctor calls), never sys.platform. Both plausible bindings
-    are covered: the lifecycle module attribute and a from-import binding in
-    cli.system (raising=False until introduces the latter).
-    """
-    from cairn.cli import system
-    from cairn.mcp_server import lifecycle as lifecycle_mod
-
-    monkeypatch.setattr(lifecycle_mod, "is_macos", lambda: False)
-    monkeypatch.setattr(system, "is_macos", lambda: False, raising=False)
-
-
 def test_environment_fails_on_incident_wiring(tmp_path, monkeypatch):
-    """#70 machine (automated half / AC8): a populated custom store, an
-    empty default store, an SSE registration whose daemon is gone, on a
-    non-macOS host -> `environment` FAILs naming the client and the
-    macOS-only lifecycle, and the run exits 1 -- even though the store itself
-    is schema-healthy (the wiring, not the store, is what broke)."""
-    from cairn.agent_install._common import mcp_config_json
-
+    """#70 machine (automated half / AC8): a populated custom store and a
+    registration still pointing at a pre-HTTP SSE endpoint -> `environment`
+    FAILs naming the client and the endpoint, and the run exits 1 -- even
+    though the store itself is schema-healthy (the wiring, not the store,
+    is what broke)."""
     custom_home = tmp_path / "custom_home"
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -1172,16 +1154,17 @@ def test_environment_fails_on_incident_wiring(tmp_path, monkeypatch):
     db = _store_db(custom_home, ws.resolve())
     db.parent.mkdir(parents=True)
     _make_db(db)
-    # The default location exists but holds no store: the empty store #70's
-    # clients silently resolved instead.
-    (Path.home() / ".cairn").mkdir(parents=True, exist_ok=True)
 
-    # A stale SSE registration (env-less by construction) with no daemon
-    # behind its (dead loopback) endpoint.
-    cfg = mcp_config_json(transport="sse", sse_url=_dead_sse_url())
-    (ws / ".mcp.json").write_text(json.dumps(cfg), encoding="utf-8")
-    # The macOS-only daemon lifecycle can never serve it on this host.
-    _force_non_macos(monkeypatch)
+    # A registration from the pre-HTTP era, pointing at an endpoint the
+    # HTTP daemon does not serve.
+    stale_url = _dead_sse_url()
+    (ws / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"cairn": {
+            "type": "sse",
+            "url": stale_url,
+        }}}),
+        encoding="utf-8",
+    )
 
     result = _run(db, "--json")
     assert result.exit_code == 1, result.output
@@ -1192,7 +1175,8 @@ def test_environment_fails_on_incident_wiring(tmp_path, monkeypatch):
     assert row["status"] == "FAIL"
     findings = row["detail"] + " " + (row.get("hint") or "")
     assert "claude" in findings, "the mismatching client must be named"
-    assert "macOS-only" in findings, "the macOS-only daemon lifecycle must be named"
+    assert stale_url in findings, "the pre-HTTP endpoint must be named"
+    assert "install-agents" in findings, "the rewrite hint must be advised"
 
 
 def test_environment_passes_on_healthy_default_install(tmp_path, monkeypatch):
@@ -1241,11 +1225,9 @@ def test_environment_emitted_when_db_unavailable(tmp_path, monkeypatch):
 
 
 def test_environment_warns_on_stale_envless_registration(tmp_path, monkeypatch):
-    """A registration written by the previous release (no environment
-    entry) that still resolves the doctor's own store draws a WARN advising
-    `cairn install-agents` -- warned, not failed; exit stays 0."""
-    from cairn.agent_install._common import mcp_config_json
-
+    """A registration written by the pre-HTTP release (an env-less stdio
+    spawn shape) draws a WARN advising `cairn install-agents` -- warned,
+    not failed; exit stays 0."""
     ws = tmp_path / "ws"
     ws.mkdir()
     default_home = Path.home() / ".cairn"
@@ -1256,11 +1238,14 @@ def test_environment_warns_on_stale_envless_registration(tmp_path, monkeypatch):
     db = _store_db(default_home, ws.resolve())
     db.parent.mkdir(parents=True)
     _make_db(db)
-    # Generated by the real generator with the home at default: exactly the
-    # env-less stdio shape the previous release wrote for this machine.
-    cfg = mcp_config_json(transport="stdio")
-    assert "env" not in cfg["mcpServers"]["cairn"]
-    (ws / ".mcp.json").write_text(json.dumps(cfg), encoding="utf-8")
+    # The env-less stdio shape the pre-HTTP release wrote for this machine.
+    (ws / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"cairn": {
+            "command": "cairn",
+            "args": ["serve"],
+        }}}),
+        encoding="utf-8",
+    )
 
     result = _run(db, "--json")
     assert result.exit_code == 0, result.output
@@ -1288,8 +1273,8 @@ def test_environment_does_not_spawn_workspace_registration(
     db.parent.mkdir(parents=True)
     _make_db(db)
 
-    # The payload proves non-execution: a spawn of this entry writes the
-    # marker file (the probe's appended args only become argv extras).
+    # The payload proves non-execution: spawning this entry writes the
+    # marker file.
     marker = ws / "spawned.marker"
     entry = {
         "type": "stdio",
@@ -1307,7 +1292,7 @@ def test_environment_does_not_spawn_workspace_registration(
     assert result.exit_code == 0, result.output
     row = _by_name(json.loads(result.stdout), "environment")
     assert row["status"] == "WARN"
-    assert "not spawn-probed" in row["detail"], row["detail"]
+    assert "workspace-owned" in row["detail"], row["detail"]
     assert ".mcp.json" in row["detail"], row["detail"]
     assert not marker.exists(), "doctor executed a workspace-owned registration"
 
@@ -1387,20 +1372,12 @@ def test_memory_staleness_passes_when_memories_referenced(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# `doctor --fix`: opt-in remediation of dead cairn-owned SSE registrations.
-# The engine (probe / freshness refusal / backup / atomic rewrite /
-# idempotence) is pinned in tests/test_doctor_fix.py; these pin the CLI
-# wiring: the flag, the JSON actions payload, the environment-only
-# recompute (every other row keeps its pre-fix result), and the
-# tradeoff-bearing summary.
-# ---------------------------------------------------------------------------
-
-
-def _dead_sse_responder(monkeypatch):
-    """Drive every SSE reachability probe off a live socket."""
-    from cairn.mcp_server import lifecycle
-
-    monkeypatch.setattr(lifecycle, "sse_responds", lambda **_: False)
+# `doctor --fix`: opt-in remediation of stale cairn-owned registrations.
+# The engine (transport-class flagging / freshness refusal / backup /
+# atomic rewrite / idempotence) is pinned in tests/test_doctor_fix.py;
+# Loopback default-port daemon URL (FR-005): the destination every
+# repointed registration must land on.
+DAEMON_URL = "http://127.0.0.1:9876/mcp"
 
 
 def _write_home_claude_sse(url):
@@ -1420,10 +1397,11 @@ def _age_file(path):
 
 def test_fix_repoints_dead_sse_and_recomputes_environment_only(
         tmp_path, monkeypatch):
-    """`--fix --json` repoints a dead user-owned SSE registration, lists
-    the action with the stdio-vs-daemon tradeoff, and recomputes ONLY the
-    environment row: every other check keeps its pre-fix result. A second
-    run reports zero actions and leaves the backup alone."""
+    """`--fix --json` repoints a stale user-owned SSE registration to the
+    daemon URL, lists the action with the shared-daemon tradeoff, and
+    recomputes ONLY the environment row: every other check keeps its
+    pre-fix result. A second run reports zero actions and leaves the
+    backup alone."""
     ws = tmp_path / "ws"
     ws.mkdir()
     monkeypatch.chdir(ws)
@@ -1433,7 +1411,6 @@ def test_fix_repoints_dead_sse_and_recomputes_environment_only(
     cfg = _write_home_claude_sse(url)
     before = cfg.read_bytes()
     _age_file(cfg)
-    _dead_sse_responder(monkeypatch)
 
     read_only = _run(db, "--json")
     assert read_only.exit_code == 1, read_only.output
@@ -1446,20 +1423,22 @@ def test_fix_repoints_dead_sse_and_recomputes_environment_only(
     assert payload["actions"] == [{
         "client": "claude",
         "config": "~/.claude.json",
-        "action": "repointed-to-stdio",
-        "url": url,
+        "action": "repointed-to-url",
+        "url": DAEMON_URL,
     }]
     assert [
         r for r in payload["checks"] if r["name"] != "environment"
     ] == [r for r in pre if r["name"] != "environment"]
     post_env = _by_name(payload["checks"], "environment")
     assert post_env["status"] in {"PASS", "WARN"}
-    assert "does not respond" not in post_env["detail"]
+    assert url not in post_env["detail"]
     summary = " ".join(payload["summary"])
-    assert "repointed claude in ~/.claude.json to stdio" in summary
+    assert "repointed claude in ~/.claude.json to the daemon URL" in summary
     assert "stdio" in summary and "daemon" in summary and "tradeoff" in summary
     rewritten = json.loads(cfg.read_text(encoding="utf-8"))
-    assert "command" in rewritten["mcpServers"]["cairn"]
+    entry = rewritten["mcpServers"]["cairn"]
+    assert "command" not in entry
+    assert entry["url"] == DAEMON_URL
     assert cfg.with_suffix(".json.bak").read_bytes() == before
 
     again = _run(db, "--fix", "--json")
@@ -1504,7 +1483,6 @@ def test_fix_refuses_fresh_config_with_guidance(tmp_path, monkeypatch):
     url = "http://127.0.0.1:65530/sse"
     cfg = _write_home_claude_sse(url)
     before = cfg.read_bytes()
-    _dead_sse_responder(monkeypatch)
 
     refused = _run(db, "--fix", "--json")
     assert refused.exit_code == 1, refused.output

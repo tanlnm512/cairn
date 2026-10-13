@@ -11,29 +11,29 @@ from ..mcp_server import lifecycle as lc
 
 @main.group(invoke_without_command=True)
 @click.option("--db", default=None, help="SQLite DB path (default: central store).")
-@click.option("--port", default=None, type=int, help="Port (for SSE transport).")
+@click.option("--port", default=None, type=int, help=f"HTTP daemon port (default {lc.DEFAULT_PORT}).")
 @click.option(
     "--read-only/--read-write",
     "read_only",
     default=None,
-    help="Open the graph DB read-only (default: read-only under SSE/HTTP, read-write under stdio).",
+    help="Open the graph DB read-only (default: read-write).",
 )
 @click.option(
     "--transport",
     default=None,
-    type=click.Choice(["stdio", "sse", "http"]),
-    help="Transport: stdio (default), sse, or http. An explicit value wins over the --port-means-SSE implication.",
+    hidden=True,
+    help="Removed: cairn serves streamable HTTP only.",
 )
 @click.option(
     "--host",
     default=lc.DEFAULT_HOST,
-    help=f"Bind host for the http transport (default {lc.DEFAULT_HOST}, loopback).",
+    help=f"Bind host for the HTTP daemon (default {lc.DEFAULT_HOST}, loopback).",
 )
 @click.option(
     "--api-key",
     default=None,
     help=(
-        "Bearer API key required by the http transport on non-loopback binds. "
+        "Bearer API key required by the HTTP daemon on non-loopback binds. "
         "Takes precedence over CAIRN_MCP_API_KEY; prefer the env var (this flag is visible in process listings)."
     ),
 )
@@ -41,52 +41,49 @@ from ..mcp_server import lifecycle as lc
     "--stateless",
     is_flag=True,
     default=False,
-    help="Run the http transport without session affinity (sequential session-less requests succeed; for load balancers).",
+    help="Run the HTTP daemon without session affinity (sequential session-less requests succeed; for load balancers).",
 )
 @click.pass_context
 def serve(ctx, db, port, read_only, transport, host, api_key, stateless):
-    """Start the MCP server (stdio by default, --port/--transport for SSE/HTTP), or manage the shared daemon."""
+    """Start the HTTP MCP server daemon in the foreground, or manage the shared daemon."""
+    if transport is not None:
+        _refuse_removed_transport(port, host)
     if ctx.invoked_subcommand is None:
-        # `cairn serve` with no subcommand: foreground mode.
         _serve_foreground(
             db=db, port=port, read_only=read_only,
-            transport=transport, host=host, api_key=api_key, stateless=stateless,
+            host=host, api_key=api_key, stateless=stateless,
         )
 
 
 @serve.command("run")
 @click.option("--db", default=None, help="SQLite DB path (default: central store).")
-@click.option("--port", default=None, type=int, help="Port (for SSE transport).")
+@click.option("--port", default=None, type=int, help=f"HTTP daemon port (default {lc.DEFAULT_PORT}).")
 @click.option(
     "--read-only/--read-write",
     "read_only",
     default=None,
     help=(
-        "Open the graph DB read-only (default for the shared SSE daemon). "
-        "A read-only connection cannot acquire SQLite's writer lock, so it "
-        "never contends with `cairn build`/`cairn embed`/`cairn memory` -- the "
-        "serving-time write paths (memory ref-counts, tool metrics) silently "
-        "no-op, and the write tools (record_memory, knowledge_add, ...) "
-        "still open a writable connection as needed. Use --read-write to "
-        "force read-write behaviour."
+        "Open the graph DB read-only (default: read-write). A read-only "
+        "connection cannot acquire SQLite's writer lock, so it never "
+        "contends with `cairn build`/`cairn embed`/`cairn memory`."
     ),
 )
 @click.option(
     "--transport",
     default=None,
-    type=click.Choice(["stdio", "sse", "http"]),
-    help="Transport: stdio (default), sse, or http. An explicit value wins over the --port-means-SSE implication.",
+    hidden=True,
+    help="Removed: cairn serves streamable HTTP only.",
 )
 @click.option(
     "--host",
     default=lc.DEFAULT_HOST,
-    help=f"Bind host for the http transport (default {lc.DEFAULT_HOST}, loopback).",
+    help=f"Bind host for the HTTP daemon (default {lc.DEFAULT_HOST}, loopback).",
 )
 @click.option(
     "--api-key",
     default=None,
     help=(
-        "Bearer API key required by the http transport on non-loopback binds. "
+        "Bearer API key required by the HTTP daemon on non-loopback binds. "
         "Takes precedence over CAIRN_MCP_API_KEY; prefer the env var (this flag is visible in process listings)."
     ),
 )
@@ -94,20 +91,28 @@ def serve(ctx, db, port, read_only, transport, host, api_key, stateless):
     "--stateless",
     is_flag=True,
     default=False,
-    help="Run the http transport without session affinity (sequential session-less requests succeed; for load balancers).",
+    help="Run the HTTP daemon without session affinity (sequential session-less requests succeed; for load balancers).",
 )
 def serve_run(db, port, read_only, transport, host, api_key, stateless):
-    """Run the MCP server in the foreground (stdio, SSE with --port, HTTP with --transport http)."""
+    """Run the HTTP MCP server daemon in the foreground."""
+    if transport is not None:
+        _refuse_removed_transport(port, host)
     _serve_foreground(
         db=db, port=port, read_only=read_only,
-        transport=transport, host=host, api_key=api_key, stateless=stateless,
+        host=host, api_key=api_key, stateless=stateless,
     )
 
 
-def _serve_foreground(db, port, read_only=None, transport=None, host=None, api_key=None, stateless=False):
-    """Foreground serve: stdio unless --port/--transport; read_only None = auto (read-only under SSE/HTTP, read-write under stdio)."""
-    import os
+def _refuse_removed_transport(port, host):
+    """Refuse a removed --transport value, naming the HTTP daemon URL and connect."""
+    url = lc.mcp_url(port or lc.DEFAULT_PORT, host or lc.DEFAULT_HOST)
+    click.echo(f"cairn: error: --transport is removed; cairn serves streamable HTTP at {url}.")
+    click.echo("Run `cairn connect` to start or reuse the daemon and print its URL.")
+    sys.exit(1)
 
+
+def _serve_foreground(db, port=None, read_only=None, host=None, api_key=None, stateless=False):
+    """Foreground serve: the HTTP daemon, read-write unless ``read_only``."""
     from ..mcp_server.auth import resolve_api_key
     from ..paths import resolve_store
 
@@ -115,134 +120,82 @@ def _serve_foreground(db, port, read_only=None, transport=None, host=None, api_k
     os.environ["CAIRN_DB"] = db or str(store.db)
     os.environ["CAIRN_KNOWLEDGE"] = str(store.knowledge)
     os.environ["CAIRN_WORKSPACE"] = str(store.workspace)
-    if transport is None:
-        transport = "sse" if port else "stdio"
-    # HTTP without --port lands on the documented default port.
-    if transport == "http" and not port:
-        port = lc.DEFAULT_PORT
-    # Default: the shared SSE daemon runs read-only (contention-safe); a
-    # foreground stdio server keeps read-write for interactive use.
-    if read_only is None:
-        read_only = bool(port) or transport == "http"
     os.environ["CAIRN_READ_ONLY"] = "1" if read_only else "0"
+    port = port if port is not None else lc.DEFAULT_PORT
     from ..mcp_server.server import run
 
     # Key precedence is decided here and travels in-process; run() never re-reads the env.
     run(
-        transport=transport, port=port, host=host,
+        port=port, host=host,
         api_key=resolve_api_key(api_key), stateless=stateless,
     )
 
 
 # --- daemon lifecycle subcommands -----------------------------------------
 @serve.command("start")
-@click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"SSE port (default {lc.DEFAULT_PORT}).")
-@click.option("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
+@click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"HTTP daemon port (default {lc.DEFAULT_PORT}).")
+@click.option("--host", default=lc.DEFAULT_HOST, help=f"Bind host (default {lc.DEFAULT_HOST}, loopback).")
 def serve_start(port, host):
-    """Install and start the persistent shared SSE daemon (launchd, KeepAlive); idempotent."""
-    import time
-
-    from ..mcp_server import lifecycle as lc
-
-    if not lc.is_macos():
-        click.echo("cairn serve start is macOS-only (launchd). For other platforms,")
-        click.echo(f"run `cairn serve --port {lc.DEFAULT_PORT}` manually under a process supervisor.")
+    """Start the persistent shared HTTP daemon (launchd on macOS, daemonized otherwise); idempotent."""
+    try:
+        pid, url, started = lc.ensure_daemon_running(port, host)
+    except RuntimeError as exc:
+        click.echo(f"ERROR: {exc}. Check the daemon log: {lc.daemon_log_path()}")
         sys.exit(1)
-
-    # Set env so resolve_store() in the daemon resolves the SAME workspace.
-    from ..paths import resolve_store
-
-    store = resolve_store()
-    os.environ.setdefault("CAIRN_DB", str(store.db))
-
-    if lc.is_loaded() and lc.sse_responds(port, host):
-        pid = lc.running_pid()
-        click.echo(f"cairn daemon already running (pid {pid}) at {lc.sse_url(port, host)}")
-        return
-
-    # Clean any orphan stdio servers first so they don't hold the WAL.
-    strays = lc.find_strays(str(store.db))
-    if strays:
-        click.echo(f"killing {len(strays)} orphan cairn serve process(es): {strays}")
-        lc.sweep_strays(str(store.db))
-
-    # (Re)write the plist with current port/host + cairn path + workspace env,
-    # then load. Workspace env is critical: under launchd cwd is "/", so
-    # without CAIRN_WORKSPACE the daemon can't find the store.
-    lc.write_plist(lc.render_plist(
-        port=port, host=host,
-        workspace=str(store.workspace),
-        db_path=str(store.db),
-        knowledge_path=str(store.knowledge),
-    ))
-    if not lc.load():
-        click.echo("ERROR: launchctl load failed. Check the plist and try `cairn serve status`.")
-        sys.exit(1)
-
-    # Wait for the SSE port to come up.
-    for _ in range(20):
-        if lc.sse_responds(port, host):
-            break
-        time.sleep(0.5)
+    if started:
+        click.echo(f"cairn daemon started (pid {pid}) at {url}")
     else:
-        click.echo("ERROR: daemon loaded but SSE port not responding after 10s.")
-        click.echo(f"See logs: {lc.log_path()}")
-        sys.exit(1)
-
-    pid = lc.running_pid()
-    click.echo(f"cairn daemon started (pid {pid}) at {lc.sse_url(port, host)}")
-    click.echo(f"  logs: {lc.log_path()}")
-    click.echo("  auto-restarts on crash; starts at login. Stop with `cairn serve stop`.")
+        click.echo(f"cairn daemon already running (pid {pid}) at {url}")
+    click.echo(f"  logs: {lc.daemon_log_path()}")
+    if lc.is_macos():
+        click.echo("  auto-restarts on crash; starts at login. Stop with `cairn serve stop`.")
+    else:
+        click.echo("  Stop with `cairn serve stop`.")
 
 
 @serve.command("stop")
 def serve_stop():
-    """Stop the SSE daemon and kill stray `cairn serve` processes."""
+    """Stop the shared HTTP daemon and kill stray `cairn serve` processes."""
     import time
-
-    from ..mcp_server import lifecycle as lc
-
-    if not lc.is_macos():
-        click.echo("cairn serve stop is macOS-only.")
-        sys.exit(1)
 
     from ..paths import resolve_store
 
     store = resolve_store()
 
-    # Unload launchd job (graceful SIGTERM from launchd).
-    loaded = lc.is_loaded()
-    if loaded:
-        lc.unload()
-        click.echo("unloaded LaunchAgent (launchd sent SIGTERM)")
-    else:
-        click.echo("LaunchAgent not loaded")
+    if lc.is_macos():
+        if lc.is_loaded():
+            lc.unload()
+            click.echo("unloaded LaunchAgent (launchd sent SIGTERM)")
+        else:
+            click.echo("LaunchAgent not loaded")
 
-    # Sweep orphan stdio servers holding the DB.
+    pid = lc.pidfile_pid()
+    if pid is not None:
+        lc.terminate_pid(pid, cmd_check=lc.is_cairn_serve_cmdline)
+        lc.pidfile_path().unlink(missing_ok=True)
+        click.echo(f"stopped daemonized daemon (pid {pid})")
+
     strays = lc.find_strays(str(store.db))
     if strays:
         click.echo(f"killing {len(strays)} stray cairn serve process(es): {strays}")
         lc.sweep_strays(str(store.db))
 
-    # Wait briefly for the port to release.
     time.sleep(0.5)
     click.echo("stopped.")
 
 
 @serve.command("status")
-@click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"Expected SSE port (default {lc.DEFAULT_PORT}).")
-@click.option("--host", default="127.0.0.1")
+@click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"HTTP daemon port (default {lc.DEFAULT_PORT}).")
+@click.option("--host", default=lc.DEFAULT_HOST)
 def serve_status(port, host):
-    """Show daemon health: launchd state, pid, port, strays, DB lock holders."""
-    from ..mcp_server import lifecycle as lc
-
+    """Show daemon health: managed state, pid, healthz, strays, DB lock holders."""
     from ..paths import resolve_store
 
     store = resolve_store()
 
     loaded = lc.is_loaded()
-    pid = lc.running_pid()
-    responds = lc.sse_responds(port, host)
+    pid = lc.running_pid() or lc.pidfile_pid()
+    responds = lc.healthz_responds(port, host)
     strays = lc.find_strays(str(store.db))
 
     # DB lock holders via lsof.
@@ -260,22 +213,28 @@ def serve_status(port, host):
     except Exception:
         pass
 
-    health = "HEALTHY" if (loaded and responds and not strays) else "UNHEALTHY"
+    if responds and not strays:
+        health = "HEALTHY"
+    elif pid is None and not loaded and not responds:
+        health = "not running"
+    else:
+        health = "UNHEALTHY"
     click.echo(f"cairn daemon: {health}")
     click.echo(f"  LaunchAgent loaded : {loaded}")
     click.echo(f"  daemon pid         : {pid}")
-    click.echo(f"  SSE responds       : {responds}  ({lc.sse_url(port, host)})")
+    click.echo(f"  healthz responds   : {responds}  ({lc.mcp_url(port, host)})")
     click.echo(f"  stray cairn serve pids: {strays if strays else 'none'}")
     click.echo(f"  DB lock holders    : {db_holders if db_holders else 'none'}")
-    click.echo(f"  plist              : {lc.plist_path()}")
-    click.echo(f"  log                : {lc.log_path()}")
+    if lc.is_macos():
+        click.echo(f"  plist              : {lc.plist_path()}")
+    click.echo(f"  log                : {lc.daemon_log_path()}")
     if strays:
         click.echo("  -> run `cairn serve stop` to kill strays")
 
 
 @serve.command("restart")
-@click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"SSE port (default {lc.DEFAULT_PORT}).")
-@click.option("--host", default="127.0.0.1")
+@click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"HTTP daemon port (default {lc.DEFAULT_PORT}).")
+@click.option("--host", default=lc.DEFAULT_HOST)
 @click.pass_context
 def serve_restart(ctx, port, host):
     """Stop then start the daemon."""

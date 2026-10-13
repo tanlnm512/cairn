@@ -37,6 +37,41 @@ def test_empty_flag_falls_through(auth, monkeypatch):
     assert auth.resolve_api_key("") is None
 
 
+def test_persisted_api_key_absent_file_returns_none(auth):
+    assert auth.persisted_api_key() is None
+
+
+def test_persisted_api_key_present_file_returns_value(auth):
+    from cairn import paths
+
+    paths.CAIRN_HOME.mkdir(parents=True, exist_ok=True)
+    (paths.CAIRN_HOME / "mcp-api-key").write_text("persisted-secret")
+    assert auth.persisted_api_key() == "persisted-secret"
+
+
+def test_resolve_api_key_ignores_persisted_key_file(auth, monkeypatch):
+    from cairn import paths
+
+    paths.CAIRN_HOME.mkdir(parents=True, exist_ok=True)
+    (paths.CAIRN_HOME / "mcp-api-key").write_text("persisted-secret")
+    assert auth.persisted_api_key() == "persisted-secret"
+    monkeypatch.delenv("CAIRN_MCP_API_KEY", raising=False)
+    assert auth.resolve_api_key(None) is None
+
+
+def test_persisted_api_key_follows_env_repointed_after_import(auth, monkeypatch, tmp_path):
+    """The key file must follow a CAIRN_HOME env change made after import
+    (call-time resolution), not the stale import-time paths.CAIRN_HOME binding."""
+    from cairn import paths
+
+    env_home = tmp_path / "env_home"
+    env_home.mkdir()
+    (env_home / "mcp-api-key").write_text("env-home-secret")
+    monkeypatch.setattr(paths, "CAIRN_HOME", tmp_path / "stale_import_binding")
+    monkeypatch.setenv("CAIRN_HOME", str(env_home))
+    assert auth.persisted_api_key() == "env-home-secret"
+
+
 def test_raw_header_correct_key(auth):
     assert auth.bearer_key_ok(f"Bearer {_KEY}", _KEY) is True
 

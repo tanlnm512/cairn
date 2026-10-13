@@ -1,6 +1,7 @@
-"""Lifecycle management for the cairn SSE daemon (macOS launchd)."""
+"""Lifecycle management for the cairn HTTP daemon (macOS launchd)."""
 from __future__ import annotations
 
+import contextlib
 import os
 import plistlib
 import re
@@ -8,11 +9,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from cairn.paths import cairn_home_env
+from cairn.paths import cairn_home_env, resolve_store
 
-LABEL = "dev.cairn.sse"
+LABEL = "dev.cairn.mcp"
+LEGACY_LABEL = "dev.cairn.sse"
 DEFAULT_PORT = 9876
 DEFAULT_HOST = "127.0.0.1"
+_LAUNCHCTL_TIMEOUT = 15.0
 
 
 def is_macos() -> bool:
@@ -28,14 +31,65 @@ def plist_path() -> Path:
 
 
 def log_path() -> Path:
-    return Path.home() / "Library" / "Logs" / "cairn-sse.log"
+    return Path.home() / "Library" / "Logs" / "cairn-mcp.log"
+
+
+def daemon_home() -> Path:
+    """CAIRN_HOME for daemon state, resolved at call time (env override wins)."""
+    env = os.environ.get("CAIRN_HOME")
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ".cairn"
+
+
+def daemon_log_path() -> Path:
+    """Log file the managed daemon writes to on this platform."""
+    if is_macos():
+        return log_path()
+    return daemon_home() / "cairn-mcp.log"
+
+
+def pidfile_path() -> Path:
+    return daemon_home() / "mcp-daemon.pid"
+
+
+def _lockfile_path() -> Path:
+    return daemon_home() / "mcp-daemon.lock"
+
+
+def pidfile_pid() -> int | None:
+    """Daemon pid recorded in the pidfile; None when absent or unparsable."""
+    try:
+        text = pidfile_path().read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return int(text.strip())
+    except ValueError:
+        return None
+
+
+def _write_pidfile(pid: int) -> None:
+    path = pidfile_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{pid}\n", encoding="utf-8")
+
+
+def _running_bin() -> str | None:
+    """Absolute path of the cairn executable running this process, when nameable."""
+    argv0 = sys.argv[0] if sys.argv else None
+    if not argv0 or Path(argv0).name != "cairn":
+        return None
+    resolved = os.path.realpath(os.path.abspath(argv0))
+    return resolved if Path(resolved).exists() else None
 
 
 def cg_bin() -> str:
-    """Absolute path to the cairn executable to launch. Prefers the same one
-    that's running this process; falls back to PATH lookup."""
+    """Absolute path to the cairn executable to launch: CAIRN_BIN, then the
+    one running this process, then PATH lookup, then the ~/.local install."""
     for cand in (
         os.environ.get("CAIRN_BIN"),
+        _running_bin(),
         shutil_which("cairn"),
         str(Path.home() / ".local" / "bin" / "cairn"),
     ):
@@ -56,9 +110,9 @@ def render_plist(
     workspace: str | None = None,
     db_path: str | None = None,
     knowledge_path: str | None = None,
-    read_only: bool = True,
+    read_only: bool = False,
 ) -> dict:
-    """Build the LaunchAgent plist dict for a read-only-by-default `cairn serve run` daemon."""
+    """Build the LaunchAgent plist dict for a read-write-by-default `cairn serve run` daemon."""
     bin_ = cg_bin()
     env = {
         # Inherit the user PATH so `cairn` can find python etc.
@@ -97,26 +151,31 @@ def write_plist(plist: dict) -> Path:
     return path
 
 
+def _run_launchctl(args: list[str]) -> subprocess.CompletedProcess | None:
+    """Bounded launchctl call; None on timeout so no invocation can wedge the start lock."""
+    try:
+        return subprocess.run(
+            ["launchctl", *args],
+            capture_output=True, text=True, timeout=_LAUNCHCTL_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+
+
 def is_loaded() -> bool:
     """True if the LaunchAgent is currently loaded."""
     if not is_macos():
         return False
-    r = subprocess.run(
-        ["launchctl", "list", LABEL],
-        capture_output=True, text=True,
-    )
-    return r.returncode == 0
+    r = _run_launchctl(["list", LABEL])
+    return r is not None and r.returncode == 0
 
 
 def running_pid() -> int | None:
     """PID of the running daemon, or None; parses both launchctl output formats."""
     if not is_macos():
         return None
-    r = subprocess.run(
-        ["launchctl", "list", LABEL],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
+    r = _run_launchctl(["list", LABEL])
+    if r is None or r.returncode != 0:
         return None
     # Modern plist-style output: "PID" = 6155;
     m = re.search(r'"PID"\s*=\s*(\d+)', r.stdout)
@@ -159,11 +218,17 @@ def _pid_cmdline(pid: int) -> str | None:
 def _is_cairn_serve_cmdline(cmdline: str) -> bool:
     """True when ``cmdline`` is a real `cairn serve` server invocation (anchored, subcommands excluded)."""
     tokens = cmdline.split()
+    if len(tokens) >= 3 and Path(tokens[0]).name.startswith("python"):
+        # Shebang exec: console scripts run as `python <path>/cairn serve ...`.
+        tokens = tokens[1:]
     if len(tokens) < 2:
         return False
     if Path(tokens[0]).name != "cairn" or tokens[1] != "serve":
         return False
     return not (len(tokens) > 2 and tokens[2] in _SERVE_LIFECYCLE_SUBCOMMANDS)
+
+
+is_cairn_serve_cmdline = _is_cairn_serve_cmdline  # public name for CLI consumers
 
 
 def _db_holder_pids(db_path: str | Path) -> set[int] | None:
@@ -190,9 +255,9 @@ def _pgrep_candidates() -> list[int]:
     try:
         r = subprocess.run(
             ["pgrep", "-f", "cairn serve"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=5,
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         return []
     pids: list[int] = []
     if r.returncode == 0:
@@ -210,6 +275,11 @@ def find_strays(db_path: str | Path) -> list[int]:
     protected = {daemon_pid, os.getpid()}
     if daemon_pid is not None:
         protected |= _children_of(daemon_pid)
+    pf_pid = pidfile_pid()
+    if pf_pid is not None and pf_pid not in protected:
+        cmdline = _pid_cmdline(pf_pid)
+        if cmdline is not None and _is_cairn_serve_cmdline(cmdline):
+            protected.add(pf_pid)
 
     server_pids: list[int] = []
     for pid in _pgrep_candidates():
@@ -238,9 +308,9 @@ def _children_of(ppid: int) -> set[int]:
     try:
         r = subprocess.run(
             ["pgrep", "-P", str(ppid)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=5,
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         return set()
     children: set[int] = set()
     if r.returncode == 0:
@@ -297,6 +367,21 @@ def sweep_strays(db_path: str | Path, log: bool = False) -> int:
     return len(strays)
 
 
+_legacy_label_unloaded = False
+
+
+def _unload_legacy_label_once() -> None:
+    """Unload the retired sse-label agent once, before the first load of the current label."""
+    global _legacy_label_unloaded
+    if _legacy_label_unloaded:
+        return
+    _legacy_label_unloaded = True
+    legacy_plist = agents_dir() / f"{LEGACY_LABEL}.plist"
+    if not legacy_plist.exists():
+        return
+    _run_launchctl(["unload", str(legacy_plist)])
+
+
 def load() -> bool:
     """Load (and start) the LaunchAgent. Returns True on success."""
     if not is_macos():
@@ -306,10 +391,12 @@ def load() -> bool:
         raise FileNotFoundError(
             f"{path} not found. Run `cairn serve start` first to create it."
         )
-    r = subprocess.run(
-        ["launchctl", "load", str(path)],
-        capture_output=True, text=True,
-    )
+    _unload_legacy_label_once()
+    r = _run_launchctl(["load", str(path)])
+    if r is None:
+        raise RuntimeError(
+            f"launchctl load timed out after {_LAUNCHCTL_TIMEOUT}s"
+        )
     return r.returncode == 0
 
 
@@ -320,29 +407,132 @@ def unload() -> bool:
     path = plist_path()
     if not path.exists():
         return True  # nothing to unload
-    r = subprocess.run(
-        ["launchctl", "unload", str(path)],
-        capture_output=True, text=True,
-    )
+    r = _run_launchctl(["unload", str(path)])
+    if r is None:
+        raise RuntimeError(
+            f"launchctl unload timed out after {_LAUNCHCTL_TIMEOUT}s"
+        )
     # unload returns nonzero if already unloaded; treat as success.
     return r.returncode == 0
 
 
-def sse_url(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST) -> str:
-    return f"http://{host}:{port}/sse"
+def mcp_url(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST) -> str:
+    return f"http://{host}:{port}/mcp"
 
 
-def sse_responds(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST, timeout: float = 2.0) -> bool:
-    """True when the SSE server accepts and answers an HTTP request within ``timeout``."""
-    import socket
+def healthz_responds(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST, timeout: float = 2.0) -> bool:
+    """True when the daemon answers GET /healthz with 200 within ``timeout``."""
+    import http.client
 
+    conn = http.client.HTTPConnection(host, port, timeout=timeout)
     try:
-        with socket.create_connection((host, port), timeout=timeout) as sock:
-            sock.settimeout(timeout)
-            # Probe the root path -- any HTTP status line (including 404) proves
-            # uvicorn is servicing requests.
-            sock.sendall(f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
-            first = sock.recv(1, socket.MSG_PEEK)
-            return bool(first)
-    except OSError:
+        conn.request("GET", "/healthz")
+        return conn.getresponse().status == 200
+    except (OSError, http.client.HTTPException):
         return False
+    finally:
+        conn.close()
+
+
+@contextlib.contextmanager
+def _start_lock():
+    """Exclusive flock over the daemon start sequence; a fresh fd per call so
+    concurrent callers (threads and processes) serialize, and the lock is
+    kernel-released when the holder dies."""
+    import fcntl
+
+    path = _lockfile_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _wait_for_healthz(port: int, host: str, attempts: int = 60, delay: float = 0.5) -> bool:
+    import time
+
+    for _ in range(attempts):
+        if healthz_responds(port, host):
+            return True
+        time.sleep(delay)
+    return False
+
+
+def _ensure_running_launchd(port: int, host: str) -> tuple[int | None, str, bool]:
+    """macOS core: reuse the loaded healthy agent, else sweep, write plist, load, wait."""
+    if is_loaded():
+        if healthz_responds(port, host):
+            return running_pid(), mcp_url(port, host), False
+        # KeepAlive respawn window: the job is loaded but not yet serving --
+        # wait it out before any write/load attempt.
+        if _wait_for_healthz(port, host):
+            return running_pid(), mcp_url(port, host), False
+        unload()  # wedged job: cycle it before a fresh load
+    store = resolve_store()
+    sweep_strays(str(store.db), log=True)
+    write_plist(render_plist(
+        port=port, host=host,
+        workspace=str(store.workspace),
+        db_path=str(store.db),
+        knowledge_path=str(store.knowledge),
+    ))
+    if not load():
+        raise RuntimeError("launchctl load failed")
+    if not _wait_for_healthz(port, host):
+        raise RuntimeError("daemon loaded but healthz not responding")
+    return running_pid(), mcp_url(port, host), True
+
+
+def _daemonize_exec(port: int, bin_: str, env: dict[str, str]) -> None:
+    """Child side of the daemonize fallback: detach, redirect stdio, exec serve run."""
+    os.setsid()
+    log_fd = os.open(
+        str(daemon_log_path()),
+        os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_CLOEXEC, 0o644,
+    )
+    devnull_fd = os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)
+    os.dup2(devnull_fd, 0)
+    os.dup2(log_fd, 1)
+    os.dup2(log_fd, 2)
+    os.close(log_fd)
+    os.close(devnull_fd)
+    try:
+        os.execvpe(bin_, [bin_, "serve", "run", "--port", str(port)], env)
+    except OSError:
+        os._exit(1)
+
+
+def _ensure_running_daemonize(port: int, host: str) -> tuple[int | None, str, bool]:
+    """Non-macOS core: reuse a healthy daemon, else fork a detached serve run."""
+    if healthz_responds(port, host):
+        return pidfile_pid(), mcp_url(port, host), False
+    store = resolve_store()
+    sweep_strays(str(store.db), log=True)
+    env = {
+        **os.environ,
+        "CAIRN_WORKSPACE": str(store.workspace),
+        "CAIRN_DB": str(store.db),
+        "CAIRN_KNOWLEDGE": str(store.knowledge),
+    }
+    bin_ = cg_bin()
+    pid = os.fork()
+    if pid == 0:
+        _daemonize_exec(port, bin_, env)
+        os._exit(1)
+    _write_pidfile(pid)
+    if not _wait_for_healthz(port, host):
+        raise RuntimeError("daemon started but healthz not responding")
+    return pid, mcp_url(port, host), True
+
+
+def ensure_daemon_running(
+    port: int = DEFAULT_PORT, host: str = DEFAULT_HOST,
+) -> tuple[int | None, str, bool]:
+    """Bring up the shared HTTP daemon; returns (pid, mcp_url, started)."""
+    with _start_lock():
+        if is_macos():
+            return _ensure_running_launchd(port, host)
+        return _ensure_running_daemonize(port, host)

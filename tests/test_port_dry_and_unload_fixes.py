@@ -5,6 +5,8 @@ This file tests:
 2. lifecycle.unload() returns the real exit status, not always True
 3. render_plist embeds CAIRN_HOME in EnvironmentVariables iff the
    home is non-default
+4. render_plist defaults to a read-write daemon under a non-sse
+   label and log name
 """
 from __future__ import annotations
 
@@ -138,3 +140,37 @@ class TestPlistEnvironmentVariables:
         assert env["CAIRN_WORKSPACE"] == "/tmp/ws"
         assert env["CAIRN_DB"] == "/tmp/ws/.kg"
         assert env["CAIRN_KNOWLEDGE"] == "/tmp/ws/.knowledge"
+
+
+class TestPlistReadWriteDefaultAndLabel:
+    """render_plist pins a read-write daemon by default (FR-002) under a
+    non-sse LaunchAgent label and log name (FR-010); --read-only stays the
+    explicit opt-out."""
+
+    def test_render_plist_default_runs_read_write(self):
+        """The default plist must not pin the daemon read-only: no
+        --read-only argument and no CAIRN_READ_ONLY=1 env entry."""
+        from cairn.mcp_server import lifecycle
+
+        plist = lifecycle.render_plist()
+        assert "--read-only" not in plist["ProgramArguments"]
+        assert plist["EnvironmentVariables"].get("CAIRN_READ_ONLY") != "1"
+
+    def test_render_plist_explicit_read_only_appends_flag(self):
+        """render_plist(read_only=True) keeps the --read-only opt-out."""
+        from cairn.mcp_server import lifecycle
+
+        plist = lifecycle.render_plist(read_only=True)
+        assert "--read-only" in plist["ProgramArguments"]
+
+    def test_render_plist_label_and_log_drop_sse_naming(self):
+        """The LaunchAgent label and the log file names must not carry the
+        sse naming of the retired transport."""
+        from cairn.mcp_server import lifecycle
+
+        plist = lifecycle.render_plist()
+        label = plist["Label"]
+        assert label.startswith("dev.cairn."), "label keeps the dev.cairn prefix"
+        assert "sse" not in label.lower()
+        for key in ("StandardOutPath", "StandardErrorPath"):
+            assert "sse" not in Path(plist[key]).name.lower()

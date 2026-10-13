@@ -14,9 +14,9 @@ from .._common import (
     _claude_hook_command,
     _claude_instructions,
     _uninstall_bases,
-    default_sse_url,
+    auth_headers,
+    daemon_mcp_url,
     mcp_config_json,
-    resolve_cg_command,
 )
 from ..merge import (
     _merge_json_file,
@@ -27,7 +27,6 @@ from ..merge import (
     _write_file,
     _write_tree,
 )
-from ...paths import cairn_home_env
 
 
 def claude_hooks_block() -> dict:
@@ -68,7 +67,6 @@ def claude_hooks_block() -> dict:
 
 
 def install_claude(workspace: str, force: bool, dry_run: bool,
-                   transport: str = "stdio", sse_url: str | None = None,
                    scope: str = "workspace") -> InstallResult:
     """Install Claude Code assets and MCP registration for the selected scope."""
     ws = Path(workspace)
@@ -79,21 +77,15 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
 
     # Claude reads workspace .mcp.json only; global registration uses user scope.
     if scope == "workspace":
-        _merge_json_file(base / ".mcp.json", mcp_config_json(transport, sse_url), force, res, dry_run=dry_run)
+        _merge_json_file(base / ".mcp.json", mcp_config_json(), force, res, dry_run=dry_run)
     else:
         if dry_run:
             res.notes.append("[dry-run] Would register MCP globally via `claude mcp add --scope user`.")
         elif shutil.which("claude"):
-            if transport == "sse":
-                url = default_sse_url(sse_url)
-                argv = ["claude", "mcp", "add", "--transport", "sse",
-                        "--scope", "user", "cairn", url]
-            else:
-                # -- ends CLI options; -e persists a non-default home in the registration.
-                argv = ["claude", "mcp", "add", "cairn", "--scope", "user"]
-                for key, value in cairn_home_env().items():
-                    argv += ["-e", f"{key}={value}"]
-                argv += ["--", *resolve_cg_command(), "serve"]
+            argv = ["claude", "mcp", "add", "--transport", "http",
+                    "--scope", "user", "cairn", daemon_mcp_url()]
+            for name, value in auth_headers().items():
+                argv += ["--header", f"{name}: {value}"]
             try:
                 proc = subprocess.run(argv, capture_output=True, timeout=15, check=False,
                                       text=True, errors="replace")
@@ -143,7 +135,7 @@ def install_claude(workspace: str, force: bool, dry_run: bool,
     if scope == "workspace":
         claude_md = ws / "CLAUDE.md"
         if not claude_md.exists():
-            _write_file(claude_md, _claude_instructions(transport, sse_url), force=False, result=res, dry_run=dry_run)
+            _write_file(claude_md, _claude_instructions(), force=False, result=res, dry_run=dry_run)
         else:
             res.skipped.append(str(claude_md) + " (exists; not overwritten)")
 

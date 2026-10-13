@@ -22,13 +22,12 @@ def _omp_agents_dir(workspace: str, scope: str = "workspace") -> Path:
 
 
 def install_omp(workspace: str, force: bool = False, dry_run: bool = False,
-                transport: str = "stdio", sse_url: str | None = None,
                 scope: str = "workspace") -> InstallResult:
     """Wire cairn into omp (.omp/mcp.json + .omp/agents/*.md)."""
     res = InstallResult("omp")
 
     mcp_path = _omp_mcp_path(workspace, scope)
-    _merge_json_file(mcp_path, mcp_config_json(transport, sse_url), force, res, dry_run=dry_run)
+    _merge_json_file(mcp_path, mcp_config_json(), force, res, dry_run=dry_run)
     res.notes.append(f"MCP server written to {mcp_path} under the `mcpServers` key.")
 
     agents_dir = _omp_agents_dir(workspace, scope)

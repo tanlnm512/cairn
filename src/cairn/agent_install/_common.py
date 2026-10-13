@@ -69,47 +69,40 @@ def resolve_cg_command() -> list[str]:
     return [sys.executable, "-m", "cairn.cli"]
 
 
-def opencode_format_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
-    """Return an OpenCode/Kilo MCP entry using a single local command array."""
-    if transport == "sse":
-        return {"mcp": {"cairn": {"type": "remote", "url": default_sse_url(sse_url), "enabled": True}}}
-    entry: dict = {"type": "local", "command": resolve_cg_command() + ["serve"], "enabled": True}
-    env = paths.cairn_home_env()
-    if env:
-        entry["env"] = env
+def daemon_mcp_url() -> str:
+    """Return the default daemon's MCP URL (loopback, default port, /mcp path)."""
+    from ..mcp_server import lifecycle as lc
+
+    return lc.mcp_url()
+
+
+def auth_headers() -> dict:
+    """Return the Authorization header carrying the persisted key; {} when no key exists."""
+    from ..mcp_server.auth import persisted_api_key
+
+    key = persisted_api_key()
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
+def _url_entry(url_key: str = "url") -> dict:
+    """Return the shared URL+key registration entry; ``url_key`` names the client's URL field."""
+    entry: dict = {"type": "http", url_key: daemon_mcp_url()}
+    if headers := auth_headers():
+        entry["headers"] = headers
+    return entry
+
+
+def opencode_format_mcp_config_json() -> dict:
+    """Return an OpenCode/Kilo MCP entry pointing at the shared daemon URL."""
+    entry: dict = {"type": "remote", "url": daemon_mcp_url(), "enabled": True}
+    if headers := auth_headers():
+        entry["headers"] = headers
     return {"mcp": {"cairn": entry}}
 
 
-def default_sse_url(sse_url: str | None = None) -> str:
-    """Resolve the SSE daemon URL: explicit --sse-url or the shared default."""
-    from ..mcp_server import lifecycle as lc
-
-    return sse_url or f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
-
-
-def mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
-    """Return the shared mcpServers config for stdio or SSE transport."""
-    if transport == "sse":
-        url = default_sse_url(sse_url)
-        # Include "type": "sse" explicitly for maximum cross-client compat.
-        # Some clients (Cursor) infer from `url`; others (ZCode, older Claude
-        # Desktop builds) want the explicit type. Harmless where it's ignored.
-        return {"mcpServers": {"cairn": {"type": "sse", "url": url}}}
-    cmd = resolve_cg_command()
-    if len(cmd) == 1:
-        # cairn binary: args = ["serve"]
-        entry: dict = {"command": cmd[0], "args": ["serve"]}
-    else:
-        # Module fallback: append "serve" to the module arguments.
-        command, *prefix = cmd
-        entry = {"command": command, "args": [*prefix, "serve"]}
-    # A non-default CAIRN_HOME must travel with the registration so the
-    # client-spawned server resolves the same store; {} on default keeps
-    # the generated config env-less.
-    env = paths.cairn_home_env()
-    if env:
-        entry["env"] = env
-    return {"mcpServers": {"cairn": entry}}
+def mcp_config_json() -> dict:
+    """Return the shared mcpServers config: a URL+key entry for the daemon."""
+    return {"mcpServers": {"cairn": _url_entry()}}
 
 
 def _python_for_hooks() -> str:
@@ -352,40 +345,35 @@ You can read these files directly when MCP is unavailable.
 """
 
 
-def _transport_note(transport: str = "stdio", sse_url: str | None = None) -> str:
+def _transport_note() -> str:
     """One-line transport description; must match what mcp_config_json() writes."""
-    if transport == "sse":
-        from ..mcp_server import lifecycle as lc
-
-        url = sse_url or f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
-        return (
-            f"- Transport: SSE, shared daemon at {url} (one process serves every "
-            "MCP client; managed via `cairn serve start` / `stop` / `status`).\n"
-            "- Do NOT run `cairn serve` yourself in this workspace -- a stray stdio "
-            "server would hold SQLite's writer lock and bring back \"database is "
-            "locked\" for every other client."
-        )
-    return "- Transport: stdio (one `cairn serve` process per client, spawned automatically by the MCP client)."
+    return (
+        f"- Transport: HTTP, shared daemon at {daemon_mcp_url()} (one process "
+        "serves every MCP client; authenticated by the persisted API key).\n"
+        "- Start the daemon with `cairn connect`; manage it via `cairn serve "
+        "start` / `stop` / `status`. Do not run a second `cairn serve` against "
+        "the same store."
+    )
 
 
-def _claude_instructions(transport: str = "stdio", sse_url: str | None = None) -> str:
+def _claude_instructions() -> str:
     return (
         "# Codebase Intelligence (Cairn)\n\n"
         "This workspace is connected to the cairn knowledge system. Use these tools\n"
         "to understand the codebase before making changes. Start with the router, drill\n"
         "down with layer-specific tools.\n\n"
-        f"{_transport_note(transport, sse_url)}\n\n"
+        f"{_transport_note()}\n\n"
     ) + _INSTRUCTIONS_BODY
 
 
-def _agents_instructions(transport: str = "stdio", sse_url: str | None = None) -> str:
+def _agents_instructions() -> str:
     return (
         "# Codebase Intelligence System\n\n"
         "This workspace uses a local knowledge graph (cairn) for codebase intelligence.\n"
         "All AI coding agents working in this workspace should use these tools.\n\n"
         "## MCP Server\n"
         "- Name: `cairn` (auto-connected at session start)\n"
-        f"{_transport_note(transport, sse_url)}\n"
+        f"{_transport_note()}\n"
         "- 26 tools across 4 layers: graph + federation (13), knowledge base + compass (5), memory (2), knowledge docs + wiki (6)\n"
         "  (`explore` is the recommended first call -- it aggregates the graph layer)\n"
         "\n"

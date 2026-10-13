@@ -38,7 +38,7 @@ through a decoupled task queue.
 
 | Surface | Module | Facts |
 |---|---|---|
-| MCP server | `src/cairn/mcp_server/` | FastMCP; stdio per-client spawn (default) or SSE daemon on `:9876`; exactly 26 tools (verified at boot); `cairn://status` resource |
+| MCP server | `src/cairn/mcp_server/` | FastMCP; Streamable HTTP daemon on `:9876` (one shared process, read-write default; `cairn connect` ensures it is running); exactly 26 tools (verified at boot); `cairn://status` resource |
 | CLI | `src/cairn/cli/` | Click; entry point `cairn` → `cairn.cli:main`; see [cli-reference.md](cli-reference.md) |
 | Dashboard | `src/cairn/dashboard/app.py` | Starlette + Jinja2 + uvicorn; loopback-only `127.0.0.1:8765`; views use read-only SQLite connections, the Settings page persists to `~/.cairn/config.json`; knowledge views — `/knowledge` catalog, `/knowledge/{family}/{slug}` detail with relationship panels, `/knowledge/graph` relationship canvas — render from the OKF bundle + derived `knowledge_edges` index |
 
@@ -141,9 +141,9 @@ The `.kg` SQLite database (`src/cairn/graph/schema.py`) holds:
 
 ## Runtime model
 
-- The MCP server boots with: tool-count verification → parent-death watchdog
-  (stdio) → background model warm-up → boot catch-up reindex
-  (`ensure_fresh_force`) → memory decay → live file watcher (`[watch]` extra).
+- The MCP daemon boots with: tool-count verification → background model
+  warm-up → boot catch-up reindex (`ensure_fresh_force`) → memory decay →
+  live file watcher (`[watch]` extra).
 - One writer at a time: builds take `build_lock` (flock, non-blocking) around
   the write phase; full-workspace builds write to a temp DB and atomically
   swap (`swap_db_file`).

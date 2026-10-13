@@ -645,9 +645,9 @@ def _check_config() -> dict:
     return _result("config", _PASS, "; ".join(f"{k}={v}" for k, v in knobs))
 
 
-# Environment wiring is appended to both doctor return paths. It reports read-only
-# registration, spawn-probe, and endpoint findings; only a wrong existing store or an
-# unreachable endpoint FAILs.
+# Environment wiring is appended to both doctor return paths. It reports
+# store-presence and registration transport-class findings; only a
+# non-daemon endpoint FAILs.
 
 # Per-client MCP registration files the doctor audits -- exactly the paths
 # check_installed consults (agent_install/detect.py); workspace files are
@@ -708,20 +708,8 @@ def _enumerate_registrations() -> list[tuple[str, Path, str, dict, bool]]:
     return found
 
 
-def _spawnable_workspace_entry(entry: dict) -> bool:
-    """True when a workspace-owned stdio entry is exactly the shape install-agents writes (untrusted otherwise)."""
-    from ...agent_install import _registration_argv
-    from ...agent_install._common import resolve_cg_command
-
-    cmd = resolve_cg_command()
-    if len(cmd) != 1 or _registration_argv(entry) != [cmd[0], "serve"]:
-        return False
-    env = entry.get("env")
-    return not isinstance(env, dict) or set(env) <= {"CAIRN_HOME"}
-
-
-def _sse_endpoint(entry: dict) -> str | None:
-    """The SSE URL of a URL-based registration (``url`` / agy's ``serverUrl``)."""
+def _registration_url(entry: dict) -> str | None:
+    """The endpoint URL of a URL-based registration (``url`` / agy's ``serverUrl``)."""
     for key in ("url", "serverUrl"):
         value = entry.get(key)
         if isinstance(value, str) and "://" in value:
@@ -729,138 +717,70 @@ def _sse_endpoint(entry: dict) -> str | None:
     return None
 
 
-def _sse_host_port(url: str) -> tuple[str, int] | None:
-    """(host, port) out of an SSE URL (the minimal parse the reachability
-    probes already use); None when the URL has no usable host:port."""
-    try:
-        host_part = url.split("://", 1)[1].split("/", 1)[0]
-        host, port_s = host_part.rsplit(":", 1)
-        return host, int(port_s)
-    except (IndexError, ValueError):
-        return None
+def _stale_registration(entry: dict, daemon_url: str) -> bool:
+    """True when the registration predates the HTTP daemon (stdio spawn-shaped, or a non-daemon endpoint)."""
+    if "command" in entry:
+        return True
+    url = _registration_url(entry)
+    return url is not None and url != daemon_url
 
 
-# Different-store verdict shape from verify_registration: the fail
-# detail that names the store the registration ACTUALLY resolves alongside
-# the intended one. Everything else it returns starts with "probe ".
-_RESOLVES_PREFIX = "registration resolves db="
-_TARGET_SEP = "; install target db="
-
-
-def _registration_findings(
-    db: str,
-) -> tuple[list[tuple[str, str]], list[str], list[str]]:
-    """Sub-audit (b): stdio env/spawn-probe and SSE endpoint findings; returns (findings, hints, sse paths)."""
-    from ...agent_install import _registration_argv, verify_registration
-    from ...mcp_server import lifecycle
-    from ...paths import cairn_home_env
+def _registration_findings() -> tuple[list[tuple[str, str]], list[str]]:
+    """Sub-audit (b): transport-class findings — stdio spawn-shaped, SSE endpoint, unsupported desktop."""
+    from ...agent_install._common import daemon_mcp_url
 
     findings: list[tuple[str, str]] = []
     hints: list[str] = []
-    sse_disps: list[str] = []
-    stale_hint = (
-        "run `cairn install-agents` to rewrite registrations with "
-        "environment propagation"
+    rewrite_hint = (
+        "run `cairn install-agents` to rewrite registrations to the daemon "
+        "URL (`cairn doctor --fix` repoints user-owned configs)"
     )
-    # The doctor's own resolved store: cwd-based, the same store the other
-    # checks audit -- the probe's comparison target.
-    expected = {"db": str(db), "workspace": str(Path.cwd())}
-    required_env = cairn_home_env()
+    daemon_url = daemon_mcp_url()
 
     for client, _path, disp, entry, workspace_owned in (
             _enumerate_registrations()):
+        if client == "claude-desktop":
+            findings.append((
+                _WARN,
+                f"claude-desktop: registration in {disp} is unsupported "
+                "(Claude Desktop has no URL-based MCP surface; the daemon "
+                "serves HTTP only)",
+            ))
+            hints.append(
+                "remove the cairn entry from the Claude Desktop config "
+                "(it is never repointed)"
+            )
+            continue
         if "command" in entry:
-            written = entry.get("env")
-            written_env = dict(written) if isinstance(written, dict) else {}
-            # Env completeness is judged on the written block, BEFORE
-            # the probe (which pins the intended env over it).
-            missing = sorted(
-                k for k, v in required_env.items() if written_env.get(k) != v
-            )
-            if not written_env:
+            if workspace_owned:
                 findings.append((
                     _WARN,
-                    f"{client}: stdio registration in {disp} has no env "
-                    "block (pre-environment-propagation shape; it resolves "
-                    "the store by cwd only)",
+                    f"{client}: stdio registration in {disp} is "
+                    "workspace-owned (untrusted repo content; doctor does "
+                    "not execute or rewrite it)",
                 ))
-                hints.append(stale_hint)
-            elif missing:
-                findings.append((
-                    _WARN,
-                    f"{client}: stdio registration in {disp} does not pin "
-                    f"{', '.join(missing)} to the effective home",
-                ))
-                hints.append(stale_hint)
-
-            if workspace_owned and not _spawnable_workspace_entry(entry):
-                findings.append((
-                    _WARN,
-                    f"{client}: stdio registration in {disp} was not "
-                    "spawn-probed (workspace-owned registration files are "
-                    "untrusted; only the shape `cairn install-agents` "
-                    "writes is executed)",
-                ))
-                hints.append(stale_hint)
-                continue
-
-            status, detail = verify_registration(
-                _registration_argv(entry), written_env, Path.cwd(), expected,
-            )
-            if status == "pass":
-                continue
-            resolved_db = ""
-            if detail.startswith(_RESOLVES_PREFIX) and _TARGET_SEP in detail:
-                body = detail[len(_RESOLVES_PREFIX):].split(_TARGET_SEP, 1)[0]
-                resolved_db = body.split(" workspace=", 1)[0]
-            if resolved_db and Path(resolved_db).exists():
-                findings.append((
-                    _FAIL,
-                    f"{client}: registration resolves a different existing "
-                    f"store -- {detail}",
-                ))
-                hints.append(stale_hint)
-            elif resolved_db:
-                findings.append((
-                    _WARN,
-                    f"{client}: {detail} (the resolved store does not exist "
-                    "on disk)",
-                ))
-                hints.append(stale_hint)
             else:
                 findings.append((
                     _WARN,
-                    f"{client}: registration probe failed -- {detail}",
+                    f"{client}: stdio registration in {disp} predates the "
+                    "HTTP daemon (`cairn serve` serves HTTP only)",
                 ))
-                hints.append(stale_hint)
-        else:
-            url = _sse_endpoint(entry)
-            if url is None:
-                continue
-            sse_disps.append(disp)
-            host_port = _sse_host_port(url)
-            responds = host_port is not None and lifecycle.sse_responds(
-                host=host_port[0], port=host_port[1]
-            )
-            if responds:
-                continue
-            findings.append((
-                _FAIL,
-                f"{client}: SSE registration in {disp} points at {url} but "
-                "the endpoint does not respond (no daemon is serving it)",
-            ))
-            hints.append(
-                "start the shared daemon (`cairn serve start`) or "
-                "re-register with `cairn install-agents --stdio`"
-            )
-    return findings, hints, sse_disps
+            hints.append(rewrite_hint)
+            continue
+        url = _registration_url(entry)
+        if url is None or url == daemon_url:
+            continue
+        findings.append((
+            _FAIL,
+            f"{client}: SSE registration in {disp} points at {url} but the "
+            f"daemon serves {daemon_url} (pre-HTTP-era endpoint)",
+        ))
+        hints.append(rewrite_hint)
+    return findings, hints
 
 
 def _check_environment(db: str) -> dict:
-    """11. Environment wiring: store/registrations/platform/binary; worst sub-audit status, scrub-safe details."""
-    from ...agent_install._common import resolve_cg_command
-    from ...mcp_server import lifecycle
-
+    """11. Environment wiring: store presence and registration transport classes; scrub-safe details."""
     findings: list[tuple[str, str]] = []
     hints: list[str] = []
 
@@ -871,42 +791,10 @@ def _check_environment(db: str) -> dict:
     else:
         findings.append((_PASS, "resolved store present"))
 
-    # (b) registration consistency (env inspection + spawn-probe + SSE).
-    reg_findings, reg_hints, sse_disps = _registration_findings(db)
+    # (b) registration transport classes.
+    reg_findings, reg_hints = _registration_findings()
     findings.extend(reg_findings)
     hints.extend(reg_hints)
-
-    # (c) platform/transport: an SSE registration nothing can serve here.
-    if sse_disps and not lifecycle.is_macos():
-        findings.append(
-            (
-                _WARN,
-                f"SSE registration in {', '.join(sse_disps)} but the LaunchAgent "
-                "daemon lifecycle is macOS-only -- nothing can serve it on "
-                "this platform",
-            )
-        )
-        hints.append(
-            "re-register with `cairn install-agents --stdio` (or run the "
-            "daemon on macOS)"
-        )
-
-    # (d) binary coherence: what registrations pin vs what the daemon runs.
-    reg_cmd = resolve_cg_command()
-    daemon_bin = lifecycle.cg_bin()
-    if len(reg_cmd) != 1 or reg_cmd[0] != daemon_bin:
-        findings.append(
-            (
-                _WARN,
-                f"binary incoherence: registrations resolve "
-                f"{' '.join(reg_cmd)} but the daemon lifecycle launches "
-                f"{daemon_bin}",
-            )
-        )
-        hints.append(
-            "re-run `cairn install-agents` so registrations and the daemon "
-            "launch the same binary"
-        )
 
     status = _PASS
     for worse in (_FAIL, _WARN):
@@ -973,8 +861,8 @@ def _run_doctor(db: str) -> list[dict]:
 _STATUS_STYLE = {_PASS: "success", _WARN: "warning", _FAIL: "error"}
 _STATUS_GLYPH = {_PASS: "✓", _WARN: "!", _FAIL: "✗"}
 _FIX_TRADEOFF = (
-    "tradeoff: stdio registrations run one cairn process per client; "
-    "SSE registrations share a single daemon"
+    "tradeoff: every client shares the single HTTP daemon instead of "
+    "spawning per-client stdio processes"
 )
 
 
@@ -994,7 +882,12 @@ def _render_doctor(results: list[dict], display) -> None:
 
 def _fix_summary_lines(actions: list[dict]) -> list[str]:
     """One guidance line per fix action, plus the transport tradeoff."""
-    from .doctor_fix import _REFUSED_RECENT, _REPOINTED, _SKIPPED_WORKSPACE
+    from .doctor_fix import (
+        _REFUSED_RECENT,
+        _REPOINTED,
+        _SKIPPED_WORKSPACE,
+        _UNSUPPORTED_DESKTOP,
+    )
 
     lines: list[str] = []
     for action in actions:
@@ -1003,7 +896,14 @@ def _fix_summary_lines(actions: list[dict]) -> list[str]:
         url = action.get("url", "")
         name = action.get("action")
         if name == _REPOINTED:
-            lines.append(f"repointed {client} in {config} to stdio ({url})")
+            lines.append(
+                f"repointed {client} in {config} to the daemon URL ({url})"
+            )
+        elif name == _UNSUPPORTED_DESKTOP:
+            lines.append(
+                f"{client} in {config} is unsupported: remove the cairn "
+                "entry (Claude Desktop cannot speak the HTTP transport)"
+            )
         elif name == _REFUSED_RECENT:
             lines.append(
                 f"refused {config}: changed recently; retry "
@@ -1036,10 +936,10 @@ def _render_fix_summary(actions: list[dict], display) -> None:
 @click.option(
     "--fix",
     is_flag=True,
-    help="Repoint dead cairn-owned SSE registrations to stdio.",
+    help="Repoint stale cairn-owned stdio/SSE registrations to the daemon URL.",
 )
 def doctor(db, as_json, fix):
-    """Run system health checks; exits 0 on PASS/WARN-only, 1 on any FAIL; read-only unless --fix repoints cairn-owned registrations."""
+    """Run system health checks; exits 0 on PASS/WARN-only, 1 on any FAIL; read-only unless --fix repoints cairn-owned registrations to the daemon URL."""
     from .. import display
 
     results = _run_doctor(db)

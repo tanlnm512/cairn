@@ -191,7 +191,7 @@ def test_post_tool_failure_is_a_registered_entrypoint_written_on_install(tmp_pat
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    install(str(ws), clients=["claude"], transport="stdio")
+    install(str(ws), clients=["claude"])
     settings = json.loads(
         (ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
     commands = [

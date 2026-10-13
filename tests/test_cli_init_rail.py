@@ -102,3 +102,56 @@ def test_init_with_build_shows_indexed_summary():
         assert "Scanning files" in out
         assert "Indexed" in out
         assert "nodes" in out
+
+
+def test_fresh_init_persists_user_only_api_key_file(tmp_path):
+    import stat
+
+    from cairn import paths
+    from cairn.mcp_server import auth
+
+    ws = _fixture_workspace(tmp_path)
+    result = CliRunner().invoke(
+        main,
+        ["init", "--workspace", str(ws), "--no-build"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    key_file = paths.CAIRN_HOME / "mcp-api-key"
+    assert key_file.is_file()
+    assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+    key = auth.persisted_api_key()
+    assert key
+    assert key in key_file.read_text(encoding="utf-8")
+    assert key not in result.output
+    # Key material lives in the key file only — never in rail output or logs.
+    leaked = [
+        p
+        for p in paths.CAIRN_HOME.rglob("*")
+        if p.is_file() and p != key_file and key.encode() in p.read_bytes()
+    ]
+    assert leaked == []
+
+
+def test_init_preserves_existing_api_key(tmp_path):
+    from cairn import paths
+    from cairn.mcp_server import auth
+
+    ws = _fixture_workspace(tmp_path)
+    runner = CliRunner()
+    first = runner.invoke(
+        main,
+        ["init", "--workspace", str(ws), "--no-build"],
+        catch_exceptions=False,
+    )
+    assert first.exit_code == 0
+    assert (paths.CAIRN_HOME / "mcp-api-key").is_file()
+    original = auth.persisted_api_key()
+    assert original
+    second = runner.invoke(
+        main,
+        ["init", "--workspace", str(ws), "--no-build"],
+        catch_exceptions=False,
+    )
+    assert second.exit_code == 0
+    assert auth.persisted_api_key() == original

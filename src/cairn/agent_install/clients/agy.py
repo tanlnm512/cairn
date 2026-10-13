@@ -5,9 +5,8 @@ import os
 import sys
 from pathlib import Path
 
-from .._common import InstallResult, default_sse_url, resolve_cg_command
+from .._common import InstallResult, _url_entry
 from ..merge import _merge_json_file, _strip_mcp
-from ...paths import cairn_home_env
 
 
 def agy_config_path() -> Path:
@@ -23,29 +22,17 @@ def agy_config_path() -> Path:
     return base / "gemini" / "config" / "mcp_config.json"
 
 
-def agy_mcp_config_json(transport: str = "stdio", sse_url: str | None = None) -> dict:
-    """Return an AGY MCP entry using serverUrl for remote transports."""
-    if transport == "sse":
-        return {"mcpServers": {"cairn": {"serverUrl": default_sse_url(sse_url)}}}
-    cmd = resolve_cg_command()
-    if len(cmd) == 1:
-        entry: dict = {"command": cmd[0], "args": ["serve"]}
-    else:
-        command, *prefix = cmd
-        entry = {"command": command, "args": [*prefix, "serve"]}
-    env = cairn_home_env()
-    if env:
-        entry["env"] = env
-    return {"mcpServers": {"cairn": entry}}
+def agy_mcp_config_json() -> dict:
+    """Return an AGY MCP entry (serverUrl surface) pointing at the daemon URL."""
+    return {"mcpServers": {"cairn": _url_entry("serverUrl")}}
 
 
 def install_agy(workspace: str, force: bool, dry_run: bool,
-                transport: str = "stdio", sse_url: str | None = None,
                 scope: str = "workspace") -> InstallResult:
     """Wire cairn into agy (global mcp_config.json)."""
     res = InstallResult("agy")
     cfg = agy_config_path()
-    _merge_json_file(cfg, agy_mcp_config_json(transport, sse_url), force, res, dry_run=dry_run)
+    _merge_json_file(cfg, agy_mcp_config_json(), force, res, dry_run=dry_run)
     res.notes.append(f"Global MCP config: {cfg}")
     res.notes.append("Start or restart `agy` CLI to load the server.")
     return res

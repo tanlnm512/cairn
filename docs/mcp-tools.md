@@ -10,11 +10,13 @@ agent session loads it.
 ## Server
 
 - Implementation: FastMCP, singleton in `src/cairn/mcp_server/_server_core.py`.
-- Transports: **stdio** (default, one process per client) or **SSE daemon**
-  on `:9876` (`cairn serve start|stop|status|restart`, `run` for foreground).
+- Transport: Streamable HTTP daemon on `:9876` — one shared process serves
+  every client (`cairn connect` ensures it is running; `cairn serve
+  start|stop|status|restart` manage it, `run` for the foreground daemon).
+  Read-write by default; `--read-only` disables the watcher and write tools.
 - Boot sequence (`server.py:run`): verify exactly 26 tools registered →
-  parent-death watchdog (stdio) → boot catch-up reindex (`ensure_fresh_force`)
-  → memory decay → live file watcher (`[watch]` extra).
+  boot catch-up reindex (`ensure_fresh_force`) → memory decay → live file
+  watcher (`[watch]` extra).
 - Every tool call is instrumented into `tool_metrics` (duration, status,
   payload sizes) — this is what `/history` and `/tokens` on the dashboard show.
 - `CAIRN_READ_ONLY=1` makes the server refuse write tools.

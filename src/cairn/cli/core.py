@@ -53,14 +53,26 @@ def _build_progress_handler(r):
               help="Install cairn git hooks (post-commit, post-checkout) in discovered repos.")
 def init(ws_arg, legacy_dir, no_build, import_docs, with_hooks):
     """Register this workspace with cairn's central store, migrating a legacy cairn/.kg store when present."""
+    import secrets
     import shutil
     import time
 
     from . import display
-    from ..paths import register_workspace, resolve_workspace
+    from ..paths import _current_cairn_home, register_workspace, resolve_workspace
 
     ws = Path(ws_arg).resolve() if ws_arg else resolve_workspace()
     store = register_workspace(ws)
+
+    key_file = _current_cairn_home() / "mcp-api-key"
+    if not key_file.exists():
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(secrets.token_urlsafe(32))
 
     with display.rail("Initializing cairn") as r:
         r.step("Initialized in", str(ws))
@@ -207,12 +219,17 @@ def config(list_all, mcp_config, db_only, as_json):
         return
 
     if mcp_config:
-        snippet = {
-            "mcpServers": {
-                "cairn": {"command": "cairn", "args": ["serve"]}
-            }
-        }
+        from ..mcp_server.auth import persisted_api_key
+        from ..mcp_server.lifecycle import mcp_url
+
+        entry: dict = {"type": "http", "url": mcp_url()}
+        key = persisted_api_key()
+        if key:
+            entry["headers"] = {"Authorization": f"Bearer {key}"}
+        snippet = {"mcpServers": {"cairn": entry}}
+        # stdout must stay pure JSON (scripts parse the snippet); hints ride stderr.
         click.echo(json.dumps(snippet, indent=2))
+        click.echo("Run `cairn connect` to start or reuse the daemon and print its URL.", err=True)
         return
 
     if list_all:
@@ -276,7 +293,7 @@ def config(list_all, mcp_config, db_only, as_json):
         click.echo("  (none configured — SCIP edges stay off)")
 
     click.echo("")
-    click.echo("MCP config for an agent (path-free):")
+    click.echo("MCP config for an agent (URL + key, needs the daemon):")
     click.echo('  cairn config --mcp-config')
 
 

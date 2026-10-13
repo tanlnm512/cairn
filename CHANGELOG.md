@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Changed
+- **Breaking**: the MCP server now speaks Streamable HTTP only — one shared loopback daemon on `127.0.0.1:9876` (read-write by default, `--read-only` opt-in). The stdio and SSE transports are removed; `cairn serve --transport <any>` exits non-zero naming the daemon URL and `cairn connect`. Agent registrations are URL + key form for the 8 supported clients (Claude Desktop reported unsupported — no remote capability); `cairn init` generates a user-only `CAIRN_MCP_API_KEY` embedded in generated configs; `cairn doctor --fix` repoints legacy stdio/SSE registrations; registration verification probes `/healthz` instead of spawning processes.
+- `cairn connect` starts or reuses the single daemon (flock-guarded, stray-sweeper enforced) and prints its URL; `serve start|stop|status|restart` manage the HTTP daemon (launchd on macOS, daemonize + pidfile elsewhere), and the sweeper now recognizes interpreter-prefixed `serve` processes.
+- MCP rev 2026-07-28 features (MRTR, `subscriptions/listen`, header validation) arrive via SDK bump only — no hand-rolled transport code (`mcp` pin unchanged).
 
 ## [0.22.0] - 2026-10-10
 ### Added

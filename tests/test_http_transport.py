@@ -1,4 +1,4 @@
-"""TC-001: the streamable-HTTP transport serves the same tool catalog as stdio.
+"""TC-001: the streamable-HTTP transport serves the full 26-tool registry.
 
 Also covers the HTTP auth gate, bind/transport-security policy, /healthz
 probe, stateless mode, and the serve-CLI flag wiring (TC-002..TC-026).
@@ -24,11 +24,11 @@ from cairn.graph.schema import _apply_schema
 _STREAMABLE_HTTP_PATH = "/mcp"
 _BOOT = (
     "import sys; from cairn.mcp_server.server import run; "
-    "run(transport=sys.argv[1], port=int(sys.argv[2]))"
+    "run(port=int(sys.argv[1]))"
 )
 _BOOT_HTTP = (
     "import sys; from cairn.mcp_server.server import run; "
-    "run(transport='http', port=int(sys.argv[1]), host=sys.argv[2], "
+    "run(port=int(sys.argv[1]), host=sys.argv[2], "
     "api_key=sys.argv[3] or None, stateless=sys.argv[4] == '1')"
 )
 _SSE_HEADERS = {"Accept": "application/json, text/event-stream"}
@@ -73,71 +73,6 @@ def _free_port() -> int:
 
 def _rpc_result_tools(message: dict) -> list[str]:
     return [tool["name"] for tool in message["result"]["tools"]]
-
-
-def _stdio_exchange(messages: list[dict], env: dict, deadline: float = 30.0) -> tuple[list[dict], str, str, int]:
-    """Drive one stdio JSON-RPC exchange sequentially and collect responses."""
-    import selectors
-
-    proc = subprocess.Popen(
-        [sys.executable, "-c", _BOOT, "stdio", "0"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-    )
-    responses: list[dict] = []
-    waited = set()
-    try:
-        for message in messages:
-            proc.stdin.write(json.dumps(message) + "\n")
-            proc.stdin.flush()
-            if "id" not in message:
-                continue
-            sel = selectors.SelectSelector()
-            sel.register(proc.stdout, selectors.EVENT_READ)
-            expired = time.monotonic() + deadline
-            while time.monotonic() < expired:
-                if sel.select(0.25):
-                    line = proc.stdout.readline()
-                    if not line:
-                        break
-                    line = line.strip()
-                    if not line.startswith("{"):
-                        continue
-                    decoded = json.loads(line)
-                    responses.append(decoded)
-                    waited.add(decoded.get("id"))
-                    break
-            if message["id"] not in waited:
-                break
-    finally:
-        try:
-            proc.stdin.close()
-        except OSError:
-            pass
-        stderr = proc.stderr.read() if proc.stderr else ""
-        rc = proc.wait(timeout=deadline)
-    return responses, (proc.stdout.read() if proc.stdout else ""), stderr, rc
-
-
-def _stdio_tool_catalog(env: dict) -> list[str]:
-    messages = [
-        _INITIALIZE,
-        {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        _TOOLS_LIST,
-    ]
-    responses, stdout, stderr, rc = _stdio_exchange(messages, env)
-    for message in responses:
-        if message.get("id") == 2 and "result" in message:
-            return _rpc_result_tools(message)
-    assert False, (
-        f"stdio session never answered tools/list (rc={rc}); "
-        f"responses: {responses!r}; "
-        f"unread stdout tail: {stdout[-1000:]}; "
-        f"stderr tail: {stderr[-1000:]}"
-    )
 
 
 def _http_post(url: str, payload: dict, headers: dict | None = None):
@@ -199,7 +134,8 @@ def _wait_http_ready(url: str, timeout_s: float = 30.0) -> None:
 def _http_tool_catalog(port: int, env: dict, log_path) -> list[str]:
     with open(log_path, "w") as server_log:
         proc = subprocess.Popen(
-            [sys.executable, "-c", _BOOT, "http", str(port)],
+            [sys.executable, "-c", _BOOT, str(port)],
+            stdin=subprocess.DEVNULL,
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=server_log,
@@ -229,22 +165,16 @@ def _http_tool_catalog(port: int, env: dict, log_path) -> list[str]:
                 proc.wait()
 
 
-def test_http_tool_catalog_matches_stdio(tmp_path):
-    """tools/list over streamable HTTP equals tools/list over stdio, same store."""
+def test_http_tool_catalog_pins_26_tools(tmp_path):
+    """tools/list over streamable HTTP serves the full 26-tool registry."""
     db_path = _scratch_store(tmp_path)
     port = _free_port()
 
-    stdio_tools = _stdio_tool_catalog(_child_env(db_path, read_only=False))
     http_tools = _http_tool_catalog(
         port, _child_env(db_path, read_only=True), tmp_path / "http-server.log"
     )
 
-    assert stdio_tools, "stdio session offered no tools"
-    http_only = sorted(set(http_tools) - set(stdio_tools))
-    stdio_only = sorted(set(stdio_tools) - set(http_tools))
-    assert not http_only and not stdio_only, (
-        f"tool catalogs diverge: http-only={http_only} stdio-only={stdio_only}"
-    )
+    assert len(http_tools) == 26
 
 
 # --- Shared fixtures/helpers for the HTTP policy suites ---------------------
@@ -297,6 +227,7 @@ def _http_server(
                 sys.executable, "-c", _BOOT_HTTP,
                 str(port), host, api_key or "", "1" if stateless else "0",
             ],
+            stdin=subprocess.DEVNULL,
             env=env,
             stdout=log,
             stderr=log,
@@ -502,12 +433,12 @@ def test_healthz_payload_unhealthy_when_store_missing(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "kwargs, expected",
     [
-        ({}, {"transport": "stdio", "port": None, "read_only": "0", "stateless": False}),
-        ({"port": 8000}, {"transport": "sse", "port": 8000, "read_only": "1", "stateless": False}),
-        ({"transport": "http"}, {"transport": "http", "port": 9876, "read_only": "1", "stateless": False}),
-        ({"transport": "http", "port": 1234}, {"transport": "http", "port": 1234, "read_only": "1", "stateless": False}),
-        ({"transport": "stdio", "port": 8000}, {"transport": "stdio", "port": 8000, "read_only": "1", "stateless": False}),
-        ({"stateless": True}, {"transport": "stdio", "port": None, "read_only": "0", "stateless": True}),
+        ({}, {"port": 9876, "read_only": "0", "stateless": False}),
+        ({"port": 8000}, {"port": 8000, "read_only": "0", "stateless": False}),
+        ({"read_only": True}, {"port": 9876, "read_only": "1", "stateless": False}),
+        ({"port": 1234, "stateless": True}, {"port": 1234, "read_only": "0", "stateless": True}),
+        ({"stateless": True}, {"port": 9876, "read_only": "0", "stateless": True}),
+        ({"port": 2000, "host": "0.0.0.0"}, {"port": 2000, "read_only": "0", "stateless": False}),
     ],
 )
 def test_serve_foreground_maps_flags_to_run(monkeypatch, kwargs, expected):
@@ -521,13 +452,12 @@ def test_serve_foreground_maps_flags_to_run(monkeypatch, kwargs, expected):
         db=None,
         port=kwargs.get("port"),
         read_only=kwargs.get("read_only"),
-        transport=kwargs.get("transport"),
         host=kwargs.get("host"),
         api_key=kwargs.get("api_key"),
         stateless=kwargs.get("stateless", False),
     )
 
-    assert captured["transport"] == expected["transport"]
+    assert "transport" not in captured
     assert captured["port"] == expected["port"]
     assert captured["stateless"] == expected["stateless"]
     assert captured["host"] == kwargs.get("host")
@@ -542,23 +472,46 @@ def test_serve_foreground_resolves_api_key_flag_over_env(monkeypatch):
 
     monkeypatch.setenv("CAIRN_MCP_API_KEY", "env-key")
     serve_cli._serve_foreground(
-        db=None, port=None, read_only=None, transport="http",
+        db=None, port=None, read_only=None,
         host=None, api_key="flag-key", stateless=False,
     )
     assert captured["api_key"] == "flag-key"
 
     serve_cli._serve_foreground(
-        db=None, port=None, read_only=None, transport="http",
+        db=None, port=None, read_only=None,
         host=None, api_key=None, stateless=False,
     )
     assert captured["api_key"] == "env-key"
 
     monkeypatch.delenv("CAIRN_MCP_API_KEY")
     serve_cli._serve_foreground(
-        db=None, port=None, read_only=None, transport="http",
+        db=None, port=None, read_only=None,
         host=None, api_key=None, stateless=False,
     )
     assert captured["api_key"] is None
+
+
+@pytest.mark.parametrize("command", ["serve", "serve run"])
+@pytest.mark.parametrize("transport", ["stdio", "sse", "http"])
+def test_serve_refuses_removed_transport_values(monkeypatch, command, transport):
+    """A removed --transport value exits non-zero naming the HTTP replacement."""
+    from click.testing import CliRunner
+
+    from cairn.cli import serve as serve_cli
+
+    def _unreachable(**kwargs):
+        raise AssertionError(
+            f"`--transport {transport}` must be refused before the foreground server starts"
+        )
+
+    monkeypatch.setattr(serve_cli, "_serve_foreground", _unreachable)
+    cli = serve_cli.serve if command == "serve" else serve_cli.serve_run
+    result = CliRunner().invoke(cli, ["--transport", transport])
+    assert result.exit_code != 0, (
+        f"`{command} --transport {transport}` exited 0; output: {result.output}"
+    )
+    assert "http://" in result.output
+    assert "cairn connect" in result.output
 
 
 # --- Live HTTP servers (subprocess boots) ------------------------------------
@@ -637,6 +590,7 @@ def test_unkeyed_non_loopback_refuses_to_start_before_binding(tmp_path):
     port = _free_port()
     proc = subprocess.run(
         [sys.executable, "-c", _BOOT_HTTP, str(port), "0.0.0.0", "", "0"],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         env=_child_env(db_path, read_only=True),

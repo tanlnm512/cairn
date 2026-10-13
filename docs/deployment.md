@@ -5,9 +5,12 @@
 Read this when you want to serve one cairn store to MCP clients over HTTP —
 locally, across a network, or from a container.
 
-`cairn serve --transport http` serves the full MCP tool registry over
-Streamable HTTP with bearer-key auth. HTTP is explicit opt-in: with no
-transport flags, `cairn serve` runs stdio and `--port` runs SSE, unchanged.
+`cairn serve` runs the MCP daemon: the full tool registry over Streamable
+HTTP with bearer-key auth, read-write by default. The stdio and SSE
+transports are gone — stdio/SSE-specific options (including any
+`--transport` value) exit non-zero with a message naming the HTTP
+replacement. `cairn connect` ensures the daemon is running and prints its
+URL.
 
 ## Serve surface
 
@@ -15,26 +18,28 @@ All flags below work on both `cairn serve` and `cairn serve run`:
 
 | Flag | Contract |
 |---|---|
-| `--transport` | `stdio` (default), `sse`, or `http`; an explicit value wins over the `--port`-means-SSE implication |
 | `--host` | bind address, default `127.0.0.1` (loopback) |
-| `--port` | listen port; `--transport http` without `--port` uses `9876`; `--port` without `--transport` still means SSE |
+| `--port` | listen port, default `9876` |
 | `--api-key` | bearer key; takes precedence over the `CAIRN_MCP_API_KEY` environment variable |
 | `--stateless` | no server-side session affinity — sequential session-less requests succeed independently, so a load balancer can distribute requests across replicas |
-| `--read-only` / `--read-write` | HTTP defaults to read-only; an explicit flag overrides |
+| `--read-only` | the daemon is read-write by default (live watcher, memory writes); `--read-only` disables both |
 
-`cairn serve start\|stop\|status\|restart` remain the macOS launchd SSE
-daemon. HTTP is foreground-only — run it under your own supervisor or
-container runtime.
+`cairn serve start\|stop\|status\|restart` manage the daemon — the macOS
+launchd LaunchAgent, or a daemonized background process elsewhere. `cairn
+connect` is the lighter entrypoint: it starts the daemon on first dial and
+reuses a healthy one.
 
 ## Key policy
 
 - The key resolves from the `--api-key` flag, else the `CAIRN_MCP_API_KEY`
   environment variable; the flag wins.
+- `cairn init` generates and persists a key once under `CAIRN_HOME`;
+  generated client configs embed it, and it stays dormant while the loopback
+  daemon runs keyless.
 - Keyless operation is allowed only on loopback binds. A non-loopback
   `--host` without a key refuses to start with a clear error (exit code 1,
   before binding).
-- Keyless loopback serves without the auth middleware — the same trust
-  model as local stdio.
+- Keyless loopback serves without the auth middleware.
 - Prefer `CAIRN_MCP_API_KEY` over `--api-key`: the flag is visible in
   process listings (`ps`). The key never appears in cairn's logs or boot
   errors.
@@ -56,7 +61,7 @@ specific host or front a reverse proxy.
 payload:
 
 ```json
-{"status": "ok", "store_reachable": true, "read_only": true, "degradations": 0}
+{"status": "ok", "store_reachable": true, "read_only": false, "degradations": 0}
 ```
 
 `status` is `unhealthy` when the store is unreachable (still HTTP 200);
@@ -66,7 +71,7 @@ other fields.
 ## Local serving (loopback, keyless)
 
 ```
-cairn serve --transport http
+cairn connect   # or: cairn serve
 ```
 
 MCP clients connect to `http://127.0.0.1:9876/mcp` with no auth header.
@@ -74,7 +79,7 @@ MCP clients connect to `http://127.0.0.1:9876/mcp` with no auth header.
 ## Networked serving (key required)
 
 ```
-CAIRN_MCP_API_KEY=<key> cairn serve --transport http --host 0.0.0.0
+CAIRN_MCP_API_KEY=<key> cairn serve --host 0.0.0.0
 ```
 
 Clients connect to `http://<host>:9876/mcp` and send
@@ -97,7 +102,7 @@ docker run -d --name cairn -p 9876:9876 \
 ```
 
 The image is `python:3.12-slim`, runs as a dedicated non-root user, and its
-entrypoint is `cairn serve --transport http --host 0.0.0.0` with
+entrypoint is `cairn serve --host 0.0.0.0` with
 `CAIRN_HOME=/data` and `EXPOSE 9876`. The key comes from the environment:
 a keyless container on the wildcard entrypoint exits nonzero at boot
 instead of serving unprotected.
@@ -112,7 +117,7 @@ instead of serving unprotected.
 
 ## Pen-test checklist
 
-- [ ] Default bind: `cairn serve --transport http` with no `--host` listens on `127.0.0.1` only.
+- [ ] Default bind: `cairn serve` with no `--host` listens on `127.0.0.1` only.
 - [ ] Refuse-to-start: a non-loopback `--host` without a key exits nonzero before binding.
 - [ ] Auth gate: a missing or wrong `Authorization: Bearer` credential is rejected (401) on every endpoint except `GET /healthz`, before any store access.
 - [ ] Exempt set: `/healthz` is the only unauthenticated path.

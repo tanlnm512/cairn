@@ -243,9 +243,10 @@ contested).
 
 | Command | Purpose |
 |---|---|
-| `cairn serve run|start|stop|status|restart` | MCP server (stdio foreground / SSE daemon `:9876`). `start`/`stop`/`restart` manage the macOS launchd LaunchAgent; `start` embeds `CAIRN_HOME`/`CAIRN_WORKSPACE`/`CAIRN_DB`/`CAIRN_KNOWLEDGE` into the plist when a custom home is in effect. On Linux these exit 1 — run `cairn serve --port 9876` under a process supervisor, or prefer stdio. |
+| `cairn serve run|start|stop|status|restart` | MCP daemon (Streamable HTTP `:9876`, read-write by default; `--read-only` disables the watcher and write tools; `run` is the foreground daemon). `start`/`stop`/`restart` manage the macOS launchd LaunchAgent, or the daemonized background daemon elsewhere; `start` embeds `CAIRN_HOME`/`CAIRN_WORKSPACE`/`CAIRN_DB`/`CAIRN_KNOWLEDGE` into the plist when a custom home is in effect. Stdio/SSE-specific options, including any `--transport` value, exit non-zero with a message naming the HTTP replacement. |
+| `cairn connect` | ensure the MCP daemon is running — start exactly one instance on first dial, reuse a healthy one — and print its URL |
 | `cairn dashboard [--db] [--port]` | loopback dashboard `:8765` (read-only views + Settings) |
-| `cairn install-agents` / `uninstall-agents` | wire cairn into AI clients (claude, droid, zcode, cursor, opencode, kilo, omp, agy, claude-desktop). With a custom `CAIRN_HOME`, generated stdio registrations embed `env.CAIRN_HOME` (CLI-registered clients carry it too: claude global scope via `claude mcp add -e`, droid via `droid mcp add --env`), hook commands embed the assignment, and each written stdio registration is spawn-verified — the report shows per-client `verify: PASS/FAIL` naming both stores on mismatch. SSE and CLI-registered clients are skipped with a note; `--dry-run` never spawns. |
+| `cairn install-agents` / `uninstall-agents` | wire cairn into AI clients (claude, droid, zcode, cursor, opencode, kilo, omp, agy). Every registration is a URL+key entry dialing the shared daemon, embedding the `CAIRN_MCP_API_KEY` generated at `cairn init`; each written registration is verified against the daemon's `/healthz` — the report shows per-client `verify: PASS/FAIL`. claude-desktop is detected and reported unsupported (no URL MCP surface; nothing written). Generated hook commands embed a custom `CAIRN_HOME` assignment; `--dry-run` writes nothing. |
 
 ## Compass / wiki / tasks / dataflow
 
@@ -267,7 +268,7 @@ contested).
 | Command | Purpose |
 |---|---|
 | `cairn status` | build state, parse errors, resource health |
-| `cairn doctor` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). 11 checks: the 10 store-internal ones — including `memory_staleness` (WARN when tribal memories older than 30d have zero `memory_refs` in that window — write-only memory) — plus `environment` — store existence, client-registration consistency (FAIL on a provable wrong-store or unreachable SSE endpoint, WARN on stale missing-env registrations), platform/transport supportability (SSE on non-macOS ⇒ WARN), binary coherence. Emitted last, also on the db-unavailable degraded path. |
+| `cairn doctor` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). 11 checks: the 10 store-internal ones — including `memory_staleness` (WARN when tribal memories older than 30d have zero `memory_refs` in that window — write-only memory) — plus `environment` — store existence, client-registration consistency (FAIL on a provable wrong-store or unreachable daemon endpoint; cairn-owned stdio/SSE registrations are flagged and, under `--fix`, repointed to the URL+key form), platform supportability, binary coherence. Emitted last, also on the db-unavailable degraded path. |
 | `cairn metrics` / `report` | tool-metrics and health reports |
 | `cairn validate` / `validate-paths` / `verify` | store integrity checks |
 | `cairn bench` | performance suites |

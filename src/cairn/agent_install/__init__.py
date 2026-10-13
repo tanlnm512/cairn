@@ -2,15 +2,11 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .. import paths
-
-# Public re-exports (single source of truth for the public API).
 from ._common import (
     CLIENTS,
     InstallResult,
@@ -40,17 +36,11 @@ from .clients import opencode as _opencode
 from .clients import kilo as _kilo
 from .clients import omp as _omp
 from .clients import claude_desktop as _claude_desktop
-
-# Per-client config generators (re-exported for backward compat — some callers
-# and tests import them by name from the top-level module).
 from .clients.zcode import zcode_mcp_config_json
 from .clients.opencode import opencode_mcp_config_json
 from .clients.kilo import kilo_mcp_config_json
-from .clients.claude_desktop import mcp_config_json_desktop
 from .clients.claude import claude_hooks_block
 from .clients.cursor import cursor_hooks_json
-
-# Per-client installers (importable from the top level).
 from .clients.claude import install_claude
 from .clients.claude_desktop import install_claude_desktop
 from .clients.cursor import install_cursor
@@ -60,9 +50,6 @@ from .clients.agy import install_agy
 from .clients.opencode import install_opencode
 from .clients.kilo import install_kilo
 from .clients.omp import install_omp
-
-# Instruction-file builders (re-exported; test_agent_surface imports
-# _agents_instructions and also parses _INSTRUCTIONS_BODY from source).
 from ._common import (
     _INSTRUCTIONS_BODY,
     _agents_instructions,
@@ -71,7 +58,6 @@ from ._common import (
 
 
 __all__ = [
-    # Public API
     "install",
     "uninstall",
     "detect_clients",
@@ -80,20 +66,14 @@ __all__ = [
     "CLIENTS",
     "InstallReport",
     "InstallResult",
-    # Path/command resolution
     "resolve_cg_command",
     "claude_desktop_config_path",
-    "verify_registration",
-    # MCP config generators
     "mcp_config_json",
     "zcode_mcp_config_json",
     "opencode_mcp_config_json",
     "kilo_mcp_config_json",
-    "mcp_config_json_desktop",
-    # Hooks
     "claude_hooks_block",
     "cursor_hooks_json",
-    # Per-client installers
     "install_claude",
     "install_claude_desktop",
     "install_cursor",
@@ -103,7 +83,6 @@ __all__ = [
     "install_opencode",
     "install_kilo",
     "install_omp",
-    # Private helpers re-exported for internal callers / tests
     "_SLASH_COMMANDS",
     "_already_installed",
     "_deep_merge",
@@ -116,39 +95,13 @@ __all__ = [
 ]
 
 
-# --- Client installation report -------------------------------------------
-
-
 @dataclass
 class InstallReport:
-    """Report summarizing client integrations installed, detections, and transport used."""
+    """Report summarizing client integrations installed and detections."""
     detections: list[Detection]
     results: list[InstallResult]
     cross_tool: Optional[InstallResult]
     git_hooks_installed: list[str] = field(default_factory=list)
-    transport: str = "stdio"  # the transport actually used (after auto-detect)
-
-
-def sse_daemon_reachable(sse_url: str | None = None) -> bool:
-    """Return True when the SSE daemon endpoint accepts connections."""
-    import socket
-
-    from ..mcp_server import lifecycle as lc
-
-    url = sse_url or f"http://127.0.0.1:{lc.DEFAULT_PORT}/sse"
-    # Parse host:port out of the URL (minimal — no urllib to avoid edge cases).
-    # Expected forms: http://HOST:PORT/sse
-    try:
-        host_part = url.split("://", 1)[1].split("/", 1)[0]
-        host, port_s = host_part.rsplit(":", 1)
-        port = int(port_s)
-    except (IndexError, ValueError):
-        return False
-    try:
-        with socket.create_connection((host, port), timeout=1.0):
-            return True
-    except OSError:
-        return False
 
 
 def install_cross_tool(workspace: str, force: bool, dry_run: bool = False) -> InstallResult:
@@ -172,8 +125,6 @@ def install_cross_tool(workspace: str, force: bool, dry_run: bool = False) -> In
     return res
 
 
-# Dispatch tables. The client key ("claude-desktop") maps to the per-client
-# module; each module owns install_<name> + uninstall(ws, res).
 _INSTALLERS = {
     "claude": _claude.install_claude,
     "claude-desktop": _claude_desktop.install_claude_desktop,
@@ -198,8 +149,6 @@ _UNINSTALLERS = {
     "omp": _omp.uninstall,
 }
 
-
-# Generous timeout: probe timeout is a FAIL verdict, so healthy installs must not flake.
 
 _PROBE_TIMEOUT_S = 5.0
 
@@ -231,76 +180,29 @@ def _registration_entry(config_path: str) -> Optional[dict]:
     return None
 
 
-def _registration_argv(entry: dict) -> list[str]:
-    """Return a registration's full argv from command/args or command-array shapes."""
-    cmd = entry.get("command")
-    if isinstance(cmd, list):
-        return [str(part) for part in cmd]
-    if isinstance(cmd, str):
-        args = entry.get("args")
-        if isinstance(args, list):
-            return [cmd, *[str(a) for a in args]]
-        return [cmd]
-    return []
+def _registration_url(entry: dict) -> Optional[str]:
+    """Return the daemon URL from a registration entry's client-specific URL field."""
+    for key in ("url", "serverUrl"):
+        value = entry.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
-def verify_registration(
-    command: list[str],
-    env: dict[str, str],
-    cwd: Path,
-    expected: dict[str, str],
-) -> tuple[str, str]:
-    """Spawn a written registration and compare its resolved store with the target."""
-    argv = list(command)
-    if argv and argv[-1] == "serve":
-        argv = argv[:-1]
-    probe_argv = [*argv, "config", "--json"]
-
-    spawn_env = {**os.environ, **env}
-    intended_db = str(expected.get("db", ""))
-    intended_ws = str(expected.get("workspace", ""))
-    if intended_db:
-        # StorePaths invariant: db = <CAIRN_HOME>/<store key>/.kg, so the
-        # intended CAIRN_HOME is the db's grandparent.
-        spawn_env["CAIRN_HOME"] = str(Path(intended_db).parent.parent)
-    if intended_ws:
-        spawn_env["CAIRN_WORKSPACE"] = intended_ws
-    intended = f"db={intended_db or '?'} workspace={intended_ws or '?'}"
-
-    try:
-        proc = subprocess.run(
-            probe_argv, env=spawn_env, cwd=str(cwd),
-            capture_output=True, text=True, timeout=_PROBE_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired:
-        return "fail", (f"probe timed out after {_PROBE_TIMEOUT_S:g}s; "
-                        f"intended store: {intended}")
-    except OSError as exc:
-        return "fail", (f"probe could not spawn {probe_argv[0]!r}: {exc}; "
-                        f"intended store: {intended}")
-    if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "").strip()
-        return "fail", (f"probe exited {proc.returncode}: {err[:200]}; "
-                        f"intended store: {intended}")
-    try:
-        resolved = json.loads(proc.stdout)
-    except ValueError:
-        resolved = None
-    if not isinstance(resolved, dict):
-        return "fail", f"probe printed no JSON object; intended store: {intended}"
-    resolved_db = str(resolved.get("db", ""))
-    resolved_ws = str(resolved.get("workspace", ""))
-    if resolved_db == intended_db and resolved_ws == intended_ws:
-        return "pass", f"resolved db={resolved_db}"
-    return "fail", (f"registration resolves db={resolved_db} "
-                    f"workspace={resolved_ws}; install target "
-                    f"db={intended_db} workspace={intended_ws}")
+def _url_host_port(url: str) -> Optional[tuple[str, int]]:
+    """Return (host, port) from an http(s) URL; None when not probeable."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    if parts.port is not None:
+        return (parts.hostname, parts.port)
+    return (parts.hostname, 443 if parts.scheme == "https" else 80)
 
 
-def _verify_results(results: list[InstallResult], workspace: str) -> None:
-    """Record spawn-probe verdicts for every file-written stdio registration."""
-    store = paths.resolve_store(workspace)
-    expected = {"db": str(store.db), "workspace": str(store.workspace)}
+def _verify_results(results: list[InstallResult]) -> None:
+    """Record healthz probe verdicts for every file-written URL registration."""
+    from ..mcp_server import lifecycle
+
     for res in results:
         entry = None
         for written in res.written:
@@ -310,16 +212,19 @@ def _verify_results(results: list[InstallResult], workspace: str) -> None:
         if entry is None:
             res.notes.append(
                 "verification skipped: no file-written MCP registration this "
-                "run (CLI-registered or unchanged); not spawn-verified")
+                "run (CLI-registered or unchanged)")
             continue
-        if "command" not in entry:
-            res.notes.append(
-                "verification skipped: SSE registration is URL-based "
-                "(nothing to spawn)")
+        host_port = _url_host_port(_registration_url(entry) or "")
+        if host_port is None:
+            res.notes.append("verification skipped: registration carries no daemon URL to probe")
             continue
-        res.verification_status, res.verification_detail = verify_registration(
-            _registration_argv(entry), entry.get("env") or {},
-            Path(workspace), expected)
+        host, port = host_port
+        if lifecycle.healthz_responds(port=port, host=host, timeout=_PROBE_TIMEOUT_S):
+            res.verification_status, res.verification_detail = (
+                "pass", f"healthz answered at {host}:{port}")
+        else:
+            res.verification_status, res.verification_detail = (
+                "fail", f"daemon at {host}:{port} unreachable — run `cairn connect` to start it")
 
 
 def install(
@@ -328,14 +233,9 @@ def install(
     force: bool = False,
     dry_run: bool = False,
     include_git_hooks: bool = False,
-    transport: str | None = None,
-    sse_url: str | None = None,
     scope: str = "workspace",
 ) -> InstallReport:
-    """Install selected agent clients and verify their stdio registrations."""
-    if transport is None:
-        transport = "sse"
-
+    """Install selected agent clients and verify their registrations."""
     detections = detect_clients(workspace)
     if clients:
         bad = [c for c in clients if c not in CLIENTS + ["all"]]
@@ -347,19 +247,13 @@ def install(
 
     results: list[InstallResult] = []
     for client in [c for c in CLIENTS if c in target]:
-        results.append(_INSTALLERS[client](
-            workspace, force, dry_run, transport=transport, sse_url=sse_url,
-            scope=scope,
-        ))
+        results.append(_INSTALLERS[client](workspace, force, dry_run, scope=scope))
 
-    # Verify from the install API so every caller gets the same probe verdicts.
     if not dry_run:
-        _verify_results(results, workspace)
+        _verify_results(results)
 
-    # Cross-tool .agents/ copies: always write when any client is targeted.
     cross = install_cross_tool(workspace, force, dry_run=dry_run) if target else None
 
-    # Git hooks (optional; under --client all or explicit flag).
     git_installed: list[str] = []
     if include_git_hooks and target and not dry_run:
         try:
@@ -372,14 +266,11 @@ def install(
             ]
             git_installed = install_hooks(repos, workspace)
         except ValueError as e:
-            # Security guard (shell-injection repo-name check) rejected a repo.
-            # Surface it: otherwise a single bad name silently installs zero hooks.
             print(f"warning: git hooks skipped — {e}")
         except Exception as e:
-            # Filesystem/other errors are genuinely best-effort, but don't hide them.
             print(f"warning: git hooks skipped — {e!r}")
 
-    return InstallReport(detections, results, cross, git_installed, transport=transport)
+    return InstallReport(detections, results, cross, git_installed)
 
 
 def uninstall(workspace: str, clients: Optional[list[str]] = None,
@@ -401,7 +292,6 @@ def uninstall(workspace: str, clients: Optional[list[str]] = None,
         _UNINSTALLERS[client](ws, res, scope=scope)
         results.append(res)
 
-    # Remove the shared skill tree and only installer-identical commands and agents.
     cross = InstallResult("cross-tool")
     _rm_tree_if_cairn(ws / ".agents" / "skills" / "cairn", cross)
     for name in _SLASH_COMMANDS:

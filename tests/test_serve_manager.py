@@ -1,0 +1,337 @@
+"""Red-first lifecycle pins for the HTTP daemon manager (FR-010).
+
+healthz probe helpers, the off-macOS daemonize fallback, start-race
+convergence, and the macOS manager cycle. Every process boundary is
+monkeypatched (C-04): no real fork/exec/signal, no launchctl call; probe
+tests bind ephemeral loopback sockets only, never port 9876.
+"""
+from __future__ import annotations
+
+import contextlib
+import http.server
+import os
+import socket
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from cairn.cli import main
+from cairn.mcp_server import lifecycle as lc
+
+DAEMON_PID = 4242
+MCP_URL = "http://127.0.0.1:9876/mcp"
+
+
+class _ExecHalt(Exception):
+    """Stops the fake child flow at the exec boundary."""
+
+
+class _HealthzAfterFirstSpawn:
+    """Probe stub: unhealthy until the first fake spawn marks it healthy."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._spawned = False
+
+    def mark_spawned(self) -> None:
+        with self._lock:
+            self._spawned = True
+
+    def __call__(self, *args, **kwargs) -> bool:
+        with self._lock:
+            return self._spawned
+
+
+def _spawn_fork_recorder(probe: _HealthzAfterFirstSpawn):
+    """os.fork stub recording spawns and flipping the probe healthy."""
+    forks: list[int] = []
+
+    def _fork() -> int:
+        forks.append(1)
+        probe.mark_spawned()
+        return DAEMON_PID
+
+    return forks, _fork
+
+
+@contextlib.contextmanager
+def _healthz_server(status: int):
+    """Ephemeral loopback server answering /healthz with ``status``, 404 elsewhere."""
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(status if self.path == "/healthz" else 404)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class TestHealthzProbes:
+    """mcp_url/healthz_responds: probes target /mcp and GET /healthz (200 = pass)."""
+
+    def test_mcp_url_points_at_the_mcp_path(self):
+        assert lc.mcp_url() == "http://127.0.0.1:9876/mcp"
+        assert lc.mcp_url(port=9999, host="localhost") == "http://localhost:9999/mcp"
+
+    def test_healthz_responds_true_on_200(self):
+        with _healthz_server(200) as port:
+            assert lc.healthz_responds(port=port, host="127.0.0.1")
+
+    def test_healthz_responds_false_on_non_200(self):
+        with _healthz_server(500) as port:
+            assert not lc.healthz_responds(port=port, host="127.0.0.1")
+
+    def test_healthz_responds_false_when_nothing_listens(self):
+        assert not lc.healthz_responds(port=_free_port(), host="127.0.0.1")
+
+
+class TestDaemonizeFallback:
+    """TC-018 unit shadow: off-macOS the manager daemonizes instead of exiting 1."""
+
+    def test_serve_start_off_macos_starts_daemon_not_exit_1(self, monkeypatch):
+        monkeypatch.setattr(lc, "is_macos", lambda: False)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        monkeypatch.setattr(
+            lc,
+            "ensure_daemon_running",
+            lambda port, host: (DAEMON_PID, f"http://{host}:{port}/mcp", True),
+            raising=False,
+        )
+        result = CliRunner().invoke(main, ["serve", "start"])
+        assert result.exit_code == 0, result.output
+        assert "macOS-only" not in result.output
+        assert "/mcp" in result.output
+
+    def test_ensure_daemon_running_daemonizes_and_persists_pid(self, monkeypatch):
+        monkeypatch.setattr(lc, "is_macos", lambda: False)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        probe = _HealthzAfterFirstSpawn()
+        monkeypatch.setattr(lc, "healthz_responds", probe, raising=False)
+        _, fake_fork = _spawn_fork_recorder(probe)
+        monkeypatch.setattr(os, "fork", fake_fork)
+        monkeypatch.setattr(
+            os, "_exit", lambda code: pytest.fail("the starting process must return, not _exit")
+        )
+
+        pid, url, started = lc.ensure_daemon_running(port=9876, host="127.0.0.1")
+
+        assert (pid, url, started) == (DAEMON_PID, MCP_URL, True)
+        home = Path(os.environ["CAIRN_HOME"])
+        home.mkdir(parents=True, exist_ok=True)
+        pidfiles = [
+            p for p in home.rglob("*")
+            if p.is_file() and p.read_text().strip() == str(DAEMON_PID)
+        ]
+        assert pidfiles, "daemon pid must be persisted to a pidfile under CAIRN_HOME"
+
+    def test_daemonize_child_execs_serve_run_detached(self, monkeypatch):
+        monkeypatch.setattr(lc, "is_macos", lambda: False)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        monkeypatch.setattr(lc, "healthz_responds", lambda *a, **k: False, raising=False)
+        monkeypatch.setattr(os, "fork", lambda: 0)
+        sessions: list[int] = []
+        monkeypatch.setattr(os, "setsid", lambda: sessions.append(1))
+        redirected: list[int] = []
+        monkeypatch.setattr(os, "dup2", lambda src, dst: redirected.append(dst))
+        recorded: dict[str, tuple] = {}
+
+        def _exec(path, args, *rest, **kwargs):
+            recorded["exec"] = (path, list(args))
+            raise _ExecHalt
+
+        def _halt(code):
+            raise _ExecHalt
+
+        for name in ("execv", "execve", "execvp", "execvpe"):
+            monkeypatch.setattr(os, name, _exec)
+        monkeypatch.setattr(os, "_exit", _halt)
+
+        with pytest.raises(_ExecHalt):
+            lc.ensure_daemon_running(port=9876, host="127.0.0.1")
+
+        path, args = recorded["exec"]
+        assert Path(path).name == "cairn"
+        assert args[1:] == ["serve", "run", "--port", "9876"]
+        assert sessions, "the daemon child must detach via setsid"
+        assert {1, 2} <= set(redirected), "daemon stdio must be redirected off the terminal"
+
+
+class TestStartRaceConvergence:
+    """NFR-004: concurrent starts converge to one daemon, warm daemon reused."""
+
+    def test_concurrent_starts_spawn_once_and_converge(self, monkeypatch):
+        monkeypatch.setattr(lc, "is_macos", lambda: False)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        probe = _HealthzAfterFirstSpawn()
+        monkeypatch.setattr(lc, "healthz_responds", probe, raising=False)
+        forks, fake_fork = _spawn_fork_recorder(probe)
+        monkeypatch.setattr(os, "fork", fake_fork)
+
+        results: list[tuple] = []
+        errors: list[BaseException] = []
+
+        def _start():
+            try:
+                results.append(lc.ensure_daemon_running(port=9876, host="127.0.0.1"))
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_start) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        assert errors == []
+        assert not any(t.is_alive() for t in threads), "the start sequence must not deadlock"
+        assert len(results) == 4
+        assert len(forks) == 1, "exactly one start sequence may spawn the daemon"
+        assert sum(1 for _, _, started in results if started) == 1
+        assert {pid for pid, _, _ in results} == {DAEMON_PID}
+        assert {url for _, url, _ in results} == {MCP_URL}
+
+    def test_healthy_daemon_reused_not_respawned(self, monkeypatch):
+        monkeypatch.setattr(lc, "is_macos", lambda: False)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        monkeypatch.setattr(lc, "healthz_responds", lambda *a, **k: True, raising=False)
+        forks, fake_fork = _spawn_fork_recorder(_HealthzAfterFirstSpawn())
+        monkeypatch.setattr(os, "fork", fake_fork)
+
+        _, url, started = lc.ensure_daemon_running(port=9876, host="127.0.0.1")
+
+        assert started is False
+        assert url == MCP_URL
+        assert forks == [], "a healthy daemon must be reused, never respawned"
+
+
+class TestMacOSManagerCycle:
+    """TC-017 unit shadow: start/status/restart/stop drive the HTTP daemon via launchd."""
+
+    def test_manager_cycle_reports_mcp_daemon(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(lc, "is_macos", lambda: True)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        monkeypatch.setenv("CAIRN_WORKSPACE", str(tmp_path / "ws"))
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "ws" / ".kg" / "graph.db"))
+        monkeypatch.setattr(lc, "is_loaded", lambda: False)
+        monkeypatch.setattr(lc, "load", lambda: True)
+        unloaded: list[int] = []
+
+        def _unload() -> bool:
+            unloaded.append(1)
+            return True
+
+        monkeypatch.setattr(lc, "unload", _unload)
+        monkeypatch.setattr(lc, "running_pid", lambda: 4321)
+        monkeypatch.setattr(lc, "healthz_responds", lambda *a, **k: True, raising=False)
+
+        runner = CliRunner()
+
+        start = runner.invoke(main, ["serve", "start", "--port", "9876"])
+        assert start.exit_code == 0, start.output
+        assert "/mcp" in start.output, "the managed daemon serves the /mcp endpoint"
+
+        monkeypatch.setattr(lc, "is_loaded", lambda: True)
+        status = runner.invoke(main, ["serve", "status", "--port", "9876"])
+        assert status.exit_code == 0, status.output
+        assert "4321" in status.output and "HEALTHY" in status.output
+
+        restart = runner.invoke(main, ["serve", "restart", "--port", "9876"])
+        assert restart.exit_code == 0, restart.output
+        assert unloaded, "restart keeps its stop+start composition"
+
+        stop = runner.invoke(main, ["serve", "stop"])
+        assert stop.exit_code == 0, stop.output
+        assert len(unloaded) >= 2
+
+
+class TestCgBinResolution:
+    """The plist/daemon child launches the cairn that's RUNNING, never a
+    stale PATH install (a pipx 0.20.2 binary kept serving the retired /sse)."""
+
+    def test_running_executable_wins_over_which(self, monkeypatch, tmp_path):
+        running = tmp_path / "cairn"
+        running.write_text("#!/bin/sh\n")
+        on_path = tmp_path / "stale-cairn"
+        on_path.write_text("#!/bin/sh\n")
+        monkeypatch.setattr(sys, "argv", [str(running), "connect"])
+        monkeypatch.setattr(lc, "shutil_which", lambda name: str(on_path))
+        assert lc.cg_bin() == str(running.resolve())
+
+    def test_cairn_bin_env_wins_first(self, monkeypatch, tmp_path):
+        pinned = tmp_path / "pinned-cairn"
+        pinned.write_text("#!/bin/sh\n")
+        running = tmp_path / "cairn"
+        running.write_text("#!/bin/sh\n")
+        monkeypatch.setattr(sys, "argv", [str(running), "connect"])
+        monkeypatch.setenv("CAIRN_BIN", str(pinned))
+        assert lc.cg_bin() == str(pinned.resolve())
+
+
+class TestLaunchdStartRobustness:
+    """A loaded-but-mid-respawn agent is awaited, never double-loaded; every
+    launchctl call is bounded so the start lock cannot wedge (NFR-004)."""
+
+    def test_loaded_unhealthy_waits_for_respawn_not_double_load(self, monkeypatch):
+        monkeypatch.setattr(lc, "is_macos", lambda: True)
+        monkeypatch.setattr(lc, "is_loaded", lambda: True)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        calls: list[str] = []
+
+        def _healthz(*args, **kwargs):
+            calls.append("healthz")
+            return len(calls) >= 3
+
+        monkeypatch.setattr(lc, "healthz_responds", _healthz)
+        monkeypatch.setattr(lc, "write_plist", lambda plist: calls.append("write_plist"))
+        monkeypatch.setattr(lc, "load", lambda: calls.append("load") or True)
+        monkeypatch.setattr(lc, "unload", lambda: calls.append("unload") or True)
+        monkeypatch.setattr(lc, "running_pid", lambda: 4321)
+        monkeypatch.setattr("time.sleep", lambda s: None)
+
+        pid, url, started = lc.ensure_daemon_running(port=9876, host="127.0.0.1")
+
+        assert (pid, url, started) == (4321, MCP_URL, False)
+        assert "load" not in calls, "an already-loaded agent must not be double-loaded"
+        assert "write_plist" not in calls
+        assert "unload" not in calls
+
+    def test_launchctl_calls_carry_timeouts(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(lc, "is_macos", lambda: True)
+        plist = tmp_path / "agent.plist"
+        plist.write_text("<plist/>")
+        monkeypatch.setattr(lc, "plist_path", lambda: plist)
+        seen: list[tuple[list[str], object]] = []
+
+        def fake_run(args, **kwargs):
+            seen.append((list(args), kwargs.get("timeout")))
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        lc.is_loaded()
+        lc.running_pid()
+        lc.load()
+        lc.unload()
+
+        launchctl = [entry for entry in seen if entry[0][0] == "launchctl"]
+        assert len(launchctl) >= 4, "expected the list/list/load/unload launchctl calls"
+        for args, timeout in launchctl:
+            assert timeout, f"launchctl {' '.join(args[:2])} must be bounded by a timeout"
