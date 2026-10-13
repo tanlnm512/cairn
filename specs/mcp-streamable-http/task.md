@@ -3,7 +3,7 @@
 **Spec**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
 **Lifecycle**: v2
 Status reflects code state per [survey.md](survey.md), not intent.
-**Delivered**: pending — delivery evidence; the orchestrator writes `commit @ <sha>` here
+**Delivered**: commit @ fabaf70
 **Waves**: 1 = Phase 1 · 2 = Phases 2–4 as two lanes (A: Phase 2 → Phase 3 manager+connect; B: Phase 4 key+installers, gated on Phase 1 only) · 3 = Phase 5
 
 ## Burndown

@@ -1,9 +1,10 @@
 # Spec: mcp-streamable-http
 
-**Status**: approved       <!-- approved 2026-10-11: the user's
-                                 /spec-execute command given directly
-                                 at the approve gate — the explicit
-                                 go-ahead named in its place -->
+**Status**: done           <!-- approved 2026-10-11 (/spec-execute
+                                 at the gate); done 2026-10-13:
+                                 delivered as commit @ fabaf70, all
+                                 20 tasks ticked with proofs, TCs
+                                 green, review resolved -->
 **Effort**: large          <!-- multi-area: server transports, daemon lifecycle
                                  (incl. Linux fallback + concurrency guard),
                                  auth key lifecycle, 8 agent installers, doctor,
