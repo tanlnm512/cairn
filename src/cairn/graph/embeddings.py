@@ -1129,7 +1129,10 @@ def _embed_mv_kinds(
             "WHERE model = ? AND vector_kind = 'docstring' AND symbol_id = ?",
             [(model, sid) for sid in emptied_docstring],
         )
-        conn.commit()
+        try:
+            conn.commit()
+        except sqlite3.OperationalError as e:
+            note_contention("embeddings.mv_docstring_flush", error=e)
 
     if limit is not None:
         stale = stale[:limit]
@@ -1294,7 +1297,14 @@ def embed_all(
         if progress:
             progress(min(i + batch_size, total), total)
 
-    reaped = reap_orphaned_embeddings(conn) if reap_orphans else 0
+    reaped = 0
+    if reap_orphans:
+        try:
+            reaped = reap_orphaned_embeddings(conn)
+        except sqlite3.OperationalError as e:
+            # Same contention contract as the batch flush: the DELETEs stay
+            # buffered and a later commit flushes them.
+            note_contention("embeddings.reap_flush", error=e)
 
     mv_embedded = (
         _embed_mv_kinds(conn, all_rows, signatures, model, batch_size, limit, progress)
@@ -1304,7 +1314,16 @@ def embed_all(
 
     # The DF table's refresh rides the embed pass, so a `cairn embed`
     # --driven build leaves term_df current with the corpus it just embedded.
-    rebuild_term_df(conn)
+    try:
+        rebuild_term_df(conn)
+    except sqlite3.OperationalError as e:
+        note_contention("embeddings.term_df_flush", error=e)
+
+    # Last-chance flush for batches buffered by contended commits.
+    try:
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        note_contention("embeddings.final_flush", error=e)
 
     summary = {
         "model": model,

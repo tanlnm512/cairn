@@ -167,8 +167,14 @@ def _swe_bench_workspaces(
         try:
             os.replace(staging, target)
         except OSError:
-            # Target already populated (e.g. by a concurrent run): use it.
+            # Target already populated (e.g. by a concurrent run): use it --
+            # but only if it is a valid checkout, never an incomplete tree.
             shutil.rmtree(staging, ignore_errors=True)
+            if not (target / ".git").is_dir():
+                raise RuntimeError(
+                    f"swe-bench workspace {target} already exists but is not "
+                    "a valid checkout (no .git); delete it and retry"
+                ) from None
     return workspaces
 
 
@@ -514,6 +520,7 @@ def bench(
     )
     from cairn.bench.agent_suite import compare_agent_reports, run_agent_suite
     from cairn.bench.datasource import build_artifact_stamp
+    from cairn.bench.scaling_suite import compare_scaling_reports
 
     # Swe-bench-only flags on another suite are a usage error, not a silent
     # ignore; the manifest itself is resolved + validated before any suite
@@ -607,7 +614,14 @@ def bench(
     budget_breaches: list = []
     try:
         if suite == "scaling":
-            size_list = [int(s.strip()) for s in sizes.split(",") if s.strip()]
+            try:
+                size_list = [int(s.strip()) for s in sizes.split(",") if s.strip()]
+            except ValueError:
+                display.error(f"--sizes expects comma-separated integers, got {sizes!r}")
+                sys.exit(1)
+            if not size_list:
+                display.error(f"--sizes selects no corpus sizes, got {sizes!r}")
+                sys.exit(1)
             tmp_root = Path(tempfile.mkdtemp(prefix="cg_bench_"))
             report = run_scaling_suite(
                 tmp_root,
@@ -689,7 +703,13 @@ def bench(
                         report, budget_limits, budget_mode
                     )
                 except ValueError as exc:
-                    display.error(f"Budget evaluation failed: {exc}")
+                    # The run completed: emit it before exiting so the
+                    # measured numbers are not discarded with the failure.
+                    _stamp_and_emit(report, stamp, as_json)
+                    if as_json:
+                        click.echo(f"Budget evaluation failed: {exc}", err=True)
+                    else:
+                        display.error(f"Budget evaluation failed: {exc}")
                     sys.exit(1)
             payload = _stamp_and_emit(report, stamp, as_json, budget_block)
             if budget_block is not None and not as_json:
@@ -697,7 +717,11 @@ def bench(
 
         # Save baseline if requested.
         if save:
-            Path(save).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            try:
+                Path(save).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            except OSError as exc:
+                display.error(f"Baseline save failed: {exc}")
+                sys.exit(1)
             display.success(f"Saved baseline to {save}")
 
         # Worked bundle if requested: after the results are emitted (and after
@@ -730,7 +754,14 @@ def bench(
             if not baseline_path.exists():
                 display.error(f"Baseline file not found: {compare}")
                 sys.exit(1)
-            baseline_data = json.loads(baseline_path.read_text(encoding="utf-8"))
+            try:
+                baseline_data = json.loads(baseline_path.read_text(encoding="utf-8"))
+            except OSError as exc:
+                display.error(f"Baseline file unreadable ({compare}): {exc}")
+                sys.exit(1)
+            except json.JSONDecodeError as exc:
+                display.error(f"Baseline file is not valid JSON ({compare}): {exc}")
+                sys.exit(1)
             if baseline_version is not None:
                 # Header + machine-profile check precede the table so any
                 # cross-machine caveat is read first; advisory only.
@@ -743,6 +774,11 @@ def bench(
                 base_key, cur_key, base_col, cur_col = (
                     "baseline_tokens", "current_tokens", "baseline tok", "current tok",
                 )
+            elif suite == "scaling":
+                deltas = compare_scaling_reports(baseline_data, payload, threshold=threshold)
+                base_key, cur_key, base_col, cur_col = (
+                    "baseline_value", "current_value", "baseline", "current",
+                )
             else:
                 deltas = compare_reports(baseline_data, payload, threshold=threshold)
                 base_key, cur_key, base_col, cur_col = (
@@ -752,14 +788,17 @@ def bench(
                 rows = []
                 any_regressed = False
                 for name, d in deltas.items():
-                    marker = " ⚠ REGRESSED" if d["regressed"] else ""
+                    marker = ""
                     if d["regressed"]:
+                        marker = " ⚠ REGRESSED"
                         any_regressed = True
+                    elif d.get("unbaselined"):
+                        marker = " (no baseline)"
                     rows.append([
                         name + marker,
-                        f"{d[base_key]:.1f}",
+                        "-" if d[base_key] is None else f"{d[base_key]:.1f}",
                         f"{d[cur_key]:.1f}",
-                        f"{d['delta_pct']:+.1f}%",
+                        "-" if d["delta_pct"] is None else f"{d['delta_pct']:+.1f}%",
                     ])
                 display.print_table(
                     f"vs baseline {baseline_version or compare} (threshold {threshold:.0%})",

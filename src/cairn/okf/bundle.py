@@ -17,27 +17,8 @@ from .concept import OKFConcept
 
 logger = logging.getLogger(__name__)
 
-# flock() locks are per open-file-description: a second os.open() of the same
-# file -- even in the same thread/process -- gets an independent lock that
-# conflicts with the first (EAGAIN under LOCK_NB). So nested lock() calls must
-# NOT re-open+flock; the inner flock would hit the outer's lock and, because the
-# acquire path uses LOCK_NB, busy-wait to a spurious TimeoutError rather than
-# block forever. Tracked via a thread-local depth counter instead.
-#
-# KNOWN CONSTRAINT (the fix spans memory/store.py + memory/promotion.py,
-# not this file): this flock is a cross-process mutex
-# over the .knowledge/ tree, but some callers currently hold it across SQLite
-# writes on caller-owned connections (e.g. promote_memory ->
-# rename_memory_embedding under `with bundle.lock():`). A blocking DB write
-# ("database is locked" busy-waits) inside the critical section serializes
-# every OTHER process's memory mutations behind it and can cascade into the
-# 5s TimeoutError above. The fix is to narrow each call site's critical
-# section to the bundle's own file I/O (read-modify-write of the .md +
-# log.md append) and move the DB writes outside the `with` block.
-# Also note the re-entrancy guard below is thread-local ONLY: a different
-# thread in the SAME process opens an independent fd whose LOCK_NB flock
-# conflicts with the first thread's -- cross-thread nesting fails after
-# `timeout` instead of re-entering.
+# flock() is per open-file-description: nested lock() calls must not
+# re-open+flock (LOCK_NB self-conflicts); thread-local depth counter.
 _LOCK_DEPTH = threading.local()
 
 
@@ -93,18 +74,25 @@ class OKFBundle:
 
     def __init__(self, root_path: str):
         self.root = Path(root_path)
-        # Lazily-built search index: concept_id -> {title, description, tags,
-        # body_lower}. ``None`` means "not built yet"; built on first search()
-        # call and invalidated by any mutation (write/delete) so it can never
-        # go stale.
+        # concept_id -> searchable fields; built on first search(), dropped
+        # on any mutation so it never goes stale.
         self._index: Optional[Dict[str, Dict[str, Any]]] = None
 
     def lock(self, timeout: float = 5.0):
         """Advisory cross-process lock guarding a read-modify-write sequence."""
         return _okf_bundle_lock(self.root, timeout=timeout)
 
+    def relativize_id(self, concept_id: str) -> str:
+        """Return concept_id relative to the bundle root; already-relative ids pass through."""
+        path = Path(concept_id)
+        if not path.is_absolute():
+            return concept_id
+        try:
+            return path.resolve().relative_to(self.root.resolve()).as_posix()
+        except ValueError:
+            return concept_id
+
     def _validate_concept_path(self, concept_id: str) -> Path:
-        self.root.mkdir(parents=True, exist_ok=True)
         root_abs = self.root.resolve()
         path = (self.root / f"{concept_id}.md").resolve()
         if not path.is_relative_to(root_abs):
@@ -128,12 +116,7 @@ class OKFBundle:
         self.update_log("write", concept.concept_id)
 
     def invalidate_search_index(self) -> None:
-        """Drop the in-memory search index so it is rebuilt on the next search.
-
-        Callers that mutate the bundle outside ``write_concept`` (e.g. a direct
-        ``unlink`` of a concept file) should invoke this so the index can never
-        return stale or phantom entries.
-        """
+        """Drop the search index; call after mutating the bundle outside write_concept."""
         self._index = None
 
     def list_concepts(self, prefix: Optional[str] = None) -> List[str]:
@@ -150,13 +133,7 @@ class OKFBundle:
         return sorted(ids)
 
     def _build_search_index(self) -> Dict[str, Dict[str, Any]]:
-        """Parse every concept once and cache the searchable fields.
-
-        Returns ``{concept_id: {title, description, tags, body_lower, tags_str}}``.
-        Built lazily on the first ``search`` call and reused across subsequent
-        queries. Invalidated by ``write_concept`` and
-        ``invalidate_search_index``.
-        """
+        """Parse every concept once, caching searchable fields keyed by concept_id."""
         index: Dict[str, Dict[str, Any]] = {}
         for cid in self.list_concepts():
             try:
@@ -175,13 +152,9 @@ class OKFBundle:
         return index
 
     def search(
-        self, query: str, tags: Optional[List[str]] = None, limit: int = 20
+        self, query: str, tags: Optional[List[str]] = None, limit: Optional[int] = 20
     ) -> List[OKFConcept]:
-        """Simple text search across concept title, description, tags, body.
-
-        Uses a lazily-built in-memory index; the index is invalidated whenever
-        a concept is written.
-        """
+        """Scored text search over title/description/tags/body; ``limit=None`` returns all matches."""
         if self._index is None:
             self._index = self._build_search_index()
         query_lower = query.lower()

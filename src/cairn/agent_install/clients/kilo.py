@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .._common import InstallResult, opencode_format_mcp_config_json
-from ..merge import _merge_json_file, _strip_mcp_kilo
+from ..merge import _merge_json_file, _note_mcp_merge, _strip_mcp_kilo
 
 
 def kilo_mcp_config_json() -> dict:
@@ -28,7 +28,7 @@ def install_kilo(workspace: str, force: bool = False, dry_run: bool = False,
     p = _kilo_config_path(workspace, scope)
     _merge_json_file(p, kilo_mcp_config_json(), force, res,
                      config_key="kilo", dry_run=dry_run)
-    res.notes.append(f"MCP server written to {p} under the `mcp` key (kilo's schema).")
+    _note_mcp_merge(res, p, "under the `mcp` key (kilo's schema).")
     res.notes.append("Skill (golden rules + tool-behaviors) may reach kilo via the .agents/skills/ fallback.")
     return res
 

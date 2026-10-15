@@ -7,7 +7,7 @@ import sys
 import click
 
 from ..graph.dataflow import CLOSURE_MAX_DEPTH
-from ..graph.taint import build_registry, find_paths
+from ..graph.taint import DEFAULT_PATH_LIMIT, build_registry, find_paths
 from .main import DEFAULT_DB_PATH, get_db, main
 
 
@@ -36,13 +36,21 @@ from .main import DEFAULT_DB_PATH, get_db, main
     default=None,
     help="Edge budget between entry and terminator (default: %d)." % CLOSURE_MAX_DEPTH,
 )
-def taint(db, from_pattern, to_pattern, fuzzy, max_depth):
+@click.option(
+    "--limit",
+    type=int,
+    default=DEFAULT_PATH_LIMIT,
+    help="Maximum printed paths (default: %d)." % DEFAULT_PATH_LIMIT,
+)
+def taint(db, from_pattern, to_pattern, fuzzy, max_depth, limit):
     """Trace inter-procedural taint paths from a source pattern to a sink pattern."""
     from ..graph.config import load_config
     from ..paths import resolve_workspace
 
     if max_depth is not None and max_depth < 1:
         raise click.UsageError("--max-depth must be >= 1.")
+    if limit < 1:
+        raise click.UsageError("--limit must be >= 1.")
 
     config = load_config(resolve_workspace())
     registry = build_registry(config.taint_sources, config.taint_sinks)
@@ -78,7 +86,7 @@ def taint(db, from_pattern, to_pattern, fuzzy, max_depth):
         )
         sys.exit(1)
 
-    for number, path in enumerate(paths, start=1):
+    for number, path in enumerate(paths[:limit], start=1):
         click.echo(
             f"taint path {number} ({from_pattern} -> {to_pattern}, "
             f"{len(path.hops)} hops):"

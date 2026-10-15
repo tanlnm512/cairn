@@ -51,17 +51,37 @@ def _report(url: str, *, started: bool, pid: int | None = None) -> None:
         click.echo(f"cairn daemon already running at {url}")
 
 
+def _try_reuse(port: int, host: str) -> bool:
+    """Reuse a healthy daemon on (port, host) only when it serves this workspace's store."""
+    payload = lc.healthz_json(port, host)
+    if payload is None:
+        return False
+    served = payload.get("db")
+    if served:
+        from ..paths import resolve_store
+
+        mine = str(resolve_store().db)
+        if served != mine:
+            click.echo(
+                f"ERROR: the daemon at {lc.mcp_url(port, host)} serves store "
+                f"{served}, not this workspace's ({mine}). Stop it with "
+                f"`cairn serve stop`, or pass --port to start a dedicated daemon."
+            )
+            sys.exit(1)
+    return True
+
+
 @main.command()
 @click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"HTTP daemon port (default {lc.DEFAULT_PORT}).")
 @click.option("--host", default=lc.DEFAULT_HOST, help=f"HTTP daemon host (default {lc.DEFAULT_HOST}, loopback).")
 def connect(port, host):
     """Start or reuse the shared HTTP daemon and print its MCP URL."""
-    if lc.healthz_responds(port, host):
+    if _try_reuse(port, host):
         _report(lc.mcp_url(port, host), started=False)
         return
     fd = _acquire_start_lock(_LOCK_WAIT_SECONDS)
     try:
-        if lc.healthz_responds(port, host):
+        if _try_reuse(port, host):
             _report(lc.mcp_url(port, host), started=False)
             return
         from ..paths import resolve_store

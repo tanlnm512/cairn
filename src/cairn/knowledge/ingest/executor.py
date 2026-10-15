@@ -1,10 +1,14 @@
 """Approved-run execution: manifest rows -> store -> embeddings."""
 from __future__ import annotations
 
+import logging
+
 from cairn.knowledge.ingest.refs import resolve_doc_refs
 from cairn.knowledge.store import add_document
 from cairn.okf.bundle import OKFBundle
 from cairn.paths import resolve_store
+
+logger = logging.getLogger(__name__)
 
 
 def execute_manifest(manifest: dict, conn) -> dict:
@@ -48,9 +52,17 @@ def execute_manifest(manifest: dict, conn) -> dict:
         )
 
     embedded: int | None = None
+    embed_error: str | None = None
     if emb.embeddings_available():
-        summary = emb.embed_knowledge(conn, bundle, batch_size=32)
-        embedded = summary["embedded"]
+        try:
+            summary = emb.embed_knowledge(conn, bundle, batch_size=32)
+            embedded = summary["embedded"]
+        except Exception as e:
+            # Embeddings are derived data: record the fault and let the
+            # index rebuild, commit, and verify legs still run (`cairn
+            # knowledge embed` retries the embedding pass).
+            embed_error = str(e)
+            logger.warning("embed_knowledge failed; continuing: %s", e)
 
     # Commit derived-index rows before the caller closes this connection.
     from cairn.knowledge.index import rebuild_knowledge_index
@@ -76,6 +88,8 @@ def execute_manifest(manifest: dict, conn) -> dict:
         "doc_link_tasks": doc_link_tasks,
         "dangling_pointers": index.get("dangling", []),
     }
+    if embed_error:
+        report["embed_error"] = embed_error
     report.update(
         verify_manifest(
             manifest, conn,

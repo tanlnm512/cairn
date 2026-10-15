@@ -279,3 +279,67 @@ def test_complete_cli_passes_claimer_to_ownership_guard(cli_env, tmp_path):
     )
     assert right.exit_code == 0, right.output
     assert get_task(bundle, queued.id).status == "done"
+
+
+def test_task_list_without_knowledge_flag_reads_the_env_store(cli_env):
+    """Omitting --knowledge resolves the bundle via resolve_store()
+    (CAIRN_KNOWLEDGE-aware), so the listing finds the env store's tasks."""
+    bundle = _bundle(cli_env)
+    queued = create_task(bundle, "wiki-page", "mod-a")
+
+    listing = CliRunner().invoke(task, ["list"])
+
+    assert listing.exit_code == 0, listing.output
+    assert queued.id in listing.stdout
+
+
+# --- escaping TASK_ID (bundle-root guard) --------------------------------
+
+
+def test_escaping_task_id_reads_as_not_found_not_a_traceback(cli_env, tmp_path):
+    """A TASK_ID escaping the bundle root must surface as the ordinary
+    not-found path in show/claim/complete/drop (clean exit 1), never a raw
+    ValueError traceback, and claim must not write outside the bundle."""
+    import sqlite3
+
+    from cairn.graph.schema import _apply_schema
+
+    db = tmp_path / "graph.db"
+    conn = sqlite3.connect(str(db))
+    _apply_schema(conn)
+    conn.commit()
+    conn.close()
+
+    outside_marker = tmp_path / "outside.claim"
+    escaping_id = "../../outside"
+
+    shown = CliRunner().invoke(
+        task, ["show", escaping_id, "--knowledge", str(cli_env)]
+    )
+    assert shown.exit_code == 1
+    assert "No task" in shown.output
+    assert not isinstance(shown.exception, ValueError), (
+        "the bundle-root guard must not escape as a raw ValueError"
+    )
+
+    claimed = CliRunner().invoke(
+        task, ["claim", escaping_id, "--knowledge", str(cli_env)]
+    )
+    assert claimed.exit_code == 1
+    assert "Could not claim" in claimed.stderr
+    assert not outside_marker.exists(), "claim must not create files outside the bundle"
+
+    dropped = CliRunner().invoke(
+        task, ["drop", escaping_id, "--knowledge", str(cli_env)]
+    )
+    assert dropped.exit_code == 1
+    assert "task not found" in dropped.output
+    assert not isinstance(dropped.exception, ValueError)
+
+    completed = CliRunner().invoke(
+        task,
+        ["complete", escaping_id, "--result", "x", "--db", str(db),
+         "--knowledge", str(cli_env)],
+    )
+    assert completed.exit_code == 1
+    assert not isinstance(completed.exception, ValueError)

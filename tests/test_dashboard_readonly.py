@@ -665,3 +665,13 @@ def test_views_over_an_over_cap_store_never_age_it(tmp_path, monkeypatch):
         if p.name.endswith(("-wal", "-shm"))
     )
     assert sidecars == []
+
+
+def test_communities_huge_id_renders_not_found(tmp_path):
+    """A ?community= integer beyond sqlite's 64-bit bind range renders the
+    communities view — never an OverflowError 500."""
+    client, _ = _guard_world(tmp_path, name="communities-huge-id.db")
+
+    resp = _fetch(client, "/communities?community=" + "9" * 25)
+
+    assert 'id="community-members"' in resp.text

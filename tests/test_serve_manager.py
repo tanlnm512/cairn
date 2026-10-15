@@ -170,7 +170,7 @@ class TestDaemonizeFallback:
 
         path, args = recorded["exec"]
         assert Path(path).name == "cairn"
-        assert args[1:] == ["serve", "run", "--port", "9876"]
+        assert args[1:] == ["serve", "run", "--port", "9876", "--host", "127.0.0.1"]
         assert sessions, "the daemon child must detach via setsid"
         assert {1, 2} <= set(redirected), "daemon stdio must be redirected off the terminal"
 
@@ -335,3 +335,143 @@ class TestLaunchdStartRobustness:
         assert len(launchctl) >= 4, "expected the list/list/load/unload launchctl calls"
         for args, timeout in launchctl:
             assert timeout, f"launchctl {' '.join(args[:2])} must be bounded by a timeout"
+
+
+class TestBoundedStartLock:
+    """The start lock must fail bounded, never block a caller forever."""
+
+    def test_start_lock_raises_runtime_error_when_held(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(lc, "_lockfile_path", lambda: tmp_path / "mcp-daemon.lock")
+        with lc._start_lock():
+            with pytest.raises(RuntimeError, match="start lock"):
+                with lc._start_lock(timeout=0.05):
+                    pass  # pragma: no cover - never reached while the lock is held
+
+    def test_start_lock_acquires_when_free(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(lc, "_lockfile_path", lambda: tmp_path / "mcp-daemon.lock")
+        with lc._start_lock(timeout=1.0):
+            pass
+
+
+class TestDaemonizeWedgeRecovery:
+    """A verified pidfile daemon that holds the db but never serves healthz is
+    cycled before a replacement fork (the launchd wedge-unload counterpart)."""
+
+    def _patch_wedge(self, monkeypatch, tmp_path, *, holds_db):
+        monkeypatch.setattr(lc, "pidfile_pid", lambda: 424242)
+        monkeypatch.setattr(
+            lc, "_pid_cmdline", lambda pid: "/usr/local/bin/cairn serve run --port 9876"
+        )
+        holders = {424242} if holds_db else set()
+        monkeypatch.setattr(lc, "_db_holder_pids", lambda db_path: holders)
+        killed: list[int] = []
+        monkeypatch.setattr(
+            lc, "terminate_pid", lambda pid, **kwargs: killed.append(pid)
+        )
+        monkeypatch.setattr(lc, "healthz_responds", lambda *a, **k: False)
+        monkeypatch.setattr(lc, "pidfile_path", lambda: tmp_path / "mcp-daemon.pid")
+        return killed
+
+    def test_wedged_pidfile_daemon_is_cycled(self, monkeypatch, tmp_path):
+        killed = self._patch_wedge(monkeypatch, tmp_path, holds_db=True)
+        (tmp_path / "mcp-daemon.pid").write_text("424242\n")
+
+        lc._cycle_wedged_daemon(9876, "127.0.0.1", str(tmp_path / "graph.db"))
+
+        assert killed == [424242], "the wedged verified daemon must be terminated"
+        assert not (tmp_path / "mcp-daemon.pid").exists(), "the stale pidfile must go"
+
+    def test_unverified_or_nonholder_pid_is_left_alone(self, monkeypatch, tmp_path):
+        killed = self._patch_wedge(monkeypatch, tmp_path, holds_db=False)
+        (tmp_path / "mcp-daemon.pid").write_text("424242\n")
+
+        lc._cycle_wedged_daemon(9876, "127.0.0.1", str(tmp_path / "graph.db"))
+
+        assert killed == [], "never kill a daemon that does not hold this db"
+        assert (tmp_path / "mcp-daemon.pid").exists()
+
+
+class TestServeStopUnloadTimeout:
+    """A launchctl unload timeout must not abort stop with a traceback or skip
+    the pidfile/stray cleanup, and must fail the command."""
+
+    def test_stop_runs_cleanup_and_exits_1_on_unload_timeout(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(lc, "is_macos", lambda: True)
+        monkeypatch.setattr(lc, "is_loaded", lambda: True)
+
+        def _boom():
+            raise RuntimeError("launchctl unload timed out after 15s")
+
+        monkeypatch.setattr(lc, "unload", _boom)
+        monkeypatch.setattr(lc, "pidfile_pid", lambda: None)
+        calls: list[str] = []
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: calls.append("strays") or [])
+        monkeypatch.setenv("CAIRN_HOME", str(tmp_path))
+
+        result = CliRunner().invoke(main, ["serve", "stop"])
+
+        assert result.exit_code == 1, result.output
+        assert "launchctl unload timed out" in result.output
+        assert calls == ["strays"], "stray sweep must run despite the unload failure"
+        assert "stopped." not in result.output
+
+
+class TestServeStatusResolvesDaemonBind:
+    """serve_status probes the port/host the daemon was started with, not just
+    the command's own defaults."""
+
+    def test_status_probes_the_plist_port(self, monkeypatch, tmp_path):
+        import plistlib
+
+        plist = tmp_path / "dev.cairn.mcp.plist"
+        plist.write_bytes(
+            plistlib.dumps(
+                {
+                    "Label": "dev.cairn.mcp",
+                    "ProgramArguments": [
+                        "/usr/local/bin/cairn", "serve", "run",
+                        "--port", "9999", "--host", "127.0.0.1",
+                    ],
+                }
+            )
+        )
+        monkeypatch.setattr(lc, "is_macos", lambda: True)
+        monkeypatch.setattr(lc, "plist_path", lambda: plist)
+        monkeypatch.setattr(lc, "is_loaded", lambda: False)
+        monkeypatch.setattr(lc, "running_pid", lambda: None)
+        monkeypatch.setattr(lc, "pidfile_pid", lambda: None)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        probed: list[tuple[int, str]] = []
+
+        def _healthz(port, host, *args, **kwargs):
+            probed.append((port, host))
+            return False
+
+        monkeypatch.setattr(lc, "healthz_responds", _healthz)
+        monkeypatch.setenv("CAIRN_HOME", str(tmp_path))
+
+        result = CliRunner().invoke(main, ["serve", "status"])
+
+        assert result.exit_code == 0, result.output
+        assert probed == [(9999, "127.0.0.1")], (
+            "status must probe the daemon's configured port, not the CLI default"
+        )
+        assert "9999" in result.output
+
+    def test_explicit_port_flag_wins(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(lc, "is_macos", lambda: False)
+        monkeypatch.setattr(lc, "pidfile_pid", lambda: None)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        probed: list[tuple[int, str]] = []
+
+        def _healthz(port, host, *args, **kwargs):
+            probed.append((port, host))
+            return False
+
+        monkeypatch.setattr(lc, "healthz_responds", _healthz)
+        monkeypatch.setenv("CAIRN_HOME", str(tmp_path))
+
+        result = CliRunner().invoke(main, ["serve", "status", "--port", "9443"])
+
+        assert result.exit_code == 0, result.output
+        assert probed == [(9443, lc.DEFAULT_HOST)]

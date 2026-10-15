@@ -4,7 +4,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from cairn.knowledge.store import add_document
+from cairn.knowledge.store import add_document, doc_concept_id
 from cairn.okf.bundle import OKFBundle
 
 # Same secret shape the title-redaction tests in test_redaction_chokepoints.py
@@ -73,3 +73,39 @@ def test_secret_shaped_title_fallback_description_stays_redacted():
         assert "sk-1234567890" not in concept.description
         assert "REDACTED_SECRET" in concept.description
         assert "sk-1234567890" not in _read_file_text(bundle, cid)
+
+
+def test_doc_concept_id_matches_add_document_assignment():
+    """Callers can predict the overwrite target: doc_concept_id must derive
+    the exact id add_document assigns a title/doc_type pair, redaction
+    included."""
+    with tempfile.TemporaryDirectory() as tmp:
+        bundle = _bundle(Path(tmp))
+        cid = add_document(
+            bundle, title="Refund policy", body="Body.", doc_type="spec",
+        )
+        assert cid == doc_concept_id("Refund policy", "spec")
+
+        secret_cid = add_document(
+            bundle, title=f"rotation {_API_KEY}", body="Body.", doc_type="decision",
+        )
+        assert secret_cid == doc_concept_id(f"rotation {_API_KEY}", "decision")
+
+
+def test_overwriting_add_is_logged(caplog):
+    """A same-title+type write replaces the prior document; it must never
+    happen silently."""
+    import logging
+
+    with tempfile.TemporaryDirectory() as tmp:
+        bundle = _bundle(Path(tmp))
+        add_document(bundle, title="Refund policy", body="v1", doc_type="spec")
+        with caplog.at_level(logging.INFO, logger="cairn.knowledge.store"):
+            cid = add_document(
+                bundle, title="Refund policy", body="v2", doc_type="spec"
+            )
+    assert any(
+        "Overwriting existing knowledge document" in r.message
+        for r in caplog.records
+    )
+    assert cid == "knowledge/spec/refund-policy"

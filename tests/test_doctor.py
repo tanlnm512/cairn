@@ -135,6 +135,26 @@ def test_eight_checks_always_emitted(tmp_path):
         assert row["status"] in _HEALTH_STATUSES
 
 
+def test_doctor_opens_store_read_only(tmp_path):
+    """Doctor must not write to the store: no journal-mode flip to WAL.
+
+    The command is read-only unless --fix; a writable open would apply
+    migrations and flip the journal mode as a side effect.
+    """
+    db = tmp_path / "graph.db"
+    _make_db(db)
+
+    result = _run(db)
+    assert result.exit_code == 0, result.output
+    assert "PASS schema" in result.output
+
+    probe = sqlite3.connect(str(db))
+    try:
+        assert probe.execute("PRAGMA journal_mode").fetchone()[0] != "wal"
+    finally:
+        probe.close()
+
+
 # ---------------------------------------------------------------------------
 # Schema -- FAIL conditions
 # ---------------------------------------------------------------------------

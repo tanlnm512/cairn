@@ -1,6 +1,7 @@
 """Assemble a skill draft from compass, ranked symbols, and memory."""
 from __future__ import annotations
 
+import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,7 +105,10 @@ def _common_prefix(a: list[str], b: list[str]) -> list[str]:
 
 
 def _knowledge_path(conn: sqlite3.Connection) -> Path:
-    """Knowledge dir for a graph connection: ``<db dir>/.knowledge``."""
+    """Knowledge dir for a graph connection; CAIRN_KNOWLEDGE overrides db-adjacency."""
+    env = os.environ.get("CAIRN_KNOWLEDGE")
+    if env:
+        return Path(env)
     row = conn.execute("PRAGMA database_list").fetchone()
     db_file = row[2] if row is not None else ""
     if db_file:

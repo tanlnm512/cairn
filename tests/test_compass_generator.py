@@ -110,6 +110,26 @@ class TestModuleResolution:
         assert _symbols_in_module(conn, "graph_core", "polaris-app") == []
         assert {s["name"] for s in _symbols_in_module(conn, "graph/core", "polaris-app")} == {"core_fn"}
 
+    def test_infer_repo_ignores_repo_named_dir_in_another_repo(self, fresh_db):
+        # `lib/client/ui` lives in repo `web`; the repo id `client` appears
+        # mid-path but file evidence must decide, not first-match containment.
+        _row(fresh_db, "repos", id="client", name="client", path="/work/client")
+        _row(fresh_db, "repos", id="web", name="web", path="/work/web")
+        _row(fresh_db, "files", id="fw1", repo_id="web", path="lib/client/ui/widget.py", language="python")
+        _row(fresh_db, "files", id="fw2", repo_id="web", path="lib/client/ui/view.py", language="python")
+        fresh_db.commit()
+        assert _infer_repo(fresh_db, "lib/client/ui") == "web"
+
+    def test_infer_repo_anchors_legacy_absolute_path_on_repo_root(self, conn):
+        assert _infer_repo(conn, "/work/polaris-app/app") == "polaris-app"
+
+    def test_infer_repo_mid_path_ambiguity_raises(self, fresh_db):
+        _row(fresh_db, "repos", id="app", name="app", path="/a")
+        _row(fresh_db, "repos", id="core", name="core", path="/c")
+        fresh_db.commit()
+        with pytest.raises(ModuleResolutionError):
+            _infer_repo(fresh_db, "src/app/core/ui")
+
     def test_empty_module_path_rejected(self, conn, tmp_path):
         with pytest.raises(ModuleResolutionError):
             generate_compass("/", conn, OKFBundle(str(tmp_path / "k")))
@@ -312,6 +332,22 @@ class TestCompassGenerateCLI:
             assert result.exit_code == 1
             assert "multiple repos" in result.output
             assert "Queued compass task" not in result.output
+            assert not list(Path(know).rglob("compass/*.md"))
+
+    def test_use_llm_dry_run_queues_nothing(self):
+        # File-queue backend: --dry-run must not write the task concept.
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db, know = self._setup(tmp)
+            from cairn.cli import main
+            result = runner.invoke(
+                main,
+                ["compass", "generate", "happy", "--use-llm", "--dry-run",
+                 "--db", db, "--knowledge", know],
+            )
+            assert result.exit_code == 0
+            assert "task not queued" in result.output
+            assert not list(Path(know).rglob("_tasks/*.md"))
             assert not list(Path(know).rglob("compass/*.md"))
 
     def test_repo_scoped_generation_passes_critic(self):

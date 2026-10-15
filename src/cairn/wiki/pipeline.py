@@ -93,22 +93,23 @@ def queue_enrich_tasks(
     repo: Optional[str] = None,
     page_id: Optional[str] = None,
 ) -> List[Task]:
-    """Queue one ``wiki-page-enrich`` task per promoted manifest page.
-
-    Only rows whose promoted content (``wiki/pages/{repo}/{page_id}``) is
-    readable are queued; ``repo``/``page_id`` narrow the selection. The
-    task's facts carry the page identity and seeds — never the body (the
-    promoted concept is read at completion time) and no content sha
-    (resolved at completion). Enrichment is content maintenance: the plan
-    kind is not touched.
-    """
+    """Queue one ``wiki-page-enrich`` task per promoted manifest page with
+    readable content and no live enrich task; ``repo``/``page_id`` narrow it.
+    Facts carry identity and seeds only — body and sha resolve at completion."""
     manifest = load_manifest(bundle)
+    live_enrich = {
+        t.resource
+        for t in list_tasks(bundle, kind_prefix="wiki-page-enrich")
+        if t.status in ("pending", "in-progress")
+    }
     queued: List[Task] = []
     for key in sorted(manifest.get("pages", {})):
         row_repo, _, row_page = str(key).partition("/")
         if repo and row_repo != repo:
             continue
         if page_id and row_page != page_id:
+            continue
+        if key in live_enrich:
             continue
         row = manifest["pages"][key]
         from .lifecycle import read_page_concept

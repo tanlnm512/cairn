@@ -162,3 +162,228 @@ def test_ingest_flag_exits_nonzero_when_a_verify_leg_fails(cli_env, monkeypatch)
     assert result.exit_code == 1
     assert "count_ok: False" in result.stdout
     assert "verification failed" in result.stderr
+
+
+# --- overwrite visibility, import dir errors, staging errors ---------------
+
+
+def test_add_same_title_and_type_reports_the_replacement(cli_env):
+    args = ["add", "--title", "Refund policy", "--body", "v1 body."]
+    first = CliRunner().invoke(knowledge, args)
+    assert first.exit_code == 0, first.stdout
+    assert "replaced" not in first.stdout
+
+    second = CliRunner().invoke(knowledge, [
+        "add", "--title", "Refund policy", "--body", "v2 body.",
+    ])
+    assert second.exit_code == 0, second.stdout
+    assert (
+        "(replaced an existing document with the same title and doc_type)"
+        in second.stdout
+    )
+    docs = _stored_docs()
+    assert len(docs) == 1
+    assert "v2 body." in docs[0].body
+
+
+def test_import_missing_directory_is_a_clean_error(cli_env):
+    missing = cli_env / "no-such-docs"
+    result = CliRunner().invoke(knowledge, ["import", str(missing)])
+    assert result.exit_code == 1
+    assert "Error:" in result.stderr
+    assert str(missing) in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "Imported" not in result.stdout
+
+
+def test_import_file_path_is_a_clean_error(cli_env):
+    plain_file = cli_env / "notes.md"
+    plain_file.write_text("not a directory\n", encoding="utf-8")
+    result = CliRunner().invoke(knowledge, ["import", str(plain_file)])
+    assert result.exit_code == 1
+    assert "Error:" in result.stderr
+    assert str(plain_file) in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_ingest_staging_valueerror_is_a_clean_error(cli_env, monkeypatch):
+    # The staging cross-check raises ValueError; it must render as a clean
+    # CLI error like the FileNotFoundError leg, never a raw traceback.
+    import cairn.knowledge.ingest as ingest_mod
+
+    def _cross_check_boom(files, dirs, outbox, include_drafts, repos):
+        raise ValueError(
+            "staging cross-check failed for a.md: expected title='A' "
+            "type='Knowledge-spec', staged title='B' type='Knowledge-spec'"
+        )
+
+    monkeypatch.setattr(ingest_mod, "run_ingest", _cross_check_boom)
+    docs = cli_env / "docs"
+    docs.mkdir()
+    result = CliRunner().invoke(knowledge, [
+        "ingest", "--dir", str(docs), "--outbox", str(cli_env / "outbox"),
+    ])
+    assert result.exit_code == 1
+    assert "Error:" in result.stderr
+    assert "staging cross-check failed" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+# --- store guards before the DB is opened ----------------------------------
+
+
+def test_search_on_uninitialized_store_is_a_clean_empty_result(cli_env):
+    result = CliRunner().invoke(knowledge, [
+        "search", "refund", "--db", str(cli_env / "no-such-dir" / "kg"),
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert "No knowledge documents matching 'refund'." in result.stdout
+    assert "Traceback" not in result.stdout
+    assert "Traceback" not in result.stderr
+
+
+def test_remove_on_uninitialized_store_is_a_clean_not_found(cli_env):
+    result = CliRunner().invoke(knowledge, [
+        "remove", "knowledge/spec/ghost",
+        "--db", str(cli_env / "no-such-dir" / "kg"),
+    ])
+    assert result.exit_code == 1
+    assert "Not found" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_impact_on_uninitialized_store_is_a_clean_empty_result(cli_env):
+    result = CliRunner().invoke(knowledge, [
+        "impact", "refund", "--db", str(cli_env / "no-such-dir" / "kg"),
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert "No knowledge documents matching 'refund'." in result.stdout
+    assert "Traceback" not in result.stdout
+    assert "Traceback" not in result.stderr
+
+
+def test_embed_on_fresh_store_initializes_cleanly(cli_env, hash_backend):
+    result = CliRunner().invoke(knowledge, [
+        "embed", "--db", str(cli_env / "graph.db"),
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert "Traceback" not in result.stdout
+    assert "Traceback" not in result.stderr
+
+
+def test_embed_missing_db_parent_is_a_clean_error(cli_env, hash_backend):
+    result = CliRunner().invoke(knowledge, [
+        "embed", "--db", str(cli_env / "no-such-dir" / "kg"),
+    ])
+    assert result.exit_code == 1
+    assert "Error:" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+# --- impact graph-bridge rendering ------------------------------------------
+
+
+def _add_doc_with_repo(cli_env):
+    added = CliRunner().invoke(knowledge, [
+        "add", "--title", "Refund policy", "--body", "Refunds within 30 days.",
+        "--affects", "ghost-repo",
+    ])
+    assert added.exit_code == 0, added.stdout
+
+
+def test_impact_lists_repos_without_graph_edges(cli_env):
+    _add_doc_with_repo(cli_env)
+    result = CliRunner().invoke(knowledge, [
+        "impact", "refund", "--db", str(cli_env / "graph.db"),
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert "ghost-repo → no cross-repo dependencies in the graph." in result.stdout
+
+
+def test_impact_reports_graph_bridge_errors(cli_env, monkeypatch):
+    import cairn.knowledge.search as search_mod
+
+    monkeypatch.setattr(
+        search_mod, "_graph_bridge",
+        lambda conn, repos: {
+            repo: {"error": "repo not found in graph"} for repo in repos
+        },
+    )
+    _add_doc_with_repo(cli_env)
+    result = CliRunner().invoke(knowledge, [
+        "impact", "refund", "--db", str(cli_env / "graph.db"),
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert "ghost-repo → graph lookup failed: repo not found in graph" in result.stdout
+
+
+# --- knowledge workflow add/sync CLI surface --------------------------------
+
+
+def test_workflow_add_steps_file_missing_is_a_clean_error(cli_env):
+    bad = str(cli_env / "missing.yaml")
+    result = CliRunner().invoke(knowledge, [
+        "workflow", "add", "--title", "Deploy flow", "--steps-file", bad,
+    ])
+    assert result.exit_code == 1
+    assert "Error:" in result.stderr
+    assert bad in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_workflow_add_steps_file_non_dict_entries_is_a_clean_error(cli_env):
+    steps_file = cli_env / "steps.yaml"
+    steps_file.write_text("- just a plain string step\n", encoding="utf-8")
+    result = CliRunner().invoke(knowledge, [
+        "workflow", "add", "--title", "Deploy flow",
+        "--steps-file", str(steps_file),
+    ])
+    assert result.exit_code == 1
+    assert "must contain a YAML/JSON list of step dicts" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_workflow_sync_dry_run_reads_store_bundle(cli_env):
+    # The bundle must come from resolve_store (CAIRN_KNOWLEDGE), not the
+    # --db-derived default, so a workflow added via the CLI is visible.
+    steps_file = cli_env / "steps.yaml"
+    steps_file.write_text(
+        "- name: Deploy\n  description: Ship it\n"
+        "  symbol: deployHotfix\n  file: src/Deploy.kt\n",
+        encoding="utf-8",
+    )
+    added = CliRunner().invoke(knowledge, [
+        "workflow", "add", "--title", "Deploy flow",
+        "--steps-file", str(steps_file),
+    ])
+    assert added.exit_code == 0, added.stdout
+
+    result = CliRunner().invoke(knowledge, [
+        "workflow", "sync", "--all", "--dry-run",
+        "--db", str(cli_env / "graph.db"),
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert "Deploy flow" in result.stdout
+    assert "1 workflow(s) with stale steps:" in result.stdout
+
+
+def test_workflow_sync_on_fresh_store_is_a_clean_noop(cli_env):
+    result = CliRunner().invoke(knowledge, [
+        "workflow", "sync", "--all", "--dry-run",
+        "--db", str(cli_env / "no-such-dir" / "kg"),
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert "No workflows to sync." in result.stdout
+    assert "Traceback" not in result.stdout
+    assert "Traceback" not in result.stderr
+
+
+def test_workflow_sync_rejects_ref_with_all(cli_env):
+    result = CliRunner().invoke(knowledge, [
+        "workflow", "sync", "deploy-flow", "--all",
+        "--db", str(cli_env / "graph.db"),
+    ])
+    assert result.exit_code == 1
+    assert "Error:" in result.stderr
+    assert "not both" in result.stderr
+    assert "Traceback" not in result.stderr

@@ -3,10 +3,38 @@ from __future__ import annotations
 
 import click
 import os
+import re
+import sqlite3
 import sys
 from pathlib import Path
 
 from .main import DEFAULT_DB_PATH, get_db, main
+
+MEMORY_TYPES = ("decision", "pattern", "mistake", "workaround")
+
+
+def _embed_saved_memories(conn, bundle, paths) -> None:
+    """Embed saved memories; on failure keep files/rows and defer to `memory embed`."""
+    from ..graph.embeddings import embed_memory_concepts
+
+    try:
+        embed_memory_concepts(conn, bundle, paths)
+    except Exception:
+        click.echo(
+            "Embedding failed; memories saved without vectors "
+            "(run `cairn memory embed` to backfill).",
+            err=True,
+        )
+
+
+def _open_read_conn(db: str):
+    """Open the graph DB for listing reads; map a corrupt file to a CLI error."""
+    try:
+        return get_db(db)
+    except sqlite3.DatabaseError as exc:
+        raise click.ClickException(
+            f"--db '{db}' is not a valid cairn database: {exc}"
+        ) from exc
 
 
 def _memory_line(c, conn, with_tier: bool = False, with_concept_id: bool = False) -> str:
@@ -39,7 +67,7 @@ def memory():
 
 
 @memory.command("record")
-@click.argument("mtype", type=click.Choice(["decision", "pattern", "mistake", "workaround"]))
+@click.argument("mtype", type=click.Choice(MEMORY_TYPES))
 @click.argument("title")
 @click.option("--body", default="", help="Memory body text.")
 @click.option("--resource", default=None, help="Related file path.")
@@ -59,30 +87,34 @@ def memory_record(mtype, title, body, resource, confidence, recurrence_key, stan
     """Record a learning: decision|pattern|mistake|workaround.
     For decision/mistake/workaround, structure --body as the fact/rule, then a
     `Why:` line and a `How to apply:` line."""
-    from ..graph.embeddings import embed_memory_concepts
     from ..memory.promotion import capture_memory
     from ..okf.bundle import OKFBundle
+    from ..paths import resolve_store
 
+    # Fresh-store guard: bootstrap dirs so get_db can initialize the store.
+    resolve_store().ensure()
+    Path(db).parent.mkdir(parents=True, exist_ok=True)
     conn = get_db(db)
-    if recurrence_key:
-        from ..memory.recurrence import note_failure_signature
+    try:
+        if recurrence_key:
+            from ..memory.recurrence import note_failure_signature
 
-        tool_name = (title[len("Tool failure: "):]
-                     if title.startswith("Tool failure: ") else mtype)
-        if note_failure_signature(conn, recurrence_key, tool_name) == 0:
-            conn.commit()
-            conn.close()
-            return
-    bundle = OKFBundle(knowledge)
-    result = capture_memory(
-        conn, bundle, type_=mtype, title=title, body=body or title,
-        resource=resource, confidence=confidence, stance=stance,
-    )
-    embed_memory_concepts(conn, bundle, [result["path"]])
-    conn.commit()
-    conn.close()
-    signals = result["signals"]
-    click.echo(f"Recorded {mtype} '{title}' -> {result['path']} (score={signals['score']}, tier={result['tier']})")
+            tool_name = (title[len("Tool failure: "):]
+                         if title.startswith("Tool failure: ") else mtype)
+            if note_failure_signature(conn, recurrence_key, tool_name) == 0:
+                conn.commit()
+                return
+        bundle = OKFBundle(knowledge)
+        result = capture_memory(
+            conn, bundle, type_=mtype, title=title, body=body or title,
+            resource=resource, confidence=confidence, stance=stance,
+        )
+        _embed_saved_memories(conn, bundle, [result["path"]])
+        conn.commit()
+        signals = result["signals"]
+        click.echo(f"Recorded {mtype} '{title}' -> {result['path']} (score={signals['score']}, tier={result['tier']})")
+    finally:
+        conn.close()
 
 
 @memory.command("reflect")
@@ -97,6 +129,8 @@ def memory_reflect(db, knowledge):
     conn = get_db(db)
     try:
         summary = reflect_store(bundle, conn)
+    except Exception as exc:
+        raise click.ClickException(f"reflect failed: {exc}") from exc
     finally:
         conn.close()
     click.echo(
@@ -114,22 +148,23 @@ def memory_reflect(db, knowledge):
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
 def memory_evolve(memory_path, title, body, db, knowledge):
     """Revise a memory: the new version supersedes the old and inherits its version chain."""
-    from ..graph.embeddings import embed_memory_concepts
     from ..memory.promotion import evolve_memory
     from ..okf.bundle import OKFBundle
 
     conn = get_db(db)
     bundle = OKFBundle(knowledge)
-    result = evolve_memory(
-        conn, bundle, memory_path, new_title=title, new_body=body
-    )
-    if result is not None:
-        embed_memory_concepts(conn, bundle, [result["path"]])
-        conn.commit()
-    conn.close()
+    try:
+        result = evolve_memory(
+            conn, bundle, memory_path, new_title=title, new_body=body
+        )
+        if result is not None:
+            _embed_saved_memories(conn, bundle, [result["path"]])
+            conn.commit()
+    finally:
+        conn.close()
     if result is None:
-        click.echo(f"Memory not found: '{memory_path}'.")
-        return
+        click.echo(f"Memory not found: '{memory_path}'.", err=True)
+        sys.exit(1)
     signals = result["signals"]
     click.echo(
         f"Evolved '{memory_path}' -> {result['path']} "
@@ -228,7 +263,7 @@ def memory_timeline(symbol, db, knowledge):
         cited = any(r == symbol or r.endswith("." + symbol) for r in refs)
         if not cited:
             hay = f"{c.title} {c.description} {c.body}".lower()
-            if symbol.lower() not in hay:
+            if re.search(rf"\b{re.escape(symbol.lower())}\b", hay) is None:
                 continue
         matches.append(c)
     matches.sort(
@@ -261,71 +296,75 @@ def memory_timeline(symbol, db, knowledge):
 def memory_capture(session_transcript, session_transcript_stdin, session_id, db, knowledge):
     """Extract learnings from a session transcript (inline or --session-transcript-stdin, stdin wins); records or queues them."""
 
-    from ..graph.embeddings import embed_memory_concepts
     from ..llm.tasks import create_task
     from ..memory.promotion import capture_memory
     from ..okf.bundle import OKFBundle
 
     conn = get_db(db)
     bundle = OKFBundle(knowledge)
-    if session_transcript_stdin:
-        # Read the full transcript from stdin — no ARG_MAX limit.
-        transcript = sys.stdin.read()
-    else:
-        transcript = session_transcript or "[]"
+    try:
+        if session_transcript_stdin:
+            # Read the full transcript from stdin — no ARG_MAX limit.
+            transcript = sys.stdin.read()
+        else:
+            transcript = session_transcript or "[]"
 
-    # Try synchronous extraction via a configured subprocess backend.
-    backend = os.environ.get("CAIRN_LLM_BACKEND", "").lower()
-    candidates = []
-    if backend in ("droid", "opencode", "claude"):
-        from ..llm.client import SubprocessBackend
+        # Try synchronous extraction via a configured subprocess backend.
+        backend = os.environ.get("CAIRN_LLM_BACKEND", "").lower()
+        candidates = []
+        if backend in ("droid", "opencode", "claude"):
+            from ..llm.client import SubprocessBackend
 
-        client = SubprocessBackend(bundle, cli=backend)
-        try:
-            candidates = client.extract(transcript)
-        except Exception:
-            candidates = []
+            client = SubprocessBackend(bundle, cli=backend)
+            try:
+                candidates = client.extract(transcript)
+            except Exception:
+                candidates = []
 
-    # If we got candidates, record them now.
-    recorded = 0
-    captured_paths = []
-    for cand in candidates:
-        try:
-            result = capture_memory(
-                conn, bundle,
-                type_=cand.get("type", "decision"),
-                title=cand.get("title", "untitled"),
-                body=cand.get("body", ""),
-                confidence=float(cand.get("confidence", 0.6)),
-                session_origin=session_id,
+        # If we got candidates, record them now.
+        recorded = 0
+        captured_paths = []
+        for cand in candidates:
+            try:
+                # Off-vocabulary LLM types fall back to the default so
+                # supersession/freshness grouping stays exact.
+                cand_type = cand.get("type") if cand.get("type") in MEMORY_TYPES else "decision"
+                result = capture_memory(
+                    conn, bundle,
+                    type_=cand_type,
+                    title=cand.get("title", "untitled"),
+                    body=cand.get("body", ""),
+                    confidence=float(cand.get("confidence", 0.6)),
+                    session_origin=session_id,
+                )
+                captured_paths.append(result["path"])
+                recorded += 1
+            except Exception:
+                continue
+
+        if captured_paths:
+            _embed_saved_memories(conn, bundle, captured_paths)
+            conn.commit()
+
+        if recorded:
+            click.echo(f"Captured {recorded} memories from session {session_id}.")
+        else:
+            # The queued task .md persists the transcript-derived facts, so redact
+            # before queueing.
+            from ..memory.privacy import strip_private_data
+
+            task = create_task(
+                bundle,
+                "memory-extract",
+                f"session-{session_id}",
+                facts={
+                    "transcript": strip_private_data(transcript)[:8000],
+                    "session_id": session_id,
+                },
             )
-            captured_paths.append(result["path"])
-            recorded += 1
-        except Exception:
-            continue
-
-    if captured_paths:
-        embed_memory_concepts(conn, bundle, captured_paths)
-        conn.commit()
-
-    if recorded:
-        click.echo(f"Captured {recorded} memories from session {session_id}.")
-    else:
-        # The queued task .md persists the transcript-derived facts, so redact
-        # before queueing.
-        from ..memory.privacy import strip_private_data
-
-        task = create_task(
-            bundle,
-            "memory-extract",
-            f"session-{session_id}",
-            facts={
-                "transcript": strip_private_data(transcript)[:8000],
-                "session_id": session_id,
-            },
-        )
-        click.echo(f"No agent available; queued memory-extract task {task.id}.")
-    conn.close()
+            click.echo(f"No agent available; queued memory-extract task {task.id}.")
+    finally:
+        conn.close()
 
 
 @memory.command("list")
@@ -348,7 +387,7 @@ def memory_list(tier, tag, db, knowledge):
 
     conn = None
     if Path(db).exists():
-        conn = get_db(db)
+        conn = _open_read_conn(db)
     try:
         for c in mems:
             click.echo(_memory_line(c, conn, with_tier=True))
@@ -381,14 +420,17 @@ def memory_digest(limit, db, knowledge):
     from ..okf.bundle import OKFBundle
 
     bundle = OKFBundle(knowledge)
-    mems = tribal_digest(bundle, limit=limit)
+    try:
+        mems = tribal_digest(bundle, limit=limit)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
     if not mems:
         click.echo("No tribal memories yet.")
         return
 
     conn = None
     if Path(db).exists():
-        conn = get_db(db)
+        conn = _open_read_conn(db)
     try:
         for c in mems:
             click.echo(_memory_line(c, conn))
@@ -488,8 +530,11 @@ def memory_batch_critic(db, knowledge):
 
     conn = get_db(db)
     bundle = OKFBundle(knowledge)
-    result = batch_critic(conn, bundle)
-    conn.close()
+    try:
+        result = batch_critic(conn, bundle)
+        conn.commit()
+    finally:
+        conn.close()
     click.echo(f"Processed {result['processed']} drafts: "
                f"{result['tribal']} -> tribal, {result['dropped']} dropped, "
                f"{result['remaining_drafts']} remain drafts.")

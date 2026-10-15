@@ -1,11 +1,9 @@
 """Signal tests for the Python parser.
 
 Covers the three enrichment signals on ParsedFile rows:
-- Import.local_alias + normalized paths for aliased imports. Plain
-  (non-aliased) imports keep the verbatim statement text: the builder's
-  import-base parser (``_import_module_bases``) consumes that shape to derive
-  module bases, so only the alias-bearing statements — whose raw text hides
-  the alias from the resolver — are normalized to dotted paths.
+- Import.local_alias + normalized dotted paths for every import statement,
+  plain and aliased alike (the resolver and cross-repo matcher segment on
+  dotted paths, never on raw statement text).
 - Edge.receiver_type for attribute calls via the scope-ordered var->type
   tracker: only bare-identifier receivers with a known in-file
   binding (class name, ``self``/``cls``, typed or constructor assignment,
@@ -52,18 +50,18 @@ def _symbol(pf, name: str):
 
 
 # ---------------------------------------------------------------------------
-# Import signals — normalized dotted path + local_alias on alias-bearing
-# statements; plain statements keep the statement text the builder's
-# module-base parser consumes.
+# Import signals — one normalized dotted path per imported name, plain and
+# aliased alike (segment-splitting consumers never see statement text).
 # ---------------------------------------------------------------------------
 
 class TestImportSignals:
-    def test_plain_imports_keep_statement_text(self):
-        pf = _parse(b"import os\nfrom enum import Enum\nfrom util import helper\n")
+    def test_plain_imports_normalize_to_dotted_paths(self):
+        pf = _parse(b"import os\nimport os.path\nfrom enum import Enum\nfrom util import helper\n")
         assert _imports(pf) == [
-            ("import os", None),
-            ("from enum import Enum", None),
-            ("from util import helper", None),
+            ("os", None),
+            ("os.path", None),
+            ("enum.Enum", None),
+            ("util.helper", None),
         ]
 
     def test_aliased_plain_import_normalizes_path(self):
@@ -82,11 +80,10 @@ class TestImportSignals:
         pf = _parse(b"from util import a, b as c\n")
         assert _imports(pf) == [("util.a", None), ("util.b", "c")]
 
-    def test_wildcard_import_records_no_alias(self):
-        # Re-export shape: no local binding exists, so no alias (abstention);
-        # the statement text stays as stored today.
+    def test_wildcard_import_binds_no_name(self):
+        # A star import binds no specific name, so no Import row is stored.
         pf = _parse(b"from util import *\n")
-        assert _imports(pf) == [("from util import *", None)]
+        assert _imports(pf) == []
 
     def test_relative_aliased_import_strips_dot_markers(self):
         pf = _parse(b"from .rel import name as rn\n")

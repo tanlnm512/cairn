@@ -256,6 +256,83 @@ class TestCompassFlowCLI:
         assert result.exit_code == 0
         assert "flow" in result.output
 
+    def test_use_llm_dry_run_queues_nothing(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db, know = self._setup(tmp)
+            result = runner.invoke(main, [
+                "compass", "flow", "checkout", "--use-llm", "--dry-run",
+                "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 0
+            assert "task not queued" in result.output
+            assert not list(Path(know).rglob("_tasks/*.md"))
+            assert not list(Path(know).rglob("compass/*.md"))
+
+    def test_ambiguous_entry_refuses_arbitrary_trace(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "test.db")
+            know = str(Path(tmp) / ".knowledge")
+            Path(know).mkdir(parents=True, exist_ok=True)
+            from cairn.graph.schema import get_db
+            conn = get_db(db)
+            _seed_name_collision(conn)
+            conn.close()
+            result = runner.invoke(main, [
+                "compass", "flow", "handleCommand", "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 1
+            assert "ambiguous" in result.output
+            assert not list(Path(know).rglob("compass/*.md"))
+            # --entry-id disambiguates.
+            result = runner.invoke(main, [
+                "compass", "flow", "handleCommand", "--entry-id", "s1",
+                "--dry-run", "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 0
+            assert "Traced" in result.output
+
+    def test_as_workflow_write_happens_after_critic_gate(self, monkeypatch):
+        import cairn.compass.critic as critic_mod
+        from cairn.compass.critic import CriticResult
+
+        def _reject(concept, conn, **kw):
+            return CriticResult(errors=["boom"], warnings=[], quality_score=0.4, passed=False)
+
+        monkeypatch.setattr(critic_mod, "critic_concept", _reject)
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db, know = self._setup(tmp)
+            result = runner.invoke(main, [
+                "compass", "flow", "checkout", "--as-workflow",
+                "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 1
+            assert "rejected" in result.output
+            assert not list(Path(know).rglob("*.md"))
+
+    def test_flow_traced_once_per_invocation(self, monkeypatch):
+        import cairn.compass.generator as gen_mod
+
+        real = gen_mod._gather_flow_facts
+        calls = []
+
+        def _counting(conn, entry, entry_id=None):
+            calls.append(entry)
+            return real(conn, entry, entry_id=entry_id)
+
+        monkeypatch.setattr(gen_mod, "_gather_flow_facts", _counting)
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db, know = self._setup(tmp)
+            result = runner.invoke(main, [
+                "compass", "flow", "checkout", "--as-workflow",
+                "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 0, result.output
+            assert len(calls) == 1
+
 
 # ─── flow gap detection tests ──────────────────────────────────────────────
 
@@ -468,6 +545,26 @@ class TestDetectFlowGaps:
         assert result["uncovered"] == []
         assert result["covered"] == []
 
+    def test_unreadable_flow_concept_reported_not_silently_dropped(self, fresh_db):
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.okf.bundle import OKFBundle
+        from cairn.okf.concept import OKFConcept
+        import tempfile
+        know = tempfile.mkdtemp()
+        bundle = OKFBundle(know)
+        _seed_flows(fresh_db)
+        cid = "compass/flow-richFlow"
+        bundle.write_concept(OKFConcept(
+            type="Compass", title="Flow: richFlow", resource="richFlow",
+            concept_id=cid, body="# test\n",
+        ))
+        (Path(know) / "compass" / "flow-richFlow.md").write_bytes(
+            b"\xff\xfe\x00 broken \xff"
+        )
+        result = detect_flow_gaps(fresh_db, bundle, min_edges=5)
+        assert result["unreadable"] == [cid]
+        assert "richFlow" in [e["name"] for e in result["uncovered"]]
+
 
 class TestFlowGapsCLI:
     def test_flow_gaps_lists_uncovered(self):
@@ -514,6 +611,83 @@ class TestFlowGapsCLI:
         result = runner.invoke(main, ["compass", "--help"])
         assert result.exit_code == 0
         assert "flow-gaps" in result.output
+
+    def _gaps_setup(self, tmp: str):
+        db = str(Path(tmp) / "test.db")
+        know = str(Path(tmp) / ".knowledge")
+        Path(know).mkdir(parents=True, exist_ok=True)
+        from cairn.graph.schema import get_db
+        conn = get_db(db)
+        _seed_flows(conn)
+        conn.close()
+        return db, know
+
+    def test_generate_rejection_sets_exit_code(self, monkeypatch):
+        import cairn.compass.critic as critic_mod
+        from cairn.compass.critic import CriticResult
+
+        monkeypatch.setattr(
+            critic_mod, "critic_concept",
+            lambda concept, conn, **kw: CriticResult(
+                errors=["x"], quality_score=0.4, passed=False),
+        )
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db, know = self._gaps_setup(tmp)
+            result = runner.invoke(main, [
+                "compass", "flow-gaps", "--min-edges", "3", "--generate",
+                "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 1
+            assert "REJECT" in result.output
+            assert not list(Path(know).rglob("compass/*.md"))
+
+    def test_generate_dry_run_would_reflects_critic(self, monkeypatch):
+        import cairn.compass.critic as critic_mod
+        from cairn.compass.critic import CriticResult
+
+        monkeypatch.setattr(
+            critic_mod, "critic_concept",
+            lambda concept, conn, **kw: CriticResult(
+                errors=["x"], quality_score=0.4, passed=False),
+        )
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db, know = self._gaps_setup(tmp)
+            result = runner.invoke(main, [
+                "compass", "flow-gaps", "--min-edges", "3", "--generate",
+                "--dry-run", "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 0
+            assert "REJECT" in result.output
+            assert "WOULD" not in result.output
+            assert "would generate 0" in result.output
+            assert not list(Path(know).rglob("compass/*.md"))
+
+    def test_generate_continues_past_one_bad_entry(self, monkeypatch):
+        import cairn.compass.generator as gen_mod
+
+        real = gen_mod.generate_flow_compass
+
+        def _flaky(name, conn, bundle, **kw):
+            if name == "midFlow":
+                raise RuntimeError("boom")
+            return real(name, conn, bundle, **kw)
+
+        monkeypatch.setattr(gen_mod, "generate_flow_compass", _flaky)
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db, know = self._gaps_setup(tmp)
+            result = runner.invoke(main, [
+                "compass", "flow-gaps", "--min-edges", "3", "--generate",
+                "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 1
+            assert "ERROR" in result.output
+            assert "Flow: richFlow" in result.output
+            assert "1 error(s)" in result.output
+            files = list(Path(know).rglob("compass/*.md"))
+            assert len(files) == 1 and "flow-richFlow" in str(files[0])
 
 
 # ─── ID-based tracing tests ────────────────────────────────────────────────

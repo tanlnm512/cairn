@@ -122,6 +122,23 @@ class TestMemoryTimeline:
         assert "RetryProbe policy notes" in result.output
         assert re.search(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", result.output)
 
+    def test_fragment_mention_does_not_surface(self, runner, tmp_path):
+        """A plain-mention match must be a whole symbol, not any substring."""
+        db_path, knowledge = _paths(tmp_path)
+        conn = get_db(db_path)
+        bundle = OKFBundle(knowledge)
+        try:
+            capture_memory(
+                conn, bundle, "decision", "RetryProbe note",
+                "`RetryProbe` handles the retries.",
+            )
+        finally:
+            conn.close()
+
+        result = _timeline(runner, db_path, knowledge, "Probe")
+        assert result.exit_code == 0, result.output
+        assert "RetryProbe note" not in result.output
+
     def test_unknown_symbol_exits_zero(self, runner, tmp_path):
         db_path, knowledge = _paths(tmp_path)
         Path(knowledge).mkdir(parents=True)

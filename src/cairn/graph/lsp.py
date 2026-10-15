@@ -449,7 +449,10 @@ def upgrade_ambiguous_edges(
                 (target_id, edge["id"]),
             ).rowcount
             upgraded += int(updated)
-        transport.shutdown()
+        try:
+            transport.shutdown()
+        except Exception:
+            pass  # courtesy only; close() in finally reaps the process
     except Exception as error:
         conn.execute("ROLLBACK TO cairn_lsp_upgrade")
         conn.execute("RELEASE cairn_lsp_upgrade")

@@ -307,3 +307,43 @@ def test_export_with_zero_promoted_pages_reports_zero_and_writes_nothing(
     assert result.exit_code == 0, result.output
     assert "Exported 0 page(s)" in result.stdout
     assert list(out.rglob("*")) == []
+
+
+# --- traversal-shaped manifest keys stay inside the target directory ---
+
+
+def test_export_skips_keys_that_escape_the_target_directory(cli_env, tmp_path):
+    """A traversal-shaped manifest key never writes outside DIR: the page
+    is skipped with a visible note while the in-root page still exports."""
+    knowledge = cli_env
+    bundle = _bundle(knowledge)
+    # A promoted concept the traversal-shaped key can read: the page read
+    # id "wiki/pages/../escape/page" resolves inside the bundle at
+    # wiki/escape/page.md, so the page is promoted and only the export
+    # path build could carry the key outside DIR.
+    bundle.write_concept(
+        OKFConcept(
+            type="Wiki-Article",
+            title="Escape page",
+            body="# page\n\nBody of page.\n\n## Sources\n",
+            concept_id="wiki/escape/page",
+            tags=["escape", "wiki"],
+        )
+    )
+    _promote(bundle, PROMOTED_PLAIN)
+    _write_manifest(knowledge, {
+        "../escape/page": _row(PROMOTED_PLAIN, state="promoted",
+                               task_id="spent-chain", attempts=1),
+        _key(PROMOTED_PLAIN): _row(PROMOTED_PLAIN, state="promoted",
+                                   task_id="spent-chain", attempts=1),
+    })
+    out = tmp_path / "out"
+
+    result = _export(knowledge, out)
+
+    assert result.exit_code == 0, result.output
+    assert "escapes the export directory" in result.stderr
+    assert "../escape/page" in result.stderr
+    assert (out / REPO / f"{PROMOTED_PLAIN}.md").is_file()
+    assert not (tmp_path / "escape").exists()
+    assert "Exported 1 page(s)" in result.stdout

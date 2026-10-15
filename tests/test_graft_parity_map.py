@@ -618,3 +618,21 @@ def test_empty_repo_map_returns_an_empty_orientation(empty_map) -> None:
     assert scope["dropped_clusters"] == 0
     assert payload["hotspots"] == []
     assert payload["dropped_hotspots"] == 0
+
+
+def test_map_on_missing_store_fails_clean(tmp_path) -> None:
+    """A fresh machine (no store at --db) gets the one-line clean error in
+    read-write and read-only alike — never an unhandled OperationalError
+    traceback, and no store directory is created."""
+    from click.testing import CliRunner
+
+    from cairn.cli import main
+
+    db = tmp_path / "missing-parent" / "store.kg"
+    for env in ({}, {"CAIRN_READ_ONLY": "1"}):
+        result = CliRunner().invoke(
+            main, ["map", "--db", str(db)], env=env, catch_exceptions=False
+        )
+        assert result.exit_code == 1, (env, result.output)
+        assert "no graph DB" in result.stderr, (env, result.output)
+        assert not db.parent.exists()

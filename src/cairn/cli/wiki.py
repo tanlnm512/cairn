@@ -77,7 +77,17 @@ def wiki_generate(repo, db, knowledge, dry_run, show_rejections, llm, pages,
                 return
             queued_total = 0
             skipped_total = 0
+            adopted_total = 0
             catalog_total = 0
+            # Tasks live before this run: adoption re-points rows at them
+            # without queueing, so classification needs them by id.
+            from ..wiki.lifecycle import live_generation_tasks, read_page_concept
+
+            live_ids = {
+                t.id
+                for tasks in live_generation_tasks(bundle).values()
+                for t in tasks
+            }
             for r, _ in plans:
                 try:
                     result = run_wiki_generate(conn, bundle, r, pages_cap=pages,
@@ -107,10 +117,19 @@ def wiki_generate(repo, db, knowledge, dry_run, show_rejections, llm, pages,
                 except ValueError as exc:
                     _manifest_error_exit(exc)
                 for page in result["plan"]:
-                    task_id = rows.get(f"{r}/{page['page_id']}", {}).get("task_id")
+                    key = f"{r}/{page['page_id']}"
+                    task_id = rows.get(key, {}).get("task_id")
                     if task_id in queued_ids:
                         queued_total += 1
                         click.echo(f"Queued wiki-page task {task_id}: {page['title']} ({r})")
+                    elif (
+                        task_id in live_ids
+                        and read_page_concept(bundle, r, page["page_id"]) is None
+                    ):
+                        # A live task over unpromoted content is queued work
+                        # (adopted or carried over), never "up to date".
+                        adopted_total += 1
+                        click.echo(f"Adopted live wiki-page task {task_id}: {page['title']} ({r})")
                     else:
                         skipped_total += 1
                         click.echo(f"Up to date, skipped: {page['title']} ({r})")
@@ -119,9 +138,11 @@ def wiki_generate(repo, db, knowledge, dry_run, show_rejections, llm, pages,
                            "after the catalog task completes to queue the page "
                            "tasks.")
                 return
-            click.echo(f"Queued {queued_total} new wiki-page task(s); "
-                       f"{skipped_total} page(s) already up to date. "
-                       "Any agent with the cairn skill can process them:")
+            summary = f"Queued {queued_total} new wiki-page task(s); "
+            if adopted_total:
+                summary += f"{adopted_total} already in flight; "
+            summary += f"{skipped_total} page(s) already up to date. "
+            click.echo(summary + "Any agent with the cairn skill can process them:")
             click.echo("  cairn task list --kind wiki-page --status pending")
             click.echo("  cairn task claim <id> && cairn task complete <id> --result-file <path>")
             return
@@ -174,12 +195,18 @@ def wiki_search(query, knowledge):
     from ..okf.bundle import OKFBundle
 
     bundle = OKFBundle(knowledge)
-    results = bundle.search(query)
+    # Score bundle-wide, then keep promoted wiki pages only: the search
+    # index spans every concept, the command's contract is pages alone.
+    results = [
+        c
+        for c in bundle.search(query, limit=None)
+        if bundle.relativize_id(c.concept_id).startswith("wiki/pages/")
+    ][:20]
     if not results:
         click.echo(f"No wiki matching '{query}'.")
         return
     for c in results:
-        click.echo(f"  {c.title}  ({c.concept_id})")
+        click.echo(f"  {c.title}  ({bundle.relativize_id(c.concept_id)})")
         if c.description:
             click.echo(f"      {c.description}")
 
@@ -311,13 +338,19 @@ def export(out_dir: Path, force, knowledge):
                    "pass --force to overwrite.", err=True)
         sys.exit(1)
     bundle, manifest = _load_manifest_or_exit(knowledge)
+    out_root = out_dir.resolve()
     exported = 0
     for key in sorted(manifest.get("pages", {})):
         page_repo, page_id = split_page_key(key)
         concept = read_page_concept(bundle, page_repo, page_id)
         if concept is None:
             continue
-        concept.to_file(str(out_dir / page_repo / f"{page_id}.md"))
+        target = (out_dir / page_repo / f"{page_id}.md").resolve()
+        if not target.is_relative_to(out_root):
+            click.echo(f"Skipped {key}: page key escapes the export directory.",
+                       err=True)
+            continue
+        concept.to_file(str(target))
         exported += 1
     click.echo(f"Exported {exported} page(s) to {out_dir}")
 
@@ -342,7 +375,7 @@ def enrich(page_id, repo, enrich_all, knowledge):
     queued = queue_enrich_tasks(bundle, repo=repo, page_id=page_id)
     if not queued and not enrich_all:
         scope = f" in repo '{repo}'" if repo else ""
-        click.echo(f"Cannot enrich '{page_id}': no promoted wiki page "
+        click.echo(f"Cannot enrich '{page_id}': no wiki page to enrich "
                    f"for it{scope}.", err=True)
         sys.exit(1)
     for task in queued:
@@ -350,7 +383,7 @@ def enrich(page_id, repo, enrich_all, knowledge):
                    f"({task.facts['repo']})")
     if not queued:
         scope = f" in repo '{repo}'" if repo else ""
-        click.echo(f"Nothing to enrich: no promoted wiki pages{scope}.")
+        click.echo(f"Nothing to enrich: no wiki pages to enrich{scope}.")
         return
     click.echo(f"Queued {len(queued)} wiki-page-enrich task(s). "
                "Any agent with the cairn skill can process them:")

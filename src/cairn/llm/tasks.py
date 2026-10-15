@@ -119,6 +119,9 @@ def claim_task(bundle: OKFBundle, task_id: str, assigned_to: str = "") -> Option
     """
     # Create claim marker path (sibling to the task file)
     claim_marker = bundle.root / f"{TASK_DIR}/{task_id}.claim"
+    if not claim_marker.resolve().is_relative_to(bundle.root.resolve()):
+        # A TASK_ID escaping the bundle root must not write outside it.
+        return None
 
     try:
         # Create the claim marker atomically (O_EXCL fails if already claimed).
@@ -658,7 +661,7 @@ def complete_task(
                     _emit(
                         TASK_LIFECYCLE,
                         task_kind=task.task_kind,
-                        event="dropped",
+                        event="failed",
                         attempt=task.attempt,
                     )
                     return {
@@ -913,5 +916,6 @@ def _read(bundle: OKFBundle, task_id: str) -> Optional[Task]:
         if concept.type != "Task":
             return None
         return _concept_to_task(concept)
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError):
+        # ValueError: the id escapes the bundle root -- treat as not found.
         return None

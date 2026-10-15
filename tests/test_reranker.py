@@ -719,3 +719,46 @@ def test_reranker_model_is_cached_rejects_no_exist_sentinel(monkeypatch):
     from cairn.graph import reranker as rrk
 
     assert rrk.reranker_model_is_cached("BAAI/bge-reranker-base") is False
+
+
+# ---------------------------------------------------------------------------
+# CLI: download-reranker verifies the persistent-enable marker actually
+# landed -- a silently failed marker write must not print "Reranking
+# enabled" and exit 0 (rerank_enabled() would stay off).
+# ---------------------------------------------------------------------------
+
+
+def _invoke_download_reranker(monkeypatch, tmp_path, *, write_marker):
+    from click.testing import CliRunner
+
+    from cairn.cli import main as cli_main
+    from cairn.graph import reranker as rrk
+
+    marker = tmp_path / "rerank_enabled"
+    monkeypatch.setattr(rrk, "reranker_available", lambda: True)
+    monkeypatch.setattr(rrk, "download_reranker_model", lambda name: True)
+    if write_marker:
+        monkeypatch.setattr(rrk, "_rerank_marker_path", lambda: marker)
+        # the real set_rerank_enabled_persistently writes through the
+        # monkeypatched path
+    else:
+        # silent write failure: the helper swallows the OSError and no
+        # marker ever lands
+        monkeypatch.setattr(rrk, "set_rerank_enabled_persistently", lambda: None)
+        monkeypatch.setattr(rrk, "_rerank_marker_path", lambda: marker)
+    return CliRunner().invoke(cli_main, ["download-reranker"], catch_exceptions=False)
+
+
+def test_download_reranker_fails_loudly_when_marker_write_fails(monkeypatch, tmp_path):
+    result = _invoke_download_reranker(monkeypatch, tmp_path, write_marker=False)
+
+    assert result.exit_code == 1
+    assert "could not be written" in result.stderr or "could not be written" in result.output
+
+
+def test_download_reranker_enables_when_marker_lands(monkeypatch, tmp_path):
+    result = _invoke_download_reranker(monkeypatch, tmp_path, write_marker=True)
+
+    assert result.exit_code == 0
+    assert "Reranking enabled" in result.output
+    assert (tmp_path / "rerank_enabled").exists()

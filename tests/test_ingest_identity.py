@@ -177,6 +177,14 @@ def test_description_skips_fenced_code_blocks():
     assert identity.description == "Real prose here."
 
 
+def test_description_skips_tilde_fenced_code_blocks():
+    """~~~ fences are code fences too: their content must never become the
+    document description."""
+    body = "~~~\ncurl -X POST http://internal/api\n~~~\n\nReal prose here."
+    identity = build_identity("polaris", "docs/gw.md", _parsed(body=body))
+    assert identity.description == "Real prose here."
+
+
 def test_description_synthesizes_provenance_line():
     identity = build_identity(
         "polaris", "docs/gw.md", _parsed(title=None, body="# Only a heading")

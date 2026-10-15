@@ -161,11 +161,17 @@ def serve_stop():
     from ..paths import resolve_store
 
     store = resolve_store()
+    unload_error: str | None = None
 
     if lc.is_macos():
         if lc.is_loaded():
-            lc.unload()
-            click.echo("unloaded LaunchAgent (launchd sent SIGTERM)")
+            try:
+                lc.unload()
+                click.echo("unloaded LaunchAgent (launchd sent SIGTERM)")
+            except RuntimeError as exc:
+                # A launchctl timeout must not skip the pidfile/stray cleanup below.
+                unload_error = str(exc)
+                click.echo(f"ERROR: {exc}")
         else:
             click.echo("LaunchAgent not loaded")
 
@@ -181,17 +187,31 @@ def serve_stop():
         lc.sweep_strays(str(store.db))
 
     time.sleep(0.5)
+    if unload_error is not None:
+        sys.exit(1)
     click.echo("stopped.")
 
 
 @serve.command("status")
-@click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"HTTP daemon port (default {lc.DEFAULT_PORT}).")
-@click.option("--host", default=lc.DEFAULT_HOST)
+@click.option(
+    "--port", default=None, type=int,
+    help="HTTP daemon port (default: the managed daemon's configured port).",
+)
+@click.option("--host", default=None, help="HTTP daemon host (default: the managed daemon's configured host).")
 def serve_status(port, host):
     """Show daemon health: managed state, pid, healthz, strays, DB lock holders."""
     from ..paths import resolve_store
 
     store = resolve_store()
+
+    # An unpassed option defers to the port/host the daemon was started with,
+    # so a custom-port daemon is not probed (and reported UNHEALTHY) on the
+    # default port.
+    d_port, d_host = lc.daemon_bind()
+    if port is None:
+        port = d_port if d_port is not None else lc.DEFAULT_PORT
+    if host is None:
+        host = d_host if d_host is not None else lc.DEFAULT_HOST
 
     loaded = lc.is_loaded()
     pid = lc.running_pid() or lc.pidfile_pid()

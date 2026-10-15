@@ -104,6 +104,15 @@ class TestTraceWorkflow:
         assert result["title"] == "Deploy Hotfix"
         assert result["steps"] == SAMPLE_STEPS
 
+    def test_trace_reports_relative_concept_id_that_round_trips(self, bundle):
+        """The reported id is the bare bundle-relative id: the absolute path
+        a parsed concept carries is rejected by the resolver on re-trace."""
+        add_workflow(bundle, "Deploy Hotfix", steps=SAMPLE_STEPS)
+        result = trace_workflow(bundle, "deploy-hotfix")
+        assert result["concept_id"] == "knowledge/workflow/deploy-hotfix"
+        assert not result["concept_id"].startswith("/")
+        assert trace_workflow(bundle, result["concept_id"]) is not None
+
     def test_trace_by_slug(self, bundle):
         add_workflow(bundle, "Deploy Hotfix", steps=SAMPLE_STEPS)
         result = trace_workflow(bundle, "deploy-hotfix")

@@ -91,4 +91,6 @@ def _text(payload: dict) -> str:
             lines.append(f"  {hit['line']}:{hit['column']} {hit['text']}")
     lines.append(f"dropped hits: {payload['dropped_hits']}")
     lines.append(f"dropped groups: {payload['dropped_groups']}")
+    if payload.get("truncated"):
+        lines.append("scan stopped at the hit cap; dropped counts are lower bounds")
     return "\n".join(lines)

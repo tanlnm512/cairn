@@ -22,10 +22,10 @@ def find_compass_concept(bundle, module: str):
 def search_knowledge_data(query: str, type_filter: str = "", limit: int = 10) -> list:
     """Matching concepts from ``bundle.search``, optionally filtered by type prefix."""
     bundle = _bundle()
-    results = bundle.search(query, limit=limit)
+    results = bundle.search(query, limit=None)
     if type_filter:
         results = [c for c in results if c.type.startswith(type_filter)]
-    return results
+    return results[:limit]
 
 
 def _render_full_body(results) -> str:
@@ -131,7 +131,7 @@ def ask_compass(query: str, file_path: str = "") -> str:
         # Memory for the path.
         if seg:
             for c in bundle.search(seg, limit=3):
-                if c.concept_id.startswith("memory/"):
+                if bundle.relativize_id(c.concept_id).startswith("memory/"):
                     out.append(f"\n# Memory: {c.title}")
                     if c.description:
                         out.append(f"  {c.description}")
@@ -215,6 +215,12 @@ def generate_flow(entry: str, as_workflow: bool = False, max_steps: int = 20) ->
         _gather_flow_facts, generate_flow_compass, generate_flow_workflow,
     )
     from cairn.compass.critic import critic_concept
+
+    from ._server_core import _read_only_mode
+
+    if _read_only_mode():
+        return ("read-only server: flow generation writes the knowledge store; "
+                "run it on the writable side")
 
     bundle = _bundle()
     conn = _rw_conn()

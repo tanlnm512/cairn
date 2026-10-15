@@ -219,21 +219,22 @@ def run_scaling_suite(
                     path_count = _path_op()
                     path_s = _t.perf_counter() - _t0
 
-                # Communities op: one full partition run on the built corpus,
-                # before the closure-gate edge multiplication below; timed
-                # after a discarded warmup call. Recorded as zero when the
-                # optional graph-analytics extra is absent.
-                from ..graph.communities import compute_communities
+                # Communities op: one full partition run on the built corpus, before
+                # the closure-gate edge multiplication below; a missing extra probe
+                # is masked as zeros, a run failure is not.
+                from ..graph.communities import compute_communities, probe_networkx
 
                 communities_count = 0
                 communities_s: float = 0.0
                 try:
+                    probe_networkx()
+                except ImportError:
+                    pass
+                else:
                     compute_communities(conn)
                     _t0 = _t.perf_counter()
                     communities_count = compute_communities(conn)
                     communities_s = _t.perf_counter() - _t0
-                except ImportError:
-                    pass
 
                 # Closure op: multiply structural-edge volume deterministically, then
                 # time + memory-trace one transitive-closure build over it.
@@ -310,3 +311,51 @@ def run_scaling_suite(
         return report
     finally:
         restore_env(saved_env)
+
+
+# Wall/peak fields the baseline comparison gates; identity and shape fields
+# (n_files, symbols, db_mb, resolve_rate) are excluded.
+_SCALING_GATED_FIELDS = (
+    "build_s",
+    "embed_s",
+    "closure_s",
+    "closure_peak_mb",
+    "closure_maintain_s",
+    "path_query_s",
+    "communities_s",
+    "peak_mem_mb",
+)
+
+
+def compare_scaling_reports(baseline: dict, current: dict, threshold: float = 0.15) -> dict:
+    """Compare scaling reports per ``n_files`` on the gated wall/peak fields (``n=<n> <field>`` keys); points missing from the baseline surface as visible, never-regressed ``unbaselined`` entries."""
+    base_points = {p["n_files"]: p for p in baseline.get("points", [])}
+    result: dict = {}
+    for point in current.get("points", []):
+        prefix = f"n={point.get('n_files')} "
+        base_point = base_points.get(point.get("n_files"))
+        if base_point is None:
+            for field in _SCALING_GATED_FIELDS:
+                if field in point:
+                    result[prefix + field] = {
+                        "baseline_value": None,
+                        "current_value": point[field],
+                        "delta_pct": None,
+                        "regressed": False,
+                        "unbaselined": True,
+                    }
+            continue
+        for field in _SCALING_GATED_FIELDS:
+            if field not in point or field not in base_point:
+                continue
+            base_value, cur_value = base_point[field], point[field]
+            if base_value == 0:
+                continue
+            delta = (cur_value - base_value) / base_value
+            result[prefix + field] = {
+                "baseline_value": round(base_value, 3),
+                "current_value": round(cur_value, 3),
+                "delta_pct": round(delta * 100, 1),
+                "regressed": delta > threshold,
+            }
+    return result

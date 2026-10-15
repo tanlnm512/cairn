@@ -273,13 +273,21 @@ def evaluate_ladder(
         cached = _LADDER_CACHE["state"]  # re-check under the lock
         if cached is not None and not force:
             return cached
-        if embeddings._effective_backend() != "server":
+        # Gate on the CONFIGURED backend: our own rung-2 local pin must not
+        # hide a server recovery from a forced re-evaluation.
+        if embeddings.backend_name() not in embeddings.SERVER_FAMILY:
             return None
         state = _evaluate(conn)
         if state is None:
             if cached is not None:
                 cached.active = False
+            # Recovery supersedes the session adoptions too, or the adopted
+            # fallback keeps steering embeds after the server is healthy.
             _LADDER_CACHE["state"] = None
+            _DEGRADATION_NOTIFIED.clear()
+            set_session_stamp(None)
+            set_session_server_model(None)
+            set_session_backend(None)
             return None
         _LADDER_CACHE["state"] = state
     # Outside the lock: telemetry emission and logging must not hold it.

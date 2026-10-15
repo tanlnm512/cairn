@@ -262,7 +262,7 @@ def embed(
 
         from cairn.graph import ann_index as ann
 
-        build_ann = ann.ann_backend_enabled()
+        build_ann = build_index or ann.ann_backend_enabled()
 
         # One progress bar for the whole `cairn embed` run -- embedding and
         # (if enabled) the ANN rebuild -- retargeting its description/total for
@@ -301,6 +301,7 @@ def embed(
             ("embedded", f"{summary['embedded']:,}"),
             ("skipped", f"{summary['skipped']:,}"),
             ("reaped", f"{summary.get('reaped', 0):,}"),
+            ("failed batches", f"{summary.get('failed_batches', 0):,}"),
             ("model", summary["model"]),
             ("vectors", f"{before:,} -> {after:,}"),
         ]

@@ -7,7 +7,6 @@ from pathlib import Path
 
 import click
 
-from ..graph.blast import BlastBaseError
 from ..review.engine import (
     build_pack,
     build_pre_submit,
@@ -98,7 +97,8 @@ def review(db, base, pre_submit, capture_event, gate, output_format, fuzzy, refr
                 )
             finally:
                 conn.close()
-        except BlastBaseError as error:
+        except RuntimeError as error:
+            # Includes BlastBaseError; git and strict-refresh failures raise bare.
             raise click.ClickException(str(error)) from error
         click.echo(render_pack(pack, output_format))
     elif pre_submit:
@@ -115,13 +115,20 @@ def review(db, base, pre_submit, capture_event, gate, output_format, fuzzy, refr
                 )
             finally:
                 conn.close()
-        except BlastBaseError as error:
+        except RuntimeError as error:
+            # Includes BlastBaseError; git and strict-refresh failures raise bare.
             raise click.ClickException(str(error)) from error
         rendered = render_pre_submit(result, output_format)
         if rendered:
             click.echo(rendered)
-        if gate and has_blocking_matches(result):
-            sys.exit(1)
+        if gate:
+            memories = result.get("memories") or {"entries": [], "error": None}
+            if memories.get("error"):
+                raise click.ClickException(
+                    f"pre-submit gate could not read memories: {memories['error']}"
+                )
+            if has_blocking_matches(result):
+                sys.exit(1)
     else:
         import json
 
@@ -141,9 +148,18 @@ def review(db, base, pre_submit, capture_event, gate, output_format, fuzzy, refr
         try:
             result = capture_review_event(conn, bundle, payload)
             if result["recorded"]:
-                from ..graph.embeddings import embed_memory_concepts
+                try:
+                    from ..graph.embeddings import embed_memory_concepts
 
-                embed_memory_concepts(conn, bundle, [result["path"]])
+                    embed_memory_concepts(conn, bundle, [result["path"]])
+                except Exception:
+                    # Vectors defer to `cairn memory embed`; the capture and
+                    # its written file must survive a down backend.
+                    click.echo(
+                        "Embedding failed; memories saved without vectors "
+                        "(run `cairn memory embed` to backfill).",
+                        err=True,
+                    )
             conn.commit()
         except ValueError as error:
             raise click.ClickException(str(error)) from error

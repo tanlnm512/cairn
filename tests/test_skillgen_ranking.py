@@ -125,3 +125,46 @@ def test_ranking_is_read_only(tmp_path):
     rank_candidates(conn, ["alpha_leaf", "zeta_hub"])
     rank_candidates(conn, ["alpha_leaf", "zeta_hub", "mid_one", "mid_two"])
     assert conn.total_changes == before
+
+
+def _oversized_name_conn(tmp_path):
+    """A closure-backed graph where one candidate name owns more symbol rows
+    than SQLite's doubled host-parameter limit can hold in one IN () query."""
+    from cairn.graph.schema import get_db
+
+    conn = get_db(str(tmp_path / "chunk.db"))
+    conn.execute(
+        "INSERT INTO repos (id, name, path) VALUES ('r1', 'r1', 'ws/r1')"
+    )
+    conn.execute(
+        "INSERT INTO files (id, repo_id, path, language) VALUES ('f1', 'r1', 'm.py', 'python')"
+    )
+    n = 16_500
+    conn.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES (?, 'f1', 'dup_name', ?, 'function')",
+        [(f"s{i}", f"m.dup_name.{i}") for i in range(n)],
+    )
+    conn.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES (?, 'f1', ?, ?, 'function')",
+        [(f"src{i}", f"caller_{i}", f"m.caller_{i}") for i in range(3)],
+    )
+    # Three distinct ancestors reach a slice of the same-name seed rows.
+    conn.executemany(
+        "INSERT INTO transitive_edges (source_id, target_name, target_id, distance) "
+        "VALUES (?, 'dup_name', ?, 1)",
+        [(f"src{src}", f"s{(src * 7919) % n}") for src in range(3)],
+    )
+    conn.commit()
+    return conn
+
+
+def test_closure_tier_chunks_same_name_seeds_under_host_parameter_limit(tmp_path):
+    """A very common candidate name (thousands of same-name symbol rows) must
+    still rank: the seed-id IN () lists are chunked, never one doubled
+    unbounded query."""
+    conn = _oversized_name_conn(tmp_path)
+    res = rank_candidates(conn, ["dup_name"])
+    assert res.tier == "closure"
+    assert res.symbols == ["dup_name"]

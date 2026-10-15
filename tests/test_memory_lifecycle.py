@@ -12,15 +12,21 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
-from cairn.graph.schema import _apply_schema
+from cairn.graph.schema import _apply_schema, get_db
 from cairn.memory.privacy import strip_private_data
 from cairn.memory.promotion import (
+    batch_critic,
     capture_memory,
+    decay,
     evolve_memory,
+    record_references_batch,
     search_memory,
+    tribal_digest,
 )
 from cairn.memory.scoring import (
     WEIGHTS,
@@ -29,7 +35,12 @@ from cairn.memory.scoring import (
     compute_score,
     score_memory,
 )
-from cairn.memory.store import tier_for_score
+from cairn.memory.store import (
+    create_memory,
+    list_memories,
+    store_memory,
+    tier_for_score,
+)
 from cairn.okf.bundle import OKFBundle
 from cairn.okf.concept import OKFConcept
 
@@ -424,3 +435,289 @@ class TestCaptureMemoryRedaction:
         stored = bundle.read_concept(result["path"])
         assert stored.body == body
 
+
+# ---------------------------------------------------------------------------
+# Regression: promotion lifecycle fixes.
+# ---------------------------------------------------------------------------
+
+class _LockedOnceConn:
+    """sqlite3 conn proxy whose executemany inserts one row then raises once."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.executemany_calls = 0
+
+    def executemany(self, sql, rows):
+        self.executemany_calls += 1
+        if self.executemany_calls == 1:
+            self._conn.executemany(sql, rows[:1])
+            raise sqlite3.OperationalError("database is locked")
+        return self._conn.executemany(sql, rows)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+class TestPromotionLifecycleRegressions:
+
+    def test_record_references_batch_retry_rolls_back_partial_insert(self, db):
+        """A locked mid-batch failure retries cleanly instead of re-inserting fixed PKs."""
+        refs = [("memory/tribal/a-1", "query"), ("memory/tribal/b-2", "query")]
+        flaky = _LockedOnceConn(db)
+        record_references_batch(flaky, refs, "sess-1")
+        rows = db.execute("SELECT memory_path FROM memory_refs").fetchall()
+        assert sorted(r["memory_path"] for r in rows) == [
+            "memory/tribal/a-1", "memory/tribal/b-2",
+        ]
+        assert flaky.executemany_calls == 2
+
+    def test_batch_critic_persists_decision_in_promotion_history(self, db, bundle):
+        """The critic's Decision entry reaches the stored file, not just memory."""
+        capture_memory(
+            db, bundle, type_="decision", title="critic draft target",
+            body="plain body text", confidence=0.1,
+        )
+        result = batch_critic(db, bundle)
+        assert result["processed"] == 1
+        assert result["remaining_drafts"] == 1
+        mems = list_memories(bundle)
+        assert len(mems) == 1
+        actions = [h["action"] for h in mems[0].extensions["promotion_history"]]
+        assert actions[-1] == "keep_draft"
+
+    def test_search_survives_corrupt_memory_file_in_broaden(self, db, bundle):
+        """A corrupt memory file is skipped by the lexical broaden, not fatal to search."""
+        capture_memory(
+            db, bundle, type_="decision", title="xyzzy needle",
+            body="unique xyzzy content", confidence=0.8,
+        )
+        broken = bundle.root / "memory" / "raw" / "broken-abc"
+        broken.parent.mkdir(parents=True, exist_ok=True)
+        broken.with_suffix(".md").write_bytes(b"\xff\xfe not utf-8")
+        results = search_memory(db, bundle, "xyzzy")
+        assert [c.title for c in results] == ["xyzzy needle"]
+
+    def test_decay_commits_validity_even_when_reap_fails(self, tmp_path, monkeypatch):
+        """Decay's validity projection is committed even when the reap step fails."""
+        import cairn.graph.embeddings as emb
+        from cairn.graph.schema import get_db
+
+        db_path = tmp_path / "graph.db"
+        conn = get_db(str(db_path))
+        kb = OKFBundle(str(tmp_path / "knowledge"))
+        concept = create_memory(
+            type_="decision", title="stale raw memory",
+            body="see `src/missing_ref.py`", confidence=0.1,
+        )
+        concept.timestamp = (
+            datetime.now(timezone.utc) - timedelta(days=10)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        store_memory(concept, kb, tier="raw", conn=conn)
+
+        def _boom(conn, bundle):
+            raise RuntimeError("reap exploded")
+
+        monkeypatch.setattr(emb, "reap_orphaned_memory_embeddings", _boom)
+        result = decay(kb, conn=conn)
+        assert result["expired_raw"] == 1
+        other = sqlite3.connect(str(db_path))
+        try:
+            rows = other.execute("SELECT concept_id FROM memory_validity").fetchall()
+        finally:
+            other.close()
+        # The projection followed the tier move (raw -> archived) and committed
+        # even though the reap step failed.
+        assert len(rows) == 1 and rows[0][0].startswith("memory/archived/")
+        conn.close()
+
+    def test_tribal_digest_rejects_negative_limit(self, bundle):
+        """A negative limit fails loudly instead of slicing from the end."""
+        with pytest.raises(ValueError):
+            tribal_digest(bundle, limit=-1)
+
+    def test_evolve_seeds_refs_baseline(self, db, bundle):
+        """An evolved memory seeds memory_refs_baseline like capture does."""
+        r1 = capture_memory(
+            db, bundle, type_="decision", title="retry policy",
+            body="use `src/missing_ref.py`", confidence=0.8,
+        )
+        result = evolve_memory(
+            db, bundle, r1["path"], new_body="use `src/missing_ref.py` (updated)"
+        )
+        stored = bundle.read_concept(result["path"])
+        assert "memory_refs_baseline" in stored.extensions
+
+
+
+# ---------------------------------------------------------------------------
+# CLI verbs: durability of the write -> embed -> commit -> close sequence
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryCliDurability:
+    """CLI memory verbs keep files and DB rows consistent through failures."""
+
+    @pytest.fixture(autouse=True)
+    def _hash_backend(self, hash_backend):
+        """The CLI record/evolve/capture paths embed; keep them dep-free."""
+
+    @pytest.fixture
+    def runner(self):
+        return CliRunner()
+
+    def _store(self, tmp_path):
+        db_path = str(tmp_path / "g.db")
+        knowledge = str(tmp_path / "k")
+        conn = get_db(db_path)
+        conn.close()
+        return db_path, knowledge
+
+    def test_record_bootstraps_missing_store_dir(self, runner, tmp_path):
+        """`memory record` initializes a never-initialized store instead of crashing."""
+        db_path = str(tmp_path / "fresh" / "g.db")
+        result = runner.invoke(_main(), [
+            "memory", "record", "decision", "first memory",
+            "--db", db_path, "--knowledge", str(tmp_path / "k"),
+        ])
+        assert result.exit_code == 0, result.output
+        assert Path(db_path).exists()
+
+    def test_evolve_missing_memory_exits_one(self, runner, tmp_path):
+        """The evolve not-found path exits 1 like forget/demote."""
+        db_path, knowledge = self._store(tmp_path)
+        result = runner.invoke(_main(), [
+            "memory", "evolve", "memory/tribal/nope",
+            "--db", db_path, "--knowledge", knowledge,
+        ])
+        assert result.exit_code == 1
+        assert "Memory not found" in result.output
+
+    def test_evolve_embed_failure_commits_rows(self, runner, tmp_path, monkeypatch):
+        """A failed embed keeps the written files and the validity rows consistent."""
+        from cairn.graph import embeddings as emb
+
+        db_path, knowledge = self._store(tmp_path)
+        bundle = OKFBundle(knowledge)
+        conn = get_db(db_path)
+        try:
+            r = capture_memory(conn, bundle, "decision", "evolve me", "v1", confidence=0.8)
+            conn.commit()
+        finally:
+            conn.close()
+
+        def boom(conn, bundle, ids):
+            raise RuntimeError("alias preflight failed")
+
+        monkeypatch.setattr(emb, "embed_memory_concepts", boom)
+        result = runner.invoke(_main(), [
+            "memory", "evolve", r["path"], "--body", "v2",
+            "--db", db_path, "--knowledge", knowledge,
+        ])
+        assert result.exit_code == 0, result.output
+        assert "Embedding failed" in result.output
+
+        ro = get_db(db_path, read_only=True)
+        try:
+            rows = ro.execute("SELECT concept_id FROM memory_validity").fetchall()
+        finally:
+            ro.close()
+        assert len(rows) == 2
+
+    def test_capture_embed_failure_commits_and_normalizes_type(self, runner, tmp_path, monkeypatch):
+        """A failed embed still commits; off-vocabulary LLM types fall back to decision."""
+        from cairn.graph import embeddings as emb
+        from cairn.llm.client import SubprocessBackend
+
+        db_path, knowledge = self._store(tmp_path)
+
+        def fake_extract(self, transcript, timeout=120):
+            return [{"type": "Decision", "title": "captured note",
+                     "body": "content", "confidence": 0.9}]
+
+        monkeypatch.setattr(SubprocessBackend, "extract", fake_extract)
+        monkeypatch.setenv("CAIRN_LLM_BACKEND", "droid")
+
+        def boom(conn, bundle, ids):
+            raise RuntimeError("alias preflight failed")
+
+        monkeypatch.setattr(emb, "embed_memory_concepts", boom)
+        result = runner.invoke(_main(), [
+            "memory", "capture", "--session-transcript", "[]",
+            "--session-id", "s1", "--db", db_path, "--knowledge", knowledge,
+        ])
+        assert result.exit_code == 0, result.output
+        assert "Captured 1 memories" in result.output
+
+        bundle = OKFBundle(knowledge)
+        cids = bundle.list_concepts(prefix="memory/")
+        assert len(cids) == 1
+        assert bundle.read_concept(cids[0]).extensions["memory_type"] == "decision"
+
+        ro = get_db(db_path, read_only=True)
+        try:
+            rows = ro.execute("SELECT concept_id FROM memory_validity").fetchall()
+        finally:
+            ro.close()
+        assert len(rows) == 1
+
+    def test_batch_critic_keep_draft_preserves_id_and_commits(self, runner, tmp_path):
+        """A KEEP_DRAFT pass keeps the concept id (refs/embeddings stay attached)
+        and commits the validity projection instead of rolling it back at close."""
+        db_path, knowledge = self._store(tmp_path)
+        bundle = OKFBundle(knowledge)
+        conn = get_db(db_path)
+        try:
+            cid = store_memory(
+                create_memory(type_="pattern", title="critic draft", body="content", confidence=0.2),
+                bundle, tier="drafts",
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        result = runner.invoke(_main(), [
+            "memory", "batch-critic", "--db", db_path, "--knowledge", knowledge,
+        ])
+        assert result.exit_code == 0, result.output
+        assert "1 remain drafts" in result.output
+
+        assert bundle.list_concepts(prefix="memory/drafts") == [cid]
+
+        ro = get_db(db_path, read_only=True)
+        try:
+            rows = [r["concept_id"] for r in
+                    ro.execute("SELECT concept_id FROM memory_validity").fetchall()]
+        finally:
+            ro.close()
+        assert rows == [cid]
+
+    def test_list_with_corrupt_db_maps_to_cli_error(self, runner, tmp_path):
+        """A non-DB file at --db yields a CLI error message, not a raw traceback."""
+        knowledge = str(tmp_path / "k")
+        bundle = OKFBundle(knowledge)
+        store_memory(
+            create_memory(type_="pattern", title="listable", body="content", confidence=0.7),
+            bundle,
+        )
+        db_path = tmp_path / "junk.db"
+        db_path.write_text("this is not a database")
+        result = runner.invoke(_main(), [
+            "memory", "list", "--db", str(db_path), "--knowledge", knowledge,
+        ])
+        assert result.exit_code == 1
+        assert "not a valid cairn database" in result.output
+
+    def test_digest_negative_limit_is_usage_error(self, runner, tmp_path):
+        """A negative --limit maps to a usage error instead of a traceback."""
+        result = runner.invoke(_main(), [
+            "memory", "digest", "--limit", "-1",
+            "--knowledge", str(tmp_path / "k"),
+        ])
+        assert result.exit_code == 2
+        assert "non-negative" in result.output
+
+
+def _main():
+    from cairn.cli.main import main
+
+    return main

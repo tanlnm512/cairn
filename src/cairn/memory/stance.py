@@ -95,14 +95,16 @@ def _reflect_one(
         if concept.extensions.get(STANCE_KEY) != verdict:
             concept.extensions[STANCE_KEY] = verdict
             changed = True
-        if verdict == "contested" and peer_id is not None:
-            peer_rel = _norm_cid(bundle, peer_id)
-            if concept.extensions.get(STANCE_PEER_KEY) != peer_rel:
-                concept.extensions[STANCE_PEER_KEY] = peer_rel
-                changed = True
-        elif STANCE_PEER_KEY in concept.extensions:
-            del concept.extensions[STANCE_PEER_KEY]
+    if verdict == "contested" and peer_id is not None:
+        peer_rel = _norm_cid(bundle, peer_id)
+        if concept.extensions.get(STANCE_PEER_KEY) != peer_rel:
+            concept.extensions[STANCE_PEER_KEY] = peer_rel
             changed = True
+    elif STANCE_PEER_KEY in concept.extensions:
+        # The peer key is reflect-owned: drop it whenever no contested verdict
+        # holds, even when the evidence vanished and no verdict fired at all.
+        del concept.extensions[STANCE_PEER_KEY]
+        changed = True
 
     final = verdict if verdict is not None else concept.extensions.get(STANCE_KEY)
     return changed, final

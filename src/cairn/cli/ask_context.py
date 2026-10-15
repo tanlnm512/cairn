@@ -7,6 +7,7 @@ import click
 import json
 
 from .main import DEFAULT_DB_PATH, get_db, main
+from ..paths import default_knowledge_path
 
 
 def _echo_route_result(result):
@@ -30,8 +31,6 @@ def _ask_all_repos(question, as_json):
     from ..graph.schema import get_db as open_store_db
     from ..okf.bundle import OKFBundle
 
-    if not question.strip():
-        raise click.UsageError("Question must not be empty.")
     answers = {}
     states = {}
     dropped = []
@@ -72,7 +71,7 @@ def _ask_all_repos(question, as_json):
 @main.command()
 @click.argument("question")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=str(default_knowledge_path()))
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
     "--all-repos",
@@ -85,6 +84,8 @@ def ask(question, db, knowledge, as_json, all_repos):
     from ..compass.router import route_query
     from ..okf.bundle import OKFBundle
 
+    if not question.strip():
+        raise click.UsageError("Question must not be empty.")
     if all_repos:
         _ask_all_repos(question, as_json)
         return
@@ -105,7 +106,7 @@ def ask(question, db, knowledge, as_json, all_repos):
 # --------------------------------------------------------------------------
 @main.command()
 @click.argument("file_path")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=str(default_knowledge_path()))
 @click.option(
     "--refresh/--no-refresh",
     default=None,
@@ -140,7 +141,7 @@ def context(file_path, knowledge, refresh):
                 break
     if seg:
         for c in bundle.search(seg, limit=3):
-            if c.concept_id.startswith("memory/"):
+            if bundle.relativize_id(c.concept_id).startswith("memory/"):
                 out.append(f"\n# Memory: {c.title}")
                 if c.description:
                     out.append(f"  {c.description}")

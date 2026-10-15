@@ -105,6 +105,18 @@ def test_parse_status_bare_heading_marker():
     assert doc.body == "## Status\nDocument content."
 
 
+def test_parse_bare_status_marker_stops_at_next_heading():
+    """A bare '## Status' followed by a section heading captures no status:
+    the next heading is a section, not the status value."""
+    doc = parse_source_doc("## Status\n## Context\nWe need a decision.\n")
+    assert doc.status is None
+
+
+def test_parse_bare_status_marker_still_takes_prose_value():
+    doc = parse_source_doc("## Status\nDraft\n\n## Context\nBody.")
+    assert doc.status == "Draft"
+
+
 def test_parse_malformed_yaml():
     text = (
         "---\n"

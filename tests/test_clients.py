@@ -323,3 +323,96 @@ def test_uninstall_opencode_global_scope_strips_global_path(
     assert "cairn" not in after.get("mcp", {}), (
         "scope=global uninstall must strip the global file"
     )
+
+
+# --------------------------------------------------------------------------
+# Re-heal, stray-file preservation, and truthful reporting
+# --------------------------------------------------------------------------
+
+
+def test_uninstall_rejects_unknown_client_names(tmp_path):
+    """API symmetry with install(): a mistyped client name raises, not no-op."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    with pytest.raises(ValueError, match="Unknown clients"):
+        uninstall(str(ws), clients=["cluade"])
+
+
+def test_uninstall_opencode_strips_legacy_mcp_json_preserving_other_servers(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    legacy = ws / ".opencode" / "mcp.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "cairn": {"command": "cg"},
+                    "user-server": {"command": "foo"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    uninstall(str(ws), clients=["opencode"])
+
+    data = json.loads(legacy.read_text(encoding="utf-8"))
+    assert "cairn" not in data["mcpServers"]
+    assert "user-server" in data["mcpServers"], (
+        "unrelated servers in the legacy file must survive uninstall"
+    )
+
+
+def test_reinstall_rewrites_disabled_or_stale_key_remote(tmp_path, pinned_api_key):
+    """A user-disabled entry or rotated auth header must read as not-installed
+    so the reinstall restores cairn's intended registration."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    install(str(ws), clients=["opencode"])
+    cfg = ws / "opencode.json"
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    data["mcp"]["cairn"]["enabled"] = False
+    data["mcp"]["cairn"]["headers"] = _bearer("rotated-old-key")
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+
+    install(str(ws), clients=["opencode"])
+
+    healed = json.loads(cfg.read_text(encoding="utf-8"))["mcp"]["cairn"]
+    assert healed["enabled"] is True
+    assert healed["headers"] == _bearer(pinned_api_key)
+
+
+def test_opencode_reinstall_note_reports_no_change(tmp_path, pinned_api_key):
+    """An already-installed registration must note 'no change', not claim
+    'MCP server written to ...'."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    install(str(ws), clients=["opencode"])
+
+    res = next(
+        r for r in install(str(ws), clients=["opencode"]).results
+        if r.client == "opencode"
+    )
+
+    assert not any(n.startswith("MCP server written") for n in res.notes)
+    assert any("already registered" in n for n in res.notes)
+
+
+def test_agy_workspace_scope_notes_global_only_surface(
+    tmp_path, monkeypatch, pinned_api_key
+):
+    """agy reads only a global MCP config; a workspace-scope install must say
+    so instead of silently writing the global path."""
+    home = tmp_path / "fake_home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda *a, **k: home)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    res = next(
+        r for r in install(str(ws), clients=["agy"], scope="workspace").results
+        if r.client == "agy"
+    )
+
+    assert any("workspace scope" in n for n in res.notes)

@@ -1,13 +1,12 @@
 """Skill CLI: the skill group (generate)."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import click
 
 from ..skillgen.assembly import DEFAULT_TOP_K, DEFAULT_TOP_N
-from .main import DEFAULT_DB_PATH, get_db, main
+from .main import get_db, main
 
 
 @main.group()
@@ -93,12 +92,11 @@ def generate(selectors, output, top_k, top_n, db, polish, knowledge):
 
 
 def _default_knowledge() -> str:
-    """--polish queue bundle when --knowledge is omitted: CAIRN_KNOWLEDGE,
-    else the store-adjacent default `cairn task` reads."""
-    from_env = os.environ.get("CAIRN_KNOWLEDGE")
-    if from_env:
-        return from_env
-    return str(DEFAULT_DB_PATH.parent / ".knowledge")
+    """--polish queue bundle when --knowledge is omitted: the resolved
+    store's bundle (CAIRN_KNOWLEDGE or store-adjacent .knowledge)."""
+    from ..paths import resolve_store
+
+    return str(resolve_store().knowledge)
 
 
 def _polish_stage(conn, knowledge: str, slug: str, rendered: str, target: Path):

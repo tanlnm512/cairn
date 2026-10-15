@@ -18,7 +18,7 @@ _KIND_METHOD = 26
 _SKIP_PARSE_ERROR = "scip_parse_error"
 _SKIP_JOIN_ANOMALY = "scip_join_anomaly"
 
-# Per-document position-join rate below which the file keeps its tree-sitter
+# Per-document edge-yield rate below which the file keeps its tree-sitter
 # edges and the anomaly is recorded.
 _JOIN_ANOMALY_THRESHOLD = 0.5
 
@@ -205,7 +205,6 @@ def _plan_document(
     if spans is None:
         return [], False
     total = 0
-    joined = 0
     rows: List[Tuple[Any, ...]] = []
     for occ in doc.occurrences:
         if occ.symbol_roles & _ROLE_DEFINITION:
@@ -219,7 +218,6 @@ def _plan_document(
         if source_id is None:
             record["unjoined_occurrences"] += 1
             continue
-        joined += 1
         record["joined_occurrences"] += 1
 
         target_id, resolution, dropped = _resolve_target(spans_by_rel, def_sites, occ.symbol, rel)
@@ -247,7 +245,8 @@ def _plan_document(
             span[2],
             resolution,
         ))
-    anomalous = total > 0 and joined / total < _JOIN_ANOMALY_THRESHOLD
+    # The guard keys on row yield, so target-dropped occurrences count against it.
+    anomalous = total > 0 and len(rows) / total < _JOIN_ANOMALY_THRESHOLD
     return rows, anomalous
 
 

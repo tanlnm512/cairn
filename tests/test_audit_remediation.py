@@ -13,6 +13,7 @@ import pytest
 
 from cairn.graph.schema import _apply_schema
 from cairn.okf.bundle import OKFBundle
+from cairn.okf.concept import OKFConcept
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +123,39 @@ def test_p3_semantic_search_fusion_runs(tmp_path, monkeypatch):
         assert len(results) >= 1
         names = [r["name"] for r in results]
         assert "AuthService" in names
+    finally:
+        conn.close()
+        emb.reset_backend_cache()
+
+
+def test_dense_leg_without_stored_rows_rides_sparse_rescue(tmp_path, monkeypatch):
+    """Zero stored embeddings under the current model must not zero out the
+    pipeline: the dense leg degrades to [] + dense_lost (the embed-failure
+    shape), so fusion still returns the bm25 hits instead of silently
+    returning nothing."""
+    from cairn.graph import embeddings as emb
+    from cairn.graph.semantic import semantic_search
+    from cairn.graph.schema import get_db
+
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
+    monkeypatch.setenv("CAIRN_ANN_BACKEND", "off")
+    emb.reset_backend_cache()
+
+    conn = get_db(str(tmp_path / "dense_none.db"))
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('demo', 'demo', '/demo')")
+    conn.execute("INSERT INTO files (id, repo_id, path, hash, line_count, language) "
+                 "VALUES (1, 'demo', 'demo/Helper.kt', 'h1', 10, 'kotlin')")
+    conn.execute("INSERT INTO symbols (id, file_id, name, kind, qualified_name, "
+                 "docstring, line_start, line_end) VALUES ('s1', 1, 'api_helper', "
+                 "'function', 'util.api_helper', 'A small api helper.', 1, 10)")
+    conn.commit()
+
+    try:
+        # Deliberately no embeddings rows: the dense leg has nothing to scan.
+        results = semantic_search(conn, "api helper", limit=5)
+        assert results, "sparse rescue must replace the pre-fix zero-result None"
+        assert [r["name"] for r in results] == ["api_helper"]
+        assert all(r["provenance"] == "bm25" for r in results)
     finally:
         conn.close()
         emb.reset_backend_cache()
@@ -402,3 +436,185 @@ def test_c35_ask_compass_survives_corrupt_compass_concept(tmp_path, monkeypatch)
 
     out = ask_compass(query="", file_path="src/mod/ledger/engine.py")
     assert "Context for src/mod/ledger/engine.py" in out
+
+
+# ---------------------------------------------------------------------------
+# Logic-flow audit 2026-10-15: search_knowledge type filter, ask_compass /
+# cairn context memory sections, empty-question guard, and bundle read
+# side effects.
+# ---------------------------------------------------------------------------
+
+
+def _make_knowledge_store(tmp_path, concepts):
+    """Fresh store db plus a knowledge bundle preloaded with ``concepts``."""
+    from cairn.graph.schema import get_db
+
+    db = tmp_path / "store.db"
+    get_db(str(db)).close()
+    knowledge = tmp_path / "knowledge"
+    bundle = OKFBundle(str(knowledge))
+    for concept in concepts:
+        bundle.write_concept(concept)
+    return db, knowledge, bundle
+
+
+def test_search_knowledge_type_filter_applies_before_limit(tmp_path, monkeypatch):
+    """A type filter must not be starved by higher-scoring other-type hits."""
+    from cairn.mcp_server.tools_compass import search_knowledge_data
+
+    concepts = [
+        OKFConcept(
+            concept_id=f"knowledge/patterns/retry-{i}",
+            type="Compass",
+            title=f"retry retry guide {i}",
+            body="retry",
+        )
+        for i in range(3)
+    ] + [
+        OKFConcept(
+            concept_id=f"knowledge/wiki/retry-notes-{i}",
+            type="Wiki-Article",
+            title=f"retry notes {i}",
+            body="retry",
+        )
+        for i in range(3)
+    ]
+    _, knowledge, _ = _make_knowledge_store(tmp_path, concepts)
+    monkeypatch.setenv("CAIRN_KNOWLEDGE", str(knowledge))
+
+    results = search_knowledge_data("retry", type_filter="Wiki", limit=3)
+
+    assert len(results) == 3, (
+        "filter must run before the limit slice so matching Wiki concepts "
+        "are returned even when Compass hits outscore them"
+    )
+    assert all(c.type.startswith("Wiki") for c in results)
+
+
+def test_ask_compass_file_mode_renders_memory_section(tmp_path, monkeypatch):
+    """File-aware ask_compass renders the Memory section for memory/ hits."""
+    db, knowledge, _ = _make_knowledge_store(tmp_path, [
+        OKFConcept(
+            concept_id="memory/tribal/engine-gotcha",
+            type="Memory",
+            title="engine gotcha",
+            description="engine init is lazy; always warm it first",
+        ),
+    ])
+    monkeypatch.setenv("CAIRN_DB", str(db))
+    monkeypatch.setenv("CAIRN_KNOWLEDGE", str(knowledge))
+
+    from cairn.mcp_server.tools_compass import ask_compass
+
+    out = ask_compass(query="", file_path="src/mod/ledger/engine.kt")
+    assert "# Memory: engine gotcha" in out, (
+        "memory/ hits must normalize their absolute concept_id before the "
+        "prefix check, or the Memory section can never render"
+    )
+    assert "engine init is lazy" in out
+
+
+def test_context_cli_renders_memory_section(tmp_path, monkeypatch):
+    """`cairn context` renders the Memory section for memory/ hits."""
+    from click.testing import CliRunner
+
+    from cairn.cli.main import main
+
+    db, knowledge, _ = _make_knowledge_store(tmp_path, [
+        OKFConcept(
+            concept_id="memory/tribal/engine-gotcha",
+            type="Memory",
+            title="engine gotcha",
+            description="engine init is lazy; always warm it first",
+        ),
+    ])
+    monkeypatch.setenv("CAIRN_DB", str(db))
+    monkeypatch.setenv("CAIRN_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("CAIRN_NO_REFRESH", "1")
+
+    result = CliRunner().invoke(
+        main, ["context", "src/mod/ledger/engine.kt", "--knowledge", str(knowledge)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "# Memory: engine gotcha" in result.output
+    assert "engine init is lazy" in result.output
+
+
+def test_ask_rejects_blank_question_on_single_store_path(tmp_path):
+    """A blank question is a usage error on the single-store path, matching --all-repos."""
+    from click.testing import CliRunner
+
+    from cairn.cli.main import main
+
+    result = CliRunner().invoke(
+        main,
+        ["ask", "   ", "--db", str(tmp_path / "unused.db"),
+         "--knowledge", str(tmp_path / "knowledge")],
+    )
+
+    assert result.exit_code != 0
+    assert "empty" in result.output.lower()
+
+
+def test_knowledge_defaults_follow_store_not_db_parent(tmp_path):
+    """--knowledge defaults resolve via the store, not CAIRN_DB's parent.
+
+    The CLI bakes option defaults in at import time, so the check runs in a
+    subprocess with CAIRN_DB pointing outside the store home.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    env = {
+        **os.environ,
+        "CAIRN_DB": str(tmp_path / "custom" / "kg.sqlite"),
+        "CAIRN_WORKSPACE": str(ws),
+    }
+    code = (
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "from cairn.cli.ask_context import ask, context\n"
+        "from cairn.paths import resolve_store\n"
+        "def default(cmd):\n"
+        "    return [p for p in cmd.params if p.name == 'knowledge'][0].default\n"
+        "print(json.dumps({\n"
+        "    'ask': default(ask),\n"
+        "    'context': default(context),\n"
+        "    'store': str(resolve_store().knowledge),\n"
+        "    'db_parent': str(Path(os.environ['CAIRN_DB']).parent / '.knowledge'),\n"
+        "}))\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True
+    )
+    assert out.returncode == 0, out.stderr
+    payload = json.loads(out.stdout)
+    assert payload["ask"] == payload["store"], (
+        "ask --knowledge default must resolve via the store, not CAIRN_DB's parent"
+    )
+    assert payload["context"] == payload["store"]
+    assert payload["ask"] != payload["db_parent"]
+
+
+def test_bundle_read_does_not_create_store_directories(tmp_path):
+    """A failed bundle read must not create the store tree as a side effect."""
+    knowledge = tmp_path / "knowledge"
+    bundle = OKFBundle(str(knowledge))
+
+    with pytest.raises(FileNotFoundError):
+        bundle.read_concept("knowledge/missing")
+
+    assert not knowledge.exists(), (
+        "read_concept must not mkdir the bundle root; read commands rely on "
+        "an exists() guard to fail cleanly on an uninitialized store"
+    )
+    # Writes still create the tree themselves.
+    bundle.write_concept(OKFConcept(
+        concept_id="knowledge/doc", type="Note", title="doc",
+    ))
+    assert (knowledge / "knowledge" / "doc.md").exists()

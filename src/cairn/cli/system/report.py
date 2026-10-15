@@ -30,10 +30,13 @@ _ERROR_EVENTS: tuple[str, ...] = ("ann_fallback", "hash_fallback", "lock_content
 _REPORT_LIMIT = 20  # bounded set of recent rows per source (events / tool errors)
 
 # Absolute-path redaction: POSIX leading "/" or "~" roots, Windows
-# drive-letter roots; URLs and relative paths stay intact, basenames survive
-# so reports stay debuggable.
+# drive-letter roots (backslash and forward-slash separators); URLs and
+# relative paths stay intact, basenames survive so reports stay debuggable.
 _POSIX_PATH_RE = re.compile(r"(?<![\w:/.-])/(?:[^\s\"']+/)+[^\s\"']*|(?<![\w])~/[^\s\"']+")
-_WIN_PATH_RE = re.compile(r"(?<![\w])(?:[A-Za-z]:)?\\(?:[^\\\s\"']+\\)+[^\\\s\"']*")
+_WIN_PATH_RE = re.compile(
+    r"(?<![\w])(?:[A-Za-z]:)?\\(?:[^\\\s\"']+\\)+[^\\\s\"']*"
+    r"|(?<![\w])[A-Za-z]:/(?:[^/\s\"']+/)+[^/\s\"']*"
+)
 
 
 def _redact_path_match(m: re.Match) -> str:

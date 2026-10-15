@@ -138,12 +138,25 @@ def generate_compass(
 
 def _infer_repo(conn, module_path: str) -> Optional[str]:
     cur = conn.cursor()
-    for r in cur.execute("SELECT id, path FROM repos"):
-        # Repo id (stable basename) as a path segment of module_path.
+    repos = cur.execute("SELECT id, path FROM repos").fetchall()
+    # Unambiguous anchors: bare repo id or explicit `{repo}/` prefix.
+    for r in repos:
         rid = r["id"]
-        if module_path.startswith(rid + "/") or ("/" + rid + "/") in module_path \
-                or module_path == rid:
+        if module_path == rid or module_path.startswith(rid + "/"):
             return rid
+    # Legacy absolute paths anchor on the registered repo root.
+    rooted = sorted(
+        r["id"] for r in repos
+        if (r["path"] or "").rstrip("/")
+        and module_path.startswith((r["path"] or "").rstrip("/") + "/")
+    )
+    if len(rooted) > 1:
+        raise ModuleResolutionError(
+            f"module '{module_path}' matches multiple repos ({', '.join(rooted)}); "
+            "pass --repo to pick one"
+        )
+    if rooted:
+        return rooted[0]
     # Bare module name: infer from the repos that contain it; ambiguous -> raise.
     rows = cur.execute(
         f"SELECT DISTINCT repo_id FROM files WHERE {_module_match_sql()}",
@@ -157,8 +170,19 @@ def _infer_repo(conn, module_path: str) -> Optional[str]:
         )
     if len(rows) == 1:
         return rows[0]["repo_id"]
+    # No file evidence: a unique repo-id segment mid-path is the last signal.
+    segment = sorted(
+        r["id"] for r in repos
+        if r["id"] != module_path and f"/{r['id']}/" in f"/{module_path}/"
+    )
+    if len(segment) > 1:
+        raise ModuleResolutionError(
+            f"module '{module_path}' matches multiple repos ({', '.join(segment)}); "
+            "pass --repo to pick one"
+        )
+    if segment:
+        return segment[0]
     # Fallback: single-repo workspace infers its only repo.
-    repos = cur.execute("SELECT id FROM repos").fetchall()
     if len(repos) == 1:
         return repos[0]["id"]
     return None
@@ -602,23 +626,10 @@ def generate_flow_compass(
     entry_id: Optional[str] = None,
     resource: Optional[str] = None,
     title: Optional[str] = None,
+    facts: Optional[Dict[str, Any]] = None,
 ) -> OKFConcept:
-    """Generate a flow compass OKF concept for an entry-point symbol.
-
-    Traces the downward call chain from ``entry`` via :func:`trace_flow`,
-    synthesizes a deterministic 5-section body from the traced facts, and
-    returns the concept. The caller (CLI) runs the critic and persists.
-
-    Args:
-        entry: the entry-point symbol name (human-readable label).
-        entry_id: optional symbol database ID for collision-safe resolution.
-        resource: optional override for the concept's ``resource`` field.
-            Defaults to the flow-gaps coverage key (bare name when the
-            symbol is unique across files, ``name#suffix`` on collisions).
-        title: optional override for the concept's ``title`` field. Defaults
-            to ``Flow: {entry}``. For collisions, pass a qualified title.
-    """
-    facts = _gather_flow_facts(conn, entry, entry_id=entry_id)
+    """Build the flow compass concept for an entry symbol (``facts`` skips the internal trace; caller runs the critic)."""
+    facts = facts or _gather_flow_facts(conn, entry, entry_id=entry_id)
     body = _flow_template_body(facts)
 
     # concept_id must be filesystem-safe and unique. The resource defaults
@@ -651,6 +662,7 @@ def generate_flow_workflow(
     entry_id: Optional[str] = None,
     title: Optional[str] = None,
     max_steps: int = 20,
+    facts: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Generate a Knowledge-workflow from a flow trace.
 
@@ -661,7 +673,7 @@ def generate_flow_workflow(
     """
     from ..knowledge.workflow import add_workflow, flow_to_workflow
 
-    facts = _gather_flow_facts(conn, entry, entry_id=entry_id)
+    facts = facts or _gather_flow_facts(conn, entry, entry_id=entry_id)
     steps = flow_to_workflow(facts, max_steps=max_steps)
     display_title = title or f"Flow: {entry}"
     cid = add_workflow(

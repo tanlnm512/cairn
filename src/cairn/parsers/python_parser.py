@@ -299,16 +299,13 @@ class PythonParser(BaseParser, TreeSitterParserBase):
                 )
 
     def _parse_imports(self, node: Node, source: bytes) -> List[Import]:
-        """Return verbatim plain Imports and normalized rows for aliased Imports."""
+        """Return one normalized dotted-path Import row per imported name."""
         line = node.start_point[0] + 1
         names = [
             child
             for i, child in enumerate(node.children)
             if node.field_name_for_child(i) == "name"
         ]
-        if not any(c.type == "aliased_import" for c in names):
-            text = self._node_text(node, source).replace("\n", " ").strip()
-            return [Import(imported_path=text, line=line)]
         module = self._from_module_text(node, source)
         imports: List[Import] = []
         for child in names:

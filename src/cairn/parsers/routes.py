@@ -123,7 +123,6 @@ def _detect_nestjs(pf: ParsedFile) -> Optional[RouteExtraction]:
                 extraction.references.append(
                     Edge(route_name, "references", method.name, method.line_start)
                 )
-                break  # one HTTP-method decorator per method is the norm
     return extraction if extraction.routes else None
 
 

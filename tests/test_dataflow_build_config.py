@@ -16,6 +16,7 @@ from cairn.graph.dataflow import (
     MAX_SYMBOLS_ENV,
     _SQLITE_IN_CHUNK,
     build_dataflow_index,
+    get_dataflow,
     resolve_max_symbols,
 )
 from cairn.graph.schema import _apply_schema
@@ -64,6 +65,12 @@ def test_invalid_env_var_falls_back_to_default(monkeypatch, capsys, raw):
     err = capsys.readouterr().err
     assert MAX_SYMBOLS_ENV in err
     assert str(DEFAULT_MAX_SYMBOLS) in err
+
+
+@pytest.mark.parametrize("bad", [0, -5])
+def test_invalid_explicit_arg_falls_back_to_default(capsys, bad):
+    assert resolve_max_symbols(bad) == DEFAULT_MAX_SYMBOLS
+    assert "must be positive" in capsys.readouterr().err
 
 
 # --- build_dataflow_index: truncation, warning, batched upserts ------------
@@ -143,3 +150,96 @@ def test_cli_build_max_symbols(tmp_path):
     rows = check.execute("SELECT COUNT(*) FROM dataflow").fetchone()[0]
     check.close()
     assert rows == 2
+
+
+# --- rebuild purges stale rows ------------------------------------------------
+
+def test_rebuild_purges_rows_of_deleted_symbols(fresh_db):
+    _seed(fresh_db)
+    build_dataflow_index(fresh_db)
+    assert fresh_db.execute("SELECT COUNT(*) FROM dataflow").fetchone()[0] == 5
+
+    fresh_db.execute("DELETE FROM symbols WHERE id = 's_r1_0'")
+    fresh_db.commit()
+    build_dataflow_index(fresh_db)
+
+    gone = fresh_db.execute(
+        "SELECT COUNT(*) FROM dataflow WHERE symbol = 'pub_r1_0'"
+    ).fetchone()[0]
+    assert gone == 0
+    assert fresh_db.execute("SELECT COUNT(*) FROM dataflow").fetchone()[0] == 4
+
+
+def test_truncated_rebuild_purges_gone_names_keeps_beyond_cap(fresh_db):
+    _seed(fresh_db)
+    build_dataflow_index(fresh_db)
+
+    fresh_db.execute("DELETE FROM symbols WHERE id = 's_r1_0'")
+    fresh_db.commit()
+    count = build_dataflow_index(fresh_db, max_symbols=3)
+
+    assert count == 3
+    rows = {
+        r[0] for r in fresh_db.execute("SELECT symbol FROM dataflow").fetchall()
+    }
+    # pub_r1_0 purged (no longer public); pub_r2_1 survives beyond the cap.
+    assert rows == {"pub_r1_1", "pub_r1_2", "pub_r2_0", "pub_r2_1"}
+
+
+# --- analysis errors recorded in the row --------------------------------------
+
+def test_analysis_failure_recorded_in_row(fresh_db, monkeypatch):
+    _seed(fresh_db)
+    import cairn.graph.queries as queries
+
+    def _boom(conn, name, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(queries, "impact_analysis", _boom)
+    build_dataflow_index(fresh_db)
+
+    stored = fresh_db.execute(
+        "SELECT analysis_errors FROM dataflow WHERE symbol = 'pub_r1_0'"
+    ).fetchone()[0]
+    assert "impact_analysis" in stored
+    assert "boom" in stored
+
+    df = get_dataflow(fresh_db, "pub_r1_0")
+    assert df["analysis_errors"] == ["impact_analysis: boom"]
+
+
+def test_clean_rows_omit_analysis_errors(fresh_db):
+    _seed(fresh_db)
+    build_dataflow_index(fresh_db)
+
+    df = get_dataflow(fresh_db, "pub_r1_0")
+    assert "analysis_errors" not in df
+
+
+# --- (symbol, repo) key: same-named public symbols across repos ----------------
+
+def test_same_name_in_two_repos_keeps_both_rows(fresh_db):
+    for rid in ("ra", "rb"):
+        fresh_db.execute(
+            "INSERT INTO repos (id, name, path, language) VALUES (?, ?, ?, ?)",
+            (rid, rid, f"/ws/{rid}", "python"),
+        )
+        fresh_db.execute(
+            "INSERT INTO files (id, repo_id, path, language) VALUES (?, ?, ?, ?)",
+            (f"f_{rid}", rid, f"{rid}.py", "python"),
+        )
+        fresh_db.execute(
+            "INSERT INTO symbols (id, file_id, name, kind) VALUES (?, ?, ?, ?)",
+            (f"s_{rid}", f"f_{rid}", "Shared", "function"),
+        )
+    fresh_db.commit()
+
+    assert build_dataflow_index(fresh_db) == 2
+    rows = fresh_db.execute(
+        "SELECT repo FROM dataflow WHERE symbol = 'Shared' ORDER BY repo"
+    ).fetchall()
+    assert [r[0] for r in rows] == ["ra", "rb"]
+
+    df = get_dataflow(fresh_db, "Shared")
+    assert df["repo"] == "ra"  # deterministic, not storage-order dependent
+    assert df.get("ambiguous") is True

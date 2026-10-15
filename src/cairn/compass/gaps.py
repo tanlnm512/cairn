@@ -1,11 +1,14 @@
 """Coverage gap detection: find modules without compass files."""
 from __future__ import annotations
 
+import logging
 import sqlite3
 from typing import List
 
 from ..okf.bundle import OKFBundle
 from .generator import _escape_like
+
+logger = logging.getLogger(__name__)
 
 
 def detect_gaps(conn: sqlite3.Connection, bundle: OKFBundle) -> List[str]:
@@ -27,7 +30,8 @@ def detect_gaps(conn: sqlite3.Connection, bundle: OKFBundle) -> List[str]:
             if concept.resource:
                 repo = concept.tags[0] if concept.tags and concept.tags[0] in repo_ids else None
                 covered.append((repo, concept.resource))
-        except Exception:
+        except Exception as e:
+            logger.warning("Skipping unreadable compass concept %s: %s", cid, e)
             continue
     gaps = []
     for mod in all_modules:

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from ..graph.blast import BlastBaseError, compute_blast, render_blast
+from ..graph.blast import compute_blast, render_blast
 from ..graph.taint import format_taint_warning
 from .main import DEFAULT_DB_PATH, get_db
 
@@ -49,7 +49,8 @@ def blast(db, base, output_format, fuzzy, refresh, output):
             )
         finally:
             conn.close()
-    except BlastBaseError as error:
+    except RuntimeError as error:
+        # Includes BlastBaseError; git and strict-refresh failures raise bare.
         raise click.ClickException(str(error)) from error
 
     paths = result.get("taint_paths") or []

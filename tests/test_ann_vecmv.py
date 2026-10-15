@@ -342,3 +342,42 @@ def test_cli_multivector_rebuilds_both_indexes(tmp_path, monkeypatch):
         assert conn.execute(f"SELECT COUNT(*) c FROM {mv_tbl}").fetchone()["c"] == 5
     finally:
         conn.close()
+
+
+def test_cli_build_index_flag_forces_rebuild_when_backend_off(tmp_path, monkeypatch):
+    """--build-index must force the ANN rebuild even with the ANN backend
+    opted out (CAIRN_ANN_BACKEND=off) -- a dead flag silently skipped it."""
+    from click.testing import CliRunner
+
+    from cairn.cli import main as cli_main
+    from cairn.graph import ann_index as ann, embeddings as emb
+    from cairn.graph.schema import init_db
+
+    monkeypatch.setenv("CAIRN_ANN_BACKEND", "off")
+    assert ann.ann_backend_enabled() is False
+    model = emb.current_model()
+
+    db_path = str(tmp_path / "off.db")
+    conn = init_db(db_path)
+    _seed_corpus(conn)
+    conn.close()
+
+    result = CliRunner().invoke(
+        cli_main, ["embed", "--db", db_path, "--build-index"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        assert ann.try_load(conn)
+        vec_tbl = ann._table_name(model)
+        names = {
+            r["name"]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert vec_tbl in names, "--build-index must rebuild despite the opt-out"
+        assert conn.execute(f"SELECT COUNT(*) c FROM {vec_tbl}").fetchone()["c"] == 3
+    finally:
+        conn.close()

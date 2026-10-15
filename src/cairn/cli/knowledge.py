@@ -34,7 +34,7 @@ def knowledge():
 def knowledge_add(file_path, body_text, title, doc_type, tags, affects,
                   affects_modules, epic, resource, description):
     """Ingest a business knowledge document."""
-    from cairn.knowledge.store import add_document
+    from cairn.knowledge.store import add_document, doc_concept_id, get_document
     from cairn.okf.bundle import OKFBundle
     from ..paths import resolve_store
 
@@ -55,13 +55,20 @@ def knowledge_add(file_path, body_text, title, doc_type, tags, affects,
     store.ensure()
     bundle = OKFBundle(str(store.knowledge))
 
+    # Same title+doc_type replaces the prior document in place; say so.
+    replaced = get_document(bundle, doc_concept_id(title, doc_type)) is not None
     cid = add_document(
         bundle, title=title, body=body, doc_type=doc_type,
         tags=_split(tags), affects_modules=_split(affects_modules),
         affects_repos=_split(affects), resource=resource or None,
         epic_link=epic or None, description=description,
     )
-    click.echo(f"Stored: {cid}")
+    note = (
+        " (replaced an existing document with the same title and doc_type)"
+        if replaced
+        else ""
+    )
+    click.echo(f"Stored: {cid}{note}")
 
 
 @knowledge.command("import")
@@ -79,10 +86,15 @@ def knowledge_import(dir_path, doc_type, tags, affects):
     store.ensure()
     bundle = OKFBundle(str(store.knowledge))
 
-    imported = import_directory(
-        bundle, dir_path, doc_type=doc_type,
-        tags=_split(tags), affects_repos=_split(affects),
-    )
+    try:
+        imported = import_directory(
+            bundle, dir_path, doc_type=doc_type,
+            tags=_split(tags), affects_repos=_split(affects),
+        )
+    except (FileNotFoundError, NotADirectoryError) as e:
+        # import_directory raises with the offending path in the message.
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
     click.echo(f"Imported {len(imported)} document(s).")
     for cid in imported:
         click.echo(f"  {cid}")
@@ -136,9 +148,10 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
             files=list(files), dirs=list(dirs), outbox=outbox,
             include_drafts=include_drafts, repos=list(repos),
         )
-    except FileNotFoundError as e:
-        # Fed adapters raise with the offending path in the message
-        # ("Fed path does not exist: ...", "Repo root does not exist: ...").
+    except (FileNotFoundError, ValueError) as e:
+        # Fed adapters raise FileNotFoundError with the offending path in
+        # the message ("Fed path does not exist: ...", "Repo root does not
+        # exist: ..."); staging raises ValueError when its cross-check fails.
         click.echo(f"Error: {e}.", err=True)
         sys.exit(1)
     dangling = []
@@ -383,6 +396,11 @@ def knowledge_search(query, limit, threshold, as_json, db):
 
     store = resolve_store()
     bundle = OKFBundle(str(store.knowledge))
+    # Guard before the DB is opened: a fresh environment has neither the
+    # knowledge bundle nor the default db parent, and get_db would raise.
+    if not bundle.root.exists() or not Path(db).parent.exists():
+        click.echo(f"No knowledge documents matching '{query}'.")
+        return
     conn = get_db(db)
     try:
         results = search_knowledge(conn, bundle, query, limit=limit, threshold=threshold)
@@ -452,7 +470,16 @@ def knowledge_embed(db, batch_size):
         display.dim(emb.install_hint())
         sys.exit(1)
 
-    bundle = OKFBundle(str(resolve_store().knowledge))
+    store = resolve_store()
+    if not Path(db).parent.exists():
+        click.echo(
+            f"Error: store directory does not exist: {Path(db).parent}. "
+            "Run `cairn init && cairn build` first.",
+            err=True,
+        )
+        sys.exit(1)
+    store.ensure()
+    bundle = OKFBundle(str(store.knowledge))
     conn = get_db(db)
     try:
         display.info(f"Embedding knowledge docs with {emb.current_model()}")
@@ -498,6 +525,9 @@ def knowledge_impact(query, db, limit):
     from ..paths import resolve_store
 
     bundle = OKFBundle(str(resolve_store().knowledge))
+    if not bundle.root.exists() or not Path(db).parent.exists():
+        click.echo(f"No knowledge documents matching '{query}'.")
+        return
     conn = get_db(db)
     try:
         results = search_knowledge(conn, bundle, query, limit=limit)
@@ -516,13 +546,20 @@ def knowledge_impact(query, db, limit):
             click.echo(f"  affects_repos: {', '.join(r['affects_repos'])}")
         if r.get("graph_deps"):
             for repo, deps in r["graph_deps"].items():
-                # cross_repo_deps returns {dependencies: [{repo, ...}], ...}.
-                # Extract repo names.
-                if isinstance(deps, dict):
-                    if deps.get("dependencies"):
-                        dep_repos = [d["repo"] for d in deps["dependencies"] if d.get("repo")]
-                        if dep_repos:
-                            click.echo(f"  {repo} → depends on: {', '.join(dep_repos)}")
+                # _graph_bridge yields cross_repo_deps' {dependencies: [...]}
+                # or {error: ...} on a repo miss; every repo prints a line.
+                if not isinstance(deps, dict):
+                    continue
+                if deps.get("error"):
+                    click.echo(f"  {repo} → graph lookup failed: {deps['error']}")
+                    continue
+                dep_repos = [
+                    d["repo"] for d in deps.get("dependencies") or [] if d.get("repo")
+                ]
+                if dep_repos:
+                    click.echo(f"  {repo} → depends on: {', '.join(dep_repos)}")
+                else:
+                    click.echo(f"  {repo} → no cross-repo dependencies in the graph.")
 
 
 @knowledge.command("remove")
@@ -535,6 +572,11 @@ def knowledge_remove(doc_id, db):
     from ..paths import resolve_store
 
     bundle = OKFBundle(str(resolve_store().knowledge))
+    # Guard before the DB is opened: a delete on a missing store is a
+    # not-found, never a store-creation side effect.
+    if not bundle.root.exists() or not Path(db).parent.exists():
+        click.echo(f"Not found: '{doc_id}'.", err=True)
+        sys.exit(1)
     conn = get_db(db)
     try:
         ok = delete_document(bundle, doc_id, conn=conn)
@@ -644,9 +686,13 @@ def knowledge_workflow_add(title, steps_raw, steps_file, tags, affects, affects_
     if steps_file:
         import yaml as _yaml  # type: ignore[import-untyped]
 
-        with open(steps_file, "r", encoding="utf-8") as fh:
-            steps = _yaml.safe_load(fh)
-        if not isinstance(steps, list):
+        try:
+            with open(steps_file, "r", encoding="utf-8") as fh:
+                steps = _yaml.safe_load(fh)
+        except (OSError, _yaml.YAMLError) as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        if not isinstance(steps, list) or not all(isinstance(s, dict) for s in steps):
             click.echo("Error: --steps-file must contain a YAML/JSON list of step dicts.", err=True)
             sys.exit(1)
     elif steps_raw:
@@ -722,7 +768,10 @@ def knowledge_workflow_trace(ref, as_json):
 @click.option("--dry-run", is_flag=True, help="Show staleness report without writing.")
 @click.option("--max-steps", default=20, type=int, help="Cap workflow steps (default 20).")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option(
+    "--knowledge", default=None,
+    help="Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge).",
+)
 def knowledge_workflow_sync(ref, sync_all, dry_run, max_steps, db, knowledge):
     """Detect and refresh stale workflows; --dry-run reports without writing, otherwise steps re-trace from the current graph."""
     from cairn.knowledge.workflow import (
@@ -730,13 +779,22 @@ def knowledge_workflow_sync(ref, sync_all, dry_run, max_steps, db, knowledge):
     )
     from cairn.knowledge.store import list_documents
     from cairn.okf.bundle import OKFBundle
+    from ..paths import resolve_store
 
+    if ref and sync_all:
+        click.echo("Error: pass a workflow ref or --all, not both.", err=True)
+        sys.exit(1)
     if not ref and not sync_all:
         click.echo("Error: provide a workflow ref or use --all.", err=True)
         sys.exit(1)
 
+    store = resolve_store()
+    bundle = OKFBundle(knowledge or str(store.knowledge))
+    # Guard before the DB is opened: no workflows exist without the bundle.
+    if not bundle.root.exists() or not Path(db).parent.exists():
+        click.echo("No workflows to sync.")
+        return
     conn = get_db(db)
-    bundle = OKFBundle(knowledge)
 
     if dry_run:
         # Staleness report mode.

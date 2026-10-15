@@ -1,6 +1,8 @@
 """Incremental synchronization command implementation."""
 from __future__ import annotations
 
+import sqlite3
+
 import click
 from pathlib import Path
 
@@ -17,8 +19,10 @@ def _repo_file_changes(conn, workspace, repo_path):
             "SELECT path, size, mtime FROM files WHERE repo_id = ?",
             (repo_name,),
         ).fetchall()
-    except Exception:
-        return []
+    except sqlite3.Error as e:
+        raise click.ClickException(
+            f"cannot read indexed files for repo '{repo_name}': {e}"
+        ) from e
 
     changed = []
     existing = set()
@@ -59,13 +63,41 @@ def _collect_changed_files(conn, workspace):
     return changed
 
 
+def _refresh_derived_indexes(conn, workspace, changed, pre):
+    """Re-apply the SCIP overlay, then maintain or rebuild closure and dataflow; return errors."""
+    from ...graph import builder
+    from ...graph.incremental import (
+        _maintain_derived_indexes,
+        _rebuild_derived_indexes,
+    )
+
+    errors: list[str] = []
+    repos = [scanner_mod.repository_id(r) for r in scanner_mod.discover_repos(workspace)]
+    try:
+        # Closure and dataflow must see the post-overlay edge population.
+        builder._apply_scip_overlay(
+            conn,
+            workspace,
+            {r: None for r in repos},
+            verbose=False,
+            generate_missing=False,
+        )
+    except Exception as e:
+        errors.append(f"scip_overlay: {e}")
+    if pre["dataflow_built"]:
+        return errors + _maintain_derived_indexes(conn, workspace, changed, pre)
+    return errors + _rebuild_derived_indexes(conn, pre["closure_built"])
+
+
 def _run_sync(conn, workspace, changed, db):
-    """Reindex changed files, refresh dataflow, and record the sync run."""
-    from ...graph.incremental import reindex_paths
+    """Reindex changed files, refresh derived indexes, and record the sync run."""
+    from ...graph.incremental import _capture_derived_prestate, reindex_paths
     from .. import display
     import time
 
     sync_started = time.time()
+    # Capture before reindex: the affected sets are the pre-update graph.
+    pre = _capture_derived_prestate(conn, workspace, changed)
     with display.progress_bar(
         description=f"Syncing {len(changed)} files",
         total=len(changed),
@@ -76,21 +108,16 @@ def _run_sync(conn, workspace, changed, db):
         result = reindex_paths(conn, workspace, changed)
         bar.update(bar._cg_task_id, completed=len(changed))
 
-    # Refresh the dataflow index if any files were reindexed.
-    if result["reindexed"]:
-        try:
-            from ...graph.dataflow import build_dataflow_index
+    errors = list(result["errors"])
+    if result["reindexed"] or result["deleted"]:
+        errors.extend(_refresh_derived_indexes(conn, workspace, changed, pre))
 
-            df_count = build_dataflow_index(conn)
-            display.dim(f"  dataflow index: {df_count:,} symbols")
-        except Exception:
-            pass
     display.success(
         f"Synced: {result['reindexed']} reindexed, {result['deleted']} deleted"
     )
-    if result["errors"]:
-        display.warning(f"{len(result['errors'])} errors")
-        for error in result["errors"][:5]:
+    if errors:
+        display.warning(f"{len(errors)} errors")
+        for error in errors[:5]:
             display.dim(f"  {error}")
 
     # Best-effort 'sync' build_runs row: only reindexed/deleted counts are

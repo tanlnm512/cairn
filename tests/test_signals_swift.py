@@ -280,5 +280,39 @@ class TestCallArity:
         assert _calls(pf, "perform")[0].call_arity == 2
 
 
+# ---------------------------------------------------------------------------
+# Declaration kinds — the innermost enclosing declaration decides
+# method-vs-function; extension members scope under the extended type.
+# ---------------------------------------------------------------------------
+
+class TestDeclarationKinds:
+    def test_extension_members_are_methods_under_extended_type(self):
+        pf = _parse(
+            b"extension String {\n"
+            b"    func boom() -> Int { return 1 }\n"
+            b"}\n"
+        )
+        boom = next(s for s in pf.symbols if s.name == "boom")
+        assert boom.kind == "method"
+        assert boom.qualified_name == "String.boom"
+
+    def test_nested_functions_stay_functions(self):
+        pf = _parse(
+            b"class Outer {\n"
+            b"    func outerFn() {\n"
+            b"        func innerFn() { }\n"
+            b"    }\n"
+            b"}\n"
+        )
+        inner = next(s for s in pf.symbols if s.name == "innerFn")
+        assert inner.kind == "function"
+
+    def test_direct_class_members_stay_methods(self):
+        pf = _parse(b"class Plain { func pm() {} }\n")
+        pm = next(s for s in pf.symbols if s.name == "pm")
+        assert pm.kind == "method"
+        assert pm.qualified_name == "Plain.pm"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

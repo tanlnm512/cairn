@@ -141,11 +141,11 @@ def test_semantic_backend_fires_on_real_brute_path(hash_backend, fresh_db):
 # ---------------------------------------------------------------------------
 
 
-def test_empty_result_event_when_no_embeddings(fresh_db):
-    """Symbols present but no embeddings rows -> brute scan finds nothing ->
-    early return [] fires BOTH semantic_backend (n_results='0') and empty_result
-    with query_kind='semantic_search'."""
-    _seed_symbols(fresh_db)
+def test_empty_result_event_when_corpus_empty(fresh_db):
+    """Empty corpus (no embeddings rows AND no sparse hits) -> results [] fires
+    BOTH semantic_backend (n_results='0') and empty_result with
+    query_kind='semantic_search'. Symbols without embeddings do not end here:
+    the dense [] + dense_lost shape lets fusion return their bm25 hits."""
     from cairn.graph.semantic import semantic_search
 
     results = semantic_search(fresh_db, "safeApiCall", limit=5)

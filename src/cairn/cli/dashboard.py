@@ -53,4 +53,8 @@ def dashboard(db, host, port):
 
     import uvicorn
 
-    uvicorn.run(create_app(db_path=path), host=host, port=port)
+    try:
+        uvicorn.run(create_app(db_path=path), host=host, port=port)
+    except KeyboardInterrupt:
+        # Ctrl-C is the documented stop: exit 0, not Click's "Aborted!" error.
+        click.echo("dashboard stopped")

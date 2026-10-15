@@ -41,6 +41,7 @@ def build_pack(
         "seeds": blast["seeds"],
         "changed_files": blast["changed_files"],
         "areas": blast["areas"],
+        "stale_graph": blast.get("stale_graph"),
         "radius": blast["radius"],
         "unindexed_files": blast["unindexed_files"],
         "deleted_files": blast["deleted_files"],

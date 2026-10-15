@@ -339,13 +339,17 @@ CREATE INDEX IF NOT EXISTS idx_agent_symbols_symbol_ts ON agent_symbols(symbol, 
 -- precomputed dataflow index for public/exported symbols. Within-repo
 -- impacted symbols and cross-repo consumer repos are materialised so lookups
 -- are O(1) instead of re-running impact_analysis + cross_repo_deps on each
--- MCP tool call. Populated by build_dataflow_index() during `cairn build`/`cairn sync`.
+-- MCP tool call. Keyed by (symbol, repo) so same-named public symbols in
+-- different repos coexist. Populated by build_dataflow_index() during
+-- `cairn build`/`cairn sync`.
 CREATE TABLE IF NOT EXISTS dataflow (
-    symbol TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
     repo TEXT NOT NULL,
     within_repo TEXT,      -- JSON list of impacted symbol names
     cross_repo TEXT,       -- JSON list of consumer repo names
-    updated TIMESTAMP
+    analysis_errors TEXT,  -- JSON list of analysis failures; '[]' = trusted
+    updated TIMESTAMP,
+    PRIMARY KEY (symbol, repo)
 );
 
 -- MCP tool invocation metrics. Each tool call is recorded with timing, session
@@ -594,6 +598,43 @@ def note_contention(site: str, error: Exception | None = None) -> None:
     )
 
 
+DATAFLOW_PK_MIGRATION = "dataflow.pk_symbol_repo"
+
+
+def _migrate_dataflow_pk(conn: sqlite3.Connection) -> None:
+    """Rebuild dataflow once with the composite (symbol, repo) primary key."""
+    applied = conn.execute(
+        "SELECT 1 FROM schema_meta WHERE key = ?", (DATAFLOW_PK_MIGRATION,)
+    ).fetchone() is not None
+    if applied:
+        return
+    pk = {row[1] for row in conn.execute("PRAGMA table_info(dataflow)") if row[5]}
+    if pk != {"symbol", "repo"}:
+        # ALTER cannot change a PK: rebuild and carry the rows over.
+        conn.execute("DROP TABLE IF EXISTS dataflow_new")
+        conn.execute("""
+            CREATE TABLE dataflow_new (
+                symbol TEXT NOT NULL,
+                repo TEXT NOT NULL,
+                within_repo TEXT,
+                cross_repo TEXT,
+                analysis_errors TEXT,
+                updated TIMESTAMP,
+                PRIMARY KEY (symbol, repo)
+            )
+        """)
+        conn.execute("""
+            INSERT INTO dataflow_new (symbol, repo, within_repo, cross_repo, updated)
+            SELECT symbol, repo, within_repo, cross_repo, updated FROM dataflow
+        """)
+        conn.execute("DROP TABLE dataflow")
+        conn.execute("ALTER TABLE dataflow_new RENAME TO dataflow")
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
+        (DATAFLOW_PK_MIGRATION, "applied"),
+    )
+
+
 def _apply_schema(conn: sqlite3.Connection) -> None:
     """Create tables/indexes/FTS (idempotent) and run additive migrations."""
     conn.executescript(SCHEMA_SQL)
@@ -626,6 +667,9 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
             else:
                 note_contention("schema.migration", error=e)
                 raise
+
+    # Table-rebuild migration: keyed by schema_meta like the ALTERs above.
+    _migrate_dataflow_pk(conn)
 
     # Deferred until after MIGRATIONS: the target_id column may not exist on a
     # pre-existing DB until TRANSITIVE_EDGES_TARGET_ID_MIGRATION backfills it.

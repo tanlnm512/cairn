@@ -157,3 +157,56 @@ def test_get_db_read_only_handles_special_chars_in_path(tmp_path):
             r.execute("DELETE FROM repos")
     finally:
         r.close()
+
+
+def _invoke(args):
+    """Run the cairn CLI in-process (lazy import per C-04)."""
+    from click.testing import CliRunner
+
+    from cairn.cli import main
+
+    return CliRunner().invoke(main, args, catch_exceptions=False)
+
+
+def test_staging_build_refuses_to_swap_empty_over_existing(
+    caller_callee_ws, caller_callee_db, tmp_path
+):
+    """A staged build that indexed zero files must never swap its empty DB
+    over the live store."""
+    db = tmp_path / "graph.db"
+    conn = caller_callee_db(str(db))
+    before = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+    conn.close()
+    assert before > 0
+    empty_ws = tmp_path / "empty"
+    empty_ws.mkdir()
+
+    result = _invoke(["build", "--workspace", str(empty_ws), "--db", str(db), "--staging"])
+
+    assert result.exit_code != 0
+    assert "refusing to swap" in result.output
+    conn = sqlite3.connect(str(db))
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] == before
+    finally:
+        conn.close()
+
+
+def test_checkpoint_missing_db_errors_without_creating_it(tmp_path):
+    missing = tmp_path / "nope.db"
+
+    result = _invoke(["checkpoint", "--db", str(missing)])
+
+    assert result.exit_code != 0
+    assert "no graph DB" in result.output
+    assert not missing.exists()
+
+
+def test_checkpoint_non_db_file_errors_cleanly(tmp_path):
+    junk = tmp_path / "junk.db"
+    junk.write_text("not a database")
+
+    result = _invoke(["checkpoint", "--db", str(junk)])
+
+    assert result.exit_code != 0
+    assert "checkpoint failed" in result.output

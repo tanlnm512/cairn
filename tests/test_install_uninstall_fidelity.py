@@ -208,6 +208,35 @@ class TestHookIdempotency:
 
 
 # --------------------------------------------------------------------------
+# MCP registration re-heal: url/headers/enabled drift must read as
+# not-installed so the reinstall rewrites the entry
+# --------------------------------------------------------------------------
+
+
+class TestMcpRegistrationReheal:
+    def test_reinstall_rewrites_stale_daemon_url(self, tmp_path, monkeypatch):
+        """A URL-based mcpServers entry whose daemon url changed must be
+        rewritten by the next install instead of reading as already-installed."""
+        _no_cli(monkeypatch, "claude")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        install(str(ws), clients=["claude"])
+        mcp = ws / ".mcp.json"
+        data = json.loads(mcp.read_text(encoding="utf-8"))
+        data["mcpServers"]["cairn"]["url"] = "http://127.0.0.1:1/mcp"
+        mcp.write_text(json.dumps(data), encoding="utf-8")
+
+        res = next(
+            r for r in install(str(ws), clients=["claude"]).results
+            if r.client == "claude"
+        )
+
+        healed = json.loads(mcp.read_text(encoding="utf-8"))
+        assert healed["mcpServers"]["cairn"]["url"] == DAEMON_URL
+        assert str(mcp) in res.written
+
+
+# --------------------------------------------------------------------------
 # Hook command strings embed the CAIRN_HOME assignment iff non-default
 # --------------------------------------------------------------------------
 
@@ -577,6 +606,44 @@ class TestGitHookInstallCoverage:
         )
         assert not (hooks / "post-checkout").exists()
 
+    def test_user_hook_mentioning_cairn_is_never_touched(self, tmp_path, monkeypatch):
+        """Ownership keys on the cairn-generated marker line, not a bare
+        'cairn' substring: a user hook that merely mentions cairn must
+        survive both install (no overwrite) and uninstall (no delete)."""
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        hooks = self._hooks_dir(ws)
+        hooks.mkdir(parents=True)
+        user_hook = "#!/bin/sh\n# runs cairn aside, then my checks\necho mine\n"
+        (hooks / "post-commit").write_text(user_hook, encoding="utf-8")
+
+        assert self._install(ws) == ["repo"], (
+            "the post-checkout slot still gets installed"
+        )
+        assert (hooks / "post-commit").read_text(encoding="utf-8") == user_hook, (
+            "a user hook mentioning cairn must not be overwritten"
+        )
+
+        from cairn.hooks.git_hooks import uninstall_hooks
+
+        assert uninstall_hooks(["repo"], str(ws)) == ["repo"]
+        assert (hooks / "post-commit").read_text(encoding="utf-8") == user_hook, (
+            "a user hook mentioning cairn must not be removed"
+        )
+
+    def test_unsafe_cairn_home_is_rejected_before_any_write(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CAIRN_HOME", str(tmp_path / 'ho"me$(touch pwned)'))
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".git").mkdir()
+
+        with pytest.raises(ValueError, match="unsafe to embed"):
+            self._install(ws)
+        assert not (self._hooks_dir(ws) / "post-commit").exists()
+        assert not (self._hooks_dir(ws) / "post-checkout").exists()
+        assert not list(tmp_path.glob("pwned")), "no shell metachar may execute"
+
     def test_invalid_repo_name_writes_no_hooks(self, tmp_path):
         ws = tmp_path / "ws"
         ws.mkdir()
@@ -732,6 +799,22 @@ class TestInitWithHooks:
         assert not (repo / ".git" / "hooks" / "post-commit").exists()
         assert not (repo / ".git" / "hooks" / "post-checkout").exists()
 
+    def test_hooks_install_repo_with_space_fails_clean(self, tmp_path):
+        """A repo id failing the shell-injection allowlist maps to a clean
+        ClickException from `hooks install`, never a raw ValueError traceback."""
+        ws = tmp_path / "multi"
+        repo = ws / "my repo"
+        (repo / ".git").mkdir(parents=True)
+
+        result = self._invoke(["hooks", "install", "--workspace", str(ws)])
+
+        assert result.exit_code == 1
+        assert "Invalid repo name" in result.output
+        assert not isinstance(result.exception, ValueError), (
+            "the guard must surface as a ClickException, not an uncaught ValueError"
+        )
+        assert not (repo / ".git" / "hooks" / "post-commit").exists()
+
 
 # --------------------------------------------------------------------------
 # F2: global-scope uninstall
@@ -863,6 +946,26 @@ class TestGlobalScopeUninstall:
         uninstall(str(ws), clients=["claude"], scope="global")
         assert ["claude", "mcp", "remove", "cairn", "--scope", "user"] in calls
 
+    def test_global_uninstall_reports_claude_mcp_remove_failure(
+        self, fake_home, tmp_path, monkeypatch
+    ):
+        """A non-zero `claude mcp remove` must surface a WARNING, not claim
+        the registration was removed."""
+        _cli_at(monkeypatch, "claude")
+
+        class _R:
+            returncode = 1
+            stdout = ""
+            stderr = "No MCP server found"
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        rep = uninstall(str(ws), clients=["claude"], scope="global")
+        claude = next(r for r in rep.results if r.client == "claude")
+        assert any("exited 1" in n for n in claude.notes)
+        assert not any(n.startswith("Removed user-scope") for n in claude.notes)
+
     def test_workspace_uninstall_never_invokes_claude_mcp_remove(
         self, fake_home, tmp_path, monkeypatch
     ):
@@ -930,6 +1033,26 @@ class TestCrossToolTreeRemoval:
         uninstall(str(ws), clients=["claude"])
         assert not skill.exists()
 
+    def test_uninstall_without_targets_leaves_cross_tool_tree_alone(
+        self, tmp_path, monkeypatch
+    ):
+        """No detections and no --client: uninstall is a no-op — .agents/ must
+        survive and the report must not deny or claim cross-tool work."""
+        _no_cli(monkeypatch, "claude")
+        from cairn.agent_install._common import _read_template
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        cmd = ws / ".agents" / "commands" / "cairn.md"
+        cmd.parent.mkdir(parents=True)
+        cmd.write_text(_read_template("commands/cairn.md"), encoding="utf-8")
+
+        rep = uninstall(str(ws))
+
+        assert rep.results == []
+        assert rep.cross_tool is None
+        assert cmd.exists(), "no-target uninstall must not delete cross-tool assets"
+
 
 # --------------------------------------------------------------------------
 # F5: uninstall only removes files the installer wrote
@@ -956,7 +1079,8 @@ class TestProvenanceCheckedRemoval:
         un_rep = uninstall(str(ws), clients=["claude"])
         un_claude = next(r for r in un_rep.results if r.client == "claude")
         assert user_cmd.exists(), "uninstall must not delete a user-authored file"
-        assert any("not cairn-written" in s for s in un_claude.skipped)
+        assert any("differs from the current cairn template" in s
+                   for s in un_claude.skipped)
 
     def test_installer_written_command_file_removed(self, tmp_path, monkeypatch):
         _no_cli(monkeypatch, "claude")
@@ -1476,6 +1600,21 @@ class TestOmpClient:
         assert not (ws / ".omp" / "agents" / "cairn-explorer.md").exists()
         assert not (ws / ".omp" / "agents" / "knowledge-steward.md").exists()
 
+    def test_dry_run_note_does_not_claim_written(self, tmp_path, monkeypatch):
+        """A dry-run merge must report what would happen, not 'MCP server
+        written to ...'."""
+        _no_cli(monkeypatch, "omp")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        res = next(
+            r for r in install(str(ws), clients=["omp"], dry_run=True).results
+            if r.client == "omp"
+        )
+
+        assert not any(n.startswith("MCP server written") for n in res.notes)
+        assert any("Would merge" in n for n in res.notes)
+
 
 # --------------------------------------------------------------------------
 # Install-time per-client verification probes /healthz, never a process
@@ -1777,3 +1916,74 @@ class TestDroidCliRegistration:
         res = next(r for r in rep.results if r.client == "droid")
         assert not any("Removed MCP registration" in n for n in res.notes)
         assert any("exited 1" in n and "not found" in n for n in res.notes)
+
+
+# --------------------------------------------------------------------------
+# Uninstall CLI: registry prune failures are visible
+# --------------------------------------------------------------------------
+
+
+def test_uninstall_cli_warns_when_registry_prune_fails(tmp_path, monkeypatch):
+    """A failing workspaces.json prune is reported, never swallowed, so the
+    registry cannot silently keep pointing at the removed store."""
+    from cairn.cli.uninstall import uninstall
+    from cairn.paths import store_key
+
+    home = tmp_path / "cairn_home"
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    key = store_key(ws.resolve())
+    (home / key).mkdir(parents=True)
+    registry = home / "workspaces.json"
+    registry.write_text(json.dumps({str(ws.resolve()): key}), encoding="utf-8")
+    monkeypatch.setenv("CAIRN_HOME", str(home))
+
+    def boom(path, text):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("cairn.agent_install.merge._atomic_write_text", boom)
+
+    result = CliRunner().invoke(
+        uninstall, ["--graph-only", "-y", "--workspace", str(ws)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "registry prune failed" in result.output
+    assert "still references the removed store" in result.output
+
+
+def test_install_agents_client_all_does_not_imply_git_hooks(tmp_path, monkeypatch):
+    """`--client all` installs client configs only; git hooks ride on the
+    explicit --git-hooks flag alone."""
+    from cairn.agent_install import InstallReport, InstallResult
+    from cairn.cli.agents import install_agents
+
+    captured = {}
+
+    def fake_install(ws, **kwargs):
+        captured.update(kwargs)
+        return InstallReport(
+            detections=[],
+            results=[InstallResult(client="claude")],
+            cross_tool=None,
+        )
+
+    monkeypatch.setattr("cairn.agent_install.install", fake_install)
+    monkeypatch.setattr("cairn.mcp_server.lifecycle.healthz_responds", lambda: True)
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    plain = CliRunner().invoke(
+        install_agents,
+        ["--client", "all", "--scope", "workspace", "--workspace", str(ws)],
+    )
+    assert plain.exit_code == 0, plain.output
+    assert captured["include_git_hooks"] is False
+
+    flagged = CliRunner().invoke(
+        install_agents,
+        ["--client", "all", "--scope", "workspace", "--workspace", str(ws),
+         "--git-hooks"],
+    )
+    assert flagged.exit_code == 0, flagged.output
+    assert captured["include_git_hooks"] is True

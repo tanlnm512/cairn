@@ -27,7 +27,7 @@ def knowledge_add(
     """Ingest a business document as knowledge. The PO's ingestion path.
     doc_type: business-rule | spec | decision. Tags and affects_* are
     comma-separated. Returns the concept_id on success."""
-    from cairn.knowledge.store import add_document
+    from cairn.knowledge.store import add_document, doc_concept_id, get_document
     from cairn.paths import resolve_store
 
     # Ensure the knowledge dir exists.
@@ -37,13 +37,20 @@ def knowledge_add(
     def _split(s):
         return [x.strip() for x in s.split(",") if x.strip()]
 
+    # Same title+doc_type replaces the prior document in place; say so.
+    replaced = get_document(bundle, doc_concept_id(title, doc_type)) is not None
     cid = add_document(
         bundle, title=title, body=body, doc_type=doc_type,
         tags=_split(tags), affects_modules=_split(affects_modules),
         affects_repos=_split(affects_repos), resource=resource or None,
         epic_link=epic_link or None,
     )
-    return f"Stored knowledge document: {cid}"
+    note = (
+        " (replaced an existing document with the same title and doc_type)"
+        if replaced
+        else ""
+    )
+    return f"Stored knowledge document: {cid}{note}"
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
@@ -107,12 +114,21 @@ def knowledge_delete(doc_id: str) -> str:
         return str(exc)
     conn = _rw_conn()
     try:
-        ok = delete_document(bundle, doc_id, conn=conn)
-        conn.commit()
+        # Delete the embedding rows and commit BEFORE unlinking the file, so
+        # a failed commit leaves the document intact instead of stranding
+        # its embedding rows behind a deleted doc.
+        ok = delete_document(bundle, doc_id, conn=conn, unlink=False)
+        if ok:
+            conn.commit()
     finally:
         conn.close()
     if not ok:
         return f"Knowledge document not found: '{doc_id}'."
+    if not delete_document(bundle, doc_id):
+        logger.warning(
+            "knowledge_delete: embedding rows committed but file already gone: %r",
+            doc_id,
+        )
     logger.warning("knowledge_delete: deleted knowledge doc_id=%r", doc_id)
     return f"Deleted knowledge document: '{doc_id}'."
 
@@ -131,7 +147,10 @@ def knowledge_status(doc_id: str, new_status: str) -> str:
         return str(exc)
     ok = update_status(bundle, doc_id, new_status)
     if not ok:
-        return f"Knowledge document not found: '{doc_id}'."
+        return (
+            f"Not found, unknown status, or backward transition rejected: "
+            f"'{doc_id}' -> '{new_status}'."
+        )
     return f"Updated '{doc_id}' status -> {new_status}."
 
 

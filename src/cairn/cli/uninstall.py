@@ -178,8 +178,9 @@ def _remove_store(ws: str, full: bool, dry_run: bool) -> None:
                 # registry behind (same discipline as the client configs).
                 # Same json.dumps format paths.py writes, just crash-safe.
                 _atomic_write_text(reg_path, json.dumps(reg, indent=2, sort_keys=True))
-            except Exception:
-                pass
+            except Exception as e:
+                click.echo(f"  warning: registry prune failed ({e}); "
+                           f"{reg_path} still references the removed store")
     click.echo("  ✓ done")
 
 

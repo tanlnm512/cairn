@@ -294,7 +294,7 @@ class TestRunEvaluationDispatch:
     def test_directory_takes_the_graded_path(self, good_gt_dir, tmp_path, monkeypatch):
         conn = get_db(str(tmp_path / "eval.db"))
 
-        def fake_l1(conn_, query, k, params=None):
+        def fake_l1(conn_, query, k, params=None, notes=None):
             # Rank 2 for the primary target, rank 1 for context: RR = 1/2.
             # (params: the RetrievalParams run_evaluation threads
             # through since -- the double accepts and ignores it.)
@@ -418,6 +418,102 @@ class TestRunEvaluationDispatch:
 
 
 # ---------------------------------------------------------------------------
+# legacy yaml validation + semantic-fallback surfacing
+# ---------------------------------------------------------------------------
+
+class TestLegacyLoaderValidation:
+    def _run(self, tmp_path, yaml_body, **kwargs):
+        queries_path = tmp_path / "queries.yaml"
+        queries_path.write_text(yaml_body, encoding="utf-8")
+        conn = get_db(str(tmp_path / "eval.db"))
+        try:
+            return run_evaluation(
+                conn, bundle_root=None, queries_path=queries_path, **kwargs
+            )
+        finally:
+            conn.close()
+
+    def test_unknown_corpus_raises_value_error(self, tmp_path):
+        with pytest.raises(ValueError, match="not a valid level"):
+            self._run(tmp_path, "- query: 'find the url builder'\n  corpus: L2\n")
+
+    def test_missing_query_raises_value_error(self, tmp_path):
+        with pytest.raises(ValueError, match="missing required 'query'"):
+            self._run(tmp_path, "- corpus: L1\n  expect: ['x']\n")
+
+    def test_non_mapping_item_raises_value_error(self, tmp_path):
+        with pytest.raises(ValueError, match="expected a mapping"):
+            self._run(tmp_path, "- just a bare string\n")
+
+
+class TestSemanticFallbackSurfacing:
+    def _raise_semantic(self, monkeypatch):
+        # Patch the source module: the queries proxy re-resolves through it
+        # on every call, and setattr on the proxy would pin the attribute.
+        import cairn.graph.semantic as semantic_mod
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("backend down")
+
+        monkeypatch.setattr(semantic_mod, "semantic_search", boom)
+
+    def test_legacy_report_carries_fallback_warnings(self, tmp_path, monkeypatch):
+        self._raise_semantic(monkeypatch)
+        queries_path = tmp_path / "queries.yaml"
+        queries_path.write_text("- query: 'find the url builder'\n", encoding="utf-8")
+        conn = get_db(str(tmp_path / "eval.db"))
+        try:
+            report = run_evaluation(
+                conn, bundle_root=None, queries_path=queries_path, corpus_filter="all"
+            )
+        finally:
+            conn.close()
+
+        assert report["L1"]["count"] == 1
+        assert len(report["warnings"]) == 1
+        warning = report["warnings"][0]
+        assert "semantic_search failed (RuntimeError)" in warning
+        assert "lexical fallback" in warning
+        assert "find the url builder" in warning
+
+    def test_graded_report_carries_fallback_warnings(
+        self, good_gt_dir, tmp_path, monkeypatch
+    ):
+        self._raise_semantic(monkeypatch)
+        conn = get_db(str(tmp_path / "eval.db"))
+        try:
+            report = run_evaluation(
+                conn, bundle_root=None, queries_path=good_gt_dir, corpus_filter="L1"
+            )
+        finally:
+            conn.close()
+
+        assert report["L1"]["count"] == 1
+        assert len(report["warnings"]) == 1
+        assert "l1-url" in report["warnings"][0]
+
+    def test_no_warnings_key_when_semantic_leg_answers(self, tmp_path, monkeypatch):
+        import cairn.graph.semantic as semantic_mod
+
+        monkeypatch.setattr(
+            semantic_mod,
+            "semantic_search",
+            lambda *args, **kwargs: [{"name": "URL", "file_path": "/r/src/yarl/_url.py"}],
+        )
+        queries_path = tmp_path / "queries.yaml"
+        queries_path.write_text("- query: 'find the url builder'\n", encoding="utf-8")
+        conn = get_db(str(tmp_path / "eval.db"))
+        try:
+            report = run_evaluation(
+                conn, bundle_root=None, queries_path=queries_path, corpus_filter="all"
+            )
+        finally:
+            conn.close()
+
+        assert "warnings" not in report
+
+
+# ---------------------------------------------------------------------------
 # yaml fixture untouched 
 # ---------------------------------------------------------------------------
 
@@ -495,6 +591,31 @@ class TestEvalCli:
                 "--db", db_path,
                 "--knowledge", knowledge_dir,
                 "--queries", str(bad_dir),
+                "--json",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "invalid eval dataset" in result.output
+
+    def test_wrong_shaped_yaml_is_a_clean_cli_error(self, tmp_path):
+        # eval.py safe_loads queries.yaml unvalidated: a dict-shaped file
+        # crashes on item.get (AttributeError), not ValueError.
+        runner = CliRunner()
+        db_path = str(tmp_path / "cli.db")
+        knowledge_dir = str(tmp_path / ".knowledge")
+        Path(knowledge_dir).mkdir(parents=True, exist_ok=True)
+        get_db(db_path).close()
+
+        bad_yaml = tmp_path / "queries.yaml"
+        bad_yaml.write_text("corpus: L1\n", encoding="utf-8")
+
+        result = runner.invoke(
+            main,
+            [
+                "eval",
+                "--db", db_path,
+                "--knowledge", knowledge_dir,
+                "--queries", str(bad_yaml),
                 "--json",
             ],
         )

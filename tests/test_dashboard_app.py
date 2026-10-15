@@ -2195,11 +2195,8 @@ def test_projects_row_anchor_opens_repo_scoped_graph(tmp_path):
     payload = _embedded_graph(target.text)
     assert payload["metadata"]["scope"] == "repo"
     assert payload["metadata"]["repo"] == "demo"
-    # demo's graph renders its own files' buckets, symbol counts included.
-    assert {n["id"] for n in payload["nodes"]} == {
-        "src/demo/core.py (2)",
-        "src/demo/util.py (1)",
-    }
+    # demo's graph renders its own directory buckets, symbol counts included.
+    assert {n["id"] for n in payload["nodes"]} == {"src/demo (3)"}
 
 
 # the JS half -- the live selectNode/deselectNode swap of the
@@ -3929,6 +3926,23 @@ def test_settings_refuses_non_numeric_timeout_without_writing(tmp_path):
     assert resp.status_code == 400
     assert "Refused" in resp.text
     assert "CAIRN_EMBED_TIMEOUT" in resp.text
+    assert _saved_config() == {}
+
+
+def test_settings_save_refused_in_read_only_mode(tmp_path, monkeypatch):
+    """Under CAIRN_READ_ONLY the save route refuses with the reason on the
+    page and CONFIG_FILE left unwritten: the read-only-branded dashboard
+    never persists configuration writes."""
+    monkeypatch.setenv("CAIRN_READ_ONLY", "1")
+    client = _settings_client(tmp_path)
+
+    resp = client.post(
+        "/settings/save", data={"CAIRN_EMBED_BACKEND": "omlx"}
+    )
+
+    assert resp.status_code == 403
+    assert "CAIRN_READ_ONLY" in resp.text
+    assert "nothing was saved" in resp.text
     assert _saved_config() == {}
 
 

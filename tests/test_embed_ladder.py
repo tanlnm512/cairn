@@ -536,6 +536,63 @@ def test_reset_backend_cache_clears_state_and_session_overrides(fresh_db, monkey
     assert emb.current_model() == stamp  # derived again, not pinned
 
 
+# Recovery (a healthy forced re-evaluation) drops the rung-1 session
+# adoptions too -- the adopted model must not keep steering requests after
+# the server is healthy again.
+
+
+def test_healthy_recovery_clears_session_adoptions(fresh_db, monkeypatch):
+    stored = _unit([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+    _server_env(monkeypatch, "http://127.0.0.1:1/v1")
+    stamp = "server/127.0.0.1:1/gone-model"
+    _seed_corpus(fresh_db, stamp, stored)
+    monkeypatch.setattr(embed_ladder, "_fetch_model_listing", lambda: ["cand-a"])
+
+    def fake_embed(texts, model_id):
+        return [_blob(stored)] * len(texts), DIM
+
+    monkeypatch.setattr(embed_ladder, "_embed_with_model", fake_embed)
+
+    assert embed_ladder.evaluate_ladder(conn=fresh_db).rung == 1
+    assert emb._server_model() == "cand-a"
+
+    # Server now serves the adopted candidate AND the configured model.
+    monkeypatch.setattr(
+        embed_ladder, "_fetch_model_listing", lambda: ["cand-a", "gone-model"]
+    )
+
+    assert embed_ladder.evaluate_ladder(force=True) is None
+    assert embed_ladder.ladder_state() is None
+    assert emb._server_model() == "gone-model"  # unpinned
+    assert emb._SESSION_STAMP_OVERRIDE is None
+    assert emb._SESSION_SERVER_MODEL is None
+    assert emb._SESSION_BACKEND_OVERRIDE is None
+    assert emb._effective_backend() == "server"
+
+
+# A rung-2 local pin must not blind a forced re-evaluation: the entry gate
+# checks the CONFIGURED backend, so recovery can unpin the override.
+
+
+def test_rung2_pin_does_not_block_forced_recovery(fresh_db, monkeypatch):
+    stored = _unit([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+    dead = _dead_base_url()
+    _server_env(monkeypatch, dead)
+    _seed_corpus(fresh_db, _stamp_for(dead, "gone-model"), stored)
+    _stub_local_fallback(monkeypatch, parity_pass=True)
+
+    assert embed_ladder.evaluate_ladder(conn=fresh_db).rung == 2
+    assert emb._effective_backend() == "local"
+
+    monkeypatch.setattr(embed_ladder, "_fetch_model_listing", lambda: ["gone-model"])
+
+    assert embed_ladder.evaluate_ladder(force=True) is None
+    assert embed_ladder.ladder_state() is None
+    assert emb._SESSION_BACKEND_OVERRIDE is None
+    assert emb._effective_backend() == "server"
+    assert emb.current_model() == _stamp_for(dead, "gone-model")
+
+
 # (f) explicit env alias beats the session adoption.
 
 

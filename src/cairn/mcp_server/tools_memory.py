@@ -5,7 +5,14 @@ import logging
 
 from mcp.types import ToolAnnotations
 
-from ._server_core import _append_embed_degradation_footnote, _bundle, _conn, _session_id, mcp
+from ._server_core import (
+    _append_embed_degradation_footnote,
+    _bundle,
+    _conn,
+    _read_only_mode,
+    _session_id,
+    mcp,
+)
 from .metric_buffering import instrument
 
 logger = logging.getLogger(__name__)
@@ -32,8 +39,11 @@ def recall_memory(
     bundle = _bundle()
     conn = _conn()
     try:
+        # session_id drives search_memory's read-through memory_refs write;
+        # a read-only server must not attempt it (matches explore's gate).
         results = search_memory(
-            conn, bundle, query, tier=tier or None, session_id=_session_id(),
+            conn, bundle, query, tier=tier or None,
+            session_id=None if _read_only_mode() else _session_id(),
             include_superseded=include_superseded, as_of=as_of,
         )
     except Exception:

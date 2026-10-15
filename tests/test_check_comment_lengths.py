@@ -211,3 +211,26 @@ def test_baseline_regeneration_is_deterministic(tmp_path):
     assert payload["schema_version"] == 1
     assert [e["fingerprint"] for e in entries] == sorted(e["fingerprint"] for e in entries)
     assert sum(e["count"] for e in entries) == 3
+
+
+def test_failed_baseline_write_preserves_the_old_document(tmp_path, monkeypatch):
+    """A torn baseline write must not clobber the file: check/update/init stay usable."""
+    import os
+
+    from cairn.cli.system.comment_style import _write_baseline
+
+    root = _repo(tmp_path, {"a.py": LETTER_BLOCK})
+    baseline = tmp_path / "baseline.json"
+    _write_baseline(baseline, scan_comment_violations(root))
+    original = baseline.read_bytes()
+
+    def explode(src, dst, *args, **kwargs):
+        raise OSError("simulated crash mid-write")
+
+    monkeypatch.setattr(os, "replace", explode)
+
+    with pytest.raises(OSError):
+        _write_baseline(baseline, [])
+
+    assert baseline.read_bytes() == original
+    assert list(tmp_path.glob("*.tmp")) == []

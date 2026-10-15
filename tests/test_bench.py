@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 
 from cairn.bench import (
@@ -110,6 +111,14 @@ class TestCorpus:
         assert stats["lines"] > 0
         assert stats["bytes"] > 0
 
+    def test_corpus_stats_tolerates_non_utf8(self, tmp_path):
+        """A non-UTF8 .py file counts with replacement chars, like the parser."""
+        repo = generate_corpus(tmp_path, 2)
+        (repo / "binary.py").write_bytes(b"\xff\xfe\x00def x():\n    pass\n")
+        stats = corpus_stats(repo)
+        assert stats["files"] == 4
+        assert stats["lines"] > 0
+
     def test_generated_corpus_is_buildable(self, tmp_path):
         """The generated source must actually parse + build without errors."""
         from cairn.graph.builder import build_graph
@@ -163,6 +172,46 @@ class TestPerfSuite:
         assert os.environ["CAIRN_DB"] == "pre.db"
         assert os.environ["CAIRN_EMBED_BACKEND"] == "sentinel"
 
+    def test_rerank_pinned_off_for_timed_queries(self, tmp_path, monkeypatch):
+        """The perf suite pins CAIRN_RERANK off for the query battery and
+        restores the ambient value, so p95s cannot drift with reranker state."""
+        monkeypatch.setenv("CAIRN_RERANK", "1")
+        seen = {}
+        import cairn.graph.semantic as semantic_mod
+        from cairn.graph.semantic import semantic_search as real
+
+        def _spy(conn, query, **kwargs):
+            seen["rerank"] = os.environ.get("CAIRN_RERANK")
+            return real(conn, query, **kwargs)
+
+        # Patch the source module: setattr on the lazy queries proxy would
+        # pin the attribute at teardown and shadow __getattr__ for the rest
+        # of the session.
+        monkeypatch.setattr(semantic_mod, "semantic_search", _spy)
+        repo = generate_corpus(tmp_path, 4, complexity="low")
+        run_perf_suite(
+            str(repo), str(tmp_path / "rr.db"), embed_backend="hash",
+            warmup=0, repeats=1, query_repeats=1,
+        )
+        assert seen.get("rerank") == "0"
+        assert os.environ["CAIRN_RERANK"] == "1"
+
+    def test_build_total_includes_persist_phase(self, tmp_path, monkeypatch):
+        """'build (total)' covers the real persist-to-disk window: build.persist
+        is recorded and never exceeds the total."""
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "p.db"))
+        repo = generate_corpus(tmp_path, 4, complexity="low")
+        report = run_perf_suite(
+            str(repo), str(tmp_path / "p.db"), embed_backend="hash",
+            warmup=0, repeats=1, query_repeats=1,
+        )
+        by_name = {op.name: op for op in report.ops}
+        assert "build.persist" in by_name
+        assert (
+            by_name["build (total)"].timing.median
+            >= by_name["build.persist"].timing.median
+        )
+
 
 class TestScalingSuite:
     def test_runs_over_tiny_sizes(self, tmp_path, monkeypatch):
@@ -185,6 +234,38 @@ class TestScalingSuite:
         run_scaling_suite(tmp_path, sizes=(3,), complexity="low", embed_backend="hash")
         assert os.environ["CAIRN_DB"] == "pre.db"
         assert os.environ["CAIRN_EMBED_BACKEND"] == "sentinel"
+
+    def test_missing_analytics_extra_still_records_zeroes(self, tmp_path, monkeypatch):
+        """networkx absent: communities are recorded as zero and the sweep
+        completes."""
+        # Stub the whole chain: a cached networkx.algorithms.community would
+        # otherwise let the probe short-circuit past the halted parent.
+        for name in ("networkx", "networkx.algorithms", "networkx.algorithms.community"):
+            monkeypatch.setitem(sys.modules, name, None)
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "nx.db"))
+        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
+        report = run_scaling_suite(
+            tmp_path, sizes=(3,), complexity="low", embed_backend="hash",
+        )
+        assert report.points[0].communities_seconds == 0.0
+        assert report.points[0].communities_count == 0
+
+    def test_internal_import_error_not_masked_as_zeroes(self, tmp_path, monkeypatch):
+        """An ImportError raised inside a communities run propagates instead of
+        being recorded as a zero-cost, zero-community point."""
+        pytest.importorskip("networkx")
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "boom.db"))
+        monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
+        import cairn.graph.communities as communities_mod
+
+        def _boom(conn):
+            raise ImportError("genuine internal failure")
+
+        monkeypatch.setattr(communities_mod, "compute_communities", _boom)
+        with pytest.raises(ImportError, match="genuine internal failure"):
+            run_scaling_suite(
+                tmp_path, sizes=(3,), complexity="low", embed_backend="hash",
+            )
 
 
 # --- report comparison (regression detection) ---------------------------
@@ -562,6 +643,124 @@ class TestBenchCliBaseline:
         assert result.exit_code == 1
         assert "Baseline file not found" in result.output
 
+    def test_invalid_json_baseline_exits_with_message(self, tmp_path, monkeypatch):
+        """A corrupt --compare file reports the JSON error instead of raising."""
+        _patch_perf_suite(monkeypatch, median_ms=100.0)
+        bad = tmp_path / "bad.json"
+        bad.write_text("{not json", encoding="utf-8")
+        result = _invoke_perf_cli(["--compare", str(bad)], tmp_path, monkeypatch)
+        assert result.exit_code == 1
+        assert "not valid JSON" in result.output
+
+    def test_save_write_failure_exits_with_message(self, tmp_path, monkeypatch):
+        """An unwritable --save path reports the write error instead of raising."""
+        _patch_perf_suite(monkeypatch, median_ms=100.0)
+        target_dir = tmp_path / "savedir"
+        target_dir.mkdir()
+        result = _invoke_perf_cli(["--save", str(target_dir)], tmp_path, monkeypatch)
+        assert result.exit_code == 1
+        assert "Baseline save failed" in result.output
+
+    def test_bad_sizes_exits_with_message_not_traceback(self, tmp_path, monkeypatch):
+        """Non-integer --sizes is a usage error, not an uncaught ValueError."""
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "sizes.db"))
+        from click.testing import CliRunner
+        from cairn.cli import main
+
+        result = CliRunner().invoke(
+            main, ["bench", "--suite", "scaling", "--sizes", "abc"]
+        )
+        assert result.exit_code == 1
+        assert "--sizes expects comma-separated integers" in result.output
+        assert "Traceback" not in result.output
+
+    def test_empty_sizes_exits_with_message(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "sizes2.db"))
+        from click.testing import CliRunner
+        from cairn.cli import main
+
+        result = CliRunner().invoke(
+            main, ["bench", "--suite", "scaling", "--sizes", ",,,"]
+        )
+        assert result.exit_code == 1
+        assert "selects no corpus sizes" in result.output
+
+
+# --- CLI --baseline on the scaling suite (points-shaped comparison) --------
+
+
+class TestBenchCliScalingBaseline:
+    def _write_scaling_baseline(self, tmp_path, points):
+        from cairn.bench.datasource import machine_profile
+
+        root = tmp_path / "benchmarks" / "baselines" / "DS-sc"
+        root.mkdir(parents=True)
+        (root / "scaling.json").write_text(
+            json.dumps({"points": points, "machine_profile": machine_profile()}),
+            encoding="utf-8",
+        )
+
+    def _scaling_report(self, n_files, build_s):
+        from cairn.bench.report import ScalingPoint, ScalingReport
+
+        return ScalingReport(points=[ScalingPoint(
+            n_files=n_files, symbols=100,
+            build_seconds=build_s, embed_seconds=1.0,
+            db_size_mb=1.0, resolve_rate=1.0, peak_memory_mb=10.0,
+        )])
+
+    def _invoke(self, tmp_path, monkeypatch, extra_args):
+        from click.testing import CliRunner
+        from cairn.cli import main
+
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "sc.db"))
+        return CliRunner().invoke(main, [
+            "bench", "--suite", "scaling", "--sizes", "5", *extra_args,
+        ])
+
+    def test_scaling_baseline_compares_points_and_exits_2_on_regression(
+        self, tmp_path, monkeypatch
+    ):
+        """The scaling comparison reads the points shape: a slower build_s
+        gates with exit 2 instead of the silent no-comparable success."""
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("RUNNER_NAME", raising=False)
+        monkeypatch.chdir(tmp_path)
+        self._write_scaling_baseline(tmp_path, [
+            {"n_files": 5, "symbols": 100, "build_s": 1.0, "embed_s": 1.0,
+             "db_mb": 1.0, "resolve_rate": 1.0, "peak_mem_mb": 10.0},
+        ])
+        monkeypatch.setattr(
+            "cairn.bench.run_scaling_suite",
+            lambda *a, **k: self._scaling_report(5, 2.0),
+        )
+        result = self._invoke(tmp_path, monkeypatch, ["--baseline", "DS-sc"])
+        assert result.exit_code == 2, result.output
+        assert "REGRESSED" in result.output
+        assert "n=5 build_s" in result.output
+        assert "No comparable operations" not in result.output
+
+    def test_scaling_point_missing_from_baseline_is_flagged_not_silent(
+        self, tmp_path, monkeypatch
+    ):
+        """A current point with no baseline counterpart renders '(no baseline)'
+        rows instead of an empty comparison and a clean exit."""
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("RUNNER_NAME", raising=False)
+        monkeypatch.chdir(tmp_path)
+        self._write_scaling_baseline(tmp_path, [
+            {"n_files": 5, "symbols": 100, "build_s": 1.0, "embed_s": 1.0,
+             "db_mb": 1.0, "resolve_rate": 1.0, "peak_mem_mb": 10.0},
+        ])
+        monkeypatch.setattr(
+            "cairn.bench.run_scaling_suite",
+            lambda *a, **k: self._scaling_report(9, 1.0),
+        )
+        result = self._invoke(tmp_path, monkeypatch, ["--baseline", "DS-sc"])
+        assert result.exit_code == 0, result.output
+        assert "(no baseline)" in result.output
+        assert "No comparable operations" not in result.output
+
 
 # --- CLI p95 budget gate (--budgets / --budget-mode) ----------------------
 
@@ -770,6 +969,22 @@ class TestBenchCliBudgets:
         assert result.exit_code == 1
         assert "requires --budgets" in result.output
 
+    def test_budget_mismatch_emits_run_results_before_exit(
+        self, tmp_path, monkeypatch
+    ):
+        """A budget naming an unmeasured op fails AFTER the completed run's
+        results are emitted, so the measurements are not discarded."""
+        _patch_budgeted_perf_suite(monkeypatch, {"find_definition": 1.0})
+        budgets = self._budgets_at_5ms(tmp_path)  # requires all six tools
+        result = _invoke_perf_cli(
+            ["--budgets", str(budgets), "--json"], tmp_path, monkeypatch
+        )
+        assert result.exit_code == 1
+        payload = json.loads(result.stdout)
+        assert "ops" in payload
+        assert "Budget evaluation failed" in result.stderr
+        assert "missing budgeted operations" in result.stderr
+
 
 class TestProfileClassBucketing:
     """Unit tests for _profile_class (the rolling-baseline class rule)."""
@@ -841,3 +1056,18 @@ class TestSweBenchWorkspaceValidation:
         task = {"instance_id": "t", "repo": "ok/repo", "base_commit": sha}
         workspaces = _swe_bench_workspaces([task], cache_root=cache_root, quiet=True)
         assert workspaces == {"t": str(target)}
+
+    def test_replace_fallback_rejects_invalid_target(self, tmp_path, monkeypatch):
+        """The os.replace fallback only adopts a concurrent-run target that is
+        itself a valid checkout, never a tree that failed the .git check."""
+        from cairn.cli.bench import _swe_bench_workspaces
+
+        cache_root = tmp_path / "cache"
+        sha = "c" * 40
+        target = cache_root / f"ok__repo-{sha}"
+        target.mkdir(parents=True)
+        (target / "stray.txt").write_text("junk", encoding="utf-8")
+        task = {"instance_id": "t", "repo": "ok/repo", "base_commit": sha}
+        monkeypatch.setattr("cairn.cli.bench.subprocess.run", lambda *a, **k: None)
+        with pytest.raises(RuntimeError, match="not a valid checkout"):
+            _swe_bench_workspaces([task], cache_root=cache_root, quiet=True)

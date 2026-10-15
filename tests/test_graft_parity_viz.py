@@ -135,3 +135,66 @@ def test_export_embeds_selected_scope_mermaid_graph(tmp_path):
         "callee edge missing from export"
     )
     assert "unrelated_symbol" not in html, "out-of-scope symbol leaked into export"
+
+
+# ---------------------------------------------------------------------------
+# viz opens the store read-only under CAIRN_READ_ONLY
+# ---------------------------------------------------------------------------
+
+
+def test_viz_opens_the_store_read_only_under_cairn_read_only(tmp_path, monkeypatch):
+    """CAIRN_READ_ONLY=1 must reach get_db as read_only=True: a pure render
+    takes no writer path (no WAL pragma, no schema/backfill writes)."""
+    import cairn.cli.hooks_viz as hooks_viz_mod
+    from click.testing import CliRunner
+
+    from cairn.cli import main
+    from cairn.graph.schema import get_db as real_get_db
+
+    db_path = tmp_path / "graph.db"
+    _seed_graph(db_path)
+
+    seen = {}
+
+    def spy(db, *args, **kwargs):
+        seen["read_only"] = kwargs.get("read_only")
+        return real_get_db(db, *args, **kwargs)
+
+    monkeypatch.setattr(hooks_viz_mod, "get_db", spy)
+    monkeypatch.setenv("CAIRN_READ_ONLY", "1")
+
+    result = CliRunner().invoke(
+        main, ["viz", "--scope", "deps", "--db", str(db_path)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["read_only"] is True
+
+
+def test_viz_defaults_to_the_writable_conn(tmp_path, monkeypatch):
+    """Without CAIRN_READ_ONLY the viz connection stays writable (default
+    behavior unchanged)."""
+    import cairn.cli.hooks_viz as hooks_viz_mod
+    from click.testing import CliRunner
+
+    from cairn.cli import main
+    from cairn.graph.schema import get_db as real_get_db
+
+    db_path = tmp_path / "graph.db"
+    _seed_graph(db_path)
+    monkeypatch.delenv("CAIRN_READ_ONLY", raising=False)
+
+    seen = {}
+
+    def spy(db, *args, **kwargs):
+        seen["read_only"] = kwargs.get("read_only")
+        return real_get_db(db, *args, **kwargs)
+
+    monkeypatch.setattr(hooks_viz_mod, "get_db", spy)
+
+    result = CliRunner().invoke(
+        main, ["viz", "--scope", "deps", "--db", str(db_path)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["read_only"] is False

@@ -454,9 +454,22 @@ class FileWatcherService:
         # the schema build lock; a concurrent CLI build/update holding that
         # lock raises RuntimeError here.
         try:
-            from .incremental import incremental_update
+            from .incremental import incremental_update, reindex_paths
 
             incremental_update(workspace=self.workspace, db_path=self.db_path)
+            # git redetection never lists a deleted untracked file (it is in
+            # neither `git diff HEAD` nor `ls-files --others`), so sweep this
+            # pass's own deletion events through the path-targeted repair.
+            missing = [p for p, _ in source_paths if not Path(p).exists()]
+            if missing:
+                from .schema import build_lock
+
+                conn = _connect(self.db_path)
+                try:
+                    with build_lock(self.db_path):
+                        reindex_paths(conn, self.workspace, missing)
+                finally:
+                    conn.close()
         except RuntimeError as e:
             # Lock contention: absorb, keep the pending_sync rows (the banner
             # stays hot and flags exactly these files), retry on the next

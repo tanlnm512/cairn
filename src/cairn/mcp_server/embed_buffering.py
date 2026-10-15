@@ -21,6 +21,9 @@ _WARN_AFTER = 4
 # embed_flush_stalled fires once per failure streak, not per tick, and resets
 # with _FAILURES on the first successful flush.
 _STALL_EVENT_SENT = False
+# Queue-overflow warning fires once per overflow streak, resetting on the
+# first successful flush, so eviction of the oldest concept_ids is observable.
+_QUEUE_OVERFLOW = False
 
 
 def _failures_bucket(n: int) -> str:
@@ -44,10 +47,19 @@ def configure(conn_factory: Callable[[], "Any"], bundle_factory: Callable[[], "A
 
 def enqueue(concept_id: str) -> None:
     """Queue a memory concept_id for (re)embedding. Non-blocking, no I/O."""
+    global _QUEUE_OVERFLOW
     if not concept_id:
         return
     with _LOCK:
+        full = len(_QUEUE) == _QUEUE.maxlen
         _QUEUE.append(concept_id)
+        if full and not _QUEUE_OVERFLOW:
+            _QUEUE_OVERFLOW = True
+            logger.warning(
+                "memory embed queue full (%d); oldest concept_id(s) are being "
+                "dropped until the embed backend drains the backlog",
+                len(_QUEUE),
+            )
     _start_flusher()
 
 
@@ -61,7 +73,7 @@ def _flush() -> None:
     from cairn.graph import embeddings as emb
 
     conn = None
-    global _FAILURES, _STALL_EVENT_SENT
+    global _FAILURES, _STALL_EVENT_SENT, _QUEUE_OVERFLOW
     try:
         conn = _conn_factory()
         bundle = _bundle_factory()
@@ -99,6 +111,7 @@ def _flush() -> None:
                 pass
     _FAILURES = 0
     _STALL_EVENT_SENT = False
+    _QUEUE_OVERFLOW = False
     with _LOCK:
         for cid in batch:
             try:

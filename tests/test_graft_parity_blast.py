@@ -750,3 +750,75 @@ def test_mermaid_renders_every_dependency_with_unique_nodes():
     edges = [line.strip() for line in rendered.splitlines() if " --> " in line]
 
     assert edges == ["a_b --> dependent", "a_b_2 --> dependent"]
+
+
+# --- CLI error mapping and rendered freshness/truncation notes -----------------
+
+
+def test_git_and_refresh_failures_render_as_clean_cli_errors(
+    radius_workspace, monkeypatch
+):
+    """RuntimeError from the git helpers or the strict refresh surfaces as
+    click's single-line error, never a raw traceback (BlastBaseError rides
+    the same handler)."""
+    import importlib
+
+    from click.testing import CliRunner
+
+    # cairn.cli re-exports the `blast` command under the same name, so the
+    # submodule must be resolved through sys.modules, not getattr.
+    blast_cli = importlib.import_module("cairn.cli.blast")
+
+    def failing_compute(conn, workspace, **kwargs):
+        raise RuntimeError("fatal: not a git repository")
+
+    monkeypatch.setattr(blast_cli, "compute_blast", failing_compute)
+    _workspace, _repo, db_path = radius_workspace
+
+    result = CliRunner().invoke(blast_cli.blast, ["--db", str(db_path)])
+
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, RuntimeError), result.exception
+    assert "fatal: not a git repository" in result.stderr
+
+
+def test_stale_graph_and_truncation_notes_render_in_every_format():
+    from cairn.graph.blast import render_blast
+
+    result = {
+        "basis": {"kind": "worktree", "base": "HEAD"},
+        "seeds": [],
+        "areas": [],
+        "radius": [],
+        "truncated": True,
+        "stale_graph": "Stale graph: 1 file(s) not refreshed: late.py",
+    }
+
+    text = render_blast(result, "text")
+    assert "Stale graph: 1 file(s) not refreshed: late.py" in text
+    assert "Truncated: results hit the radius cap" in text
+
+    markdown = render_blast(result, "markdown")
+    assert "_Stale graph: 1 file(s) not refreshed: late.py_" in markdown
+    assert "_Truncated: results hit the radius cap" in markdown
+
+    mermaid = render_blast(result, "mermaid")
+    assert "%% Stale graph" in mermaid
+    assert "%% Truncated" in mermaid
+
+
+def test_compute_blast_reports_unrepaired_drift(radius_workspace):
+    import json
+
+    _workspace, _repo, db_path = radius_workspace
+
+    result = _blast(db_path, "--no-refresh")
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert "Stale graph" in payload["stale_graph"]
+    assert "call_chain.py" in payload["stale_graph"]
+
+    rendered = _run_blast(db_path, "--no-refresh")
+    assert rendered.exit_code == 0
+    assert "Stale graph" in rendered.output

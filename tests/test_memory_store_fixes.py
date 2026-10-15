@@ -1,21 +1,27 @@
 """Tests for memory store fixes (H4, H5)."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from cairn.graph.schema import get_db
+from cairn.memory.promotion import promote_memory
 from cairn.memory.store import (
     check_overlap,
+    consolidate_memories,
     create_memory,
     delete_memory,
+    demote_memory,
     get_memory,
+    list_memories,
     share_memory,
     store_memory,
     validate_agent_id,
 )
 from cairn.okf.bundle import OKFBundle
+from cairn.okf.concept import OKFConcept
 
 
 def test_validate_agent_id_accepts_conforming_ids():
@@ -385,3 +391,110 @@ def test_delete_memory_removes_refs_written_with_absolute_id(tmp_path, fresh_db)
 
     remaining = cursor.execute("SELECT memory_path FROM memory_refs").fetchall()
     assert abs_id not in [r[0] for r in remaining]
+
+
+def _write_compass_concept(bundle: OKFBundle) -> None:
+    """One compass-namespaced concept reachable through get_memory's fallback."""
+    bundle.write_concept(OKFConcept(
+        type="Compass", title="guide", body="navigation",
+        concept_id="compass/guide", tags=["guide"], extensions={},
+    ))
+
+
+def test_get_demote_promote_refuse_non_memory_namespace(tmp_path, fresh_db):
+    """Concepts resolved outside memory/ are refused, like delete_memory does."""
+    bundle = OKFBundle(str(tmp_path / "knowledge"))
+    _write_compass_concept(bundle)
+
+    assert get_memory(bundle, "compass/guide") is None
+    assert demote_memory(bundle, "compass/guide", target_tier="raw", conn=fresh_db) is None
+    assert promote_memory(bundle, "compass/guide", conn=fresh_db) is None
+
+    assert (bundle.root / "compass" / "guide.md").exists()
+    assert bundle.list_concepts(prefix="memory/") == []
+
+
+def test_create_memory_clamps_confidence_to_unit_range():
+    """Percent-scale or negative confidence clamps into [0, 1] before tiering."""
+    hot = create_memory(type_="decision", title="hot", body="b", confidence=95)
+    assert hot.extensions["memory_score"] == 1.0
+    assert hot.extensions["memory_tier"] == "tribal"
+    cold = create_memory(type_="decision", title="cold", body="b", confidence=-3)
+    assert cold.extensions["memory_score"] == 0.0
+    assert cold.extensions["memory_tier"] == "raw"
+
+
+def test_purge_archived_counts_only_removed_files(tmp_path):
+    """An aged candidate whose file is already absent is not counted as purged."""
+    from cairn.memory.store import purge_archived
+
+    bundle = OKFBundle(str(tmp_path / "knowledge"))
+    old = _archived_memory(bundle, "vanished memory", timestamp="2024-01-01T00:00:00Z")
+    (bundle.root / f"{old}.md").unlink()
+
+    assert purge_archived(bundle, max_days=90) == 0
+
+
+def test_list_memories_warns_on_unreadable_concept(tmp_path, caplog):
+    """A corrupt memory file still drops from the listing, but logs which id."""
+    bundle = OKFBundle(str(tmp_path / "knowledge"))
+    mem = create_memory(type_="pattern", title="corrupt target", body="b", confidence=0.7)
+    cid = store_memory(mem, bundle)
+    (bundle.root / f"{cid}.md").write_bytes(b"\xff\xfe not utf-8 \x80")
+
+    with caplog.at_level(logging.WARNING, logger="cairn.memory.store"):
+        mems = list_memories(bundle)
+
+    assert mems == []
+    assert any(cid in r.getMessage() for r in caplog.records)
+
+
+def test_consolidate_records_relative_source_ids(tmp_path):
+    """consolidated_from stores bundle-relative ids, not absolute machine paths."""
+    bundle = OKFBundle(str(tmp_path / "knowledge"))
+    for body in ("v1", "v2"):
+        store_memory(
+            create_memory(type_="pattern", title="dup note", body=body, confidence=0.1),
+            bundle, tier="raw",
+        )
+
+    count = consolidate_memories(bundle)
+
+    assert count == 2
+    tribal = bundle.list_concepts(prefix="memory/tribal")
+    assert len(tribal) == 1
+    unified = bundle.read_concept(tribal[0])
+    sources = unified.extensions["consolidated_from"]
+    assert len(sources) == 2
+    assert all(not cid.startswith("/") for cid in sources)
+    assert all(cid.startswith("memory/raw/") for cid in sources)
+
+
+def test_consolidate_counts_only_successful_archives(tmp_path, caplog, monkeypatch):
+    """A failed per-source archive is warned about and excluded from the count."""
+    bundle = OKFBundle(str(tmp_path / "knowledge"))
+    for body in ("v1", "v2"):
+        store_memory(
+            create_memory(type_="pattern", title="dup note", body=body, confidence=0.1),
+            bundle, tier="raw",
+        )
+
+    original = bundle.write_concept
+
+    def flaky(concept):
+        if concept.extensions.get("memory_tier") == "archived":
+            raise OSError("disk full")
+        return original(concept)
+
+    monkeypatch.setattr(bundle, "write_concept", flaky)
+
+    with caplog.at_level(logging.WARNING, logger="cairn.memory.store"):
+        count = consolidate_memories(bundle)
+
+    assert count == 0
+    assert any(
+        "failed to archive consolidated source" in r.getMessage()
+        for r in caplog.records
+    )
+    assert len(bundle.list_concepts(prefix="memory/tribal")) == 1
+    assert len(bundle.list_concepts(prefix="memory/raw")) == 2

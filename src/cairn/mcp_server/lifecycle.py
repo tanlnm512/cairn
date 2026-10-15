@@ -16,6 +16,9 @@ LEGACY_LABEL = "dev.cairn.sse"
 DEFAULT_PORT = 9876
 DEFAULT_HOST = "127.0.0.1"
 _LAUNCHCTL_TIMEOUT = 15.0
+# Bounds the blocking start lock: a wedged holder must fail callers with a
+# clear error instead of blocking them forever.
+_START_LOCK_TIMEOUT = 120.0
 
 
 def is_macos() -> bool:
@@ -128,7 +131,7 @@ def render_plist(
         env["CAIRN_DB"] = str(db_path)
     if knowledge_path:
         env["CAIRN_KNOWLEDGE"] = str(knowledge_path)
-    args = [bin_, "serve", "run", "--port", str(port)]
+    args = [bin_, "serve", "run", "--port", str(port), "--host", str(host)]
     if read_only:
         args.append("--read-only")
         env["CAIRN_READ_ONLY"] = "1"
@@ -380,6 +383,11 @@ def _unload_legacy_label_once() -> None:
     if not legacy_plist.exists():
         return
     _run_launchctl(["unload", str(legacy_plist)])
+    try:
+        # Without this, launchd re-launches the retired agent at every login.
+        legacy_plist.unlink()
+    except OSError:
+        pass
 
 
 def load() -> bool:
@@ -434,18 +442,78 @@ def healthz_responds(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST, timeout
         conn.close()
 
 
+def healthz_json(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST, timeout: float = 2.0) -> dict | None:
+    """Parsed /healthz payload, or None when the daemon does not answer 200."""
+    import http.client
+    import json
+
+    conn = http.client.HTTPConnection(host, port, timeout=timeout)
+    try:
+        conn.request("GET", "/healthz")
+        resp = conn.getresponse()
+        if resp.status != 200:
+            return None
+        return json.loads(resp.read())
+    except (OSError, http.client.HTTPException, ValueError):
+        return None
+    finally:
+        conn.close()
+
+
+def _args_bind(args: list[str]) -> tuple[int | None, str | None]:
+    """Extract the (--port, --host) pair from a `serve run` argv; Nones when absent."""
+    port: int | None = None
+    host: str | None = None
+    for i, tok in enumerate(args):
+        if tok == "--port" and i + 1 < len(args) and args[i + 1].isdigit():
+            port = int(args[i + 1])
+        elif tok == "--host" and i + 1 < len(args):
+            host = args[i + 1]
+    return port, host
+
+
+def daemon_bind() -> tuple[int | None, str | None]:
+    """(port, host) the managed daemon was started with, from its plist or argv; Nones when undiscoverable."""
+    args: list[str] = []
+    if is_macos():
+        try:
+            with open(plist_path(), "rb") as f:
+                args = list(plistlib.load(f).get("ProgramArguments") or [])
+        except (OSError, plistlib.InvalidFileException):
+            return None, None
+    else:
+        pid = pidfile_pid()
+        cmdline = _pid_cmdline(pid) if pid is not None else None
+        if cmdline:
+            args = cmdline.split()
+    return _args_bind(args)
+
+
 @contextlib.contextmanager
-def _start_lock():
-    """Exclusive flock over the daemon start sequence; a fresh fd per call so
-    concurrent callers (threads and processes) serialize, and the lock is
-    kernel-released when the holder dies."""
+def _start_lock(timeout: float = _START_LOCK_TIMEOUT):
+    """Bounded exclusive flock over the daemon start sequence; RuntimeError once ``timeout`` expires."""
+    import errno
     import fcntl
+    import time
 
     path = _lockfile_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o644)
+    deadline = time.monotonic() + timeout
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"timed out after {timeout:.0f}s waiting for the "
+                        f"daemon start lock ({path})"
+                    ) from exc
+                time.sleep(0.05)
         yield
     finally:
         os.close(fd)
@@ -486,7 +554,7 @@ def _ensure_running_launchd(port: int, host: str) -> tuple[int | None, str, bool
     return running_pid(), mcp_url(port, host), True
 
 
-def _daemonize_exec(port: int, bin_: str, env: dict[str, str]) -> None:
+def _daemonize_exec(port: int, host: str, bin_: str, env: dict[str, str]) -> None:
     """Child side of the daemonize fallback: detach, redirect stdio, exec serve run."""
     os.setsid()
     log_fd = os.open(
@@ -500,9 +568,26 @@ def _daemonize_exec(port: int, bin_: str, env: dict[str, str]) -> None:
     os.close(log_fd)
     os.close(devnull_fd)
     try:
-        os.execvpe(bin_, [bin_, "serve", "run", "--port", str(port)], env)
+        os.execvpe(
+            bin_, [bin_, "serve", "run", "--port", str(port), "--host", str(host)], env
+        )
     except OSError:
         os._exit(1)
+
+
+def _cycle_wedged_daemon(port: int, host: str, db_path: str) -> None:
+    """Kill a verified pidfile daemon that holds this db but is not serving healthz."""
+    pf_pid = pidfile_pid()
+    if pf_pid is None or healthz_responds(port, host):
+        return
+    cmdline = _pid_cmdline(pf_pid)
+    if cmdline is None or not _is_cairn_serve_cmdline(cmdline):
+        return
+    holders = _db_holder_pids(db_path)
+    if holders is None or pf_pid not in holders:
+        return
+    terminate_pid(pf_pid, cmd_check=_is_cairn_serve_cmdline)
+    pidfile_path().unlink(missing_ok=True)
 
 
 def _ensure_running_daemonize(port: int, host: str) -> tuple[int | None, str, bool]:
@@ -510,6 +595,7 @@ def _ensure_running_daemonize(port: int, host: str) -> tuple[int | None, str, bo
     if healthz_responds(port, host):
         return pidfile_pid(), mcp_url(port, host), False
     store = resolve_store()
+    _cycle_wedged_daemon(port, host, str(store.db))
     sweep_strays(str(store.db), log=True)
     env = {
         **os.environ,
@@ -520,7 +606,7 @@ def _ensure_running_daemonize(port: int, host: str) -> tuple[int | None, str, bo
     bin_ = cg_bin()
     pid = os.fork()
     if pid == 0:
-        _daemonize_exec(port, bin_, env)
+        _daemonize_exec(port, host, bin_, env)
         os._exit(1)
     _write_pidfile(pid)
     if not _wait_for_healthz(port, host):

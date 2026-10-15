@@ -160,7 +160,12 @@ def group_by_top_level(conn: sqlite3.Connection, repo: str) -> List[Tuple[str, i
         if legacy_repo_root and p.startswith(legacy_repo_root + "/"):
             p = p[len(legacy_repo_root) + 1:]
         parts = p.split("/")
-        # Use first meaningful module dir (skip src/main/java/...)
-        key = "/".join(parts[:3]) if len(parts) >= 3 else parts[0]
+        # Group by directory: first 3 segments for deep paths, else the parent.
+        if len(parts) >= 4:
+            key = "/".join(parts[:3])
+        elif len(parts) >= 2:
+            key = "/".join(parts[:-1])
+        else:
+            key = parts[0]
         buckets[key] = buckets.get(key, 0) + r["symbols"]
     return sorted(buckets.items(), key=lambda x: -x[1])

@@ -80,6 +80,39 @@ def test_config_echoes_none_configured_without_scip_key(tmp_path, monkeypatch):
     assert "(none configured" in result.output
 
 
+def test_config_survives_misconfigured_embed_server_backend(tmp_path, monkeypatch):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.chdir(ws)
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "server")
+    monkeypatch.delenv("CAIRN_EMBED_BASE_URL", raising=False)
+    from cairn.graph.embeddings import reset_backend_cache
+
+    reset_backend_cache()
+    try:
+        result = _invoke(["config"])
+    finally:
+        reset_backend_cache()
+
+    assert result.exit_code == 0, result.output
+    assert "unusable backend" in result.output
+    assert "CAIRN_EMBED_BASE_URL" in result.output
+
+
+def test_config_namespace_label_falls_back_when_env_unusable(tmp_path, monkeypatch):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _write_scip_config(ws, {"repo_namespaces": {"acme": "github.com/acme"}})
+    monkeypatch.chdir(ws)
+    monkeypatch.setenv("CAIRN_REPO_NAMESPACES", "{not json")
+
+    result = _invoke(["config"])
+
+    assert result.exit_code == 0, result.output
+    assert "(CAIRN_REPO_NAMESPACES)" not in result.output
+    assert "cairn.json" in result.output
+
+
 # --------------------------------------------------------------------------
 # cairn import-scip requires a built store
 # --------------------------------------------------------------------------
@@ -208,6 +241,29 @@ def test_import_scip_success_line_reports_document_counts(
     assert result.exit_code == 0, result.output
     assert "matched 1/2 documents" in result.output
     assert ", 1 skipped" in result.output
+
+
+def test_import_scip_corrupt_index_maps_to_click_error(
+    caller_callee_ws, caller_callee_db, tmp_path, monkeypatch
+):
+    db_path = str(tmp_path / "graph.db")
+    caller_callee_db(db_path).close()
+    idx = tmp_path / "index.scip"
+    idx.write_bytes(b"\x00not-a-protobuf")
+
+    def _raise(conn, scip_path, workspace):
+        raise ValueError(f"corrupt SCIP index: {scip_path} (bad protobuf)")
+
+    stub = types.ModuleType("cairn.parsers.scip_importer")
+    stub.import_scip_file = _raise
+    monkeypatch.setitem(sys.modules, "cairn.parsers.scip_importer", stub)
+
+    result = _invoke(
+        ["import-scip", str(idx), "--db", db_path, "--workspace", str(caller_callee_ws)]
+    )
+
+    assert result.exit_code != 0
+    assert "corrupt SCIP index" in result.output
 
 
 # --------------------------------------------------------------------------

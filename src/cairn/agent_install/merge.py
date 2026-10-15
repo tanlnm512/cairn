@@ -160,6 +160,16 @@ def _merge_json_file(path: Path, merger: dict, force: bool, result: InstallResul
     result.add(path, existed=False)
 
 
+def _note_mcp_merge(res: InstallResult, path: Path, detail: str) -> None:
+    """Append a note stating what the preceding _merge_json_file call did."""
+    if str(path) in res.skipped:
+        res.notes.append(f"MCP server already registered in {path}; no change.")
+    elif f"would merge into {path}" in res.written:
+        res.notes.append(f"[dry-run] Would merge the MCP server into {path} {detail}.")
+    else:
+        res.notes.append(f"MCP server written to {path} {detail}.")
+
+
 # --------------------------------------------------------------------------
 # Merge / idempotency logic
 # --------------------------------------------------------------------------
@@ -173,6 +183,11 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
         if not isinstance(cur, dict):
             return False
         new = merger["mcp"]["servers"]["cairn"]
+        if "command" not in new:
+            # URL-based entry: compare url + headers so a moved daemon or
+            # rotated key reads as not-installed and the reinstall rewrites it.
+            return (cur.get("url") == new.get("url")
+                    and (cur.get("headers") or {}) == (new.get("headers") or {}))
         cur_cmd = cur.get("command", "") + " " + " ".join(cur.get("args", []))
         new_cmd = new.get("command", "") + " " + " ".join(new.get("args", []))
         if cur_cmd.strip() != new_cmd.strip():
@@ -192,6 +207,8 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
         new = merger["mcp"]["cairn"]
         if new.get("type") == "remote":
             return (cur.get("url") == new.get("url")
+                    and cur.get("enabled") == new.get("enabled")
+                    and (cur.get("headers") or {}) == (new.get("headers") or {})
                     and (cur.get("env") or {}) == (new.get("env") or {}))
         cur_cmd = " ".join(cur.get("command", []))
         new_cmd = " ".join(new.get("command", []))
@@ -207,6 +224,12 @@ def _already_installed(existing: dict, merger: dict, *, config_key: str = "mcpSe
         if not isinstance(cur, dict):
             return False
         new = merger["mcpServers"]["cairn"]
+        url_key = next((k for k in ("url", "serverUrl") if k in new), None)
+        if "command" not in new and url_key is not None:
+            # URL-based entry (url/serverUrl): compare url + headers so a moved
+            # daemon or rotated key reads as not-installed and gets rewritten.
+            return (cur.get(url_key) == new.get(url_key)
+                    and (cur.get("headers") or {}) == (new.get("headers") or {}))
         # Compare the full command (command + args joined) so path changes register.
         cur_cmd = cur.get("command", "") + " " + " ".join(cur.get("args", []))
         new_cmd = new.get("command", "") + " " + " ".join(new.get("args", []))
@@ -353,7 +376,7 @@ def _rm_if_ours(path: Path, expected: str, res: InstallResult) -> None:
     except (OSError, UnicodeDecodeError):
         ours = False
     if not ours:
-        res.skipped.append(f"{path} (not cairn-written; left in place)")
+        res.skipped.append(f"{path} (differs from the current cairn template; left in place)")
         return
     path.unlink()
     res.written.append(f"removed {path}")
@@ -416,16 +439,24 @@ def _strip_mcp_kilo(path: Path, res) -> None:
 def _strip_mcp_opencode(path: Path, res) -> None:
     """Remove cairn from OpenCode config and its legacy MCP file."""
     _strip_mcp_kilo(path, res)
-    # Cleanup: remove a stray .opencode/mcp.json if it carries our server.
+    # Cleanup: strip the cairn server from a stray .opencode/mcp.json, deleting
+    # it only when no other servers or keys remain.
     stray = path.parent / ".opencode" / "mcp.json"
-    if stray.exists():
-        stray_data = _load_json_or_none(stray)
-        stray_servers = (
-            stray_data.get("mcpServers") if isinstance(stray_data, dict) else None
-        )
-        if isinstance(stray_servers, dict) and "cairn" in stray_servers:
-            stray.unlink()
-            res.written.append(f"removed stray {stray}")
+    data = _load_json_or_none(stray)
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    if not (isinstance(servers, dict) and "cairn" in servers):
+        return
+    del servers["cairn"]
+    if servers:
+        data["mcpServers"] = servers
+    else:
+        data.pop("mcpServers", None)
+    if data:
+        _atomic_write_text(stray, json.dumps(data, indent=2) + "\n")
+        res.written.append(f"stripped cairn from {stray}")
+    else:
+        stray.unlink()
+        res.written.append(f"removed stray {stray}")
 
 
 def _strip_hooks(path: Path, res: InstallResult) -> None:

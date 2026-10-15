@@ -20,7 +20,7 @@ _CLIENT_CHOICES = [*CLIENTS, "all"]
               help="Where to write configs: 'workspace' (./.claude/) or 'global' (~/.claude/). If omitted, prompts interactively.")
 @click.option("--force", is_flag=True, help="Overwrite existing cairn files.")
 @click.option("--dry-run", is_flag=True, help="Show what would be written; change nothing.")
-@click.option("--git-hooks", is_flag=True, help="Also install git git hooks (post-commit + post-checkout) in repos.")
+@click.option("--git-hooks", is_flag=True, help="Also install git hooks (post-commit + post-checkout) in repos.")
 @click.option("--yes", "-y", is_flag=True,
               help="Skip the interactive prompt; install for detected clients that don't already have cairn.")
 def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, yes):
@@ -133,7 +133,7 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, yes):
     if scope is None:
         scope = "workspace"
 
-    include_git = git_hooks or (target_clients is not None and "all" in target_clients)
+    include_git = git_hooks
 
     click.echo(f"Scope: {scope}")
     report = install(ws, clients=target_clients, force=force, dry_run=dry_run,

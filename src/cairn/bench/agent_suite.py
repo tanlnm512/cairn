@@ -23,6 +23,9 @@ CHARS_PER_TOKEN = 4
 # Fixed token budget the pack-fit-rate arm requests its pack within.
 _PACK_BUDGET_TOKENS = 4000
 
+# MCP per-call result-cap default (mcp_server.metric_buffering), pinned per run.
+_RESULT_CAP_CHARS = 60000
+
 # Bound on how many names one control-arm alternation grep chases per hop.
 # Keeps the regex (and the recipe) bounded on dense corpora; the first 40 in
 # sorted order — deterministic. Generous vs a real agent's attention.
@@ -90,7 +93,7 @@ class _ControlAgent:
         hits: List[Path] = []
         for path in sorted(self.workspace.rglob("*.py")):
             try:
-                text = path.read_text(encoding="utf-8")
+                text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             found = rx.search(text) if rx is not None else pattern in text
@@ -107,7 +110,7 @@ class _ControlAgent:
             self._read.add(path)
             self.calls += 1
             try:
-                text = path.read_text(encoding="utf-8")
+                text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             self.chars += len(text)
@@ -561,21 +564,20 @@ class AgentReport:
 
 
 def compare_agent_reports(baseline: dict, current: dict, threshold: float = 0.15) -> dict:
-    """Compare two agent-suite reports on the cairn arm's context cost.
-
-    ``baseline``/``current`` are dicts from ``AgentReport.to_dict()``. The
-    gated metric is per-task ``est_tokens`` (the effort a cairn change can
-    regress — the control arm only changes when the corpus or recipe does).
-    Returns {task label -> {baseline_tokens, current_tokens, delta_pct,
-    regressed}}; "regressed" means current tokens exceed baseline by more
-    than ``threshold`` (default 15%).
-    """
+    """Compare two agent reports on cairn-arm est_tokens; labels missing from the baseline surface as visible, never-regressed ``unbaselined`` entries."""
     base = {t["label"]: t["cairn"]["est_tokens"] for t in baseline.get("tasks", [])}
     cur = {t["label"]: t["cairn"]["est_tokens"] for t in current.get("tasks", [])}
     result = {}
     for label, cur_tokens in cur.items():
         base_tokens = base.get(label)
         if base_tokens is None or base_tokens == 0:
+            result[label] = {
+                "baseline_tokens": None,
+                "current_tokens": cur_tokens,
+                "delta_pct": None,
+                "regressed": False,
+                "unbaselined": True,
+            }
             continue
         delta = (cur_tokens - base_tokens) / base_tokens
         result[label] = {
@@ -609,22 +611,22 @@ def run_agent_suite(
     task targets from the built graph (the corpus itself is seeded by
     ``generate_corpus``'s own default).
     """
-    # Same env discipline as the perf suite: pin the DB/backend for the
-    # build+embed, and pin the reranker OFF so results never depend on the
-    # optional cross-encoder or its auto-enable marker. Snapshot + restore.
-    saved_env = snapshot_env(("CAIRN_DB", "CAIRN_EMBED_BACKEND", "CAIRN_RERANK"))
-
-    os.environ["CAIRN_DB"] = db_path
-    os.environ["CAIRN_EMBED_BACKEND"] = embed_backend
-    os.environ["CAIRN_RERANK"] = "0"
-
-    from cairn.graph import embeddings as emb
-    from cairn.graph.builder import build_graph
-    from cairn.graph.dataflow import build_transitive_closure
-    from cairn.graph.schema import get_db
-
-    emb.reset_backend_cache()
+    # Pins (DB/backend/reranker/result-cap) set inside the try so no failure leaks them.
+    saved_env = snapshot_env(
+        ("CAIRN_DB", "CAIRN_EMBED_BACKEND", "CAIRN_RERANK", "CAIRN_MAX_RESULT_CHARS")
+    )
     try:
+        os.environ["CAIRN_DB"] = db_path
+        os.environ["CAIRN_EMBED_BACKEND"] = embed_backend
+        os.environ["CAIRN_RERANK"] = "0"
+        os.environ["CAIRN_MAX_RESULT_CHARS"] = str(_RESULT_CAP_CHARS)
+
+        from cairn.graph import embeddings as emb
+        from cairn.graph.builder import build_graph
+        from cairn.graph.dataflow import build_transitive_closure
+        from cairn.graph.schema import get_db
+
+        emb.reset_backend_cache()
         build_stats = build_graph(workspace=workspace, db_path=db_path)
         if progress:
             progress("build_done", symbols=build_stats.get("symbols", 0),

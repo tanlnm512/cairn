@@ -98,7 +98,7 @@ _BACKEND = frozenset({"ann", "brute", "hash"})
 _MS_BUCKETS = frozenset({"0-10ms", "10-100ms", "100-1000ms", ">1000ms"})
 _N_BUCKETS = frozenset({"0", "1-5", "6-10", "11-50", ">50"})
 _CHARS_BUCKETS = frozenset({"<=500", "500-2k", "2k-10k", ">10k"})
-_TASK_EVENTS = frozenset({"claimed", "completed", "revised", "dropped"})
+_TASK_EVENTS = frozenset({"claimed", "completed", "revised", "failed", "dropped"})
 _ANN_REASONS = frozenset(
     {"load_failed", "not_installed", "no_index", "disabled", "query_error"}
 )

@@ -379,6 +379,23 @@ class TestValidateRefinedOutline:
         assert eff[2]["title"] == "A core"
         assert eff[3] == det[2] and eff[4] == det[4]
 
+    def test_duplicate_module_entries_keep_only_the_first(self, fresh_db):
+        from cairn.wiki.refine import validate_refined_outline
+
+        det = self._det(fresh_db)
+        refined = [
+            {"title": "B first", "description": "d1", "module": "m_b"},
+            {"title": "B second", "description": "d2", "module": "m_b"},
+        ]
+        eff = validate_refined_outline(refined, det, fresh_db, "r")
+        # One page record per module: the first refined entry wins and the
+        # deterministic pages the refinement never covered follow once.
+        assert [page["module"] for page in eff] == [
+            "m_b", "", "m_a", "m_c", "m_big",
+        ]
+        assert eff[0]["title"] == "B first"
+        assert len(eff) == len({page["page_id"] for page in eff})
+
     def test_phantom_module_entry_is_rejected_and_det_pages_appended(
         self, fresh_db
     ):

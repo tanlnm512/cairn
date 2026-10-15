@@ -499,9 +499,11 @@ def _build_graph_impl(
                 conn, workspace, transport=lsp_transport, **budgets
             )
         upgraded = lsp_report.get("upgraded", 0)
-        if upgraded:
-            resolution_stats["exact"] += upgraded
-            resolution_stats["ambiguous"] -= upgraded
+        # Upgrades span all repos; clamp so single-repo ambiguous counts stay non-negative.
+        applied = min(upgraded, resolution_stats.get("ambiguous", 0))
+        if applied:
+            resolution_stats["exact"] += applied
+            resolution_stats["ambiguous"] -= applied
 
     try:
         import_edges = materialize_import_edges(conn)
@@ -1029,7 +1031,12 @@ def _import_module_bases(raw: str) -> List[str]:
                 rest = rest[len("static "):].strip()
             bases.append(_norm_module_token(rest))
     else:
-        bases.append(_norm_module_token(text))
+        norm = _norm_module_token(text)
+        if norm:
+            bases.append(norm)
+            parent = norm.rsplit(".", 1)[0]
+            if parent and parent != norm:
+                bases.append(parent)
     return [b for b in bases if b]
 
 

@@ -676,3 +676,81 @@ def test_banner_reports_only_unrepaired_drift():
     banner = unrepaired.banner()
     assert "2 file(s) not refreshed" in banner
     assert "a.py" in banner
+
+
+def test_failed_strict_refresh_is_a_clean_cli_error(freshness, monkeypatch):
+    """A failed drift repair surfaces as click's single-line error, never a
+    raw RuntimeError traceback, on every graph-reading command."""
+    from cairn.cli import main
+
+    db_path = freshness.activate("failed-refresh")
+
+    def failing_reindex(conn, workspace, paths):
+        return {
+            "reindexed": 0,
+            "deleted": 0,
+            "embedded_symbols": 0,
+            "deferred_embeds": 0,
+            "errors": ["parse exploded"],
+        }
+
+    monkeypatch.setattr(
+        "cairn.graph.incremental.reindex_paths", failing_reindex
+    )
+
+    result = CliRunner().invoke(
+        main, ["callers", OLD_NAME, "--db", str(db_path)]
+    )
+
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, RuntimeError), result.exception
+    assert "graph refresh failed" in result.stderr
+    assert "parse exploded" in result.stderr
+
+
+def test_deps_refreshes_drift_before_answering(freshness):
+    from cairn.cli import main
+
+    db_path = freshness.activate("deps-refresh")
+
+    result = CliRunner().invoke(
+        main,
+        ["deps", "demo", "--db", str(db_path)],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout
+    _assert_only_drifted_file_reindexed(freshness)
+    _assert_graph_refreshed(db_path)
+
+
+def test_impact_text_output_surfaces_truncation(freshness, monkeypatch):
+    """A capped traversal prints a truncation notice instead of rendering
+    as complete; --json already carried the flag."""
+    from cairn.cli import main
+    from cairn.graph import queries
+
+    db_path = freshness.activate("impact-truncated")
+    monkeypatch.setattr(
+        queries,
+        "impact_analysis",
+        lambda conn, name, **kwargs: {
+            "impacted": [
+                {"symbol": "a", "file": "a.py", "repo": "demo", "depth": 0}
+            ],
+            "cycles": [],
+            "total": 1,
+            "truncated": True,
+        },
+    )
+
+    result = CliRunner().invoke(
+        main,
+        ["impact", NEW_NAME, "--db", str(db_path)],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    assert "Total impacted: 1" in result.stdout
+    assert "Truncated" in result.stderr

@@ -43,9 +43,9 @@ def _phase_timings(workspace: str, db_path: str) -> tuple[dict, dict]:
         marks.append((ph, _t.perf_counter()))
 
     stats = build_graph(workspace=workspace, db_path=db_path, progress=_progress)
+    build_end = _t.perf_counter()
 
-    # Collapse the ordered marks into per-phase elapsed time. Each phase's
-    # duration is from its FIRST mark to the first mark of any LATER phase.
+    # Collapse marks: each phase spans its first mark to the next phase's first mark; the last runs to build_end.
     phase_seconds: dict[str, float] = {}
     seen_phases: list[str] = []
     first_ts: dict[str, float] = {}
@@ -53,10 +53,9 @@ def _phase_timings(workspace: str, db_path: str) -> tuple[dict, dict]:
         if ph not in first_ts:
             first_ts[ph] = ts
             seen_phases.append(ph)
-    # Phase end = start of the next phase in seen order (or last mark overall).
     for i, ph in enumerate(seen_phases):
         start = first_ts[ph]
-        end = first_ts[seen_phases[i + 1]] if i + 1 < len(seen_phases) else marks[-1][1]
+        end = first_ts[seen_phases[i + 1]] if i + 1 < len(seen_phases) else build_end
         if end > start:
             phase_seconds[ph] = end - start
     return stats, phase_seconds
@@ -85,7 +84,7 @@ def run_perf_suite(
 
     # This suite pins process-global env vars to point the build/embed at
     # the bench DB and the chosen backend; restore them however the run ends.
-    saved_env = snapshot_env(("CAIRN_DB", "CAIRN_EMBED_BACKEND"))
+    saved_env = snapshot_env(("CAIRN_DB", "CAIRN_EMBED_BACKEND", "CAIRN_RERANK"))
     try:
         # --- Build phase ------------------------------------------------------
         # Build timing is single-shot (the phase-event split is the signal, and a
@@ -197,7 +196,8 @@ def run_perf_suite(
                 query_ops.append(
                     ("impact_analysis_wide", lambda: q.impact_analysis(conn, wide_target, max_depth=3, limit=100))
                 )
-            # semantic_search and explore may need embeddings.
+            # semantic_search and explore may need embeddings; reranker pinned OFF.
+            os.environ["CAIRN_RERANK"] = "0"
             query_ops.append(("semantic_search", lambda: q.semantic_search(conn, query_target, limit=10)))
             query_ops.append(("explore", lambda: q.explore(conn, query_target)))
 

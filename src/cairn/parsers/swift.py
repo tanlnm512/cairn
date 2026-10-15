@@ -30,6 +30,9 @@ TYPE_DECL_NODES = {
     "actor_declaration",
 }
 
+# Scope kinds whose direct members are methods; extensions included.
+_TYPE_SCOPE_NODES = TYPE_DECL_NODES | {"extension_declaration"}
+
 
 class SwiftParser(BaseParser, TreeSitterParserBase):
     language = "swift"
@@ -72,6 +75,25 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
                 pf.imports.append(imp)
             return
 
+        if t == "extension_declaration" or (
+            t in TYPE_DECL_NODES and self._is_extension(node, source)
+        ):
+            # An extension declares no new type: scope members under the
+            # extended type's name without emitting a symbol for it.
+            name = self._extension_type_name(node, source)
+            if name:
+                self._scope.append(name)
+                self._scope_kinds.append(t)
+                self._var_types.push()
+                self._var_types.record("self", name)
+                self._walk(node, source, pf)
+                self._var_types.pop()
+                self._scope.pop()
+                self._scope_kinds.pop()
+            else:
+                self._walk(node, source, pf)
+            return
+
         if t in TYPE_DECL_NODES:
             sym = self._parse_type_decl(node, source)
             if sym:
@@ -91,11 +113,13 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
             if sym:
                 pf.symbols.append(sym)
                 self._scope.append(sym.name)
+                self._scope_kinds.append(t)
                 self._var_types.push()
                 self._record_param_types(node, source)
                 self._walk(node, source, pf)
                 self._var_types.pop()
                 self._scope.pop()
+                self._scope_kinds.pop()
             return
 
         if t in ("property_declaration",):
@@ -127,6 +151,26 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
             if child.type == "type_identifier":
                 return self._node_text(child, source).strip()
         return None
+
+    def _is_extension(self, node: Node, source: bytes) -> bool:
+        """True when a TYPE_DECL_NODES node is the ``extension`` spelling."""
+        return any(
+            not c.is_named and self._node_text(c, source) == "extension"
+            for c in node.children
+        )
+
+    def _extension_type_name(self, node: Node, source: bytes) -> Optional[str]:
+        """Bare name of the type an extension declaration extends."""
+        name = None
+        for child in node.children:
+            if child.type == "user_type":
+                # ``Ns.Foo`` nests both segments: the last one is the bare name.
+                for sub in child.children:
+                    if sub.type == "type_identifier":
+                        name = self._node_text(sub, source).strip()
+            elif child.type == "type_identifier":
+                name = self._node_text(child, source).strip()
+        return name
 
     def _collect_modifiers(self, node: Node, source: bytes) -> List[str]:
         mods = []
@@ -194,7 +238,11 @@ class SwiftParser(BaseParser, TreeSitterParserBase):
         if not name:
             return None
         mods = self._collect_modifiers(node, source)
-        kind = "method" if self._scope else "function"
+        kind = (
+            "method"
+            if self._scope_kinds and self._scope_kinds[-1] in _TYPE_SCOPE_NODES
+            else "function"
+        )
         return Symbol(
             name=name,
             kind=kind,

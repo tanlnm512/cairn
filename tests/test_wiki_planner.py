@@ -326,3 +326,36 @@ class TestEmptyGraph:
         with pytest.raises(WikiPlannerError, match=r".+"):
             build_page_plan(fresh_db, "r")
 
+
+
+def test_group_by_top_level_buckets_three_segment_paths_under_directory(tmp_path):
+    """A path exactly three segments deep groups under its directory, not
+    under its own file name."""
+    from cairn.graph.schema import get_db
+    from cairn.graph.stats import group_by_top_level
+
+    conn = get_db(str(tmp_path / "g.db"))
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('r', 'r', '/tmp/r')")
+    conn.executemany(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (?, 'r', ?, 'python')",
+        [
+            ("f1", "src/cairn/pack.py"),
+            ("f2", "src/cairn/refs.py"),
+            ("f3", "src/cairn/cli/core.py"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, line_start, line_end) "
+        "VALUES (?, ?, ?, 'function', ?, 1, 10)",
+        [("s1", "f1", "a", "a"), ("s2", "f2", "b", "b"), ("s3", "f3", "c", "c")],
+    )
+    conn.commit()
+
+    try:
+        buckets = dict(group_by_top_level(conn, "r"))
+    finally:
+        conn.close()
+
+    assert buckets["src/cairn"] == 2
+    assert buckets["src/cairn/cli"] == 1
+    assert "src/cairn/pack.py" not in buckets

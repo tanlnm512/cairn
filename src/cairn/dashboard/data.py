@@ -1122,6 +1122,20 @@ def _recorded_sha(concept: Optional["OKFConcept"]) -> Optional[str]:
     return concept.extensions.get("commit_sha") or None
 
 
+def _store_workspace(knowledge_dir: str) -> Optional[str]:
+    """The workspace registered to the store owning ``knowledge_dir``; None
+    when the store is not a keyed store under CAIRN_HOME."""
+    from cairn import paths
+    from .workspaces import _load_registry
+
+    home = Path(paths.CAIRN_HOME)
+    store_dir = Path(knowledge_dir).resolve().parent
+    for ws_path, key in _load_registry(home).items():
+        if key and (home / str(key)) == store_dir:
+            return ws_path
+    return None
+
+
 def _wiki_rows(
     knowledge_dir: str, repo: Optional[str] = None, page_id: Optional[str] = None
 ):
@@ -1131,6 +1145,7 @@ def _wiki_rows(
 
     bundle = OKFBundle(knowledge_dir)
     chains = page_chains(bundle)
+    workspace = _store_workspace(knowledge_dir)
     heads: Dict[str, Optional[str]] = {}
     for key, row in load_manifest(knowledge_dir)["pages"].items():
         key_repo, key_page = split_page_key(key)
@@ -1140,7 +1155,7 @@ def _wiki_rows(
             continue
         concept = read_page_concept(bundle, key_repo, key_page)
         if key_repo not in heads:
-            heads[key_repo] = get_repo_head(key_repo)
+            heads[key_repo] = get_repo_head(key_repo, workspace)
         yield (
             key_repo,
             key_page,

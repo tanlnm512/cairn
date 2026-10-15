@@ -10,6 +10,10 @@ from ..graph.repo_map import projection
 CLOSURE_TIER = "closure"
 DEGREE_TIER = "degree"
 
+# Per-query cap on seed ids in an IN () clause, under SQLite's 999
+# host-parameter limit.
+_SEED_ID_CHUNK = 400
+
 
 @dataclass
 class RankedSymbols:
@@ -42,17 +46,17 @@ def _rank_from_closure(conn: sqlite3.Connection, candidates: list[str]) -> list[
         seed_ids = _candidate_symbol_ids(conn, candidate)
         if not seed_ids:
             continue
-        placeholders = ",".join("?" for _ in seed_ids)
-        row = conn.execute(
-            f"""
-            SELECT COUNT(DISTINCT t.source_id) AS impact
-            FROM transitive_edges t
-            WHERE t.target_id IN ({placeholders})
-              AND t.source_id NOT IN ({placeholders})
-            """,
-            (*seed_ids, *seed_ids),
-        ).fetchone()
-        scored.append((candidate, row["impact"]))
+        ancestors: set[str] = set()
+        for i in range(0, len(seed_ids), _SEED_ID_CHUNK):
+            chunk = seed_ids[i : i + _SEED_ID_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT DISTINCT t.source_id FROM transitive_edges t "
+                f"WHERE t.target_id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            ancestors.update(row["source_id"] for row in rows)
+        scored.append((candidate, len(ancestors.difference(seed_ids))))
     return _ordered(scored)
 
 

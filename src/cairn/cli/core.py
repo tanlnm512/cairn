@@ -88,8 +88,12 @@ def init(ws_arg, legacy_dir, no_build, import_docs, with_hooks):
         if legacy_db.exists() and not store.db.exists():
             size_kb = legacy_db.stat().st_size // 1024
             store.db.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(legacy_db), str(store.db))
-            migrated.append(f".kg ({size_kb} KB)")
+            try:
+                shutil.move(str(legacy_db), str(store.db))
+            except OSError as e:
+                r.warn(f"legacy .kg migration failed: {e}")
+            else:
+                migrated.append(f".kg ({size_kb} KB)")
         if legacy_kn.exists() and legacy_kn.is_dir():
             # Merge: copy legacy knowledge tree into the store. Skip .DS_Store
             # and files that already exist at the destination. Only count as a
@@ -257,23 +261,38 @@ def config(list_all, mcp_config, db_only, as_json):
     # (real vs hash fallback) before the user ever runs `cairn embed`.
     from ..graph.embeddings import _effective_backend, is_hash_fallback, current_model
 
-    eff = _effective_backend()
-    model = current_model()
-    if is_hash_fallback():
-        # Silent fallback: user expects bge-m3 but will get hash.
-        click.echo(f"embed:      {model}  ⚠ fallback (sentence-transformers not installed)")
-        click.echo("            for real embeddings: uv tool install 'cairn-intel[semantic]' --force")
-    elif eff == "hash":
-        click.echo(f"embed:      {model}  (CAIRN_EMBED_BACKEND=hash)")
+    try:
+        eff = _effective_backend()
+        model = current_model()
+    except RuntimeError as e:
+        click.echo(f"embed:      unusable backend ({e})")
     else:
-        click.echo(f"embed:      {model}  (backend: {eff})")
+        if is_hash_fallback():
+            # Silent fallback: user expects bge-m3 but will get hash.
+            click.echo(f"embed:      {model}  ⚠ fallback (sentence-transformers not installed)")
+            click.echo("            for real embeddings: uv tool install 'cairn-intel[semantic]' --force")
+        elif eff == "hash":
+            click.echo(f"embed:      {model}  (CAIRN_EMBED_BACKEND=hash)")
+        else:
+            click.echo(f"embed:      {model}  (backend: {eff})")
 
     # Show the resolved cross-repo namespace map (env / cairn.json / default).
     from ..graph.cross_repo import _load_namespaces
     from ..graph.config import load_config
 
     cfg = load_config(store.workspace)
-    source = "CAIRN_REPO_NAMESPACES" if os.environ.get("CAIRN_REPO_NAMESPACES") else (
+    env_raw = os.environ.get("CAIRN_REPO_NAMESPACES")
+    env_usable = False
+    if env_raw:
+        try:
+            parsed = json.loads(env_raw)
+        except json.JSONDecodeError:
+            parsed = None
+        env_usable = isinstance(parsed, dict) and any(
+            isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()
+            for k, v in parsed.items()
+        )
+    source = "CAIRN_REPO_NAMESPACES" if env_usable else (
         str(cfg.source) if cfg.source and cfg.repo_namespaces else "built-in default"
     )
     namespaces = _load_namespaces()
@@ -366,6 +385,18 @@ def build(repo, workspace, db, verbose, staging, lsp, with_closure):
             # build_graph's last event (persist) opens a sub-step it never closes;
             # settle it before the derived-index phases.
             r.finish("done")
+
+            if staging and not summary.get("files"):
+                # An empty staged build must never be swapped over the live store.
+                if os.path.exists(target_db):
+                    try:
+                        os.remove(target_db)
+                    except OSError:
+                        pass
+                raise click.ClickException(
+                    f"no source files found under {workspace} — refusing to swap "
+                    f"an empty build over {db}"
+                )
 
             # Derived indexes: dataflow always (slow, animated sub-step);
             # transitive closure only under --with-closure (pure SQL).
@@ -524,7 +555,7 @@ def import_scip(scip_file, workspace, db, with_closure):
             from ..graph.dataflow import build_transitive_closure
 
             build_transitive_closure(conn)
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         raise click.ClickException(str(e)) from e
     finally:
         conn.close()
@@ -603,11 +634,18 @@ def checkpoint(db):
     from ..paths import resolve_store
 
     path = db or str(resolve_store().db)
-    conn = sqlite3.connect(path)
+    if not Path(path).exists():
+        raise click.ClickException(f"no graph DB at {path} — run `cairn build` first")
+    try:
+        conn = sqlite3.connect(path)
+    except sqlite3.Error as e:
+        raise click.ClickException(f"cannot open {path}: {e}") from e
     try:
         conn.execute("PRAGMA busy_timeout = 10000")
         before = Path(path + "-wal").stat().st_size if Path(path + "-wal").exists() else 0
         result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    except sqlite3.DatabaseError as e:
+        raise click.ClickException(f"checkpoint failed for {path}: {e}") from e
     finally:
         conn.close()
     after = Path(path + "-wal").stat().st_size if Path(path + "-wal").exists() else 0
