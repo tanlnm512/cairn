@@ -167,3 +167,21 @@ def test_module_symbol_count_is_escaped_and_repo_scoped(conn):
     # qualify the module.
     assert "agent_runtime/app%svc/mid/one.py" not in modules
     assert "agent_runtime/app/services/jobs.py" in modules
+
+
+def test_unreadable_compass_concept_warns_and_leaves_phantom_gap(conn, tmp_path, caplog):
+    # An unreadable compass silently dropping out of `covered` would report
+    # its module as a gap; the skip must at least name the concept id.
+    import logging
+
+    knowledge = tmp_path / "k"
+    _compass(knowledge, "app/services/jobs.py", repo="agent_runtime")
+    (knowledge / "compass" / "app-services-jobs-py.md").write_bytes(
+        b"\xff\xfe\x00 broken \xff"
+    )
+    with caplog.at_level(logging.WARNING, logger="cairn.compass.gaps"):
+        gaps = detect_gaps(conn, OKFBundle(str(knowledge)))
+    assert any(
+        "compass/app-services-jobs-py" in r.message for r in caplog.records
+    ), caplog.text
+    assert "agent_runtime/app/services/jobs.py" in gaps

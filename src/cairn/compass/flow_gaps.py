@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from ..okf.bundle import OKFBundle
 
@@ -48,24 +48,27 @@ def detect_flow_gaps(
     conn: sqlite3.Connection,
     bundle: OKFBundle,
     min_edges: int = 5,
-) -> Dict[str, List[dict]]:
+) -> Dict[str, List[Any]]:
     """Find functions and methods meeting outgoing edge threshold lacking a flow compass.
 
     Returns a dict with 'uncovered' and 'covered' candidate lists sorted by
-    out_edges descending. Resources use the same coverage key
-    (:func:`_coverage_resource`) the generator writes.
+    out_edges descending, plus 'unreadable': flow compass concept ids that
+    could not be read (excluded from coverage). Resources use the same
+    coverage key (:func:`_coverage_resource`) the generator writes.
     """
     candidates = _get_flow_candidates(conn, min_edges)
 
     # Build the set of already-documented flow resources.
     covered_resources: set[str] = set()
+    unreadable: List[str] = []
     for cid in bundle.list_concepts(prefix="compass/flow-"):
         try:
             concept = bundle.read_concept(cid)
-            if concept.resource:
-                covered_resources.add(concept.resource)
         except Exception:
+            unreadable.append(cid)
             continue
+        if concept.resource:
+            covered_resources.add(concept.resource)
 
     uncovered: List[dict] = []
     covered: List[dict] = []
@@ -81,7 +84,7 @@ def detect_flow_gaps(
         else:
             uncovered.append(entry)
 
-    return {"uncovered": uncovered, "covered": covered}
+    return {"uncovered": uncovered, "covered": covered, "unreadable": unreadable}
 
 
 def _get_flow_candidates(conn: sqlite3.Connection, min_edges: int) -> List[dict]:

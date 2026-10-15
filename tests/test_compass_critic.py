@@ -12,6 +12,7 @@ Covers the two fact-checking gaps in src/compass/critic.py:
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 from cairn.compass.critic import (
     _extract_file_refs,
@@ -301,3 +302,77 @@ class TestDefaultSectionVocab:
         assert "# Subsystems" in _DEFAULT_SECTION_VOCAB
         assert len(_DEFAULT_SECTION_VOCAB) == 10
         assert _DEFAULT_COMPLETE_SECTIONS == 5.0
+
+
+class TestValidatePathsUnreadable:
+    def test_unreadable_concept_reported_as_stale_not_dropped(self, fresh_db, tmp_path):
+        from cairn.compass.critic import validate_paths
+        from cairn.okf.bundle import OKFBundle
+
+        know = tmp_path / ".knowledge"
+        bundle = OKFBundle(str(know))
+        bundle.write_concept(OKFConcept(
+            type="Compass", title="t", resource="x",
+            concept_id="compass/mod", body="# x\n",
+        ))
+        (know / "compass" / "mod.md").write_bytes(b"\xff\xfe\x00 broken \xff")
+
+        stale = validate_paths(fresh_db, bundle)
+        entry = next(e for e in stale if e["concept_id"] == "compass/mod")
+        assert entry["verified"] == 0.0
+        assert "error" in entry
+
+
+class TestCompassValidateCLI:
+    def _seed(self, tmp):
+        db = str(Path(tmp) / "test.db")
+        know = str(Path(tmp) / ".knowledge")
+        Path(know).mkdir(parents=True, exist_ok=True)
+        from cairn.graph.schema import get_db
+        conn = get_db(db)
+        conn.close()
+        return db, know
+
+    def test_missing_knowledge_root_fails_loudly(self):
+        # A misrouted --knowledge path must not look like a vacuous pass.
+        import shutil
+        import tempfile
+        from click.testing import CliRunner
+
+        from cairn.cli import main
+
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db, know = self._seed(tmp)
+            shutil.rmtree(know)
+            result = runner.invoke(
+                main, ["compass", "validate", "--db", db, "--knowledge", know]
+            )
+            assert result.exit_code == 1
+            assert "Knowledge bundle not found" in result.output
+
+    def test_unreadable_file_does_not_abort_remaining_validation(self):
+        import tempfile
+        from click.testing import CliRunner
+
+        from cairn.cli import main
+        from cairn.okf.bundle import OKFBundle
+
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db, know = self._seed(tmp)
+            bundle = OKFBundle(know)
+            bundle.write_concept(OKFConcept(
+                type="Compass", title="Good", resource="a/b/c.py",
+                concept_id="compass/a-b-c", body="# ok\n",
+            ))
+            # Sorts before a-b-c, so the loop must survive it to reach the good file.
+            (Path(know) / "compass" / "00-bad.md").write_bytes(b"\xff\xfe\x00 broken \xff")
+
+            result = runner.invoke(
+                main, ["compass", "validate", "--db", db, "--knowledge", know]
+            )
+            assert result.exit_code == 1
+            assert "[ERROR] compass/00-bad" in result.output
+            assert "compass/a-b-c" in result.output
+            assert "total errors" in result.output

@@ -97,6 +97,15 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
 
             facts = _gather_facts(conn, module, repo)
             # facts["module"] is the repo-relative module path.
+            if dry_run:
+                click.echo("--- dry-run: task not queued ---")
+                click.echo(
+                    f"Would queue compass-synthesize task for `{facts['module']}` "
+                    f"({facts['symbol_count']} symbols, "
+                    f"{len(facts['key_files'])} key file(s))."
+                )
+                click.echo("Re-run without --dry-run to enqueue it.")
+                return
             t = create_task(bundle, "compass-synthesize", facts["module"], facts=facts)
             click.echo(f"Queued compass task: {t.id}")
             click.echo("Any agent with the cairn skill can process it:")
@@ -182,11 +191,19 @@ def compass_validate(db, knowledge):
         bundle = OKFBundle(knowledge)
         ids = bundle.list_concepts(prefix="compass/")
         if not ids:
+            if not bundle.root.is_dir():
+                click.echo(f"Knowledge bundle not found: {knowledge}")
+                sys.exit(1)
             click.echo("No compass files to validate.")
             return
         total_errors = 0
         for cid in ids:
-            concept = bundle.read_concept(cid)
+            try:
+                concept = bundle.read_concept(cid)
+            except Exception as exc:
+                click.echo(f"  [ERROR] {cid} (read error: {exc})")
+                total_errors += 1
+                continue
             result = critic_concept(concept, conn)
             status = "OK" if result.passed else "FAIL"
             click.echo(f"  [{status}] {cid} (quality={result.quality_score:.2f})")
@@ -234,18 +251,36 @@ def compass_gaps(db, knowledge):
               help="With --as-workflow, cap the number of workflow steps (default 20).")
 @click.option("--use-llm", is_flag=True,
               help="Queue the flow for agent-decoupled LLM synthesis (file-queue).")
-def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm):
+@click.option("--entry-id", default=None,
+              help="Symbol database ID for collision-safe entry resolution.")
+def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm, entry_id):
     """Generate a compass for a business FLOW traced from an entry-point symbol; --use-llm queues agent-decoupled synthesis."""
     from ..compass.generator import _gather_flow_facts, generate_flow_compass, generate_flow_workflow
     from ..compass.critic import critic_concept
     from ..okf.bundle import OKFBundle
 
     conn = get_db(db)
+    steps = []
+    workflow_cid = None
     try:
         bundle = OKFBundle(knowledge)
 
-        # Trace first (cheap) so we can report the chain before generating prose.
-        facts = _gather_flow_facts(conn, entry)
+        # A bare name that matches several definitions would trace an
+        # arbitrary one; refuse and point at the ids instead.
+        if entry_id is None:
+            from ..graph.traversal import find_definition
+            defs = [d for d in find_definition(conn, entry, limit=50)
+                    if d["name"] == entry]
+            if len(defs) > 1:
+                click.echo(f"`{entry}` is ambiguous: {len(defs)} symbols share the name.")
+                for d in defs:
+                    click.echo(f"  {d['id']}  {d['file_path']} ({d['repo']})")
+                click.echo("Re-run with --entry-id <id>, or use "
+                           "`cairn compass flow-gaps --generate` for the batch path.")
+                sys.exit(1)
+
+        # Trace once and reuse the facts for the print, the workflow, and the compass.
+        facts = _gather_flow_facts(conn, entry, entry_id=entry_id)
         # total_steps counts the entry itself; a flow worth documenting needs at
         # least one outgoing call (chain depth > 0).
         if facts["total_steps"] <= 1:
@@ -256,6 +291,12 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm)
         # --use-llm enqueues a flow-synthesize task and returns immediately,
         # mirroring `compass generate --use-llm`.
         if use_llm:
+            if dry_run:
+                click.echo("--- dry-run: task not queued ---")
+                click.echo(f"Would queue flow-synthesize task for `{entry}` "
+                           f"({facts['total_steps']} step(s)).")
+                click.echo("Re-run without --dry-run to enqueue it.")
+                return
             from ..llm.tasks import create_task
             t = create_task(bundle, "flow-synthesize", entry, facts=facts)
             click.echo(f"Traced {facts['total_steps']} step(s) from `{entry}` "
@@ -276,6 +317,14 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm)
             click.echo(f"  terminal calls: {len(facts['leaves'])}")
         click.echo("")
 
+        # Compass + critic gate run before any write so a rejected flow
+        # leaves no artifact behind.
+        concept = generate_flow_compass(entry, conn, bundle, entry_id=entry_id, facts=facts)
+
+        # Critic gate (same contract as the module compass). Run it BEFORE the
+        # dry-run return so --dry-run reflects the real verdict.
+        result = critic_concept(concept, conn)
+
         # --- Workflow generation (procedural knowledge) ---
         if as_workflow:
             from ..knowledge.workflow import flow_to_workflow
@@ -287,18 +336,9 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm)
                     if step.get("description"):
                         click.echo(f"     {step['description']}")
                 click.echo("")
-            else:
-                cid = generate_flow_workflow(entry, conn, bundle, max_steps=max_steps)
-                click.echo(f"Generated flow workflow: {cid} ({len(steps)} steps)")
-                click.echo(f"  Trace with: cairn knowledge workflow trace \"Flow: {entry}\"")
-                click.echo("")
-
-        # --- Compass generation (declarative knowledge) ---
-        concept = generate_flow_compass(entry, conn, bundle)
-
-        # Critic gate (same contract as the module compass). Run it BEFORE the
-        # dry-run return so --dry-run reflects the real verdict.
-        result = critic_concept(concept, conn)
+            elif result.passed:
+                workflow_cid = generate_flow_workflow(
+                    entry, conn, bundle, facts=facts, max_steps=max_steps)
     finally:
         conn.close()
 
@@ -327,6 +367,11 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm)
         click.echo("\nThe flow body is graph-sourced, so this usually means a stale "
                    "graph (run `cairn build`) or a generator bug.")
         sys.exit(1)
+
+    if workflow_cid:
+        click.echo(f"Generated flow workflow: {workflow_cid} ({len(steps)} steps)")
+        click.echo(f"  Trace with: cairn knowledge workflow trace \"Flow: {entry}\"")
+        click.echo("")
 
     bundle.write_concept(concept)
     click.echo(f"Generated flow compass: {concept.concept_id}")
@@ -358,6 +403,8 @@ def compass_flow_gaps(min_edges, generate, limit, dry_run, db, knowledge):
 
         uncovered = result["uncovered"]
         covered = result["covered"]
+        for cid in result.get("unreadable", ()):
+            click.echo(f"WARNING: unreadable flow compass file skipped: {cid}")
 
         if not uncovered and not covered:
             click.echo(f"No candidate flows found (min-edges={min_edges}). "
@@ -366,7 +413,7 @@ def compass_flow_gaps(min_edges, generate, limit, dry_run, db, knowledge):
 
         # --generate: batch-generate flow compasses for uncovered candidates.
         if generate:
-            from ..compass.generator import generate_flow_compass
+            from ..compass.generator import _gather_flow_facts, generate_flow_compass
             from ..compass.critic import critic_concept
 
             targets = uncovered if limit <= 0 else uncovered[:limit]
@@ -379,6 +426,7 @@ def compass_flow_gaps(min_edges, generate, limit, dry_run, db, knowledge):
             generated = 0
             rejected = 0
             skipped = 0
+            errors = 0
             for entry in targets:
                 name = entry["name"]
                 sym_id = entry.get("id")
@@ -393,29 +441,34 @@ def compass_flow_gaps(min_edges, generate, limit, dry_run, db, knowledge):
                 else:
                     display_title = f"Flow: {name}"
 
-                # Trace first to check it's non-trivial.
-                from ..compass.generator import _gather_flow_facts
-                facts = _gather_flow_facts(conn, name, entry_id=sym_id)
-                if facts["total_steps"] <= 1:
-                    click.echo(f"  SKIP  {name:40} (no outgoing calls)")
-                    skipped += 1
+                try:
+                    # Trace first to check it's non-trivial.
+                    facts = _gather_flow_facts(conn, name, entry_id=sym_id)
+                    if facts["total_steps"] <= 1:
+                        click.echo(f"  SKIP  {name:40} (no outgoing calls)")
+                        skipped += 1
+                        continue
+
+                    concept = generate_flow_compass(
+                        name, conn, bundle,
+                        entry_id=sym_id, resource=resource, title=display_title,
+                    )
+                    # The critic runs in dry-run too, so WOULD reflects the
+                    # verdict the write path would have hit.
+                    critic_result = critic_concept(concept, conn)
+                except Exception as e:
+                    click.echo(f"  ERROR {display_title} ({e})")
+                    errors += 1
                     continue
 
-                concept = generate_flow_compass(
-                    name, conn, bundle,
-                    entry_id=sym_id, resource=resource, title=display_title,
-                )
+                if not critic_result.passed:
+                    click.echo(f"  REJECT {display_title} (quality={critic_result.quality_score:.2f})")
+                    rejected += 1
+                    continue
 
                 if dry_run:
                     click.echo(f"  WOULD  {display_title}")
                     generated += 1
-                    continue
-
-                # Critic gate.
-                critic_result = critic_concept(concept, conn)
-                if not critic_result.passed:
-                    click.echo(f"  REJECT {display_title} (quality={critic_result.quality_score:.2f})")
-                    rejected += 1
                     continue
 
                 bundle.write_concept(concept)
@@ -425,7 +478,10 @@ def compass_flow_gaps(min_edges, generate, limit, dry_run, db, knowledge):
 
             click.echo("")
             action = "would generate" if dry_run else "generated"
-            click.echo(f"Batch complete: {action} {generated}, {rejected} rejected, {skipped} skipped.")
+            click.echo(f"Batch complete: {action} {generated}, {rejected} rejected, "
+                       f"{skipped} skipped, {errors} error(s).")
+            if not dry_run and (rejected or errors):
+                sys.exit(1)
             return
     finally:
         conn.close()
