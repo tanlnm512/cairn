@@ -446,5 +446,61 @@ def test_memory_validity_apply_idempotent(fresh_db):
     assert row_count == 1, "re-apply must not touch existing rows"
 
 
+def test_legacy_dataflow_pk_rebuilt_to_symbol_repo(fresh_db):
+    """A pre-existing bare-symbol-PK dataflow table is rebuilt in place to the
+    composite (symbol, repo) primary key, carrying existing rows over."""
+    fresh_db.executescript(
+        """
+        DROP TABLE dataflow;
+        CREATE TABLE dataflow (
+            symbol TEXT PRIMARY KEY,
+            repo TEXT NOT NULL,
+            within_repo TEXT,
+            cross_repo TEXT,
+            updated TIMESTAMP
+        );
+        INSERT INTO dataflow (symbol, repo, within_repo, cross_repo, updated)
+            VALUES ('Shared', 'ra', '["x"]', '[]', 0);
+        """
+    )
+    # fresh_db's initial _apply_schema already recorded the migration; reset
+    # it so this legacy table gets the rebuild treatment.
+    fresh_db.execute(
+        "DELETE FROM schema_meta WHERE key = 'dataflow.pk_symbol_repo'"
+    )
+    fresh_db.commit()
+
+    _apply_schema(fresh_db)
+
+    pk = [row[1] for row in fresh_db.execute("PRAGMA table_info(dataflow)") if row[5]]
+    assert pk == ["symbol", "repo"]
+    row = fresh_db.execute(
+        "SELECT repo, within_repo, analysis_errors FROM dataflow WHERE symbol = 'Shared'"
+    ).fetchone()
+    assert row[0] == "ra"
+    assert row[1] == '["x"]'
+    assert row[2] is None  # legacy rows carry no analysis_errors until rewritten
+    marker = fresh_db.execute(
+        "SELECT value FROM schema_meta WHERE key = 'dataflow.pk_symbol_repo'"
+    ).fetchone()
+    assert marker is not None and marker["value"] == "applied"
+
+
+def test_dataflow_pk_migration_idempotent(fresh_db):
+    """Re-applying the schema after the dataflow PK rebuild is a no-op: rows
+    are neither duplicated nor dropped."""
+    fresh_db.execute(
+        "INSERT INTO dataflow (symbol, repo, within_repo, cross_repo, updated) "
+        "VALUES ('sym', 'r1', '[]', '[]', 0)"
+    )
+    fresh_db.commit()
+
+    _apply_schema(fresh_db)  # re-run
+
+    pk = [row[1] for row in fresh_db.execute("PRAGMA table_info(dataflow)") if row[5]]
+    assert pk == ["symbol", "repo"]
+    assert fresh_db.execute("SELECT COUNT(*) FROM dataflow").fetchone()[0] == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

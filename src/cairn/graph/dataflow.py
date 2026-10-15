@@ -23,6 +23,13 @@ MAX_SYMBOLS_ENV = "CAIRN_DATAFLOW_MAX_SYMBOLS"
 def resolve_max_symbols(explicit: Optional[int] = None) -> int:
     """Resolve the explicit, environment, or default symbol cap."""
     if explicit is not None:
+        if explicit <= 0:
+            print(
+                f"warning: max_symbols={explicit!r} must be positive; "
+                f"using {DEFAULT_MAX_SYMBOLS}",
+                file=sys.stderr,
+            )
+            return DEFAULT_MAX_SYMBOLS
         return explicit
     raw = os.environ.get(MAX_SYMBOLS_ENV, "").strip()
     if not raw:
@@ -54,6 +61,7 @@ def _public_symbols(conn: sqlite3.Connection) -> List[Dict[str, str]]:
         JOIN files f ON s.file_id = f.id
         JOIN repos r ON f.repo_id = r.id
         WHERE s.kind IN ('function', 'method', 'class', 'interface', 'enum')
+        ORDER BY s.name, r.name
     """).fetchall()
 
     result = []
@@ -99,15 +107,17 @@ def _compute_dataflow_row(
     name: str,
     repo: str,
     cross_cache: Optional[Dict[str, list]] = None,
-) -> tuple[list[str], list[str]]:
-    """Return one symbol's within- and cross-repository dataflow payload."""
+) -> tuple[list[str], list[str], list[str]]:
+    """Return one symbol's within/cross-repo payload plus analysis error markers."""
     from .queries import impact_analysis, cross_repo_deps  # avoid circular import
 
+    errors: list[str] = []
     try:
         impact = impact_analysis(conn, name, max_depth=5)
         within = list({item["symbol"] for item in impact.get("impacted", []) if item.get("symbol") != name})
-    except Exception:
+    except Exception as e:
         within = []
+        errors.append(f"impact_analysis: {e}")
 
     if cross_cache is not None and repo in cross_cache:
         cross = cross_cache[repo]
@@ -115,11 +125,29 @@ def _compute_dataflow_row(
         try:
             xref = cross_repo_deps(conn, repo)
             cross = [d["repo"] for d in xref.get("dependents", [])]
-        except Exception:
+        except Exception as e:
             cross = []
+            errors.append(f"cross_repo_deps: {e}")
         if cross_cache is not None:
             cross_cache[repo] = cross
-    return within, cross
+    return within, cross, errors
+
+
+def _purge_non_public_rows(conn: sqlite3.Connection, live_names: set[str]) -> None:
+    """Delete dataflow rows whose symbol is no longer a public symbol."""
+    conn.execute(
+        "CREATE TEMP TABLE IF NOT EXISTS dataflow_live_names "
+        "(symbol TEXT PRIMARY KEY)"
+    )
+    conn.execute("DELETE FROM dataflow_live_names")
+    conn.executemany(
+        "INSERT OR IGNORE INTO dataflow_live_names (symbol) VALUES (?)",
+        ((name,) for name in live_names),
+    )
+    conn.execute(
+        "DELETE FROM dataflow "
+        "WHERE symbol NOT IN (SELECT symbol FROM dataflow_live_names)"
+    )
 
 
 def build_dataflow_index(
@@ -137,21 +165,28 @@ def build_dataflow_index(
             f"above {len(symbols)} for full coverage.",
             file=sys.stderr,
         )
+        # A capped build keeps rows of still-public symbols beyond the cap,
+        # so only names the graph no longer declares public are stale.
+        _purge_non_public_rows(conn, {s["name"] for s in symbols})
         symbols = symbols[:max_symbols]
+    else:
+        conn.execute("DELETE FROM dataflow")
     count = 0
     now = time.time()
 
     cross_cache: Dict[str, list] = {}
     batch: list[tuple] = []
     for sym in symbols:
-        within, cross = _compute_dataflow_row(conn, sym["name"], sym["repo"], cross_cache)
+        within, cross, errors = _compute_dataflow_row(conn, sym["name"], sym["repo"], cross_cache)
 
-        batch.append((sym["name"], sym["repo"], json.dumps(within), json.dumps(cross), now))
+        batch.append(
+            (sym["name"], sym["repo"], json.dumps(within), json.dumps(cross), json.dumps(errors), now)
+        )
         count += 1
         if len(batch) >= _SQLITE_IN_CHUNK:
             conn.executemany("""
-                INSERT OR REPLACE INTO dataflow (symbol, repo, within_repo, cross_repo, updated)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO dataflow (symbol, repo, within_repo, cross_repo, analysis_errors, updated)
+                VALUES (?, ?, ?, ?, ?, ?)
             """, batch)
             batch.clear()
         if progress:
@@ -159,8 +194,8 @@ def build_dataflow_index(
 
     if batch:
         conn.executemany("""
-            INSERT OR REPLACE INTO dataflow (symbol, repo, within_repo, cross_repo, updated)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO dataflow (symbol, repo, within_repo, cross_repo, analysis_errors, updated)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, batch)
 
     conn.commit()
@@ -471,13 +506,13 @@ def maintain_dataflow_index(conn: sqlite3.Connection, affected_names) -> int:
             if repo in repos_done:
                 continue  # one row per (name, repo); payload is name-keyed
             repos_done.add(repo)
-            within, cross = _compute_dataflow_row(conn, name, repo, cross_cache)
+            within, cross, errors = _compute_dataflow_row(conn, name, repo, cross_cache)
             conn.execute(
                 """
-                INSERT OR REPLACE INTO dataflow (symbol, repo, within_repo, cross_repo, updated)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO dataflow (symbol, repo, within_repo, cross_repo, analysis_errors, updated)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (name, repo, json.dumps(within), json.dumps(cross), now),
+                (name, repo, json.dumps(within), json.dumps(cross), json.dumps(errors), now),
             )
             count += 1
         if not repos_done:
@@ -564,17 +599,24 @@ def closure_has_seed_cycle(
 
 def get_dataflow(conn: sqlite3.Connection, symbol: str) -> Optional[Dict]:
     """Return one symbol's precomputed dataflow row or None."""
-    row = conn.execute(
-        "SELECT * FROM dataflow WHERE symbol = ?", (symbol,)
-    ).fetchone()
+    rows = conn.execute(
+        "SELECT * FROM dataflow WHERE symbol = ? ORDER BY repo", (symbol,)
+    ).fetchall()
 
-    if row is None:
+    if not rows:
         return None
 
-    return {
+    row = rows[0]
+    out = {
         "symbol": row["symbol"],
         "repo": row["repo"],
         "within_repo": json.loads(row["within_repo"] or "[]"),
         "cross_repo": json.loads(row["cross_repo"] or "[]"),
         "updated": row["updated"],
     }
+    errors = json.loads(row["analysis_errors"] or "[]")
+    if errors:
+        out["analysis_errors"] = errors
+    if len(rows) > 1:
+        out["ambiguous"] = True
+    return out
