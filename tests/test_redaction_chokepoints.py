@@ -522,12 +522,12 @@ class TestKnowledgeNamespaceGuard:
 
 class TestMemoryDeleteNamespaceGuard:
     def test_delete_memory_refuses_out_of_namespace_resolution(self, bundle):
-        """get_memory's raw-path fallback can resolve compass concepts; the
-        store chokepoint must refuse to unlink them."""
+        """get_memory refuses non-memory resolutions, so delete never unlinks
+        a compass concept."""
         from cairn.memory.store import delete_memory, get_memory
 
         cid = _write_compass_doc(bundle, "compass/other-module")
-        assert get_memory(bundle, "compass/other-module") is not None  # fixture: fallback resolves
+        assert get_memory(bundle, "compass/other-module") is None
         assert delete_memory(bundle, "compass/other-module") is False
         assert (bundle.root / f"{cid}.md").exists(), "compass file must survive"
 

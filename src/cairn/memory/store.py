@@ -1,6 +1,7 @@
 """Memory storage: tiered OKF files (raw/drafts/tribal/archived)."""
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -11,6 +12,8 @@ from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 from ..okf.provenance import Tier
 from ..okf.utils import slugify
+
+logger = logging.getLogger(__name__)
 
 TIERS = ("raw", "drafts", "tribal", "archived")
 STANCES = ("preferred", "tentative", "contested")
@@ -77,6 +80,7 @@ def create_memory(
         raise ValueError(
             f"stance must be one of {'|'.join(STANCES)}, got {stance!r}"
         )
+    confidence = min(1.0, max(0.0, float(confidence)))
     tier = tier_for_score(score if score is not None else confidence)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     okf_type = f"{TIER_TYPE_PREFIX[tier]}-{type_}"
@@ -119,6 +123,18 @@ def _rel_id(bundle: OKFBundle, concept_id: str) -> str:
         return str(Path(concept_id).relative_to(bundle.root))
     except ValueError:
         return concept_id
+
+
+def _in_memory_namespace(bundle: OKFBundle, concept: OKFConcept) -> bool:
+    """Whether the concept's resolved id lives under the bundle's memory/ tree."""
+    resolved = concept.concept_id
+    try:
+        resolved = str(
+            Path(resolved).resolve().relative_to(Path(bundle.root).resolve())
+        )
+    except ValueError:
+        pass
+    return resolved == "memory/" or resolved.startswith("memory/")
 
 
 def parse_memory_timestamp(ts) -> Optional[datetime]:
@@ -179,17 +195,19 @@ def store_memory(
 ):
     """Write a memory to its tier and move validity and old-file cleanup with it."""
     t = tier or concept.extensions.get("memory_tier", "drafts")
-    slug = slugify(concept.title or "") or "memory"
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if t == "raw":
-        import uuid
-        unique_suffix = uuid.uuid4().hex[:6]
-        concept.concept_id = f"{TIER_DIRS['raw']}/{ts}-{slug}-{unique_suffix}"
+    old_rel = _rel_id(bundle, old_id) if old_id else None
+    if old_rel and old_rel.startswith(TIER_DIRS[t] + "/"):
+        # Same-tier re-store keeps the id so refs and embedding rows stay attached.
+        concept.concept_id = old_rel
     else:
-        # Add UUID suffix for non-raw tiers to prevent same-title collisions
+        slug = slugify(concept.title or "") or "memory"
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         import uuid
         unique_suffix = uuid.uuid4().hex[:6]
-        concept.concept_id = f"{TIER_DIRS[t]}/{slug}-{unique_suffix}"
+        if t == "raw":
+            concept.concept_id = f"{TIER_DIRS['raw']}/{ts}-{slug}-{unique_suffix}"
+        else:
+            concept.concept_id = f"{TIER_DIRS[t]}/{slug}-{unique_suffix}"
     # Keep tier metadata in sync with file location.
     concept.extensions["memory_tier"] = t
     write_validity(
@@ -204,16 +222,16 @@ def store_memory(
         bundle=bundle,
         conn=conn,
     )
-    # Clean up old tier file only when old_id is explicitly provided.
-    if old_id and old_id != concept.concept_id:
-        old_file = Path(bundle.root) / f"{old_id}.md"
+    # Clean up old tier file only when the id actually moved.
+    if old_rel and old_rel != concept.concept_id:
+        old_file = Path(bundle.root) / f"{old_rel}.md"
         if old_file.exists():
             old_file.unlink()
             bundle.invalidate_search_index()
         if conn is not None:
             conn.execute(
                 "DELETE FROM memory_validity WHERE concept_id = ?",
-                (_rel_id(bundle, old_id),),
+                (old_rel,),
             )
     return concept.concept_id
 
@@ -356,29 +374,32 @@ def list_memories(
     for cid in bundle.list_concepts(prefix=prefix):
         try:
             c = bundle.read_concept(cid)
-            if tag and tag not in c.tags:
-                continue
-            out.append(c)
         except Exception:
+            logger.warning("skipping unreadable memory concept: %s", cid)
             continue
+        if tag and tag not in c.tags:
+            continue
+        out.append(c)
     return out
 
 
 def get_memory(bundle: OKFBundle, path: str) -> Optional[OKFConcept]:
-    """Read a memory by its full concept id or path."""
+    """Read a memory-namespaced concept by its full concept id or path."""
     cid = path
     if cid.endswith(".md"):
         cid = cid[:-3]
     if not cid.startswith("memory/") and "/memory/" not in cid:
         cid = f"memory/{cid}"
     try:
-        return bundle.read_concept(cid)
+        concept = bundle.read_concept(cid)
     except FileNotFoundError:
         # Try as a relative path from the bundle root.
         try:
-            return bundle.read_concept(path.replace(".md", ""))
+            concept = bundle.read_concept(path.replace(".md", ""))
         except FileNotFoundError:
             return None
+    # The fallback can resolve outside memory/ (compass/wiki); refuse it.
+    return concept if _in_memory_namespace(bundle, concept) else None
 
 
 def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
@@ -395,14 +416,7 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
             return False
         abs_cid = cid
         if concept is not None:
-            resolved = concept.concept_id
-            try:
-                resolved = str(
-                    Path(resolved).resolve().relative_to(Path(bundle.root).resolve())
-                )
-            except ValueError:
-                pass
-            if not (resolved == "memory/" or resolved.startswith("memory/")):
+            if not _in_memory_namespace(bundle, concept):
                 return False
             cid = concept.concept_id
             abs_cid = cid
@@ -477,7 +491,7 @@ def purge_archived(bundle: OKFBundle, max_days: int = 90) -> int:
                 if file_path.exists():
                     file_path.unlink()
                     bundle.invalidate_search_index()
-                purged += 1
+                    purged += 1
     return purged
 
 
@@ -500,7 +514,7 @@ def consolidate_memories(bundle: OKFBundle) -> int:
             try:
                 concepts.append(bundle.read_concept(cid))
             except Exception:
-                pass
+                logger.warning("skipping unreadable memory concept: %s", cid)
 
         groups: dict[str, list[OKFConcept]] = {}
         for c in concepts:
@@ -534,13 +548,14 @@ def consolidate_memories(bundle: OKFBundle) -> int:
                 concept_id=f"memory/tribal/{_slugify(new_title)}-{unique_suffix}",
                 extensions={
                     "memory_tier": "tribal",
-                    "consolidated_from": [c.concept_id for c in group],
+                    "consolidated_from": [_rel_id(bundle, c.concept_id) for c in group],
                 },
             )
             bundle.write_concept(unified_concept)
 
             for c in group:
                 if c.concept_id and c.concept_id != unified_concept.concept_id:
+                    source_id = _rel_id(bundle, c.concept_id)
                     try:
                         old_file = Path(bundle.root) / f"{c.concept_id}.md"
                         c.extensions["memory_tier"] = "archived"
@@ -553,9 +568,10 @@ def consolidate_memories(bundle: OKFBundle) -> int:
                         if old_file.exists():
                             old_file.unlink()
                             bundle.invalidate_search_index()
+                        consolidated_count += 1
                     except Exception:
-                        pass
-
-            consolidated_count += len(group)
+                        logger.warning(
+                            "failed to archive consolidated source: %s", source_id
+                        )
 
     return consolidated_count

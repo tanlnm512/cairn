@@ -247,6 +247,33 @@ class TestReflectVerdicts:
         assert STANCE_PEER_KEY not in m.extensions
         assert summary["changed"] == 1
 
+    def test_stale_peer_cleared_when_evidence_disappears(self, db, bundle):
+        """A reflect-written peer id is dropped once the contested verdict can
+        no longer fire, even when no fresh verdict replaces it."""
+        _add_symbol(db, "ApiClient", 2)
+        _write_memory(
+            bundle, "memory/tribal/aaa-old", "Use `ApiClient` or `LegacyLogin`.",
+            memory_refs_baseline=1.0,
+        )
+        _write_memory(
+            bundle, "memory/tribal/bbb-new", "Use `ApiClient` via factory.",
+            memory_refs_baseline=1.0,
+        )
+        _link_superseded(bundle, "memory/tribal/aaa-old", "memory/tribal/bbb-new")
+        reflect_store(bundle, db)
+
+        old = bundle.read_concept("memory/tribal/aaa-old")
+        assert old.extensions[STANCE_PEER_KEY] == "memory/tribal/bbb-new"
+
+        # Evidence disappears: the superseding peer's file is gone.
+        (bundle.root / "memory/tribal/bbb-new.md").unlink()
+
+        summary = reflect_store(bundle, db)
+
+        old = bundle.read_concept("memory/tribal/aaa-old")
+        assert STANCE_PEER_KEY not in old.extensions
+        assert summary["changed"] == 1
+
     def test_contested_outranks_baseline_drop(self, db, bundle):
         _add_symbol(db, "ApiClient", 2)
         _write_memory(

@@ -693,13 +693,28 @@ class TestMemoryCliDurability:
 
     def test_list_with_corrupt_db_maps_to_cli_error(self, runner, tmp_path):
         """A non-DB file at --db yields a CLI error message, not a raw traceback."""
+        knowledge = str(tmp_path / "k")
+        bundle = OKFBundle(knowledge)
+        store_memory(
+            create_memory(type_="pattern", title="listable", body="content", confidence=0.7),
+            bundle,
+        )
         db_path = tmp_path / "junk.db"
         db_path.write_text("this is not a database")
         result = runner.invoke(_main(), [
-            "memory", "list", "--db", str(db_path), "--knowledge", str(tmp_path / "k"),
+            "memory", "list", "--db", str(db_path), "--knowledge", knowledge,
         ])
         assert result.exit_code == 1
         assert "not a valid cairn database" in result.output
+
+    def test_digest_negative_limit_is_usage_error(self, runner, tmp_path):
+        """A negative --limit maps to a usage error instead of a traceback."""
+        result = runner.invoke(_main(), [
+            "memory", "digest", "--limit", "-1",
+            "--knowledge", str(tmp_path / "k"),
+        ])
+        assert result.exit_code == 2
+        assert "non-negative" in result.output
 
 
 def _main():
