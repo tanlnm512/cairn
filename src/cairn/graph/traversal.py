@@ -103,12 +103,15 @@ def get_callees(
     limit: int = 200,
     fuzzy: bool = False,
     kind: Optional[str] = None,
+    symbol_id: Optional[str] = None,
 ) -> List[sqlite3.Row]:
     """Return edges whose source is a symbol named `name` (what it calls)."""
     cur = conn.cursor()
     target_clause = "" if fuzzy else "AND e.target_id IS NOT NULL"
     kind_clause = "AND e.kind = ?" if kind else ""
     kind_params: Tuple[str, ...] = (kind,) if kind else ()
+    source_clause = "s.id = ?" if symbol_id is not None else "s.name = ?"
+    source_params: Tuple[str, ...] = (symbol_id,) if symbol_id is not None else (name,)
     rows = cur.execute(
         f"""SELECT e.line AS edge_line, e.column AS edge_column, e.kind AS edge_kind,
                    COALESCE(t.name, e.target_name) AS callee_name,
@@ -120,10 +123,10 @@ def get_callees(
             JOIN symbols s ON e.source_id = s.id
             JOIN files f ON s.file_id = f.id
             LEFT JOIN symbols t ON e.target_id = t.id
-            WHERE s.name = ? {target_clause} {kind_clause}
+            WHERE {source_clause} {target_clause} {kind_clause}
             ORDER BY f.repo_id, f.path, e.line, COALESCE(t.name, e.target_name)
             LIMIT ?""",
-        (name, *kind_params, limit),
+        (*source_params, *kind_params, limit),
     ).fetchall()
     return list(rows)
 

@@ -211,7 +211,7 @@ def _hop_ids(conn: sqlite3.Connection, seed: PackSymbol) -> List[str]:
     ids: List[str] = []
     directions: Tuple[Tuple[Callable[..., Any], str, Dict[str, Any]], ...] = (
         (get_callers, "caller_id", {"symbol_id": seed.symbol_id}),
-        (get_callees, "resolved", {}),
+        (get_callees, "resolved", {"symbol_id": seed.symbol_id}),
     )
     for fetch, field, extra in directions:
         filled = 0

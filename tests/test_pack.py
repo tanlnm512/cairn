@@ -946,3 +946,42 @@ def test_fit_admits_enrichment_before_lower_rank_symbols(
     assert [i.kind for i in tight.items] == ["source", "compass", "memory"]
     assert tight.dropped == {"symbols": 1, "compass": 0, "memories": 0}
     assert 0 < _reported_tokens(render_pack(tight)) <= budget
+
+
+def test_hop_ids_callees_are_symbol_scoped(fresh_db):
+    """Callee expansion keys on the seed's symbol id, so a same-named
+    symbol's callees in another file cannot leak into the hop set."""
+    from cairn.pack import PackSymbol, _hop_ids
+
+    conn = fresh_db
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('test', 'test', '/tmp/test')")
+    conn.executemany(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (?, 'test', ?, 'python')",
+        [("f1", "a.py"), ("f2", "b.py")],
+    )
+    conn.executemany(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, line_start, line_end) "
+        "VALUES (?, ?, ?, 'function', ?, 1, 10)",
+        [
+            ("s1", "f1", "handle", "a.handle"),
+            ("s2", "f2", "handle", "b.handle"),
+            ("t1", "f1", "alpha", "a.alpha"),
+            ("t2", "f2", "beta", "b.beta"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO edges (id, source_id, target_id, target_name, kind, resolution) "
+        "VALUES (?, ?, ?, ?, 'calls', 'exact')",
+        [("e1", "s1", "t1", "alpha"), ("e2", "s2", "t2", "beta")],
+    )
+    conn.commit()
+
+    seed = PackSymbol(
+        symbol_id="s1", name="handle", qualified_name="a.handle",
+        kind="function", file_path="a.py", is_seed=True,
+    )
+
+    ids = _hop_ids(conn, seed)
+
+    assert "t1" in ids
+    assert "t2" not in ids
