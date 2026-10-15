@@ -469,3 +469,37 @@ def test_auto_pass_degrades_when_pyright_absent(tmp_path: Path) -> None:
     assert report["upgraded"] == 0
     assert report["budget_hit"] is None
     assert any("pyright unavailable" in n for n in report["notices"])
+
+
+class ShutdownFailingTransport(FakeJsonRpcTransport):
+    def shutdown(self):
+        raise RuntimeError("shutdown pipe broken")
+
+
+def test_shutdown_failure_keeps_upgrades(tmp_path: Path) -> None:
+    """A failing courtesy shutdown must not roll back upgraded edges."""
+    workspace, implementation = _workspace(tmp_path, "shutdown_fail")
+    transport = ShutdownFailingTransport(
+        {
+            "uri": implementation.as_uri(),
+            "range": {"start": {"line": 1, "character": 0}},
+        },
+        [],
+    )
+
+    summary = build_graph(
+        workspace=workspace,
+        db_path=str(tmp_path / "shutdown-fail.db"),
+        verbose=False,
+        lsp=True,
+        lsp_transport=transport,
+    )
+
+    conn = sqlite3.connect(str(tmp_path / "shutdown-fail.db"))
+    conn.row_factory = sqlite3.Row
+    try:
+        assert _edge(conn, "resolved_target")["resolution"] == "exact"
+    finally:
+        conn.close()
+    assert summary["lsp"]["upgraded"] == 1
+    assert transport.closed
