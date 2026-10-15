@@ -186,10 +186,7 @@ class OKFBundle:
     def search(
         self, query: str, tags: Optional[List[str]] = None, limit: Optional[int] = 20
     ) -> List[OKFConcept]:
-        """Simple text search across concept title, description, tags, body.
-
-        Lazily-indexed; invalidated on write; ``limit=None`` returns all matches.
-        """
+        """Scored text search over title/description/tags/body; ``limit=None`` returns all matches."""
         if self._index is None:
             self._index = self._build_search_index()
         query_lower = query.lower()

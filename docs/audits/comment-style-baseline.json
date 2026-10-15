@@ -150,13 +150,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "comment:7d6eecc3644f8b435d6ce175da93432452e1e6e72280f825f79dfbc24c750815",
-      "paths": [
-        "src/cairn/okf/bundle.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "comment:7f107640d992355ed40c07c017c6588dce99d77be6b03334ff20ab2b113abc8f",
       "paths": [
         "src/cairn/compass/router.py"
@@ -209,13 +202,6 @@
       "fingerprint": "comment:9f9fe72bcd908e4e76d3a59fa527aeca01903a0b5a0433dc85e6bd880082a2ea",
       "paths": [
         "src/cairn/llm/tasks.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "comment:a4bf6d2e359c8de69db42340290b981e381350b42e264e1c51f843036e5c1e65",
-      "paths": [
-        "src/cairn/okf/bundle.py"
       ]
     },
     {
@@ -328,13 +314,6 @@
       "fingerprint": "docstring:056114ffbf93598f12f24b4d4542e3aa2bde8816409d20ee6342df859751ce21",
       "paths": [
         "src/cairn/wiki/pipeline.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:05a3aa0fedd8b1658b3942696332b4e68b7d8ce326220a4622a4fac3b2451808",
-      "paths": [
-        "src/cairn/okf/bundle.py"
       ]
     },
     {
@@ -878,13 +857,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:6e3d55773add64f817fc6d37f670bcf6b5178a70750992fb99dd69a39c47cfec",
-      "paths": [
-        "src/cairn/okf/bundle.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:723a55a5d2bb32f917cbc049ac4e5752ee833603841055791785b502e25e89fd",
       "paths": [
         "src/cairn/refs.py"
@@ -958,13 +930,6 @@
       "fingerprint": "docstring:80dddc29b6f7d86191960bdbbf8e29ddb21aef05432dc9bf9a1ca2bd13b822b1",
       "paths": [
         "src/cairn/compass/generator.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:816d8d0ea1399f62eefd55e672037e2fb640e8b33c0a2a29fa51d22cf8bfe9fe",
-      "paths": [
-        "src/cairn/okf/bundle.py"
       ]
     },
     {
