@@ -14,7 +14,10 @@ def _refresh_conn(conn, refresh: bool | None = None):
     """Refresh the graph before a query; report unrepaired drift on stderr."""
     from ..graph.watcher import refresh_for_query
 
-    report = refresh_for_query(conn, repair=refresh)
+    try:
+        report = refresh_for_query(conn, repair=refresh)
+    except RuntimeError as error:
+        raise click.ClickException(str(error)) from error
     if report.drifted_paths and not report.repaired:
         click.echo(report.banner(), err=True)
     return report
@@ -149,7 +152,7 @@ def federated_search(query, limit, as_json, shared_embed):
         raise click.UsageError(str(exc)) from exc
     if as_json:
         click.echo(json.dumps(asdict(result), indent=2, default=str))
-        if not result.states:
+        if not result.hits:
             sys.exit(1)
         return
     if not result.states:
@@ -246,6 +249,11 @@ def impact(symbol, depth, db, as_json, refresh, fuzzy):
         click.echo(f"No impacted symbols for '{symbol}'.", err=True)
         sys.exit(1)
     click.echo(f"Total impacted: {result['total']}")
+    if result["truncated"]:
+        click.echo(
+            "Truncated: hit the symbol cap; narrow the query for full coverage.",
+            err=True,
+        )
     # Group by depth for readability.
     by_depth: dict[int, list] = {}
     for r in result["impacted"]:
@@ -266,10 +274,16 @@ def impact(symbol, depth, db, as_json, refresh, fuzzy):
 @click.argument("repo")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-def deps(repo, db, as_json):
+@click.option(
+    "--refresh/--no-refresh",
+    default=None,
+    help="Reindex drifted files before answering.",
+)
+def deps(repo, db, as_json, refresh):
     """Cross-repo dependencies for REPO."""
     conn = get_db(db)
     try:
+        _refresh_conn(conn, refresh)
         result = queries.cross_repo_deps(conn, repo)
     finally:
         conn.close()

@@ -261,6 +261,54 @@ class TestUpdatePass:
         finally:
             scanner_mod._gitignore_cache.pop(str(repo), None)
 
+    def test_deleted_untracked_file_is_swept_from_the_graph(
+        self, tmp_path, monkeypatch, fake_watchdog
+    ):
+        """A deleted UNTRACKED file appears in neither `git diff HEAD` nor
+        `ls-files --others`, so git-based redetection never reindexes it:
+        the pass sweeps its own deletion events and the ghost rows die."""
+        ws, repo = _make_corpus(tmp_path)
+        db = _make_db(tmp_path)
+        src = repo / "src" / "ghost.py"
+        src.write_text("def ghost():\n    return 1\n")
+
+        conn = sqlite3.connect(db)
+        try:
+            conn.execute(
+                "INSERT INTO repos (id, name, path) VALUES ('repo', 'repo', ?)",
+                (str(repo),),
+            )
+            conn.execute(
+                "INSERT INTO files (id, repo_id, path, language) "
+                "VALUES ('f-ghost', 'repo', 'src/ghost.py', 'python')"
+            )
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind) "
+                "VALUES ('s-ghost', 'f-ghost', 'ghost', 'function')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        src.unlink()  # deleted while untracked (never git-added)
+
+        # Redetection sees nothing (no git diff, no untracked files): the
+        # sweep below must perform the removal alone.
+        monkeypatch.setattr(
+            "cairn.graph.incremental.incremental_update",
+            lambda **kwargs: {"files_reindexed": 0},
+        )
+
+        svc = FileWatcherService(str(ws), db, debounce_s=0.05)
+        assert svc.start() is True
+        try:
+            svc._update_pass({str(src)})
+
+            assert _rows(db, "SELECT path FROM files") == []
+            assert _rows(db, "SELECT name FROM symbols") == []
+            assert _rows(db) == []  # pending_sync cleared too
+        finally:
+            svc.stop()
+
 
 # ---------------------------------------------------------------------------
 # Kill switches and degradation

@@ -393,6 +393,18 @@ def _areas(seeds: list[dict], radius: list[dict]) -> list[dict]:
     ]
 
 
+def _result_notes(result: dict) -> list[str]:
+    """Unrepaired-drift and truncation notices for the rendered surfaces."""
+    notes: list[str] = []
+    if result.get("stale_graph"):
+        notes.append(result["stale_graph"])
+    if result.get("truncated"):
+        notes.append(
+            "Truncated: results hit the radius cap; some dependents are missing."
+        )
+    return notes
+
+
 def _render_text(result: dict) -> str:
     lines = ["Blast radius", f"Basis: {result['basis']['kind']} ({result['basis']['base']})"]
     for area in result["areas"]:
@@ -416,6 +428,9 @@ def _render_text(result: dict) -> str:
             lines.append("  No dependents")
     if not result["areas"]:
         lines.extend(["", "Dependents:", "  No dependents"])
+    notes = _result_notes(result)
+    if notes:
+        lines.extend(["", *notes])
     return "\n".join(lines) + "\n"
 
 
@@ -440,6 +455,9 @@ def _render_markdown(result: dict) -> str:
         lines.append("")
     if not result["areas"]:
         lines.extend(["## Dependents", "", "- No dependents", ""])
+    notes = _result_notes(result)
+    if notes:
+        lines.extend([""] + [f"_{note}_" for note in notes])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -468,6 +486,7 @@ def _mermaid_id(name: str, used: set[str]) -> str:
 
 def _render_mermaid(result: dict) -> str:
     lines = ["flowchart TD"]
+    lines.extend(f"    %% {note}" for note in _result_notes(result))
     if not result["radius"]:
         lines.append("    %% No dependents")
         return "\n".join(lines) + "\n"
@@ -553,7 +572,7 @@ def compute_blast(
         conn, deleted_seeds, fuzzy=fuzzy, limit=limit
     )
 
-    refresh_for_query(conn, repair=refresh)
+    report = refresh_for_query(conn, repair=refresh)
     live_changed = [item for item in changed if not item["deleted"]]
     live_seeds, live_unindexed = _seed_symbols(conn, live_changed)
     live_radius, live_cycles, live_truncated = _radius(
@@ -604,6 +623,7 @@ def compute_blast(
         "unindexed_files": unindexed,
         "deleted_files": sorted(set(deleted)),
         "truncated": truncated,
+        "stale_graph": report.banner(),
         "taint_paths": taint_paths,
     }
 

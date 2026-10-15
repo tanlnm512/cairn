@@ -90,6 +90,7 @@ def get_callers(
            JOIN files f ON s.file_id = f.id
            WHERE {target_clause}
               {kind_clause}
+           ORDER BY f.repo_id, f.path, e.line, s.name
            LIMIT ?""",
         (*target_params, *kind_params, limit),
     ).fetchall()
@@ -120,6 +121,7 @@ def get_callees(
             JOIN files f ON s.file_id = f.id
             LEFT JOIN symbols t ON e.target_id = t.id
             WHERE s.name = ? {target_clause} {kind_clause}
+            ORDER BY f.repo_id, f.path, e.line, COALESCE(t.name, e.target_name)
             LIMIT ?""",
         (name, *kind_params, limit),
     ).fetchall()

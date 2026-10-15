@@ -268,6 +268,28 @@ class FederatedSearchTests(FederationStoreCase):
         ]
         self.assertEqual(rendered, expected)
 
+    def test_cli_zero_hits_exits_nonzero_in_both_modes(self):
+        """Zero hits exits 1 with and without --json; only the payload
+        differs (registered stores are still named in the states map)."""
+        import json
+        from click.testing import CliRunner
+
+        from cairn.cli.main import main
+
+        with self._silence_logging():
+            as_json = CliRunner().invoke(
+                main, ["federated-search", "no_such_symbol_zzz", "--json"]
+            )
+            as_text = CliRunner().invoke(
+                main, ["federated-search", "no_such_symbol_zzz"]
+            )
+
+        self.assertEqual(as_json.exit_code, 1, as_json.output)
+        payload = json.loads(as_json.stdout)
+        self.assertEqual(payload["hits"], [])
+        self.assertTrue(payload["states"], "registered stores stay named")
+        self.assertEqual(as_text.exit_code, 1, as_text.output)
+
 
 class UnavailableStoreTests(FederationStoreCase):
     """Named dropped-store report: missing, locked, unindexed, no stores."""

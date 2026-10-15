@@ -503,3 +503,80 @@ def test_dfs_resolves_same_name_callers(fresh_db):
 
     res = impact_analysis(fresh_db, "hub", max_depth=5, use_index=False)
     assert res["total"] == 20
+
+
+# --- Deterministic LIMIT subsets ----------------------------------------------
+# Which caller/callee rows survive a cap used to follow SQL enumeration order;
+# the ORDER BY pins the surviving subset to (repo, file, line, name).
+
+
+def _seed_ordering_graph(db: sqlite3.Connection) -> None:
+    db.execute("INSERT INTO repos (id, name, path) VALUES ('r', 'r', '/tmp/r')")
+    db.executemany(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (?, 'r', ?, 'python')",
+        [("fA", "a.py"), ("fB", "b.py"), ("fC", "c.py")],
+    )
+    db.executemany(
+        "INSERT INTO symbols (id, file_id, name, kind, line_start) "
+        "VALUES (?, ?, ?, 'function', ?)",
+        [
+            ("sLeaf", "fA", "leaf", 1),
+            ("sHub", "fA", "hub", 1),
+            ("sAlpha", "fA", "alpha", 20),
+            ("sZeta", "fB", "zeta", 30),
+            ("sMid", "fC", "mid", 10),
+            ("sAlphaCallee", "fA", "alpha_callee", 10),
+        ],
+    )
+    # Deliberately unsorted insert order: the query, not rowid order, decides.
+    db.executemany(
+        "INSERT INTO edges (id, source_id, target_id, target_name, kind, line, resolution) "
+        "VALUES (?, ?, ?, ?, 'calls', ?, ?)",
+        [
+            ("e1", "sZeta", "sLeaf", None, 30, "exact"),
+            ("e2", "sMid", "sLeaf", None, 10, "exact"),
+            ("e3", "sAlpha", "sLeaf", None, 20, "exact"),
+            ("e4", "sHub", None, "beta_callee", 30, "unresolved"),
+            ("e5", "sHub", "sAlphaCallee", None, 10, "exact"),
+            ("e6", "sHub", None, "gamma_callee", 20, "unresolved"),
+        ],
+    )
+    db.commit()
+
+
+def test_get_callers_limit_subset_is_deterministic(fresh_db):
+    from cairn.graph.traversal import get_callers
+
+    _seed_ordering_graph(fresh_db)
+
+    rows = get_callers(fresh_db, "leaf", limit=10)
+    assert [(r["file_path"], r["edge_line"], r["caller_name"]) for r in rows] == [
+        ("a.py", 20, "alpha"),
+        ("b.py", 30, "zeta"),
+        ("c.py", 10, "mid"),
+    ]
+
+    capped = get_callers(fresh_db, "leaf", limit=2)
+    assert [(r["file_path"], r["edge_line"], r["caller_name"]) for r in capped] == [
+        ("a.py", 20, "alpha"),
+        ("b.py", 30, "zeta"),
+    ]
+
+
+def test_get_callees_limit_subset_is_deterministic(fresh_db):
+    from cairn.graph.traversal import get_callees
+
+    _seed_ordering_graph(fresh_db)
+
+    rows = get_callees(fresh_db, "hub", limit=10, fuzzy=True)
+    assert [(r["edge_line"], r["callee_name"]) for r in rows] == [
+        (10, "alpha_callee"),
+        (20, "gamma_callee"),
+        (30, "beta_callee"),
+    ]
+
+    capped = get_callees(fresh_db, "hub", limit=2, fuzzy=True)
+    assert [(r["edge_line"], r["callee_name"]) for r in capped] == [
+        (10, "alpha_callee"),
+        (20, "gamma_callee"),
+    ]
