@@ -19,7 +19,7 @@ def wiki_generate(
 ) -> str:
     """Plan the deterministic wiki and queue one critic-gated task per page (refine_catalog queues the catalog task instead)."""
     from cairn.wiki.catalog import WikiPlannerError
-    from cairn.wiki.pipeline import run_wiki_generate
+    from cairn.wiki.pipeline import WikiManifestWriteError, run_wiki_generate
 
     pages = _clamp(pages, 1, 50)  # bound LLM-supplied value at the boundary
     conn = _conn()
@@ -31,6 +31,11 @@ def wiki_generate(
             )
         except WikiPlannerError as exc:
             return f"wiki_generate: {exc} Nothing was queued."
+        except WikiManifestWriteError as exc:
+            return (
+                f"wiki_generate: {exc} Nothing was recorded; "
+                "re-running adopts the already-live tasks."
+            )
     finally:
         conn.close()
 
