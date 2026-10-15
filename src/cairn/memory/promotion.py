@@ -64,11 +64,7 @@ def capture_memory(
         )
         signals = score_memory(concept, conn, bundle)
         apply_score(concept, signals)
-        body_refs = extract_file_refs(concept.body or "") + extract_symbol_refs(
-            concept.body or ""
-        )
-        if body_refs:
-            concept.extensions["memory_refs_baseline"] = signals["graph_verification"]
+        _seed_refs_baseline(concept, signals)
         tier = store_mod.tier_for_score(signals["score"])
         if _is_session_bookkeeping(title, body):
             tier = "raw"
@@ -150,6 +146,8 @@ def record_references_batch(
                 conn.commit()
                 break
             except sqlite3.OperationalError:
+                # Drop partial inserts or the retry collides on the fixed PKs.
+                conn.rollback()
                 if attempt == 2:
                     raise
                 time.sleep(0.05)
@@ -264,10 +262,14 @@ def search_memory(
     # Lexical broaden: only pay the cost of reading every memory concept from
     # disk when substring search alone came up thin.
     if len(lexical_hits) <= 2:
-        all_mem = [
-            c for cid in bundle.list_concepts(prefix="memory/")
-            if (c := bundle.read_concept(cid)) is not None and _visible(c)
-        ]
+        all_mem = []
+        for cid in bundle.list_concepts(prefix="memory/"):
+            try:
+                c = bundle.read_concept(cid)
+            except Exception:
+                continue  # unreadable/corrupt concept file: skip it
+            if _visible(c):
+                all_mem.append(c)
         for c in all_mem:
             resolved.setdefault(c.concept_id, c)
         seen = {c.concept_id for c in lexical_hits}
@@ -368,10 +370,10 @@ def _semantic_memory_search(
                 break
         return out
     except Exception:
-        # Never let semantic ranking break recall_memory, but leave a debug
-        # breadcrumb (schema drift / malformed blob shouldn't vanish silently).
-        logger.debug("semantic memory search failed; returning []", exc_info=True)
-        return []  # never let semantic ranking break recall_memory
+        # Never let semantic ranking break recall_memory, but surface the
+        # degradation (schema drift / malformed blob) at warning level.
+        logger.warning("semantic memory search failed; returning []", exc_info=True)
+        return []
 
 
 def promote_memory(bundle: OKFBundle, memory_path: str, conn=None) -> Optional[str]:
@@ -445,17 +447,22 @@ def batch_critic(
         old_id = concept.concept_id  # capture before re-tier for cleanup
         if signals["score"] < 0.3:
             decision = Decision.ARCHIVE
-            store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id, conn=conn)
-            dropped += 1
         elif new_tier == "tribal":
             decision = Decision.PROMOTE
+        else:
+            decision = Decision.KEEP_DRAFT
+        # Append the decision BEFORE the write so the stored file carries it
+        # (same append-then-write order as promote_memory).
+        _append_promotion(concept, decision, signals["score"])
+        if decision is Decision.ARCHIVE:
+            store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id, conn=conn)
+            dropped += 1
+        elif decision is Decision.PROMOTE:
             store_mod.store_memory(concept, bundle, tier="tribal", old_id=old_id, conn=conn)
             tribal += 1
         else:
-            decision = Decision.KEEP_DRAFT
             store_mod.store_memory(concept, bundle, tier="drafts", old_id=old_id, conn=conn)
             promoted += 1  # remains a candidate
-        _append_promotion(concept, decision, signals["score"])
     return {"processed": len(drafts), "tribal": tribal, "dropped": dropped, "remaining_drafts": promoted}
 
 
@@ -479,6 +486,9 @@ def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90, 
                 archived += 1
     reaped = 0
     if conn is not None and (expired or archived):
+        # Commit the tier moves' validity rows first: the reap below is
+        # best-effort and its failure must not roll them back.
+        conn.commit()
         from cairn.graph import embeddings as _emb
         try:
             reaped = _emb.reap_orphaned_memory_embeddings(conn, bundle)
@@ -490,6 +500,8 @@ def decay(bundle: OKFBundle, raw_max_days: int = 7, tribal_max_stale: int = 90, 
 
 def tribal_digest(bundle: OKFBundle, limit: int = 10) -> List[OKFConcept]:
     """Return top-scoring tribal memories for session orientation."""
+    if limit < 0:
+        raise ValueError(f"limit must be non-negative, got {limit}")
     mems = store_mod.list_memories(bundle, tier="tribal")
     mems.sort(key=lambda c: c.extensions.get("memory_score", 0), reverse=True)
     return mems[:limit]
@@ -616,6 +628,7 @@ def evolve_memory(
         )
         signals = score_memory(concept, conn, bundle)
         apply_score(concept, signals)
+        _seed_refs_baseline(concept, signals)
         tier = store_mod.tier_for_score(signals["score"])
         new_path = store_mod.store_memory(concept, bundle, tier=tier, conn=conn)
         _mark_superseded(bundle, old.concept_id, new_path)
@@ -624,6 +637,15 @@ def evolve_memory(
 
 
 # --- helpers -------------------------------------------------------------
+
+def _seed_refs_baseline(concept: OKFConcept, signals: Dict) -> None:
+    """Seed memory_refs_baseline from the verified-ref fraction when the body cites refs."""
+    body_refs = extract_file_refs(concept.body or "") + extract_symbol_refs(
+        concept.body or ""
+    )
+    if body_refs:
+        concept.extensions["memory_refs_baseline"] = signals["graph_verification"]
+
 
 def _age_days(ts: str) -> float:
     """Age in days of an ISO-8601 timestamp; 0 when malformed or naive."""
