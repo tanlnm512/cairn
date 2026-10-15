@@ -208,6 +208,35 @@ class TestHookIdempotency:
 
 
 # --------------------------------------------------------------------------
+# MCP registration re-heal: url/headers/enabled drift must read as
+# not-installed so the reinstall rewrites the entry
+# --------------------------------------------------------------------------
+
+
+class TestMcpRegistrationReheal:
+    def test_reinstall_rewrites_stale_daemon_url(self, tmp_path, monkeypatch):
+        """A URL-based mcpServers entry whose daemon url changed must be
+        rewritten by the next install instead of reading as already-installed."""
+        _no_cli(monkeypatch, "claude")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        install(str(ws), clients=["claude"])
+        mcp = ws / ".mcp.json"
+        data = json.loads(mcp.read_text(encoding="utf-8"))
+        data["mcpServers"]["cairn"]["url"] = "http://127.0.0.1:1/mcp"
+        mcp.write_text(json.dumps(data), encoding="utf-8")
+
+        res = next(
+            r for r in install(str(ws), clients=["claude"]).results
+            if r.client == "claude"
+        )
+
+        healed = json.loads(mcp.read_text(encoding="utf-8"))
+        assert healed["mcpServers"]["cairn"]["url"] == DAEMON_URL
+        assert str(mcp) in res.written
+
+
+# --------------------------------------------------------------------------
 # Hook command strings embed the CAIRN_HOME assignment iff non-default
 # --------------------------------------------------------------------------
 
@@ -863,6 +892,26 @@ class TestGlobalScopeUninstall:
         uninstall(str(ws), clients=["claude"], scope="global")
         assert ["claude", "mcp", "remove", "cairn", "--scope", "user"] in calls
 
+    def test_global_uninstall_reports_claude_mcp_remove_failure(
+        self, fake_home, tmp_path, monkeypatch
+    ):
+        """A non-zero `claude mcp remove` must surface a WARNING, not claim
+        the registration was removed."""
+        _cli_at(monkeypatch, "claude")
+
+        class _R:
+            returncode = 1
+            stdout = ""
+            stderr = "No MCP server found"
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        rep = uninstall(str(ws), clients=["claude"], scope="global")
+        claude = next(r for r in rep.results if r.client == "claude")
+        assert any("exited 1" in n for n in claude.notes)
+        assert not any(n.startswith("Removed user-scope") for n in claude.notes)
+
     def test_workspace_uninstall_never_invokes_claude_mcp_remove(
         self, fake_home, tmp_path, monkeypatch
     ):
@@ -930,6 +979,26 @@ class TestCrossToolTreeRemoval:
         uninstall(str(ws), clients=["claude"])
         assert not skill.exists()
 
+    def test_uninstall_without_targets_leaves_cross_tool_tree_alone(
+        self, tmp_path, monkeypatch
+    ):
+        """No detections and no --client: uninstall is a no-op — .agents/ must
+        survive and the report must not deny or claim cross-tool work."""
+        _no_cli(monkeypatch, "claude")
+        from cairn.agent_install._common import _read_template
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        cmd = ws / ".agents" / "commands" / "cairn.md"
+        cmd.parent.mkdir(parents=True)
+        cmd.write_text(_read_template("commands/cairn.md"), encoding="utf-8")
+
+        rep = uninstall(str(ws))
+
+        assert rep.results == []
+        assert rep.cross_tool is None
+        assert cmd.exists(), "no-target uninstall must not delete cross-tool assets"
+
 
 # --------------------------------------------------------------------------
 # F5: uninstall only removes files the installer wrote
@@ -956,7 +1025,8 @@ class TestProvenanceCheckedRemoval:
         un_rep = uninstall(str(ws), clients=["claude"])
         un_claude = next(r for r in un_rep.results if r.client == "claude")
         assert user_cmd.exists(), "uninstall must not delete a user-authored file"
-        assert any("not cairn-written" in s for s in un_claude.skipped)
+        assert any("differs from the current cairn template" in s
+                   for s in un_claude.skipped)
 
     def test_installer_written_command_file_removed(self, tmp_path, monkeypatch):
         _no_cli(monkeypatch, "claude")
@@ -1475,6 +1545,21 @@ class TestOmpClient:
         assert after["mcpServers"]["other-server"] == {"command": "echo"}
         assert not (ws / ".omp" / "agents" / "cairn-explorer.md").exists()
         assert not (ws / ".omp" / "agents" / "knowledge-steward.md").exists()
+
+    def test_dry_run_note_does_not_claim_written(self, tmp_path, monkeypatch):
+        """A dry-run merge must report what would happen, not 'MCP server
+        written to ...'."""
+        _no_cli(monkeypatch, "omp")
+        ws = tmp_path / "ws"
+        ws.mkdir()
+
+        res = next(
+            r for r in install(str(ws), clients=["omp"], dry_run=True).results
+            if r.client == "omp"
+        )
+
+        assert not any(n.startswith("MCP server written") for n in res.notes)
+        assert any("Would merge" in n for n in res.notes)
 
 
 # --------------------------------------------------------------------------

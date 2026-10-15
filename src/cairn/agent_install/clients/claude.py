@@ -151,15 +151,24 @@ def _mcp_remove_user_scope(res: InstallResult) -> None:
         )
         return
     try:
-        subprocess.run(
+        proc = subprocess.run(
             ["claude", "mcp", "remove", "cairn", "--scope", "user"],
             capture_output=True, timeout=15, check=False,
+            text=True, errors="replace",
         )
-        res.notes.append("Removed user-scope MCP registration via `claude mcp remove cairn --scope user`.")
     except (subprocess.SubprocessError, OSError) as e:
         res.notes.append(
             f"WARNING: `claude mcp remove cairn --scope user` failed ({e}); "
             "the registration may remain."
+        )
+        return
+    if proc.returncode == 0:
+        res.notes.append("Removed user-scope MCP registration via `claude mcp remove cairn --scope user`.")
+    else:
+        err = (proc.stderr or proc.stdout or "").strip()
+        res.notes.append(
+            f"WARNING: `claude mcp remove cairn --scope user` exited "
+            f"{proc.returncode}: {err[:200]}; the registration may remain."
         )
 
 

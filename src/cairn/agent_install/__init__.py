@@ -281,6 +281,9 @@ def uninstall(workspace: str, clients: Optional[list[str]] = None,
 
     detections = detect_clients(workspace)
     if clients:
+        bad = [c for c in clients if c not in CLIENTS + ["all"]]
+        if bad:
+            raise ValueError(f"Unknown clients: {bad}. Valid: {CLIENTS + ['all']}")
         target = set(CLIENTS) if "all" in clients else set(clients)
     else:
         target = {d.client for d in detections if d.detected}
@@ -293,13 +296,14 @@ def uninstall(workspace: str, clients: Optional[list[str]] = None,
         results.append(res)
 
     cross = InstallResult("cross-tool")
-    _rm_tree_if_cairn(ws / ".agents" / "skills" / "cairn", cross)
-    for name in _SLASH_COMMANDS:
-        _rm_if_ours(ws / ".agents" / "commands" / f"{name}.md",
-                    _read_template(f"commands/{name}.md"), cross)
-    _rm_if_ours(ws / ".agents" / "agents" / "cairn-explorer.md",
-                _claude_agent_md(), cross)
-    _rm_if_ours(ws / ".agents" / "agents" / "knowledge-steward.md",
-                _claude_agent_md("cursor/knowledge-steward.json"), cross)
+    if target:
+        _rm_tree_if_cairn(ws / ".agents" / "skills" / "cairn", cross)
+        for name in _SLASH_COMMANDS:
+            _rm_if_ours(ws / ".agents" / "commands" / f"{name}.md",
+                        _read_template(f"commands/{name}.md"), cross)
+        _rm_if_ours(ws / ".agents" / "agents" / "cairn-explorer.md",
+                    _claude_agent_md(), cross)
+        _rm_if_ours(ws / ".agents" / "agents" / "knowledge-steward.md",
+                    _claude_agent_md("cursor/knowledge-steward.json"), cross)
 
     return InstallReport(detections, results, cross if target else None)

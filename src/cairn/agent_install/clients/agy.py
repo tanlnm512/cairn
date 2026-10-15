@@ -34,6 +34,11 @@ def install_agy(workspace: str, force: bool, dry_run: bool,
     cfg = agy_config_path()
     _merge_json_file(cfg, agy_mcp_config_json(), force, res, dry_run=dry_run)
     res.notes.append(f"Global MCP config: {cfg}")
+    if scope == "workspace":
+        res.notes.append(
+            "agy reads only a global MCP config; the global path was written "
+            "even though workspace scope was requested."
+        )
     res.notes.append("Start or restart `agy` CLI to load the server.")
     return res
 

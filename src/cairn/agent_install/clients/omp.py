@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .._common import InstallResult, _omp_agent_md, mcp_config_json
-from ..merge import _merge_json_file, _rm_if_ours, _strip_mcp, _write_file
+from ..merge import _merge_json_file, _note_mcp_merge, _rm_if_ours, _strip_mcp, _write_file
 
 
 def _omp_mcp_path(workspace: str, scope: str = "workspace") -> Path:
@@ -28,7 +28,7 @@ def install_omp(workspace: str, force: bool = False, dry_run: bool = False,
 
     mcp_path = _omp_mcp_path(workspace, scope)
     _merge_json_file(mcp_path, mcp_config_json(), force, res, dry_run=dry_run)
-    res.notes.append(f"MCP server written to {mcp_path} under the `mcpServers` key.")
+    _note_mcp_merge(res, mcp_path, "under the `mcpServers` key.")
 
     agents_dir = _omp_agents_dir(workspace, scope)
     _write_file(agents_dir / "cairn-explorer.md", _omp_agent_md(), force, res, dry_run=dry_run)
