@@ -2195,11 +2195,8 @@ def test_projects_row_anchor_opens_repo_scoped_graph(tmp_path):
     payload = _embedded_graph(target.text)
     assert payload["metadata"]["scope"] == "repo"
     assert payload["metadata"]["repo"] == "demo"
-    # demo's graph renders its own files' buckets, symbol counts included.
-    assert {n["id"] for n in payload["nodes"]} == {
-        "src/demo/core.py (2)",
-        "src/demo/util.py (1)",
-    }
+    # demo's graph renders its own directory buckets, symbol counts included.
+    assert {n["id"] for n in payload["nodes"]} == {"src/demo (3)"}
 
 
 # the JS half -- the live selectNode/deselectNode swap of the

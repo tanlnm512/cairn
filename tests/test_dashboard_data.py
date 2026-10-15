@@ -144,10 +144,10 @@ def test_get_graph_repo_scope(fresh_db):
 
     assert graph["metadata"]["scope"] == "repo"
     assert graph["metadata"]["repo"] == "alpha"
-    assert graph["metadata"]["node_count"] == 2  # one bucket per top-level path
+    assert graph["metadata"]["node_count"] == 1  # one directory bucket
     assert graph["edges"] == []
     labels = {n["id"] for n in graph["nodes"]}
-    assert labels == {"src/alpha/core.py (2)", "src/alpha/util.py (1)"}
+    assert labels == {"src/alpha (3)"}
 
 
 def test_get_graph_symbol_scope(fresh_db):
@@ -2816,18 +2816,15 @@ def test_repo_scope_empty_repo_buckets_every_repo(fresh_db):
 
     graph = get_graph(fresh_db, scope="repo")  # no repo id
     ids = {n["id"] for n in graph["nodes"]}
-    # Buckets span both repos' top-level structure.
-    assert ids == {"src/one/core.py (1)", "src/one/util.py (1)", "src/two/core.py (1)"}
+    # Buckets span both repos' top-level directory structure.
+    assert ids == {"src/one (2)", "src/two (1)"}
     assert graph["metadata"]["repo"] == ""
-    assert graph["metadata"]["node_count"] == 3
+    assert graph["metadata"]["node_count"] == 2
     assert graph["metadata"]["truncated"] is False
 
     # A named repo still scopes to it.
     graph = get_graph(fresh_db, scope="repo", repo="r1")
-    assert {n["id"] for n in graph["nodes"]} == {
-        "src/one/core.py (1)",
-        "src/one/util.py (1)",
-    }
+    assert {n["id"] for n in graph["nodes"]} == {"src/one (2)"}
 
 
 def test_symbol_scope_overview_excludes_vendored_and_minified_symbols(fresh_db):
