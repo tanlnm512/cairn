@@ -202,12 +202,7 @@ def _prose_heavy_warning(body: str, verified_ref_count: int) -> Optional[str]:
 # --- path validation ---------------------------------------------------
 
 def validate_paths(conn: sqlite3.Connection, bundle) -> List[dict]:
-    """Scan all concepts and check backtick-quoted file/symbol refs against the graph.
-
-    Returns a list of stale entries: [{concept_id, verified, error?}] where
-    verified < 1.0; unreadable concepts are reported with verified=0.0 plus
-    an ``error`` key. Does NOT delete concepts — only marks them for review.
-    """
+    """Stale-entry report for backtick file/symbol refs (marks only; unreadable concepts carry verified=0.0 and an error key)."""
     from ..memory.scoring import _graph_verification
 
     stale = []

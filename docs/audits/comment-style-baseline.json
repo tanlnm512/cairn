@@ -311,13 +311,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:056114ffbf93598f12f24b4d4542e3aa2bde8816409d20ee6342df859751ce21",
-      "paths": [
-        "src/cairn/wiki/pipeline.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:0839aa133eca7bbb8569a7a1e8d8c5ee7ad257486d4ac2947a7bcc171dc30a9f",
       "paths": [
         "src/cairn/pack.py"
@@ -409,13 +402,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:16c650ffd9f0a6756123fb482e762892cfbc4b95b89db51cdfdd28e1dac29007",
-      "paths": [
-        "src/cairn/viz/query.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:19704b6c1a5e040e182dff0cb4256e967e6e01014cddfd735f971d9458b7c083",
       "paths": [
         "src/cairn/skillgen/assembly.py"
@@ -426,13 +412,6 @@
       "fingerprint": "docstring:1a6b7c7a42cad0a820cad03413f7321327c7ab16676b83a3f913f6ad20591484",
       "paths": [
         "src/cairn/wiki/pipeline.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:1bed0084b2a1fed047be72be631d25a3425840426284d1f530627e8e95425bf4",
-      "paths": [
-        "src/cairn/eval.py"
       ]
     },
     {
@@ -510,13 +489,6 @@
       "fingerprint": "docstring:2cb95075f05cdbfd96e5ddc74dcc989f3756f35bcca9699df43ade3c6b7ad416",
       "paths": [
         "src/cairn/pack.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:2e749241711f4a803f42321a4532b08b7166f0df92891ef4b1b278dac5aa64a1",
-      "paths": [
-        "src/cairn/compass/critic.py"
       ]
     },
     {
@@ -608,13 +580,6 @@
       "fingerprint": "docstring:3d41eb0cd84f27f6d56f42eee028b456f7721359ceff1e3c2ed1d0549e186219",
       "paths": [
         "src/cairn/pack_enrich.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:3d60a908466678de624a5b5bedf62292594c8a9b6437263a7faaeb419518fe3d",
-      "paths": [
-        "src/cairn/viz/query.py"
       ]
     },
     {
@@ -738,13 +703,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:56cfda8083af7b30a64c6929c743c772ced02262a7d8e20edf731e1df28926ad",
-      "paths": [
-        "src/cairn/eval.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:573e63a8020585c0e1473cb24e23a2da67a47f72c55bfea8268de42369877f65",
       "paths": [
         "src/cairn/compass/critic.py"
@@ -752,23 +710,9 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:57a61e8e7f51fed101b2b03cbdf99d429d75c3df54680d46ef428f9f6fc76749",
-      "paths": [
-        "src/cairn/hooks/git_hooks.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:5adc3b7b3d4f165bfa653a614e80a4eb07c453acc9d169a547060db7f043588b",
       "paths": [
         "src/cairn/llm/tasks.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:5ea138f6986b60339ddc124dc1eeda8ec889dbdc3594e83d1c37eab35998fd09",
-      "paths": [
-        "src/cairn/paths.py"
       ]
     },
     {
@@ -1081,13 +1025,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:a3abf6dd99d6085234bbf6a233279745629d8e57c10b34d1c61bf315979630f6",
-      "paths": [
-        "src/cairn/eval.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:a5ca4d3f56320487588fbdeefcf2aba9b99e2c244f29d795ffb96ae6d5b23014",
       "paths": [
         "src/cairn/eval.py"
@@ -1126,13 +1063,6 @@
       "fingerprint": "docstring:aefea4f86e50e50de52436fd8c7c7d49ee8d0db6b750b5a5a71fd519fc3f8f28",
       "paths": [
         "src/cairn/skillgen/gate.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:b250888bb32a1f4cd12573f12b06644aed6b1d2b9ea3b7b6305b94f2b141d366",
-      "paths": [
-        "src/cairn/compass/generator.py"
       ]
     },
     {
@@ -1305,13 +1235,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:ddca41ccf323546493732b596fe0bddaf54c7df516e419944e79f1de0d9e4b7a",
-      "paths": [
-        "src/cairn/eval.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:de82b3fd86faeca32160b7febb6fa2b082de2f0940a6b7d6c321ff8aba1107ec",
       "paths": [
         "src/cairn/review/spans.py"
@@ -1322,13 +1245,6 @@
       "fingerprint": "docstring:df1842a51e9b81214b73dbc0c8fe7814729f6933dba4a03691b61207b868b82d",
       "paths": [
         "src/cairn/refs.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:df806da8f9f65bdc1de39c8e7717e2a0d250ff90b758688c56e1e5c7c370d7df",
-      "paths": [
-        "src/cairn/eval.py"
       ]
     },
     {
@@ -1417,13 +1333,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:ebb4d26d4db51cae89a95402167f8ffeac032fd310b8f5af7dd0af58d882d781",
-      "paths": [
-        "src/cairn/wiki/refine.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:f36dc08c775e5846b57573d10e19a398d4b2f73be0931b31e67e94ca033b9a8d",
       "paths": [
         "src/cairn/hooks/git_hooks.py"
@@ -1476,13 +1385,6 @@
       "fingerprint": "docstring:f71eafa895b387e918140d93a5db305d2cb48b26301ab45f56775c0cfe91b0a7",
       "paths": [
         "src/cairn/paths.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:f8240f65f2617607f4bccec0f39a3aca23c01bac4d756a0316d2457d8455caf8",
-      "paths": [
-        "src/cairn/compass/flow_gaps.py"
       ]
     },
     {

@@ -34,12 +34,7 @@ def _validate_repo_name(repo: str) -> str:
 
 
 def _validate_hook_home(path: str) -> str:
-    """Reject CAIRN_HOME values unsafe inside the hook's double-quoted export line.
-
-    Raises ValueError: within double quotes bash still expands ``$`` and
-    backticks and honors backslash escapes, so such a path would execute at
-    commit time.
-    """
+    """Raise ValueError for CAIRN_HOME values that would expand inside the hook's double quotes."""
     if _HOOK_HOME_UNSAFE_RE.search(path):
         raise ValueError(
             f"CAIRN_HOME ({path!r}) contains characters unsafe to embed in a "
@@ -131,12 +126,7 @@ def discover_hook_repos(workspace: str) -> List[str]:
 
 
 def install_hooks(repos: List[str], workspace: str) -> List[str]:
-    """Install cairn post-commit and post-checkout hooks in each repo.
-    Returns list of installed repo names.
-
-    Raises ValueError if any repo name fails the shell-injection guard or
-    the effective CAIRN_HOME is unsafe to interpolate.
-    """
+    """Install post-commit/post-checkout hooks; ValueError on unsafe repo names or CAIRN_HOME."""
     # Validate ALL repos up front (before any hook is written) so a single bad
     # name is rejected atomically rather than leaving a half-installed state.
     for repo in repos:

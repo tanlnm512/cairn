@@ -353,14 +353,7 @@ def resolve_workspace(explicit: str | os.PathLike | None = None) -> Path:
 
 
 def resolve_store(workspace: str | os.PathLike | None = None) -> StorePaths:
-    """Resolve the full StorePaths for the current context.
-
-    Honors CAIRN_DB / CAIRN_KNOWLEDGE as hard overrides (used by the
-    MCP server, which sets them in its env). Otherwise derives from the
-    resolved workspace's store path; this performs no registry writes --
-    registration happens only via `cairn init` (register_workspace), and
-    an unregistered workspace resolves relative to cwd.
-    """
+    """StorePaths for the context; CAIRN_DB/CAIRN_KNOWLEDGE override, no registry writes."""
     ws = resolve_workspace(workspace)
     key = store_key(ws)
     home = CAIRN_HOME / key

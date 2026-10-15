@@ -260,12 +260,7 @@ def evaluate_l1_query(
     params: Optional["RetrievalParams"] = None,
     notes: Optional[List[str]] = None,
 ) -> Tuple[float, float]:
-    """Evaluate L1 query using semantic_search / search_symbols.
-
-    Returns (recall_at_k, reciprocal_rank). ``params`` is threaded
-    through to ``semantic_search`` verbatim; ``None`` keeps today's defaults.
-    ``notes`` (when a list) receives a marker per lexical-fallback event.
-    """
+    """(recall_at_k, RR) for one L1 query; ``notes`` collects lexical-fallback markers."""
     results = _retrieve_l1(conn, query, k, params=params, notes=notes)
     retrieved_names = [_result_field(r, "name") for r in results]
     return _legacy_match_score(retrieved_names, expect, k)
@@ -400,13 +395,7 @@ def _retrieve_l1(
     params: Optional["RetrievalParams"] = None,
     notes: Optional[List[str]] = None,
 ) -> List[Any]:
-    """L1 retrieval pipeline (semantic first, lexical fallback), full rows.
-
-    ``params`` reaches the ``semantic_search`` call; the lexical
-    fallback leg takes no retrieval tunables today. When ``notes`` is a
-    list, a marker is appended whenever the semantic leg raises and the
-    lexical fallback is scored instead.
-    """
+    """L1 retrieval rows, semantic first with lexical fallback (``notes`` marks fallbacks)."""
     from cairn.graph import queries as qmod
 
     try:
@@ -469,12 +458,7 @@ def evaluate_graded_query(
     params: Optional["RetrievalParams"] = None,
     notes: Optional[List[str]] = None,
 ) -> Tuple[float, float]:
-    """Evaluate one graded query through its level's retrieval pipeline.
-
-    ``params`` applies to the L1 (semantic) leg only -- L4/L5
-    retrieval pass no retrieval tunables. ``notes`` threads through to
-    the L1 fallback marker.
-    """
+    """Score one graded query via its level pipeline; ``params`` and ``notes`` apply to the L1 leg."""
     if graded.level == "L1":
         results = _retrieve_l1(conn, graded.text, k, params=params, notes=notes)
     elif graded.level == "L4":
@@ -492,14 +476,7 @@ def _run_graded_evaluation(
     k: int = 10,
     params: Optional["RetrievalParams"] = None,
 ) -> Dict[str, Any]:
-    """Graded counterpart of the yaml loop in ``run_evaluation``.
-
-    Report shape mirrors the yaml one — ``{"L1": {...}, "L4": {...},
-    "L5": {...}}`` with ``count``/``recall_at_10``/``mrr`` — plus additive
-    ``n_queries`` and ``n_expectations`` keys for dataset-size visibility,
-    and a ``warnings`` list whenever an L1 query fell back from the
-    semantic leg. ``params`` threads through to every retrieval call.
-    """
+    """Graded-dataset loop; mirrors the yaml report shape plus n_queries/n_expectations and fallback warnings."""
     queries = load_ground_truth(graded_dir)
 
     stats = {
@@ -556,23 +533,7 @@ def run_evaluation(
     k: int = 10,
     params: Optional["RetrievalParams"] = None,
 ) -> Dict[str, Any]:
-    """Run full evaluation harness across specified corpus ("L1", "L4", "L5", or "all").
-
-    ``queries_path`` selects the query source (two loaders, one
-    harness): a *directory* holding the graded pair
-    (``queries.jsonl`` + ``expectations.tsv``) takes the graded loader and
-    the identity-first matcher; anything else (a yaml file, or None for the
-    bundled fixture) takes the legacy yaml path unchanged.
-
-    ``params`` is an explicit frozen ``RetrievalParams``
-    threaded through to every L1 ``semantic_search`` call in both paths —
-    the injection channel the sweep harness uses instead of mutating the
-    environment (in-process env writes would leak across combinations).
-    ``None`` (the default, and every ``None`` field) preserves today's
-    retrieval behavior exactly. Malformed yaml items raise ``ValueError``
-    (mirroring the graded loader); a ``warnings`` list is appended to the
-    report whenever an L1 query fell back from the semantic leg.
-    """
+    """Full harness over L1/L4/L5/all; a directory queries_path selects the graded loader, else legacy yaml; ``params`` threads to L1 retrieval."""
     if queries_path is not None and Path(queries_path).is_dir():
         return _run_graded_evaluation(
             conn, bundle_root, Path(queries_path), corpus_filter, k, params=params

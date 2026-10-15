@@ -628,23 +628,7 @@ def generate_flow_compass(
     title: Optional[str] = None,
     facts: Optional[Dict[str, Any]] = None,
 ) -> OKFConcept:
-    """Generate a flow compass OKF concept for an entry-point symbol.
-
-    Traces the downward call chain from ``entry`` via :func:`trace_flow`,
-    synthesizes a deterministic 5-section body from the traced facts, and
-    returns the concept. The caller (CLI) runs the critic and persists.
-
-    Args:
-        entry: the entry-point symbol name (human-readable label).
-        entry_id: optional symbol database ID for collision-safe resolution.
-        resource: optional override for the concept's ``resource`` field.
-            Defaults to the flow-gaps coverage key (bare name when the
-            symbol is unique across files, ``name#suffix`` on collisions).
-        title: optional override for the concept's ``title`` field. Defaults
-            to ``Flow: {entry}``. For collisions, pass a qualified title.
-        facts: optional pre-traced facts from :func:`_gather_flow_facts`;
-            skips the internal re-trace when the caller already traced.
-    """
+    """Build the flow compass concept for an entry symbol (``facts`` skips the internal trace; caller runs the critic)."""
     facts = facts or _gather_flow_facts(conn, entry, entry_id=entry_id)
     body = _flow_template_body(facts)
 

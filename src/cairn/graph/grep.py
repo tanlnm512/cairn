@@ -44,11 +44,7 @@ def graph_grep(
     path_prefix: str = "",
     max_hits: int = DEFAULT_MAX_HITS,
 ) -> dict:
-    """Search indexed files and group hits by their innermost stored symbol.
-
-    Scanning stops once ``max_hits`` hits are collected; ``truncated`` marks
-    that ``dropped_hits`` / ``dropped_groups`` are then lower bounds.
-    """
+    """Grouped hits by innermost symbol; ``truncated`` marks dropped counts as lower bounds."""
     if max_hits < 1:
         raise ValueError("max_hits must be at least 1")
     expression = re.escape(pattern) if fixed else pattern

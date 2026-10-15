@@ -835,10 +835,8 @@ def _run_doctor(db: str) -> list[dict]:
         _log.debug("doctor: store missing at %s", db)
     else:
         try:
-            # Read-only open: no migrations, no WAL flip (the command is
-            # "read-only unless --fix", and --fix touches only registrations).
-            # The sqlite_master probe forces header reads so a corrupt file
-            # still takes the degraded path instead of per-check WARNs.
+            # Read-only open: no migrations, no WAL flip; the sqlite_master
+            # probe keeps corrupt-file detection on the degraded path.
             conn = get_db(db, read_only=True)
             conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
         except Exception as e:  # OperationalError (can't open) / DatabaseError (corrupt) / ...

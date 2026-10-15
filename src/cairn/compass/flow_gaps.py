@@ -49,13 +49,7 @@ def detect_flow_gaps(
     bundle: OKFBundle,
     min_edges: int = 5,
 ) -> Dict[str, List[Any]]:
-    """Find functions and methods meeting outgoing edge threshold lacking a flow compass.
-
-    Returns a dict with 'uncovered' and 'covered' candidate lists sorted by
-    out_edges descending, plus 'unreadable': flow compass concept ids that
-    could not be read (excluded from coverage). Resources use the same
-    coverage key (:func:`_coverage_resource`) the generator writes.
-    """
+    """Flow candidates over the edge threshold without a compass; unreadable compass ids land under 'unreadable'."""
     candidates = _get_flow_candidates(conn, min_edges)
 
     # Build the set of already-documented flow resources.
