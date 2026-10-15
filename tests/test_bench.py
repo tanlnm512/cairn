@@ -177,15 +177,17 @@ class TestPerfSuite:
         restores the ambient value, so p95s cannot drift with reranker state."""
         monkeypatch.setenv("CAIRN_RERANK", "1")
         seen = {}
-        import cairn.graph.queries as queries_mod
-
-        real = queries_mod.semantic_search
+        import cairn.graph.semantic as semantic_mod
+        from cairn.graph.semantic import semantic_search as real
 
         def _spy(conn, query, **kwargs):
             seen["rerank"] = os.environ.get("CAIRN_RERANK")
             return real(conn, query, **kwargs)
 
-        monkeypatch.setattr(queries_mod, "semantic_search", _spy)
+        # Patch the source module: setattr on the lazy queries proxy would
+        # pin the attribute at teardown and shadow __getattr__ for the rest
+        # of the session.
+        monkeypatch.setattr(semantic_mod, "semantic_search", _spy)
         repo = generate_corpus(tmp_path, 4, complexity="low")
         run_perf_suite(
             str(repo), str(tmp_path / "rr.db"), embed_backend="hash",

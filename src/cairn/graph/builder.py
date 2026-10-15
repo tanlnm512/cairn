@@ -1031,7 +1031,12 @@ def _import_module_bases(raw: str) -> List[str]:
                 rest = rest[len("static "):].strip()
             bases.append(_norm_module_token(rest))
     else:
-        bases.append(_norm_module_token(text))
+        norm = _norm_module_token(text)
+        if norm:
+            bases.append(norm)
+            parent = norm.rsplit(".", 1)[0]
+            if parent and parent != norm:
+                bases.append(parent)
     return [b for b in bases if b]
 
 
