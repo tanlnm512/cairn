@@ -539,3 +539,7 @@ def test_redaction_keeps_relative_and_url_paths(tmp_path):
         "config at [PATH]/config.toml"
     assert _redact_paths(r"missing C:\Users\bob\work\app\db.sqlite") == \
         "missing [PATH]/db.sqlite"
+    assert _redact_paths("missing C:/Users/bob/work/app/db.sqlite") == \
+        "missing [PATH]/db.sqlite"
+    assert _redact_paths("file:///C:/Users/bob/secret.txt") == \
+        "file:///[PATH]/secret.txt"

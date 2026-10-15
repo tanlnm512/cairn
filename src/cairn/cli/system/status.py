@@ -122,7 +122,9 @@ def eval_cmd(db, knowledge, corpus, queries_path, as_json):
     conn = get_db(db)
     try:
         report = run_evaluation(conn, bundle_root=knowledge, queries_path=qpath, corpus_filter=corpus)
-    except ValueError as exc:
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        # eval.py safe_loads queries.yaml unvalidated, so wrong-shaped files
+        # surface as KeyError/TypeError/AttributeError, not just ValueError.
         raise click.ClickException(f"invalid eval dataset: {exc}") from exc
     finally:
         conn.close()

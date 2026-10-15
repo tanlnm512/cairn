@@ -153,8 +153,9 @@ def _baseline_document(violations: Sequence[dict]) -> dict:
 
 def _write_baseline(path: Path, violations: Sequence[dict]) -> None:
     text = json.dumps(_baseline_document(violations), indent=2, sort_keys=True) + "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8", newline="\n")
+    from ...agent_install.merge import _atomic_write_text
+
+    _atomic_write_text(path, text)
 
 
 def _load_baseline(path: Path) -> dict[str, dict]:

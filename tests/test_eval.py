@@ -501,6 +501,31 @@ class TestEvalCli:
         assert result.exit_code != 0
         assert "invalid eval dataset" in result.output
 
+    def test_wrong_shaped_yaml_is_a_clean_cli_error(self, tmp_path):
+        # eval.py safe_loads queries.yaml unvalidated: a dict-shaped file
+        # crashes on item.get (AttributeError), not ValueError.
+        runner = CliRunner()
+        db_path = str(tmp_path / "cli.db")
+        knowledge_dir = str(tmp_path / ".knowledge")
+        Path(knowledge_dir).mkdir(parents=True, exist_ok=True)
+        get_db(db_path).close()
+
+        bad_yaml = tmp_path / "queries.yaml"
+        bad_yaml.write_text("corpus: L1\n", encoding="utf-8")
+
+        result = runner.invoke(
+            main,
+            [
+                "eval",
+                "--db", db_path,
+                "--knowledge", knowledge_dir,
+                "--queries", str(bad_yaml),
+                "--json",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "invalid eval dataset" in result.output
+
     def test_yaml_path_still_accepted(self, tmp_path):
         runner = CliRunner()
         db_path = str(tmp_path / "cli.db")

@@ -10,6 +10,9 @@ _REPOINTED = "repointed-to-url"
 _REFUSED_RECENT = "refused-recent-write"
 _SKIPPED_WORKSPACE = "skipped-workspace-owned"
 _UNSUPPORTED_DESKTOP = "remove-unsupported-desktop"
+_UNREADABLE_CONFIG = "unreadable-config"
+_MALFORMED_CONFIG = "malformed-config"
+_UNREPLACEABLE = "unrecognized-shape"
 
 
 def _url_config(client: str) -> dict | None:
@@ -109,6 +112,7 @@ def apply_doctor_fixes(db: str) -> list[dict]:
         try:
             recent = path.stat().st_mtime > time.time() - _FRESHNESS_WINDOW_S
         except OSError:
+            actions.append(action(_UNREADABLE_CONFIG, _registration_url(entry)))
             continue
         if recent:
             actions.append(action(_REFUSED_RECENT, _registration_url(entry)))
@@ -116,8 +120,10 @@ def apply_doctor_fixes(db: str) -> list[dict]:
 
         data = _load_json_or_none(path)
         if not isinstance(data, dict):
+            actions.append(action(_MALFORMED_CONFIG, _registration_url(entry)))
             continue
         if not _replace_registration(data, client):
+            actions.append(action(_UNREPLACEABLE, _registration_url(entry)))
             continue
         _backup_to_bak(path, "doctor-fix", InstallResult(client))
         _atomic_write_text(path, json.dumps(data, indent=2) + "\n")

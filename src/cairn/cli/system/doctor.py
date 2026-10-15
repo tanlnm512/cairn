@@ -835,10 +835,21 @@ def _run_doctor(db: str) -> list[dict]:
         _log.debug("doctor: store missing at %s", db)
     else:
         try:
-            conn = get_db(db)
+            # Read-only open: no migrations, no WAL flip (the command is
+            # "read-only unless --fix", and --fix touches only registrations).
+            # The sqlite_master probe forces header reads so a corrupt file
+            # still takes the degraded path instead of per-check WARNs.
+            conn = get_db(db, read_only=True)
+            conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
         except Exception as e:  # OperationalError (can't open) / DatabaseError (corrupt) / ...
             db_error = e
             _log.debug("doctor: get_db(%s) raised %r", db, e)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                conn = None
 
     if conn is None:
         # The environment audit needs no db connection, so it is appended on
@@ -883,9 +894,12 @@ def _render_doctor(results: list[dict], display) -> None:
 def _fix_summary_lines(actions: list[dict]) -> list[str]:
     """One guidance line per fix action, plus the transport tradeoff."""
     from .doctor_fix import (
+        _MALFORMED_CONFIG,
         _REFUSED_RECENT,
         _REPOINTED,
         _SKIPPED_WORKSPACE,
+        _UNREADABLE_CONFIG,
+        _UNREPLACEABLE,
         _UNSUPPORTED_DESKTOP,
     )
 
@@ -913,6 +927,21 @@ def _fix_summary_lines(actions: list[dict]) -> list[str]:
             lines.append(
                 f"skipped {config}: workspace-owned; edit the repo "
                 "registration deliberately"
+            )
+        elif name == _UNREADABLE_CONFIG:
+            lines.append(
+                f"could not inspect {config} (stat failed); retry "
+                "`cairn doctor --fix` once the file is readable"
+            )
+        elif name == _MALFORMED_CONFIG:
+            lines.append(
+                f"skipped {config}: not a JSON object; fix or remove the "
+                "stale cairn entry manually"
+            )
+        elif name == _UNREPLACEABLE:
+            lines.append(
+                f"could not repoint {config}: unrecognized registration "
+                "shape; edit it manually"
             )
         else:
             lines.append(f"{client} {config}: {name} ({url})")

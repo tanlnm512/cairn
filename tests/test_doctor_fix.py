@@ -204,6 +204,65 @@ def test_fresh_config_is_refused_without_backup(tmp_path, monkeypatch, entry):
     assert not path.with_suffix(".json.bak").exists()
 
 
+def _patch_registration_rows(monkeypatch, path: Path, client: str, entry: dict):
+    doctor = import_module("cairn.cli.system.doctor")
+    monkeypatch.setattr(
+        doctor,
+        "_enumerate_registrations",
+        lambda: [(client, path, f"config/{path.name}", entry, False)],
+    )
+
+
+def test_unreadable_config_is_recorded(tmp_path, monkeypatch):
+    from cairn.cli.system.doctor_fix import apply_doctor_fixes
+
+    path = tmp_path / "config.json"  # never created: stat() inside the fix fails
+    _patch_registration_rows(monkeypatch, path, "claude", copy.deepcopy(_STDIO_SEED))
+
+    actions = apply_doctor_fixes(str(tmp_path / "store.db"))
+
+    assert actions == [{
+        "client": "claude",
+        "config": "config/config.json",
+        "action": "unreadable-config",
+        "url": None,
+    }]
+
+
+def test_malformed_config_is_recorded(tmp_path, monkeypatch):
+    from cairn.cli.system.doctor_fix import apply_doctor_fixes
+
+    path = tmp_path / "config.json"
+    path.write_text("[1, 2]", encoding="utf-8")
+    _age(path)
+    _patch_registration_rows(monkeypatch, path, "claude", copy.deepcopy(_STDIO_SEED))
+
+    actions = apply_doctor_fixes(str(tmp_path / "store.db"))
+
+    assert len(actions) == 1
+    assert actions[0]["action"] == "malformed-config"
+    assert path.read_text(encoding="utf-8") == "[1, 2]"
+    assert not path.with_suffix(".json.bak").exists()
+
+
+def test_unrecognized_shape_is_recorded(tmp_path, monkeypatch):
+    from cairn.cli.system.doctor_fix import apply_doctor_fixes
+
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"mcpServers": 5}), encoding="utf-8")
+    _age(path)
+    _patch_registration_rows(monkeypatch, path, "claude", copy.deepcopy(_STDIO_SEED))
+
+    actions = apply_doctor_fixes(str(tmp_path / "store.db"))
+
+    assert len(actions) == 1
+    assert actions[0]["action"] == "unrecognized-shape"
+    assert json.loads(path.read_text(encoding="utf-8")) == {"mcpServers": 5}
+    assert not path.with_suffix(".json.bak").exists()
+    summary = import_module("cairn.cli.system.doctor")._fix_summary_lines(actions)
+    assert any("unrecognized registration shape" in line for line in summary)
+
+
 @pytest.mark.parametrize(
     "entry",
     [_STDIO_SEED, _SSE_SEED],
