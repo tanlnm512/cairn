@@ -216,6 +216,12 @@ def generate_flow(entry: str, as_workflow: bool = False, max_steps: int = 20) ->
     )
     from cairn.compass.critic import critic_concept
 
+    from ._server_core import _read_only_mode
+
+    if _read_only_mode():
+        return ("read-only server: flow generation writes the knowledge store; "
+                "run it on the writable side")
+
     bundle = _bundle()
     conn = _rw_conn()
     try:
