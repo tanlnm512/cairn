@@ -131,6 +131,55 @@ def _add_doc(bundle, title, *, tags=None, modules=None, relationships=None):
     )
 
 
+# --- supersede chain: linear contract plus the branched-DAG degenerate case ---
+
+
+class TestSupersedeChain:
+    def _edge(self, conn, newer, older):
+        conn.execute(
+            "INSERT INTO knowledge_edges "
+            "(doc_id, related_id, relation, kind, provenance, created_at) "
+            "VALUES (?, ?, 'supersedes', 'extracted', 'frontmatter:relates_to', 0)",
+            (newer, older),
+        )
+
+    def test_linear_chain_is_oldest_to_newest(self, workspace):
+        from cairn.knowledge.index import supersede_chain
+
+        bundle = _bundle()
+        old = _add_doc(bundle, "Chain old")
+        new = _add_doc(bundle, "Chain new")
+        conn = _conn()
+        try:
+            self._edge(conn, new, old)
+            chain = supersede_chain(conn, bundle, old)
+        finally:
+            conn.close()
+        assert [m["concept_id"] for m in chain] == [old, new]
+        assert chain[0]["relation"] == "superseded-by"
+        assert chain[1]["relation"] is None
+
+    def test_branched_dag_returns_the_chain_through_the_query(self, workspace):
+        """A branched supersede DAG must yield a valid chain containing the
+        queried doc, not an uncaught AssertionError."""
+        from cairn.knowledge.index import supersede_chain
+
+        bundle = _bundle()
+        old = _add_doc(bundle, "Old doc")
+        a_new = _add_doc(bundle, "A new doc")
+        b_new = _add_doc(bundle, "B new doc")
+        conn = _conn()
+        try:
+            self._edge(conn, a_new, old)
+            self._edge(conn, b_new, old)
+            chain = supersede_chain(conn, bundle, b_new)
+        finally:
+            conn.close()
+        ids = [m["concept_id"] for m in chain]
+        assert b_new in ids
+        assert ids[-1] == b_new
+
+
 # --- VAL-INGEST-003: ingested links queryable as knowledge_edges rows ---
 
 

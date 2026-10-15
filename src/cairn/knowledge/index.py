@@ -93,36 +93,45 @@ def supersede_chain(conn, bundle: OKFBundle, doc_id: str) -> List[Dict[str, Any]
     newer_of, older_of, concepts = _supersede_facts(conn, bundle)
     concepts.setdefault(start, concept)  # a chain of one is never an edge endpoint
 
-    # Walk back to the oldest member (deterministic on branched chains).
-    visited = {start}
-    oldest = start
+    # Ancestors of the queried doc, farthest first.
+    back: List[str] = []
+    seen: Set[str] = {start}
+    current: str = start
     while True:
         older = next(
-            (c for c in sorted(older_of.get(oldest, ())) if c not in visited),
+            (c for c in sorted(older_of.get(current, ())) if c not in seen),
             None,
         )
         if older is None:
             break
-        visited.add(older)
-        oldest = older
+        back.append(older)
+        seen.add(older)
+        current = older
 
-    # Walk forward collecting members oldest -> newest.
-    chain_ids: List[str] = []
-    seen: Set[str] = set()
-    current: Optional[str] = oldest
-    while current is not None and current not in seen:
-        seen.add(current)
-        chain_ids.append(current)
-        current = next(
+    # Descendants of the queried doc, sorted-first per node.
+    forward: List[str] = []
+    current = start
+    while True:
+        newer = next(
             (n for n in sorted(newer_of.get(current, ())) if n not in seen),
             None,
         )
-    # The queried doc must be in its own chain; on a branched DAG the
-    # sorted-first successor pick can diverge from it, so guard loudly.
-    assert start in chain_ids, (
-        f"supersede walk from {start} dropped the start doc: branched "
-        "supersede DAG (linear chains are the writer contract)"
-    )
+        if newer is None:
+            break
+        forward.append(newer)
+        seen.add(newer)
+        current = newer
+
+    chain_ids = [*reversed(back), start, *forward]
+    if any(
+        len(newer_of.get(cid, ())) > 1 or len(older_of.get(cid, ())) > 1
+        for cid in chain_ids
+    ):
+        logger.warning(
+            "Branched supersede DAG at %s; reporting the chain through it "
+            "(linear chains are the writer contract).",
+            start,
+        )
 
     members: List[Dict[str, Any]] = []
     for pos, cid in enumerate(chain_ids):

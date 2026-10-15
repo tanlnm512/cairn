@@ -242,3 +242,25 @@ def test_embed_runs_when_backend_available(staged, workspace):
     finally:
         conn.close()
     assert report["embedded"] is not None
+
+
+def test_embed_failure_does_not_abort_index_and_commit(staged, hash_backend, monkeypatch):
+    """An embed_knowledge fault must not skip the derived-index rebuild,
+    the commit, or the verify legs: embeddings are derived data."""
+    from cairn.graph import embeddings as emb
+
+    def boom(conn, bundle, batch_size=64, progress=None):
+        raise RuntimeError("alias parity preflight failed")
+
+    monkeypatch.setattr(emb, "embed_knowledge", boom)
+    conn = _conn()
+    try:
+        report = execute_manifest(staged, conn)
+        indexed = conn.execute("SELECT COUNT(*) FROM knowledge_edges").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert report["embedded"] is None
+    assert "alias parity preflight failed" in report["embed_error"]
+    assert indexed > 0
+    assert report["count_ok"] is True

@@ -130,15 +130,15 @@ def _description(repo: str, relpath: str, parsed: ParsedDoc) -> str:
 def _first_meaningful_paragraph(body: str) -> str | None:
     """Return the first meaningful non-fenced body paragraph, if any."""
     lines: list[str] = []
-    in_fence = False
+    fence = ""
     for raw in body.splitlines():
         stripped = raw.strip()
-        if in_fence:
-            if stripped.startswith("```"):
-                in_fence = False
+        if fence:
+            if stripped.startswith(fence):
+                fence = ""
             continue
-        if stripped.startswith("```"):
-            in_fence = True
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            fence = stripped[:3]
             continue
         if not stripped:
             if lines:

@@ -229,6 +229,37 @@ class TestIslandDetection:
         assert _queue() == 0
         assert len(_doc_link_tasks(bundle)) == 1
 
+    def test_failed_task_frees_the_island_for_requeueing(self, workspace):
+        """A failed task is terminal: it must not permanently suppress
+        re-queueing of the same island pair."""
+        bundle = _bundle()
+        _corpus(bundle)
+        _add_doc(bundle, "Island alpha", tags=["pair-island"])
+        _add_doc(bundle, "Island beta", tags=["pair-island"])
+        _rebuild()
+        assert _queue() == 1
+        task = _doc_link_tasks(bundle, status="pending")[0]
+        concept = bundle.read_concept(f"_tasks/{task.id}")
+        concept.status = "failed"
+        bundle.write_concept(concept)
+
+        assert _queue() == 1
+
+    def test_dropped_task_frees_the_island_for_requeueing(self, workspace):
+        """A user-dropped task is terminal: the pair must be re-queueable."""
+        from cairn.llm.tasks import drop_task
+
+        bundle = _bundle()
+        _corpus(bundle)
+        _add_doc(bundle, "Island alpha", tags=["pair-island"])
+        _add_doc(bundle, "Island beta", tags=["pair-island"])
+        _rebuild()
+        assert _queue() == 1
+        task = _doc_link_tasks(bundle, status="pending")[0]
+        assert drop_task(bundle, task.id)["dropped"] is True
+
+        assert _queue() == 1
+
     def test_island_shapes_two_doc_component_plus_paired_singletons(
         self, workspace
     ):

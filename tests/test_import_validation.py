@@ -95,6 +95,32 @@ class TestImportDirectoryValidation:
         assert len(imported) == 1
         assert "Keep" in bundle.read_concept(imported[0]).title
 
+    def test_same_stem_files_get_distinct_ids(self, bundle):
+        """Two same-stem files must not collapse onto one concept id: the
+        second write would silently destroy the first document's content."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            for sub in ("sub-a", "sub-b"):
+                (root / sub).mkdir()
+                (root / sub / "readme.md").write_text(
+                    f"# Readme {sub}\n\ncontent of {sub}", encoding="utf-8"
+                )
+            imported = import_directory(bundle, tmpdir)
+
+        assert len(imported) == 2
+        assert len(set(imported)) == 2
+        bodies = {bundle.read_concept(cid).body for cid in imported}
+        assert any("content of sub-a" in b for b in bodies)
+        assert any("content of sub-b" in b for b in bodies)
+
+    def test_missing_directory_raises(self, bundle):
+        """A nonexistent import path is an error, never a silent
+        "Imported 0 document(s)" success."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = str(Path(tmpdir) / "no-such-dir")
+            with pytest.raises(FileNotFoundError, match="no-such-dir"):
+                import_directory(bundle, missing)
+
     def test_import_directory_normal_files_succeed(self, bundle):
         """Normal-sized files should be imported successfully."""
         with tempfile.TemporaryDirectory() as tmpdir:

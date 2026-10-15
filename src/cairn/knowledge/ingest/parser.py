@@ -130,10 +130,15 @@ def _inline_status(body: str) -> str | None:
             continue
         if value:
             return value
+        # Bare marker: the value may sit on the next line, but a following
+        # heading or marker ends the field instead of being captured.
         for follower in lines[i + 1 :]:
             follower = follower.strip()
-            if follower:
-                return follower
+            if not follower:
+                continue
+            if _HEADING_RE.match(follower) or _marker_value(follower) is not None:
+                break
+            return follower
         return None
     return None
 

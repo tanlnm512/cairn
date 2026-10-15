@@ -212,13 +212,13 @@ class TestSupersedeChain:
         with pytest.raises(ValueError, match="Unknown knowledge document"):
             self._chain(GHOST)
 
-    def test_branched_dag_asserts_start_doc_membership(self, workspace):
+    def test_branched_dag_returns_the_chain_through_the_query(self, workspace):
         """Supersede chains are linear by writer contract (one successor
-        per superseded doc). A branched DAG is outside that contract: the
-        walk follows the sorted-first successor per fork, so the queried
-        doc dropping out of its own chain must fail loudly, not silently
-        return a chain without it. Titles pick ids so the non-start branch
-        sorts first (the walk would otherwise still pass through start)."""
+        per superseded doc). A branched DAG is the degenerate case: the
+        reported chain must still contain the queried doc over real edges,
+        never an uncaught AssertionError. Titles pick ids so the non-start
+        branch sorts first (a sorted-first walk from the base would miss
+        start)."""
         bundle = _bundle()
         base = _add_doc(bundle, "Fork base", tags=["adr"])
         start = _add_doc(bundle, "Fork zulu")
@@ -227,8 +227,8 @@ class TestSupersedeChain:
             _declare(bundle, newer, base, "supersedes")
             _declare(bundle, base, newer, "superseded-by")
         _rebuild()
-        with pytest.raises(AssertionError):
-            self._chain(start)
+        chain = self._chain(start)
+        assert [m["concept_id"] for m in chain] == [base, start]
 
 
 # --- related_docs store API: neighbors with relation, kind, title ---

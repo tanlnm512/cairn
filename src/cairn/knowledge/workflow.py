@@ -11,6 +11,7 @@ from .store import (
     add_document,
     get_document,
     list_documents,
+    normalize_doc_id,
     slugify,
 )
 from ..memory.privacy import strip_private_data
@@ -91,7 +92,9 @@ def trace_workflow(bundle: OKFBundle, ref: str) -> Optional[dict]:
     if concept is None:
         return None
     return {
-        "concept_id": concept.concept_id,
+        # Report the bare bundle-relative id: the absolute path a parsed
+        # concept carries is not a resolvable ref on round-trip.
+        "concept_id": normalize_doc_id(bundle, concept.concept_id),
         "title": concept.title,
         "doc_status": concept.extensions.get("doc_status", "active"),
         "steps": concept.extensions.get("steps", []),
@@ -204,7 +207,7 @@ def check_workflow_staleness(
             })
 
     return {
-        "concept_id": concept.concept_id,
+        "concept_id": normalize_doc_id(bundle, concept.concept_id),
         "title": concept.title or "",
         "resource": concept.resource or "",
         "total_steps": len(steps),
@@ -251,7 +254,7 @@ def sync_workflow(
     facts = _gather_flow_facts(conn, resource)
     if facts["total_steps"] <= 1:
         return {
-            "concept_id": concept.concept_id,
+            "concept_id": normalize_doc_id(bundle, concept.concept_id),
             "title": concept.title or "",
             "resource": resource,
             "old_step_count": len(old_steps),
@@ -292,7 +295,7 @@ def sync_workflow(
     bundle.write_concept(updated)
 
     return {
-        "concept_id": concept.concept_id,
+        "concept_id": normalize_doc_id(bundle, concept.concept_id),
         "title": concept.title or "",
         "resource": resource,
         "old_step_count": len(old_steps),

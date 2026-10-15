@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Set
 from pathlib import Path
 
 from cairn.okf.concept import OKFConcept
@@ -21,6 +21,11 @@ IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
 def doc_type_slug(doc_type: str) -> str:
     """The path-safe doc_type for knowledge ids: slugified, "general" fallback."""
     return slugify(doc_type) or "general"
+
+
+def doc_concept_id(title: str, doc_type: str, slug: Optional[str] = None) -> str:
+    """The concept id add_document assigns a title/doc_type (or explicit slug)."""
+    return f"knowledge/{doc_type_slug(doc_type)}/{slug or slugify(strip_private_data(title))}"
 
 
 def _redact_step_descriptions(steps: List[dict]) -> List[dict]:
@@ -88,6 +93,7 @@ def add_document(
     doc_source: str = "manual",    # "manual" or "imported"
     relationships: Optional[List[dict]] = None,  # {concept_id, relation, kind}
     verified_refs: Optional[List[dict]] = None,  # {ref, kind: file|symbol, verified}
+    slug: Optional[str] = None,  # explicit concept-id slug (slug-safe); defaults to slugified title
 ) -> str:
     """Redact, normalize, and store one document; return its concept id."""
     title = strip_private_data(title)
@@ -97,9 +103,7 @@ def add_document(
     description = strip_private_data(description) if description else None
     if steps:
         steps = _redact_step_descriptions(steps)
-    slug = slugify(title)
-    safe_doc_type = doc_type_slug(doc_type)
-    concept_id = f"knowledge/{safe_doc_type}/{slug}"
+    concept_id = doc_concept_id(title, doc_type, slug)
 
     extensions: dict = {
         "tier": Tier.ASSERTED.value,
@@ -129,6 +133,10 @@ def add_document(
         # Verified doc->code refs (D1.3): OKF v0.2 family, wiki pattern.
         verified=list(verified_refs) if verified_refs else None,
     )
+    # A same-title+type write replaces the prior document in place; surface
+    # it so the loss of the old content is never silent.
+    if get_document(bundle, concept_id) is not None:
+        logger.info("Overwriting existing knowledge document: %s", concept_id)
     bundle.write_concept(concept)
     return concept_id
 
@@ -185,6 +193,10 @@ def update_status(bundle: OKFBundle, doc_id: str, new_status: str) -> bool:
     """Apply a forward-only status transition and return success."""
     if new_status not in DOC_STATUSES:
         return False
+    # A status write on a missing store is a not-found, never a store
+    # creation: bundle.lock() would mkdir the tree as a side effect.
+    if not bundle.root.exists():
+        return False
     with bundle.lock():
         concept = get_document(bundle, doc_id)
         _refuse_out_of_namespace(bundle, doc_id, concept)
@@ -200,8 +212,8 @@ def update_status(bundle: OKFBundle, doc_id: str, new_status: str) -> bool:
         return True
 
 
-def delete_document(bundle: OKFBundle, doc_id: str, conn=None) -> bool:
-    """Delete a document and optional embeddings without committing."""
+def delete_document(bundle: OKFBundle, doc_id: str, conn=None, unlink: bool = True) -> bool:
+    """Delete a document file and/or embeddings without committing."""
     with bundle.lock():
         concept = get_document(bundle, doc_id)
         _refuse_out_of_namespace(bundle, doc_id, concept)
@@ -216,18 +228,18 @@ def delete_document(bundle: OKFBundle, doc_id: str, conn=None) -> bool:
             return False
         if not file_path.exists():
             return False
-        file_path.unlink()
-        # Unlink bypasses write_concept: drop the cached index or the deleted
-        # concept stays searchable.
-        bundle.invalidate_search_index()
-    # Clean up embeddings in DB. Normalize doc_id to relative for DB lookup.
-    try:
-        rel_id = str(Path(doc_id).relative_to(bundle.root))
-    except ValueError:
-        rel_id = doc_id
-    # Clean up embeddings in DB. Do NOT commit here -- the caller owns the
-    # transaction boundary; committing a connection we don't own can either
-    # commit an in-flight caller transaction or hit "database is locked".
+        if unlink:
+            file_path.unlink()
+            # Unlink bypasses write_concept: drop the cached index or the
+            # deleted concept stays searchable.
+            bundle.invalidate_search_index()
+    # Embeddings are keyed by the bare bundle-relative id; normalize whatever
+    # shape doc_id arrived in (absolute path, relative or symlinked root)
+    # onto it, or the DELETE silently matches nothing.
+    rel_id = normalize_doc_id(bundle, doc_id)
+    # Do NOT commit here -- the caller owns the transaction boundary;
+    # committing a connection we don't own can either commit an in-flight
+    # caller transaction or hit "database is locked".
     if conn is not None:
         conn.execute("DELETE FROM knowledge_embeddings WHERE doc_id = ?", (rel_id,))
     return True
@@ -242,8 +254,14 @@ def import_directory(
     affects_repos: Optional[List[str]] = None,
 ) -> List[str]:
     """Import in-size markdown files as lower-authority knowledge docs."""
+    from cairn.knowledge.ingest.identity import _unique_slug
+
+    root = Path(dir_path)
+    if not root.is_dir():
+        raise FileNotFoundError(f"Import directory does not exist: {root}")
     imported = []
-    for md_file in sorted(Path(dir_path).rglob("*.md")):
+    seen_slugs: Set[str] = set()
+    for md_file in sorted(root.rglob("*.md")):
         # Validate file size; one vanished file skips, never aborts the import.
         try:
             file_size = md_file.stat().st_size
@@ -264,6 +282,12 @@ def import_directory(
             continue
 
         title = md_file.stem.replace("-", " ").replace("_", " ").title()
+        # Same-stem files must not collapse onto one concept id: the second
+        # write would silently replace the first document's content.
+        slug = slugify(title)
+        if slug in seen_slugs:
+            slug = _unique_slug(slug, md_file.parent.name, seen_slugs)
+        seen_slugs.add(slug)
         try:
             cid = add_document(
                 bundle,
@@ -274,6 +298,7 @@ def import_directory(
                 affects_modules=affects_modules,
                 affects_repos=affects_repos,
                 doc_source="imported",  # Imported docs get lower authority
+                slug=slug,
             )
             imported.append(cid)
         except Exception as e:

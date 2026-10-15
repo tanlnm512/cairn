@@ -63,6 +63,13 @@ class TestUpdateStatusValidation:
     def test_missing_doc_returns_false(self, bundle):
         assert update_status(bundle, "knowledge/business-rule/nope", "archived") is False
 
+    def test_missing_store_returns_false_without_creating_it(self, tmp_path):
+        """A status write on a missing store must not create the tree:
+        bundle.lock() would otherwise mkdir it as a read side effect."""
+        root = tmp_path / "no-such-store"
+        assert update_status(OKFBundle(str(root)), "knowledge/spec/x", "archived") is False
+        assert not root.exists()
+
     def test_doc_statuses_ordering(self):
         assert DOC_STATUSES == ("active", "superseded", "archived")
 

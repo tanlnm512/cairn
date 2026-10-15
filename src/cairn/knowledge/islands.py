@@ -11,6 +11,10 @@ DOC_LINK_KIND = "doc-link"
 #: Resource label for doc-link tasks (members live in the facts).
 DOC_LINK_RESOURCE = "knowledge-island"
 
+#: Task statuses that still cover an island pair; failed and user-dropped
+#: tasks free the pair for re-queueing.
+_COVERING_STATUSES = frozenset({"pending", "in-progress", "done"})
+
 
 def knowledge_doc_ids(bundle: OKFBundle) -> List[str]:
     """Bare concept_ids of every parsable knowledge doc, sorted."""
@@ -91,11 +95,13 @@ def queue_doc_link_tasks(conn, bundle: OKFBundle) -> int:
 
 
 def _queued_member_sets(bundle: OKFBundle) -> Set[frozenset]:
-    """Member sets of every existing doc-link task (any status)."""
+    """Member sets of every actionable doc-link task (not failed/dropped)."""
     from cairn.llm.tasks import list_tasks
 
     covered: Set[frozenset] = set()
     for task in list_tasks(bundle, kind_prefix=DOC_LINK_KIND):
+        if task.status not in _COVERING_STATUSES:
+            continue
         members = (task.facts or {}).get("members")
         if isinstance(members, list) and members:
             covered.add(frozenset(str(m) for m in members))
