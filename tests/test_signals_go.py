@@ -203,5 +203,38 @@ class TestReceiverPins:
         assert edge.call_arity == 2
 
 
+# ---------------------------------------------------------------------------
+# Per-file state — the factory-cached singleton must reset scope stacks on
+# parse, even after a mid-walk exception (the builder swallows those and
+# keeps walking other files).
+# ---------------------------------------------------------------------------
+
+class TestPerFileStateReset:
+    def test_mid_file_exception_leaves_no_stale_type_scope(self, monkeypatch, tmp_path):
+        """A parse that raises mid-walk inside a type body must not leak
+        ``_scope`` into the next parse's qualified names."""
+        boom = tmp_path / "boom.go"
+        boom.write_text("package m\n\ntype Handler struct {\n\tX int\n}\n")
+        fine = tmp_path / "fine.go"
+        fine.write_text("package m\n\nfunc Solus() { other() }\n")
+
+        parser = GoParser()
+        real_walk = parser._walk
+
+        def flaky(node, source, pf):
+            if node.type == "type_spec":
+                raise RuntimeError("mid-walk")
+            return real_walk(node, source, pf)
+
+        monkeypatch.setattr(parser, "_walk", flaky)
+        with pytest.raises(RuntimeError):
+            parser.parse(str(boom))
+        monkeypatch.setattr(parser, "_walk", real_walk)
+
+        pf = parser.parse(str(fine))
+        assert _symbol(pf, "Solus").qualified_name == "Solus"
+        assert [e.source_name for e in _call_edges(pf, "other")] == ["Solus"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

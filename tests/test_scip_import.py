@@ -600,6 +600,49 @@ def test_in_workspace_target_that_fails_join_is_dropped(fresh_db, tmp_path):
 
 
 @needs_scip
+def test_majority_target_dropped_document_triggers_join_anomaly(fresh_db, tmp_path):
+    """A document whose edge yield falls below the threshold keeps its
+    tree-sitter call edges and records the anomaly: target-dropped
+    occurrences count against the guard instead of evading it, so the file
+    is never stripped of tree-sitter edges for a thin replacement."""
+    _seed_graph(fresh_db, tmp_path)
+    fresh_db.execute(
+        "INSERT INTO edges (id, source_id, target_id, target_name, kind, line, "
+        "column, resolution, source) VALUES "
+        "('e_ts', 's_m', NULL, 'helper', 'calls', 2, 0, 'unresolved', 'tree_sitter')"
+    )
+    fresh_db.commit()
+
+    x = "python a.py a.py/x()."
+    g = "python a.py a.py/g()."
+    idx = tmp_path / "i.scip"
+    idx.write_bytes(
+        _index_bytes(
+            _doc(
+                symbols=[_sym(x, K_FUNCTION), _sym(g, K_FUNCTION)],
+                occurrences=[
+                    _occ([50, 0, 5], x, 1),  # def x joins nothing -> refs to x drop
+                    _occ([5, 0, 5], g, 1),   # def g joins the function symbol
+                    _occ([1, 0, 5], g),      # joins source and target: one edge row
+                    _occ([1, 6, 11], x),     # source joins, target dropped
+                    _occ([2, 0, 5], x),      # source joins, target dropped
+                ],
+            )
+        )
+    )
+    record = import_scip_file(fresh_db, str(idx), str(tmp_path))
+
+    assert record["join_anomalies"] == 1
+    assert record["edges"] == 0
+    assert fresh_db.execute(
+        "select count(*) from skipped_files where reason = 'scip_join_anomaly'"
+    ).fetchone()[0] == 1
+    assert fresh_db.execute(
+        "select count(*) from edges where id = 'e_ts'"
+    ).fetchone()[0] == 1
+
+
+@needs_scip
 def test_occurrence_without_range_is_counted_unjoined(fresh_db, tmp_path):
     _seed_graph(fresh_db, tmp_path)
     from cairn.parsers import _scip_pb2 as pb

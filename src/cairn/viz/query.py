@@ -22,34 +22,46 @@ def get_symbol_graph(conn: sqlite3.Connection, name: str, depth: int = 1) -> Dic
         return _empty("symbol", name)
     _add_node(nodes, focal["name"], focal["kind"], focal["path"], focal["repo_id"])
 
-    # Callers (1-hop).
-    for r in cur.execute(
+    truncated = False
+    # Callers (1-hop); fetch cap+1 to flag truncation.
+    callers = cur.execute(
         "SELECT s.name AS caller, s.kind AS ckind, f.path, f.repo_id, e.kind AS ekind "
         "FROM edges e JOIN symbols s ON e.source_id = s.id "
         "JOIN files f ON s.file_id = f.id "
-        "WHERE e.target_id IN (SELECT id FROM symbols WHERE name = ?) LIMIT 30",
+        f"WHERE e.target_id IN (SELECT id FROM symbols WHERE name = ?) "
+        f"LIMIT {_NEIGHBOR_CAP + 1}",
         (name,),
-    ).fetchall():
+    ).fetchall()
+    if len(callers) > _NEIGHBOR_CAP:
+        truncated = True
+        callers = callers[:_NEIGHBOR_CAP]
+    for r in callers:
         _add_node(nodes, r["caller"], r["ckind"], r["path"], r["repo_id"])
         edges.append({"source": r["caller"], "target": name, "kind": r["ekind"]})
 
-    # Callees (1-hop).
-    for r in cur.execute(
+    # Callees (1-hop); fetch cap+1 to flag truncation.
+    callees = cur.execute(
         "SELECT COALESCE(t.name, e.target_name) AS callee, t.kind, f.path, f.repo_id, "
         "e.target_id AS resolved, e.kind AS ekind FROM edges e JOIN symbols s ON e.source_id = s.id "
         "LEFT JOIN symbols t ON e.target_id = t.id "
-        "LEFT JOIN files f ON t.file_id = f.id WHERE s.name = ? LIMIT 30",
+        "LEFT JOIN files f ON t.file_id = f.id WHERE s.name = ? "
+        f"LIMIT {_NEIGHBOR_CAP + 1}",
         (name,),
-    ).fetchall():
+    ).fetchall()
+    if len(callees) > _NEIGHBOR_CAP:
+        truncated = True
+        callees = callees[:_NEIGHBOR_CAP]
+    for r in callees:
         if r["callee"]:
             _add_node(nodes, r["callee"], r["kind"] or "external", r["path"], r["repo_id"])
             edges.append({"source": name, "target": r["callee"], "kind": r["ekind"]})
 
     return {"nodes": list(nodes.values()), "edges": edges,
-            "metadata": {"scope": "symbol", "symbol": name, "node_count": len(nodes), "edge_count": len(edges)}}
+            "metadata": {"scope": "symbol", "symbol": name, "node_count": len(nodes),
+                         "edge_count": len(edges), "truncated": truncated}}
 
 
-# Per focal row per direction, mirroring get_symbol_graph's scope caps.
+# Callers/callees cap per focal row per direction.
 _NEIGHBOR_CAP = 30
 
 
@@ -194,13 +206,7 @@ def _is_vendored_path(path: str) -> bool:
 def _curated_scope_graph(
     conn: sqlite3.Connection, include_tests: bool, path_filter: str = ""
 ) -> tuple[dict[str, dict], list[dict], dict]:
-    """Degree-ranked, test/vendor-curated symbols + their deduplicated internal edges.
-
-    Shared core of :func:`get_module_graph` and :func:`get_symbol_overview`.
-    ``path_filter`` is an optional SQL LIKE pattern on the file path. Returns
-    ``(nodes, edges, meta)`` where ``meta`` carries node_count, edge_count,
-    edge_kinds, tests_included, truncated, and vendored_excluded.
-    """
+    """Degree-ranked curated symbols plus their deduplicated internal edges and honest metadata."""
     from ..graph.tests import is_test_symbol
 
     cur = conn.cursor()
@@ -230,7 +236,7 @@ def _curated_scope_graph(
         if eligible > _SCOPE_CAP:
             continue
         _add_node(nodes, r["name"], r["kind"], r["path"], r["repo_id"])
-    edges = _internal_edges(cur, nodes)
+    edges, edges_truncated = _internal_edges(cur, nodes)
     edge_kinds: dict[str, int] = {}
     for e in edges:
         edge_kinds[e["kind"]] = edge_kinds.get(e["kind"], 0) + 1
@@ -240,15 +246,18 @@ def _curated_scope_graph(
         "edge_kinds": edge_kinds,
         "tests_included": include_tests,
         "truncated": eligible > _SCOPE_CAP,
+        "edges_truncated": edges_truncated,
         "vendored_excluded": vendored_excluded,
     }
     return nodes, edges, meta
 
 
-def _internal_edges(cur: sqlite3.Cursor, nodes: dict[str, dict]) -> list[dict]:
-    """Edges between the kept symbols, deduplicated on (source, target, kind)."""
+def _internal_edges(
+    cur: sqlite3.Cursor, nodes: dict[str, dict]
+) -> tuple[list[dict], bool]:
+    """Edges between kept symbols, deduplicated on (source, target, kind); flag is cap truncation."""
     if not nodes:
-        return []
+        return [], False
     names = list(nodes.keys())
     placeholders = ",".join("?" * len(names))
     rows = cur.execute(
@@ -257,9 +266,12 @@ def _internal_edges(cur: sqlite3.Cursor, nodes: dict[str, dict]) -> list[dict]:
         f"LEFT JOIN symbols s2 ON e.target_id = s2.id "
         f"WHERE s1.name IN ({placeholders}) "
         f"AND COALESCE(s2.name, e.target_name) IN ({placeholders}) "
-        f"LIMIT {_SCOPE_EDGE_CAP}",
+        f"LIMIT {_SCOPE_EDGE_CAP + 1}",
         names + names,
     ).fetchall()
+    truncated = len(rows) > _SCOPE_EDGE_CAP
+    if truncated:
+        rows = rows[:_SCOPE_EDGE_CAP]
     edges: list[dict] = []
     seen_edges: set[tuple] = set()
     for r in rows:
@@ -269,27 +281,13 @@ def _internal_edges(cur: sqlite3.Cursor, nodes: dict[str, dict]) -> list[dict]:
                 continue
             seen_edges.add(key)
             edges.append({"source": r["src"], "target": r["tgt"], "kind": r["kind"]})
-    return edges
+    return edges, truncated
 
 
 def get_module_graph(
     conn: sqlite3.Connection, module: str = "", include_tests: bool = False
 ) -> Dict:
-    """Symbols in a module + their internal edges, curated for usefulness.
-
-    An empty ``module`` (the dashboard's default landing view) matches every
-    path. Candidates are ranked by degree (fan-in + fan-out of any edges)
-    then name, so the cap lands on the symbols that carry the module's
-    structure. Tests are excluded by default (the ``is_test_symbol``
-    heuristics from the impact layer); ``include_tests`` opts back in.
-    Symbols from vendored/minified assets (:func:`_is_vendored_path`) are
-    never candidates — they are generated noise in every scope, so unlike
-    tests they have no opt-in. Edges are deduplicated on ``(source,
-    target, kind)``: the join is by bare symbol name, so same-named symbols
-    across repos multiply one logical edge into many parallel rows.
-    ``metadata.tests_included``, ``metadata.truncated`` and
-    ``metadata.vendored_excluded`` report all three choices honestly.
-    """
+    """Symbols in a module plus internal edges, degree-ranked and curated with honest metadata."""
     nodes, edges, meta = _curated_scope_graph(
         conn, include_tests, path_filter=f"%{module}%"
     )

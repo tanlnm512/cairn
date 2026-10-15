@@ -182,10 +182,16 @@ class CSharpParser(BaseParser, TreeSitterParserBase):
         # interfaces (implements). C# single-inheritance makes this unambiguous.
         for child in node.children:
             if child.type == "base_list":
-                names = [c for c in child.children if c.type == "identifier"]
-                for i, name_node in enumerate(names):
+                bases = [
+                    c
+                    for c in child.children
+                    if c.type in ("identifier", "generic_name", "qualified_name")
+                ]
+                for i, base in enumerate(bases):
                     edge_kind = "extends" if i == 0 and kind == "class" else "implements"
-                    target = self._node_text(name_node, source).strip()
+                    target = self._type_name(base, source)
+                    if not target:
+                        continue
                     self._pending_edges.append(
                         Edge(name, edge_kind, target, node.start_point[0] + 1)
                     )

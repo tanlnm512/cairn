@@ -142,18 +142,18 @@
       "local_alias": "Delta"
     },
     {
-      "imported_path": "from enum import Enum",
+      "imported_path": "enum.Enum",
       "line": 3,
       "local_alias": null
     },
     {
-      "imported_path": "from typing import Optional",
-      "line": 4,
+      "imported_path": "os",
+      "line": 1,
       "local_alias": null
     },
     {
-      "imported_path": "import os",
-      "line": 1,
+      "imported_path": "typing.Optional",
+      "line": 4,
       "local_alias": null
     }
   ]

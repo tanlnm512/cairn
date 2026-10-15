@@ -324,5 +324,33 @@ class TestCallArity:
         assert _call_edge(pf, "User").call_arity == 1
 
 
+class TestInheritanceEdges:
+    def test_generic_and_qualified_bases_emit_edges(self):
+        """``class Repo : Base, IRepo<Repo>, Ns.Iface`` emits extends for the
+        first base and implements for the generic and qualified rest."""
+        pf = _parse(b"class Repo : Base, IRepo<Repo>, Ns.Iface {}\n")
+        edges = [
+            (e.kind, e.target_name)
+            for e in pf.edges
+            if e.kind in ("extends", "implements")
+        ]
+        assert edges == [
+            ("extends", "Base"),
+            ("implements", "IRepo"),
+            ("implements", "Iface"),
+        ]
+
+    def test_struct_generic_base_emits_edge(self):
+        """``struct Money : IComparable<Money>`` keeps the first-base edge
+        (kind extends, the struct convention) despite the generic wrapper."""
+        pf = _parse(b"public struct Money : IComparable<Money> { }\n")
+        edges = [
+            (e.kind, e.target_name)
+            for e in pf.edges
+            if e.kind in ("extends", "implements")
+        ]
+        assert edges == [("extends", "IComparable")]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -619,6 +619,105 @@ def test_get_symbol_neighbors_depth_past_one_is_clamped(fresh_db):
     assert get_symbol_neighbors(fresh_db, ["alpha_main"]) == one_hop
 
 
+def test_get_symbol_graph_flags_direction_cap_truncation(fresh_db):
+    """get_symbol_graph carries the same truncated flag as its neighbors
+    generalization: True only when a direction hits the 30-row cap, with
+    exactly-at-cap and small graphs reporting False."""
+    from cairn.viz.query import _NEIGHBOR_CAP, get_symbol_graph
+
+    _seed(fresh_db)
+    assert get_symbol_graph(fresh_db, "alpha_main")["metadata"]["truncated"] is False
+
+    over = _NEIGHBOR_CAP + 3
+    fresh_db.executemany(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (?, ?, ?, ?)",
+        [
+            (f"cap_g_f{i:02d}", "alpha", f"src/alpha/capg{i:02d}.py", "python")
+            for i in range(over)
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            (
+                f"cap_g_s{i:02d}",
+                f"cap_g_f{i:02d}",
+                f"cap_g_caller_{i:02d}",
+                f"alpha.capg.{i}",
+                "function",
+            )
+            for i in range(over)
+        ]
+        + [("cap_g_focal", "f_a1", "cap_g_focal", "alpha.cap_g_focal", "function")],
+    )
+    fresh_db.executemany(
+        "INSERT INTO edges (id, source_id, target_id, kind) VALUES (?, ?, ?, ?)",
+        [
+            (f"cap_g_e{i:02d}", f"cap_g_s{i:02d}", "cap_g_focal", "calls")
+            for i in range(over)
+        ],
+    )
+    fresh_db.commit()
+
+    over_graph = get_symbol_graph(fresh_db, "cap_g_focal")
+
+    assert over_graph["metadata"]["truncated"] is True
+    assert over_graph["metadata"]["edge_count"] == _NEIGHBOR_CAP
+
+    for i in range(3):
+        fresh_db.execute("DELETE FROM edges WHERE id = ?", (f"cap_g_e{i:02d}",))
+    fresh_db.commit()
+    at_cap = get_symbol_graph(fresh_db, "cap_g_focal")
+
+    assert at_cap["metadata"]["truncated"] is False
+    assert at_cap["metadata"]["edge_count"] == _NEIGHBOR_CAP
+
+
+def test_get_module_graph_flags_edge_cap_truncation(fresh_db):
+    """The curated scopes report edges_truncated when the internal-edge cap
+    bounds the result, keeping the honest-metadata contract."""
+    from cairn.viz.query import _SCOPE_EDGE_CAP, get_module_graph
+
+    _seed(fresh_db)
+    assert get_module_graph(fresh_db)["metadata"]["edges_truncated"] is False
+
+    n = 24
+    fresh_db.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            (
+                f"cap_m_s{i:02d}",
+                "f_a1",
+                f"cap_m_fn_{i:02d}",
+                f"alpha.capm.fn_{i}",
+                "function",
+            )
+            for i in range(n)
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO edges (id, source_id, target_id, kind) VALUES (?, ?, ?, ?)",
+        [
+            (
+                f"cap_m_e{i:02d}_{j}",
+                f"cap_m_s{i:02d}",
+                f"cap_m_s{(i + j) % n:02d}",
+                "calls",
+            )
+            for i in range(n)
+            for j in range(1, 6)
+        ],
+    )
+    fresh_db.commit()
+
+    graph = get_module_graph(fresh_db)
+
+    assert graph["metadata"]["edges_truncated"] is True
+    assert graph["metadata"]["edge_count"] == _SCOPE_EDGE_CAP
+
+
 def test_projects_data_flows_through_the_read_only_factory(tmp_path):
     """The dashboard's own connection factory serves the view data, and that
     connection can never write ."""
@@ -3322,3 +3421,64 @@ def test_get_wiki_page_gain_staleness(tmp_path, monkeypatch):
 
     assert page is not None
     assert page["staleness"] == "stale"
+
+
+def test_wiki_staleness_heads_resolve_against_the_store_workspace(
+    tmp_path, monkeypatch
+):
+    """Staleness HEADs resolve through the selected store's registered
+    workspace, not the server process's cwd: a page whose recorded sha
+    matches that workspace's HEAD reads fresh from any server cwd."""
+    from pathlib import Path
+
+    from cairn import paths
+    from cairn.dashboard.data import get_wiki_pages
+    from cairn.okf.bundle import OKFBundle
+    from cairn.okf.concept import OKFConcept
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    key = paths.store_key(ws)
+    home = Path(paths.CAIRN_HOME)
+    knowledge = home / key / ".knowledge"
+    knowledge.mkdir(parents=True)
+    (home / "workspaces.json").write_text(
+        json.dumps({str(ws): key}), encoding="utf-8"
+    )
+
+    sha = "abc1234a"
+    bundle = OKFBundle(str(knowledge))
+    bundle.write_concept(
+        OKFConcept(
+            type="Wiki-Article",
+            title="Wiki: overview",
+            body="# overview\n\n## Sources\n",
+            concept_id="wiki/pages/alpha/overview",
+            tags=["alpha", "wiki"],
+            extensions={"commit_sha": sha},
+        )
+    )
+    manifest_dir = knowledge / "_wiki"
+    manifest_dir.mkdir()
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "cairn-wiki-manifest-3",
+                "pages": {"alpha/overview": {"page_id": "overview"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    seen = {}
+
+    def _fake_head(repo, workspace=None):
+        seen[repo] = workspace
+        return sha
+
+    monkeypatch.setattr("cairn.dashboard.data.get_repo_head", _fake_head)
+
+    pages = get_wiki_pages(str(knowledge))
+
+    assert seen == {"alpha": str(ws)}
+    assert pages[0]["staleness"] == "fresh"
