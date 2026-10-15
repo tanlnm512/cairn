@@ -3932,6 +3932,23 @@ def test_settings_refuses_non_numeric_timeout_without_writing(tmp_path):
     assert _saved_config() == {}
 
 
+def test_settings_save_refused_in_read_only_mode(tmp_path, monkeypatch):
+    """Under CAIRN_READ_ONLY the save route refuses with the reason on the
+    page and CONFIG_FILE left unwritten: the read-only-branded dashboard
+    never persists configuration writes."""
+    monkeypatch.setenv("CAIRN_READ_ONLY", "1")
+    client = _settings_client(tmp_path)
+
+    resp = client.post(
+        "/settings/save", data={"CAIRN_EMBED_BACKEND": "omlx"}
+    )
+
+    assert resp.status_code == 403
+    assert "CAIRN_READ_ONLY" in resp.text
+    assert "nothing was saved" in resp.text
+    assert _saved_config() == {}
+
+
 def test_settings_save_write_failure_renders_error_and_keeps_config(
     tmp_path, monkeypatch
 ):

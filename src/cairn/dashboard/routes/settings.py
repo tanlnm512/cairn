@@ -221,11 +221,23 @@ async def _settings_save(
 ) -> Response:
     from ..app import SETTINGS_KEYS
     from ...graph import embeddings
+    from ...telemetry.sink import is_read_only
     from ... import paths
 
     _, _, store_key = context.resolve_selection(
         request, context.db_path, context.knowledge_dir, form=form
     )
+    if is_read_only():
+        return context.render(
+            request,
+            "settings.html",
+            _settings_context(
+                store_key,
+                error="Refused: CAIRN_READ_ONLY is set; "
+                "nothing was saved.",
+            ),
+            status_code=403,
+        )
     submitted = {
         key: str(form.get(key) or "").strip()
         for key in SETTINGS_KEYS

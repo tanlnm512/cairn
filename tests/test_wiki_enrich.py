@@ -295,6 +295,29 @@ def test_enrich_propagates_the_row_diagrams_flag(cli_env, monkeypatch):
     assert "diagrams" not in queued[_key("details")].facts
 
 
+def test_enrich_rerun_never_duplicates_live_enrich_tasks(cli_env, monkeypatch):
+    """A re-run over pages whose enrichment is still live queues nothing
+    new: one task per promoted page no matter how often enrich runs."""
+    knowledge = cli_env
+    bundle = _bundle(knowledge)
+    _promote_article(bundle, "overview", body=PRIOR_BODY)
+    _write_manifest(knowledge, {
+        _key("overview"): _row("overview", state="promoted",
+                               task_id="spent-chain", attempts=1),
+    })
+    _fresh_head(monkeypatch, FRESH_SHA)
+
+    first = _enrich(knowledge, "--all")
+    assert first.exit_code == 0, first.output
+    queued = _pending_enrich_tasks(bundle)
+    assert [t.resource for t in queued] == [_key("overview")]
+
+    second = _enrich(knowledge, "--all")
+
+    assert second.exit_code == 0, second.output
+    assert [t.id for t in _pending_enrich_tasks(bundle)] == [queued[0].id]
+
+
 # --- enrich refuses unpromoted/unknown pages --------------------------
 
 

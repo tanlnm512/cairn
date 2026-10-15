@@ -96,22 +96,18 @@ def validate_refined_outline(
     conn: sqlite3.Connection,
     repo: str,
 ) -> List[Dict[str, Any]]:
-    """Validate a refined catalog outline against the graph.
-
-    Returns the effective page plan in refined order; every record carries
-    the planner's record shape (``page_id``/``title``/``description``/
-    ``module``/``source``/``seeds``/``input_hash``). A rejected entry is
-    replaced by the deterministic entry for the same module, and any
-    deterministic entry the refinement dropped is appended, so a page is
-    never silently lost to a positional shift.
-    """
+    """Validate a refined catalog outline: the effective plan in refined order
+    with the planner's record shape; rejected entries revert to their module's
+    deterministic entry, duplicate modules keep the first, dropped ones appended."""
     det_by_module = {entry["module"]: entry for entry in deterministic_plan}
     effective: List[Dict[str, Any]] = []
+    covered = set()
     for entry in refined:
         record = _effective_entry(entry, det_by_module, conn, repo)
-        if record is not None:
-            effective.append(record)
-    covered = {record["module"] for record in effective}
+        if record is None or record["module"] in covered:
+            continue
+        covered.add(record["module"])
+        effective.append(record)
     for entry in deterministic_plan:
         if entry["module"] not in covered:
             effective.append(entry)

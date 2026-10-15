@@ -26,7 +26,11 @@ def register(routes: list[Any], context: DashboardContext) -> None:
     def communities(request: Request) -> Response:
         # An HX drill-down renders only the member region and skips the listing query.
         raw = request.query_params.get("community", "").strip()
-        community_id = int(raw) if raw.isdigit() else None
+        # Beyond sqlite's 64-bit range the bind itself raises OverflowError;
+        # no such community id can exist, so it parses as no selection.
+        community_id = (
+            int(raw) if raw.isdigit() and int(raw) <= 2**63 - 1 else None
+        )
         fragment = is_hx_request(request)
         selected_db, _, store_key = resolve_selection(
             request, db_path, knowledge_dir

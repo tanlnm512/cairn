@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import click
 
@@ -51,6 +52,9 @@ def map_orientation(
     """Show directory clusters, hubs, and workspace hotspots."""
     from ..graph.watcher import _read_only_env
 
+    # The gate must fire before get_db, which would create a missing store.
+    if not Path(db).exists():
+        raise click.ClickException(f"no graph DB at {db} — run `cairn build` first")
     read_only = _read_only_env()
     conn = get_db(db, read_only=read_only)
     try:

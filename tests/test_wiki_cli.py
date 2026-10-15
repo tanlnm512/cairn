@@ -368,6 +368,35 @@ def test_generate_llm_force_requeues_unchanged_promoted_page(cli_env, tmp_path):
     assert len(ids) == 2 and queued[0].id in ids
 
 
+def test_generate_llm_rerun_reports_live_task_as_in_flight(cli_env, tmp_path):
+    """A re-run over an unchanged, unpromoted page whose task is still live
+    reports it as adopted/in flight — never "Up to date, skipped": the work
+    is queued, nothing has been written yet."""
+    db = tmp_path / "graph.db"
+    conn = get_db(str(db))
+    try:
+        _seed_indexed_repo(conn)
+    finally:
+        conn.close()
+    knowledge = cli_env
+    generate = ["generate", "--llm", "--pages", "1",
+                "--db", str(db), "--knowledge", str(knowledge)]
+
+    first = CliRunner().invoke(wiki, generate)
+    assert first.exit_code == 0, first.output
+    bundle = _bundle(knowledge)
+    live = list_tasks(bundle, kind="wiki-page", status="pending")
+    assert [t.resource for t in live] == [f"{REPO}/overview"]
+
+    rerun = CliRunner().invoke(wiki, generate)
+    assert rerun.exit_code == 0, rerun.output
+    assert "Adopted live wiki-page task" in rerun.stdout
+    assert "already in flight" in rerun.stdout
+    assert "Up to date, skipped" not in rerun.stdout
+    assert {t.id for t in list_tasks(bundle, kind="wiki-page", status="pending")} == \
+        {live[0].id}
+
+
 def test_generate_llm_dry_run_queues_nothing(cli_env, tmp_path):
     """`--llm --dry-run` prints the plan and writes nothing: no task is
     queued and no manifest lands."""
@@ -547,3 +576,38 @@ def test_status_unpromoted_page_reports_unknown_staleness(cli_env, monkeypatch):
     assert result.exit_code == 0, result.output
     line = _page_lines(result.stdout.lower(), QUEUED_A)[0]
     assert "unknown" in line
+
+
+# --- wiki search -------------------------------------------------
+
+
+def test_search_returns_only_wiki_pages(cli_env):
+    """`wiki search` scopes to promoted wiki pages: a compass concept whose
+    body matches equally never surfaces in the results."""
+    bundle = _bundle(cli_env)
+    bundle.write_concept(
+        OKFConcept(
+            type="Compass",
+            title="Compass: queries",
+            body="The querulent module owns query planning.\n",
+            concept_id="compass/queries",
+            tags=["compass"],
+        )
+    )
+    bundle.write_concept(
+        OKFConcept(
+            type="Wiki-Article",
+            title="Wiki: overview",
+            body="The querulent module owns query planning.\n\n## Sources\n",
+            concept_id=f"wiki/pages/{REPO}/overview",
+            tags=[REPO, "wiki"],
+        )
+    )
+
+    result = CliRunner().invoke(wiki, ["search", "querulent",
+                                       "--knowledge", str(cli_env)])
+
+    assert result.exit_code == 0, result.output
+    assert "wiki/pages/r/overview" in result.stdout
+    assert "compass/queries" not in result.stdout
+    assert "Compass: queries" not in result.stdout
