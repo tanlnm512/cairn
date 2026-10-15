@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -140,7 +141,7 @@ class OKFConcept:
         """
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         # Create temp file in the same directory as target for os.replace atomicity
-        tmp_path = f"{path}.{os.getpid()}.tmp"
+        tmp_path = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
         try:
             # Write to temp file first
             Path(tmp_path).write_text(self.to_markdown(), encoding="utf-8")

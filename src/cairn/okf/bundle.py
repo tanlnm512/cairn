@@ -103,8 +103,17 @@ class OKFBundle:
         """Advisory cross-process lock guarding a read-modify-write sequence."""
         return _okf_bundle_lock(self.root, timeout=timeout)
 
+    def relativize_id(self, concept_id: str) -> str:
+        """Return concept_id relative to the bundle root; already-relative ids pass through."""
+        path = Path(concept_id)
+        if not path.is_absolute():
+            return concept_id
+        try:
+            return path.resolve().relative_to(self.root.resolve()).as_posix()
+        except ValueError:
+            return concept_id
+
     def _validate_concept_path(self, concept_id: str) -> Path:
-        self.root.mkdir(parents=True, exist_ok=True)
         root_abs = self.root.resolve()
         path = (self.root / f"{concept_id}.md").resolve()
         if not path.is_relative_to(root_abs):
@@ -175,12 +184,11 @@ class OKFBundle:
         return index
 
     def search(
-        self, query: str, tags: Optional[List[str]] = None, limit: int = 20
+        self, query: str, tags: Optional[List[str]] = None, limit: Optional[int] = 20
     ) -> List[OKFConcept]:
         """Simple text search across concept title, description, tags, body.
 
-        Uses a lazily-built in-memory index; the index is invalidated whenever
-        a concept is written.
+        Lazily-indexed; invalidated on write; ``limit=None`` returns all matches.
         """
         if self._index is None:
             self._index = self._build_search_index()

@@ -11,6 +11,7 @@ from unittest.mock import patch
 from cairn.compass.router import route_query
 from cairn.graph import watcher
 from cairn.okf.bundle import OKFBundle
+from cairn.okf.concept import OKFConcept
 
 
 class TestGitignoreCacheInvalidation:
@@ -90,4 +91,33 @@ class TestRouterEmptyFlag:
         assert "empty" in result, "Router response should include 'empty' flag"
         assert result["empty"] is False, (
             "empty should be False when any layer returns results"
+        )
+
+
+class TestKnowledgeLayerRouting:
+    """L5 knowledge layer must surface knowledge/ concepts to route_query."""
+
+    def test_l5_knowledge_lookup_returns_knowledge_concept(self, fresh_db, tmp_path):
+        """A knowledge/ concept matching an L5 query is returned, not filtered out.
+
+        bundle.search() returns concepts whose concept_id is an absolute path
+        (read_concept resolves against the root), so the layer filter must
+        normalize ids to bundle-relative form before the prefix check.
+        """
+        bundle = OKFBundle(str(tmp_path / "knowledge"))
+        bundle.write_concept(OKFConcept(
+            concept_id="knowledge/policies/refund-eligibility",
+            type="Business-Rule",
+            title="Refund eligibility policy",
+            body="Customers get 30 days to request a refund.",
+        ))
+
+        result = route_query("policy", fresh_db, bundle)
+
+        assert result["layer"] == "L5"
+        assert result["results"].get("knowledge") == ["Refund eligibility policy"], (
+            "L5 knowledge layer must return matching knowledge/ concepts"
+        )
+        assert not result.get("degraded"), (
+            "a hit in the targeted layer must not fall back to degraded mode"
         )

@@ -22,10 +22,10 @@ def find_compass_concept(bundle, module: str):
 def search_knowledge_data(query: str, type_filter: str = "", limit: int = 10) -> list:
     """Matching concepts from ``bundle.search``, optionally filtered by type prefix."""
     bundle = _bundle()
-    results = bundle.search(query, limit=limit)
+    results = bundle.search(query, limit=None)
     if type_filter:
         results = [c for c in results if c.type.startswith(type_filter)]
-    return results
+    return results[:limit]
 
 
 def _render_full_body(results) -> str:
@@ -131,7 +131,7 @@ def ask_compass(query: str, file_path: str = "") -> str:
         # Memory for the path.
         if seg:
             for c in bundle.search(seg, limit=3):
-                if c.concept_id.startswith("memory/"):
+                if bundle.relativize_id(c.concept_id).startswith("memory/"):
                     out.append(f"\n# Memory: {c.title}")
                     if c.description:
                         out.append(f"  {c.description}")

@@ -262,7 +262,7 @@ def _search_knowledge(query: str, bundle: OKFBundle) -> List[str]:
     """Search knowledge documents."""
     return [
         c.title or "" for c in bundle.search(query, limit=5)
-        if c.concept_id.startswith("knowledge/")
+        if bundle.relativize_id(c.concept_id).startswith("knowledge/")
     ]
 
 
