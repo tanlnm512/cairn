@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass, field, replace
 from typing import Dict, Iterator, List, Tuple
 
-from cairn.graph.schema import get_db
+from cairn.graph.schema import _is_lock_contention, get_db
 from cairn.graph.fusion import rrf_fuse
 from cairn.paths import StorePaths, _load_registry, resolve_store
 
@@ -60,8 +60,9 @@ def federated_search(
                 continue
             try:
                 store_hits = _search_store(store, query, limit)
-            except Exception:
-                states[ws_path] = "locked"
+            except Exception as exc:
+                locked = isinstance(exc, sqlite3.Error) and _is_lock_contention(exc)
+                states[ws_path] = "locked" if locked else "error"
                 dropped.append(ws_path)
                 continue
             states[ws_path] = "ok"

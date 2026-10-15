@@ -292,7 +292,7 @@ class FederatedSearchTests(FederationStoreCase):
 
 
 class UnavailableStoreTests(FederationStoreCase):
-    """Named dropped-store report: missing, locked, unindexed, no stores."""
+    """Named dropped-store report: missing, locked, unindexed, error, no stores."""
 
     @classmethod
     def setUpClass(cls):
@@ -380,6 +380,25 @@ class UnavailableStoreTests(FederationStoreCase):
             holder.close()
 
         self.assertEqual(result.states[str(self.store_c.workspace)], "locked")
+        self.assertEqual(result.dropped, [str(self.store_c.workspace)])
+        self.assertEqual(
+            set(result.states),
+            self._healthy_workspaces() | {str(self.store_c.workspace)},
+        )
+        self.assertEqual(
+            {hit["workspace"] for hit in result.hits}, self._healthy_workspaces()
+        )
+
+    def test_corrupt_store_reports_error_not_locked(self):
+        """A corrupt store file reports state 'error'; 'locked' is lock-only."""
+        from cairn.graph.federation import federated_search
+
+        for sibling in self.store_c.home.glob(".kg*"):
+            sibling.unlink()
+        self.store_c.db.write_bytes(b"not a sqlite database")
+        result = federated_search("authenticate", limit=10)
+
+        self.assertEqual(result.states[str(self.store_c.workspace)], "error")
         self.assertEqual(result.dropped, [str(self.store_c.workspace)])
         self.assertEqual(
             set(result.states),

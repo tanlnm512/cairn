@@ -44,7 +44,11 @@ def graph_grep(
     path_prefix: str = "",
     max_hits: int = DEFAULT_MAX_HITS,
 ) -> dict:
-    """Search indexed files and group hits by their innermost stored symbol."""
+    """Search indexed files and group hits by their innermost stored symbol.
+
+    Scanning stops once ``max_hits`` hits are collected; ``truncated`` marks
+    that ``dropped_hits`` / ``dropped_groups`` are then lower bounds.
+    """
     if max_hits < 1:
         raise ValueError("max_hits must be at least 1")
     expression = re.escape(pattern) if fixed else pattern
@@ -63,6 +67,8 @@ def graph_grep(
 
     searched = 0
     unreadable = 0
+    truncated = False
+    collected_hits = 0
     groups: dict[tuple[str, str, str], _Group] = {}
     for row in file_rows:
         path = row["path"]
@@ -77,7 +83,7 @@ def graph_grep(
             unreadable += 1
             continue
         searched += 1
-        _collect_file_hits(
+        collected_hits += _collect_file_hits(
             matcher,
             source.splitlines(),
             str(row["id"]),
@@ -85,7 +91,11 @@ def graph_grep(
             path,
             symbols_by_file.get(str(row["id"]), []),
             groups,
+            max_hits - collected_hits,
         )
+        if collected_hits >= max_hits:
+            truncated = True
+            break
 
     ordered = sorted(
         groups.values(),
@@ -120,6 +130,7 @@ def graph_grep(
         "groups": [_payload_group(group) for group in capped],
         "dropped_hits": total_hits - returned_hits,
         "dropped_groups": len(ordered) - len(capped),
+        "truncated": truncated,
     }
 
 
@@ -179,9 +190,14 @@ def _collect_file_hits(
     path: str,
     symbols: list[_SymbolSpan],
     groups: dict[tuple[str, str, str], _Group],
-) -> None:
+    budget: int,
+) -> int:
+    """Collect hits up to ``budget`` and return how many were stored."""
+    collected = 0
     for line_number, text in enumerate(lines, start=1):
         for match in matcher.finditer(text):
+            if collected >= budget:
+                return collected
             symbol = _innermost_symbol(symbols, line_number)
             symbol_name = symbol.qualified_name if symbol is not None else ""
             key = (
@@ -200,6 +216,8 @@ def _collect_file_hits(
                     "text": text,
                 }
             )
+            collected += 1
+    return collected
 
 
 def _innermost_symbol(

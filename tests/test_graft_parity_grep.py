@@ -417,6 +417,28 @@ def test_truncation_counts_are_explicit(capped_hits: SimpleNamespace) -> None:
         "second",
     ]
     assert sum(len(group["hits"]) for group in payload["groups"]) == 2
-    assert payload["dropped_hits"] == 1
-    assert payload["dropped_groups"] == 1
-    assert payload["searched_files"] == 4
+    assert payload["dropped_hits"] == 0
+    assert payload["dropped_groups"] == 0
+    assert payload["searched_files"] == 3
+    assert payload["truncated"] is True
+
+
+def test_truncated_scan_stops_reading_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _fixture(
+        tmp_path,
+        monkeypatch,
+        "capped-many",
+        {
+            "a_needles.py": "\n".join(["needle"] * 12) + "\n",
+            "b_needles.py": "\n".join(["needle"] * 12) + "\n",
+        },
+    )
+
+    payload = _payload(fixture, "needle", "--max-hits", "5")
+
+    assert sum(len(group["hits"]) for group in payload["groups"]) == 5
+    assert [group["path"] for group in payload["groups"]] == ["a_needles.py"]
+    assert payload["searched_files"] == 1  # b_needles.py never scanned
+    assert payload["truncated"] is True
