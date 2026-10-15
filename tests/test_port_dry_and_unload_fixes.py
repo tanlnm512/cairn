@@ -174,3 +174,67 @@ class TestPlistReadWriteDefaultAndLabel:
         assert "sse" not in label.lower()
         for key in ("StandardOutPath", "StandardErrorPath"):
             assert "sse" not in Path(plist[key]).name.lower()
+
+
+class TestPlistCarriesBindHost:
+    """The rendered daemon argv must carry --host: a requested non-default
+    host must not be silently dropped in favor of the default loopback."""
+
+    def test_render_plist_program_arguments_carry_host(self):
+        from cairn.mcp_server import lifecycle
+
+        plist = lifecycle.render_plist(port=9999, host="0.0.0.0")
+        args = plist["ProgramArguments"]
+        assert args[args.index("--port") + 1] == "9999"
+        assert args[args.index("--host") + 1] == "0.0.0.0", (
+            "render_plist must pass the requested host to `serve run`"
+        )
+
+    def test_render_plist_default_host_is_loopback(self):
+        from cairn.mcp_server import lifecycle
+
+        args = lifecycle.render_plist()["ProgramArguments"]
+        assert args[args.index("--host") + 1] == lifecycle.DEFAULT_HOST
+
+
+class TestLegacyPlistRemovedAfterUnload:
+    """Unloading the retired dev.cairn.sse agent must also delete its plist,
+    or launchd re-launches it at every login."""
+
+    def test_legacy_plist_unlinked_after_unload(self, tmp_path, monkeypatch):
+        from cairn.mcp_server import lifecycle
+
+        legacy = tmp_path / f"{lifecycle.LEGACY_LABEL}.plist"
+        legacy.write_text("<plist/>")
+        monkeypatch.setattr(lifecycle, "agents_dir", lambda: tmp_path)
+        calls: list[list[str]] = []
+        monkeypatch.setattr(
+            lifecycle,
+            "_run_launchctl",
+            lambda args: calls.append(list(args)) or subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr=""),
+        )
+        monkeypatch.setattr(lifecycle, "_legacy_label_unloaded", False)
+
+        lifecycle._unload_legacy_label_once()
+
+        assert calls == [["unload", str(legacy)]]
+        assert not legacy.exists(), "the retired plist must be deleted, not just unloaded"
+
+    def test_second_call_is_a_no_op(self, tmp_path, monkeypatch):
+        from cairn.mcp_server import lifecycle
+
+        legacy = tmp_path / f"{lifecycle.LEGACY_LABEL}.plist"
+        legacy.write_text("<plist/>")
+        monkeypatch.setattr(lifecycle, "agents_dir", lambda: tmp_path)
+        calls: list[list[str]] = []
+        monkeypatch.setattr(
+            lifecycle,
+            "_run_launchctl",
+            lambda args: calls.append(list(args)) or subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr=""),
+        )
+        monkeypatch.setattr(lifecycle, "_legacy_label_unloaded", False)
+
+        lifecycle._unload_legacy_label_once()
+        lifecycle._unload_legacy_label_once()
+
+        assert len(calls) == 1, "the legacy unload stays a one-shot"

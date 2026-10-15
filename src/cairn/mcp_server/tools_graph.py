@@ -51,14 +51,15 @@ def _prepend_banner(text: str, banner: str) -> str:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
-def find_definition(name: str) -> str:
+def find_definition(name: str, limit: int = 50) -> str:
     """Find where a symbol is defined (file:line, kind, qualified name) with exact→qualified→substring fallback."""
     from cairn.graph import queries
 
+    limit = _clamp(limit, 1, 1000)  # bound LLM-supplied value at the boundary
     conn = _conn()
     try:
         freshness = _fresh_graph(conn)
-        rows = queries.find_definition(conn, name)
+        rows = queries.find_definition(conn, name, limit=limit)
     finally:
         conn.close()
     if not rows:
@@ -74,6 +75,8 @@ def find_definition(name: str) -> str:
             f"{r['file_path']}:{r['line_start']}  {r['kind']} "
             f"{r['qualified_name'] or r['name']}  ({r['repo']})"
         )
+    if len(rows) >= limit:
+        out.append("  ... hit the limit cap; pass a higher limit for more.")
     return _with_freshness("\n".join(out), freshness)
 
 
@@ -244,8 +247,10 @@ def impact_analysis(
     conn = _conn()
     try:
         freshness = _fresh_graph(conn)
-        # Cached path: read precomputed dataflow table (O(1)).
-        if cached:
+        # Cached path: read precomputed dataflow table (O(1)). Structured
+        # output needs the live traversal -- the cache carries no depth,
+        # cycle, or affected-test data for the typed result.
+        if cached and not structured:
             from cairn.graph.dataflow import get_dataflow as _get_dataflow
             df = _get_dataflow(conn, name)
             if df is not None:
@@ -885,6 +890,7 @@ def visualize_graph(
     depth = _clamp(depth, 1, 10)  # bound LLM-supplied value at the boundary
     conn = _conn()
     try:
+        freshness = _fresh_graph(conn)
         if scope == "symbol":
             graph = vq.get_symbol_graph(conn, symbol)
         elif scope == "impact":
@@ -907,5 +913,6 @@ def visualize_graph(
     if format == "dot":
         return vr.to_dot(graph)
     if format == "json":
+        # Machine-readable formats stay banner-free so parsers see pure output.
         return vr.to_json(graph)
-    return vr.to_mermaid(graph)
+    return _with_freshness(vr.to_mermaid(graph), freshness)

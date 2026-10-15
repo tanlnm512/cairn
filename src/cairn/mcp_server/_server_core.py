@@ -349,11 +349,16 @@ def healthz_payload() -> dict:
             conn.close()
     except Exception:
         pass
+    try:
+        db_path = os.environ.get("CAIRN_DB") or str(_store().db)
+    except Exception:
+        db_path = ""
     return {
         "status": "ok" if store_reachable else "unhealthy",
         "store_reachable": store_reachable,
         "read_only": _read_only_mode(),
         "degradations": degradations,
+        "db": db_path,
     }
 
 

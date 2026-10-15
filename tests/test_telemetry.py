@@ -427,6 +427,36 @@ def test_flush_keeps_rows_appended_during_flush(events_db):
     assert [r["name"] for r in rows] == [ANN_FALLBACK, LOCK_CONTENTION]
 
 
+def test_flush_drain_is_identity_based_under_maxlen_eviction(events_db, monkeypatch):
+    """Maxlen eviction during the DB write must not make the drain drop
+    freshly enqueued rows: removal is by identity, not by count."""
+    import collections
+
+    monkeypatch.setattr(sink, "_BUFFER", collections.deque(maxlen=4))
+    late = [(9000.0 + i, "late", "unknown", None) for i in range(4)]
+
+    class _EvictingConn(_UnclosableConn):
+        def executemany(self, sql, params):
+            # The enqueues evict both snapshotted batch entries mid-flush.
+            with sink._LOCK:
+                for row in late:
+                    sink._BUFFER.append(row)
+            return self._real.executemany(sql, params)
+
+    configure_conn(lambda: _EvictingConn(events_db))
+    batch = [(1111.0, ANN_FALLBACK, "unknown", None), (2222.0, LOCK_CONTENTION, "unknown", None)]
+    for row in batch:
+        sink._BUFFER.append(row)
+    assert len(sink._BUFFER) == 2
+
+    flush()
+
+    # All four late rows survive; a count-based drain would have popped two.
+    assert list(sink._BUFFER) == late
+    rows = events_db.execute("SELECT name FROM events ORDER BY id").fetchall()
+    assert [r["name"] for r in rows] == [ANN_FALLBACK, LOCK_CONTENTION]
+
+
 def test_concurrent_flushes_neither_duplicate_nor_drop(events_db):
     """    Two overlapping flush cycles write each row exactly once.
 

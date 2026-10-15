@@ -165,11 +165,14 @@ def _flush_events():
                 except Exception:
                     pass
         with _LOCK:
-            for _ in range(len(batch)):
+            # Identity-based drain: a count-based popleft could drop events
+            # enqueued (and never flushed) while maxlen evicted batch entries
+            # during the DB work above.
+            for event in batch:
                 try:
-                    _BUFFER.popleft()
-                except IndexError:
-                    break
+                    _BUFFER.remove(event)
+                except ValueError:
+                    pass
 
 
 def _flush_all() -> None:

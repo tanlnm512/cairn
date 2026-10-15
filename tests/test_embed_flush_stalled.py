@@ -35,6 +35,7 @@ def _reset_buffer_state(monkeypatch):
         eb._QUEUE.clear()
     eb._FAILURES = 0
     eb._STALL_EVENT_SENT = False
+    eb._QUEUE_OVERFLOW = False
     yield
     with sink._LOCK:
         sink._BUFFER.clear()
@@ -42,6 +43,7 @@ def _reset_buffer_state(monkeypatch):
         eb._QUEUE.clear()
     eb._FAILURES = 0
     eb._STALL_EVENT_SENT = False
+    eb._QUEUE_OVERFLOW = False
 
 
 def _queue_one():
@@ -155,3 +157,42 @@ def test_telemetry_off_silences_the_event(monkeypatch, caplog):
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
+
+
+def test_queue_overflow_eviction_warns_once_per_streak(monkeypatch, caplog):
+    """Eviction at maxlen is observable: the first overflowing enqueue warns,
+    later evictions stay quiet, and a successful flush re-arms the warning."""
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="cairn.mcp_server.embed_buffering")
+    monkeypatch.setattr(eb, "_start_flusher", lambda: None)
+    with eb._LOCK:
+        eb._QUEUE.clear()
+    for i in range(eb._QUEUE.maxlen):
+        eb.enqueue(f"c{i}")
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+    eb.enqueue("overflow-1")
+    eb.enqueue("overflow-2")
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, "one warning per overflow streak, not one per eviction"
+    assert "queue full" in warnings[0].getMessage()
+
+    # A successful flush re-arms the guard for the next overflow.
+    real = sqlite3.connect(":memory:")
+    monkeypatch.setattr(eb, "_conn_factory", lambda: real)
+    monkeypatch.setattr(eb, "_bundle_factory", lambda: object())
+    from cairn.graph import embeddings as emb
+
+    monkeypatch.setattr(emb, "embed_memory_concepts", lambda *a, **k: None)
+    eb._flush()
+    assert eb._QUEUE_OVERFLOW is False
+
+    with eb._LOCK:
+        eb._QUEUE.clear()
+    for i in range(eb._QUEUE.maxlen):
+        eb.enqueue(f"d{i}")
+    eb.enqueue("overflow-again")
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 2, "a new overflow streak warns again"
+    real.close()

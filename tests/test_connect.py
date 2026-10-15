@@ -35,6 +35,10 @@ def _patch_lifecycle(monkeypatch, *, healthy, ensure_delay=0.0, probe_barrier=No
                 pass
         return state["healthy"]
 
+    def fake_healthz_json(*args, **kwargs):
+        # No "db" key: store identity unknown -> reuse stays allowed.
+        return {"status": "ok", "store_reachable": True} if state["healthy"] else None
+
     def fake_ensure(port=None, host=None, *args, **kwargs):
         state["calls"].append("ensure")
         if ensure_delay:
@@ -53,6 +57,7 @@ def _patch_lifecycle(monkeypatch, *, healthy, ensure_delay=0.0, probe_barrier=No
 
     fakes = {
         "healthz_responds": fake_healthz,
+        "healthz_json": fake_healthz_json,
         "ensure_daemon_running": fake_ensure,
         "find_strays": fake_find_strays,
         "sweep_strays": fake_sweep_strays,
@@ -111,6 +116,24 @@ def test_warm_connect_reports_reused_without_starting(monkeypatch):
     assert state["calls"].count("ensure") == 0
     assert _url_base() in result.output
     assert _REUSED.search(result.output)
+
+
+def test_connect_refuses_daemon_serving_another_workspace(monkeypatch):
+    """A healthy daemon pinned to another workspace's store must never be
+    reused silently: connect fails loudly instead of handing out a URL that
+    answers from the wrong store."""
+    state = _patch_lifecycle(monkeypatch, healthy=True)
+    monkeypatch.setattr(
+        "cairn.mcp_server.lifecycle.healthz_json",
+        lambda *a, **k: {"status": "ok", "db": "/tmp/other-ws/.kg/graph.db"},
+    )
+
+    result = _invoke_connect()
+
+    assert result.exit_code == 1, result.output
+    assert "serves store" in result.output
+    assert "/tmp/other-ws/.kg/graph.db" in result.output
+    assert state["calls"] == [], "no daemon may be started or swept for a foreign store"
 
 
 def test_racing_connects_converge_to_one_daemon(monkeypatch):
