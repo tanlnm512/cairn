@@ -229,6 +229,38 @@ class TestMemoryCaptureFallbackRedaction:
         raw = (knowledge / "_tasks" / f"{task.id}.md").read_text(encoding="utf-8")
         assert "abcdefghijklmnopqrstuvwxyz1234" not in raw
 
+    def test_subprocess_prompt_carries_the_redacted_transcript(
+        self, tmp_path, monkeypatch
+    ):
+        """When a real agent CLI answers, the prompt itself (argv to the
+        external process) must hold the scrubbed transcript, not the raw
+        session content."""
+        from cairn.llm.client import SubprocessBackend
+
+        knowledge = tmp_path / "knowledge"
+        knowledge.mkdir(parents=True)
+        monkeypatch.setenv("CAIRN_KNOWLEDGE", str(knowledge))
+
+        bundle = OKFBundle(str(knowledge))
+        backend = SubprocessBackend(bundle, cli="droid")
+
+        seen = {}
+
+        def fake_exec(prompt, timeout=120):
+            seen["prompt"] = prompt
+            return '{"title": "t", "keep": true, "score": 0.9}\n'
+
+        monkeypatch.setattr(backend, "_exec", fake_exec)
+
+        transcript = f'[{{"role": "user", "text": "auth failed for {_BEARER}"}}]'
+        out = backend.extract(transcript)
+
+        assert out == [{"title": "t", "keep": True, "score": 0.9}]
+        assert "abcdefghijklmnopqrstuvwxyz1234" not in seen["prompt"], (
+            "raw secret left the process via the subprocess prompt"
+        )
+        assert "REDACTED_SECRET" in seen["prompt"]
+
 
 # ---------------------------------------------------------------------------
 # F3: memory titles redacted at capture/evolve

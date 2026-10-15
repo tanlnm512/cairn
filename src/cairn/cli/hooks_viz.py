@@ -23,7 +23,10 @@ def hooks_install(workspace):
     repos = discover_hook_repos(workspace)
     if not repos:
         raise click.ClickException(NO_GIT_REPOS_GUIDANCE)
-    installed = install_hooks(repos, workspace)
+    try:
+        installed = install_hooks(repos, workspace)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     if installed:
         click.echo(
             f"Installed post-commit and post-checkout hooks in "
@@ -66,10 +69,11 @@ def viz(fmt, scope, symbol, module, repo, depth, output, do_embed, export_path, 
     """Generate visual diagrams from the graph."""
     if export_path and output:
         raise click.UsageError("--export and --output are mutually exclusive.")
+    from ..graph.watcher import _read_only_env
     from ..viz import query as vq
     from ..viz import renderers as vr
 
-    conn = get_db(db)
+    conn = get_db(db, read_only=_read_only_env())
     try:
         if scope == "symbol":
             graph = vq.get_symbol_graph(conn, symbol or "")

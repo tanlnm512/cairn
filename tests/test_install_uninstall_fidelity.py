@@ -606,6 +606,44 @@ class TestGitHookInstallCoverage:
         )
         assert not (hooks / "post-checkout").exists()
 
+    def test_user_hook_mentioning_cairn_is_never_touched(self, tmp_path, monkeypatch):
+        """Ownership keys on the cairn-generated marker line, not a bare
+        'cairn' substring: a user hook that merely mentions cairn must
+        survive both install (no overwrite) and uninstall (no delete)."""
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        hooks = self._hooks_dir(ws)
+        hooks.mkdir(parents=True)
+        user_hook = "#!/bin/sh\n# runs cairn aside, then my checks\necho mine\n"
+        (hooks / "post-commit").write_text(user_hook, encoding="utf-8")
+
+        assert self._install(ws) == ["repo"], (
+            "the post-checkout slot still gets installed"
+        )
+        assert (hooks / "post-commit").read_text(encoding="utf-8") == user_hook, (
+            "a user hook mentioning cairn must not be overwritten"
+        )
+
+        from cairn.hooks.git_hooks import uninstall_hooks
+
+        assert uninstall_hooks(["repo"], str(ws)) == ["repo"]
+        assert (hooks / "post-commit").read_text(encoding="utf-8") == user_hook, (
+            "a user hook mentioning cairn must not be removed"
+        )
+
+    def test_unsafe_cairn_home_is_rejected_before_any_write(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CAIRN_HOME", str(tmp_path / 'ho"me$(touch pwned)'))
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".git").mkdir()
+
+        with pytest.raises(ValueError, match="unsafe to embed"):
+            self._install(ws)
+        assert not (self._hooks_dir(ws) / "post-commit").exists()
+        assert not (self._hooks_dir(ws) / "post-checkout").exists()
+        assert not list(tmp_path.glob("pwned")), "no shell metachar may execute"
+
     def test_invalid_repo_name_writes_no_hooks(self, tmp_path):
         ws = tmp_path / "ws"
         ws.mkdir()
@@ -760,6 +798,22 @@ class TestInitWithHooks:
         assert "git hooks not installed" in result.output
         assert not (repo / ".git" / "hooks" / "post-commit").exists()
         assert not (repo / ".git" / "hooks" / "post-checkout").exists()
+
+    def test_hooks_install_repo_with_space_fails_clean(self, tmp_path):
+        """A repo id failing the shell-injection allowlist maps to a clean
+        ClickException from `hooks install`, never a raw ValueError traceback."""
+        ws = tmp_path / "multi"
+        repo = ws / "my repo"
+        (repo / ".git").mkdir(parents=True)
+
+        result = self._invoke(["hooks", "install", "--workspace", str(ws)])
+
+        assert result.exit_code == 1
+        assert "Invalid repo name" in result.output
+        assert not isinstance(result.exception, ValueError), (
+            "the guard must surface as a ClickException, not an uncaught ValueError"
+        )
+        assert not (repo / ".git" / "hooks" / "post-commit").exists()
 
 
 # --------------------------------------------------------------------------

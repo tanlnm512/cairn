@@ -156,14 +156,38 @@ def _load_registry() -> dict[str, str]:
         return {}
     try:
         data = json.loads(REGISTRY_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError:
+        _logger.warning(
+            "%s is not valid JSON; ignoring it (run `cairn init` to rebuild it)",
+            REGISTRY_FILE,
+        )
         return {}
+    except OSError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _save_registry(reg: dict[str, str]) -> None:
+    """Persist the registry atomically (tmp file + fsync + os.replace)."""
     CAIRN_HOME.mkdir(parents=True, exist_ok=True)
-    REGISTRY_FILE.write_text(json.dumps(reg, indent=2, sort_keys=True), encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(
+        dir=str(CAIRN_HOME), prefix=".workspaces-", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(reg, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+            # flush+fsync BEFORE the replace: without it a crash can persist
+            # the directory entry while the data blocks were never written.
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, REGISTRY_FILE)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def register_workspace(workspace: Path) -> StorePaths:
@@ -333,8 +357,9 @@ def resolve_store(workspace: str | os.PathLike | None = None) -> StorePaths:
 
     Honors CAIRN_DB / CAIRN_KNOWLEDGE as hard overrides (used by the
     MCP server, which sets them in its env). Otherwise derives from the
-    resolved workspace's store; auto-registers cwd on first use so a fresh
-    `cairn build` just works without an explicit `cairn init`.
+    resolved workspace's store path; this performs no registry writes --
+    registration happens only via `cairn init` (register_workspace), and
+    an unregistered workspace resolves relative to cwd.
     """
     ws = resolve_workspace(workspace)
     key = store_key(ws)

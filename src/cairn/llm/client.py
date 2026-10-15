@@ -209,6 +209,11 @@ class SubprocessBackend:
             return {"score": 0.5}
 
     def extract(self, transcript: str, timeout: float = 120) -> List[Dict[str, Any]]:
+        # Same privacy floor as the queue path: the transcript leaves the
+        # process via the prompt, so it must be scrubbed first.
+        from ..memory.privacy import strip_private_data
+
+        transcript = strip_private_data(transcript)
         raw = self._exec(
             _build_prompt("memory-extract", {"transcript": transcript}), timeout
         )

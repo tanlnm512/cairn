@@ -258,13 +258,15 @@ def evaluate_l1_query(
     expect: List[str],
     k: int = 10,
     params: Optional["RetrievalParams"] = None,
+    notes: Optional[List[str]] = None,
 ) -> Tuple[float, float]:
     """Evaluate L1 query using semantic_search / search_symbols.
 
     Returns (recall_at_k, reciprocal_rank). ``params`` is threaded
     through to ``semantic_search`` verbatim; ``None`` keeps today's defaults.
+    ``notes`` (when a list) receives a marker per lexical-fallback event.
     """
-    results = _retrieve_l1(conn, query, k, params=params)
+    results = _retrieve_l1(conn, query, k, params=params, notes=notes)
     retrieved_names = [_result_field(r, "name") for r in results]
     return _legacy_match_score(retrieved_names, expect, k)
 
@@ -396,11 +398,14 @@ def _retrieve_l1(
     query: str,
     k: int,
     params: Optional["RetrievalParams"] = None,
+    notes: Optional[List[str]] = None,
 ) -> List[Any]:
     """L1 retrieval pipeline (semantic first, lexical fallback), full rows.
 
     ``params`` reaches the ``semantic_search`` call; the lexical
-    fallback leg takes no retrieval tunables today.
+    fallback leg takes no retrieval tunables today. When ``notes`` is a
+    list, a marker is appended whenever the semantic leg raises and the
+    lexical fallback is scored instead.
     """
     from cairn.graph import queries as qmod
 
@@ -408,8 +413,12 @@ def _retrieve_l1(
         results = list(qmod.semantic_search(conn, query, limit=k, params=params))
         if results:
             return results
-    except Exception:  # noqa: BLE001 - mirrors evaluate_l1_query's degrade
-        pass
+    except Exception as exc:  # noqa: BLE001 - mirrors evaluate_l1_query's degrade
+        if notes is not None:
+            notes.append(
+                f"semantic_search failed ({type(exc).__name__}); "
+                "scored the lexical fallback"
+            )
     return list(qmod.search_symbols(conn, query, limit=k))
 
 
@@ -458,14 +467,16 @@ def evaluate_graded_query(
     graded: GradedQuery,
     k: int = 10,
     params: Optional["RetrievalParams"] = None,
+    notes: Optional[List[str]] = None,
 ) -> Tuple[float, float]:
     """Evaluate one graded query through its level's retrieval pipeline.
 
     ``params`` applies to the L1 (semantic) leg only -- L4/L5
-    retrieval pass no retrieval tunables.
+    retrieval pass no retrieval tunables. ``notes`` threads through to
+    the L1 fallback marker.
     """
     if graded.level == "L1":
-        results = _retrieve_l1(conn, graded.text, k, params=params)
+        results = _retrieve_l1(conn, graded.text, k, params=params, notes=notes)
     elif graded.level == "L4":
         results = _retrieve_l4(conn, bundle_root, graded.text, k)
     else:
@@ -485,8 +496,9 @@ def _run_graded_evaluation(
 
     Report shape mirrors the yaml one — ``{"L1": {...}, "L4": {...},
     "L5": {...}}`` with ``count``/``recall_at_10``/``mrr`` — plus additive
-    ``n_queries`` and ``n_expectations`` keys for dataset-size visibility.
-    ``params`` threads through to every retrieval call.
+    ``n_queries`` and ``n_expectations`` keys for dataset-size visibility,
+    and a ``warnings`` list whenever an L1 query fell back from the
+    semantic leg. ``params`` threads through to every retrieval call.
     """
     queries = load_ground_truth(graded_dir)
 
@@ -496,10 +508,16 @@ def _run_graded_evaluation(
         "L5": {"count": 0, "recall": 0.0, "mrr": 0.0, "n_expectations": 0},
     }
 
+    warnings: List[str] = []
     for graded in queries:
         if corpus_filter != "all" and graded.level != corpus_filter:
             continue
-        rec, rr = evaluate_graded_query(conn, bundle_root, graded, k=k, params=params)
+        notes: List[str] = []
+        rec, rr = evaluate_graded_query(
+            conn, bundle_root, graded, k=k, params=params, notes=notes
+        )
+        for note in notes:
+            warnings.append(f"{note} (query: {graded.query_id!r})")
         bucket = stats[graded.level]
         bucket["count"] += 1
         bucket["recall"] += rec
@@ -525,6 +543,8 @@ def _run_graded_evaluation(
                 "n_queries": 0,
                 "n_expectations": 0,
             }
+    if warnings:
+        report["warnings"] = warnings
     return report
 
 
@@ -549,7 +569,9 @@ def run_evaluation(
     the injection channel the sweep harness uses instead of mutating the
     environment (in-process env writes would leak across combinations).
     ``None`` (the default, and every ``None`` field) preserves today's
-    retrieval behavior exactly.
+    retrieval behavior exactly. Malformed yaml items raise ``ValueError``
+    (mirroring the graded loader); a ``warnings`` list is appended to the
+    report whenever an L1 query fell back from the semantic leg.
     """
     if queries_path is not None and Path(queries_path).is_dir():
         return _run_graded_evaluation(
@@ -572,21 +594,39 @@ def run_evaluation(
         "L5": {"count": 0, "recall": 0.0, "mrr": 0.0},
     }
 
-    for item in queries:
+    warnings: List[str] = []
+    for idx, item in enumerate(queries, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"queries item {idx}: expected a mapping with 'query'/'corpus' keys"
+            )
         c_type = item.get("corpus", "L1")
+        if c_type not in VALID_LEVELS:
+            raise ValueError(
+                f"queries item {idx}: corpus {c_type!r} is not a valid level; "
+                f"expected one of {sorted(VALID_LEVELS)}"
+            )
+        q_text = item.get("query")
+        if not q_text or not str(q_text).strip():
+            raise ValueError(f"queries item {idx}: missing required 'query'")
+        q_text = str(q_text)
         if corpus_filter != "all" and c_type != corpus_filter:
             continue
 
-        q_text = item["query"]
         expect = item.get("expect", [])
+        notes: List[str] = []
 
         if c_type == "L1":
-            rec, rr = evaluate_l1_query(conn, q_text, expect, k=k, params=params)
+            rec, rr = evaluate_l1_query(
+                conn, q_text, expect, k=k, params=params, notes=notes
+            )
         elif c_type == "L4":
             rec, rr = evaluate_l4_query(conn, bundle_root, q_text, expect, k=k)
         else:
             rec, rr = evaluate_l5_query(conn, bundle_root, q_text, expect, k=k)
 
+        for note in notes:
+            warnings.append(f"{note} (query: {q_text!r})")
         stats[c_type]["count"] += 1
         stats[c_type]["recall"] += rec
         stats[c_type]["mrr"] += rr
@@ -605,4 +645,6 @@ def run_evaluation(
             # buckets; L4 appears only when the corpus has L4 queries.
             report[c_key] = {"count": 0, "recall_at_10": 0.0, "mrr": 0.0}
 
+    if warnings:
+        report["warnings"] = warnings
     return report

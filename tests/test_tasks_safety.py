@@ -209,6 +209,35 @@ class TestCompleteTaskCriticIntegration:
         assert get_task(bundle, task.id).status == "failed"
         assert [t.id for t in list_tasks(bundle, status="failed")] == [task.id]
 
+    def test_exhausted_chain_emits_failed_lifecycle_event(
+        self, fresh_db, tmp_path, monkeypatch
+    ):
+        """The exhausted-revise branch persists 'failed'; its lifecycle
+        telemetry must carry the same event name, not 'dropped'."""
+        conn = _conn_with_fixture(fresh_db)
+        bundle = _create_bundle(tmp_path)
+
+        events = []
+        monkeypatch.setattr(
+            "cairn.llm.tasks._emit",
+            lambda *args, **kwargs: events.append(kwargs.get("event")),
+        )
+
+        task = create_task(
+            bundle,
+            task_kind="compass-synthesize",
+            resource="test",
+            facts={"key_files": ["src/graph/queries.py"]},
+            parent_attempt=MAX_REVISE_CYCLES,
+        )
+        claim_task(bundle, task.id, "test-agent")
+        outcome = complete_task(
+            bundle, task.id, "See `src/DoesNotExist.kt`.", conn=conn
+        )
+
+        assert outcome["dropped"] is True
+        assert events == ["claimed", "failed"]
+
 # --- C2: Atomic Claim and claimed_at Tests ---
 
 class TestCompleteTaskCriticFailureLeavesTaskReCompletable:

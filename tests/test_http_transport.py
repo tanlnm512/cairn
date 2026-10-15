@@ -404,14 +404,16 @@ def test_stateless_flag_flips_singleton_setting(_http_singleton_settings):
 def test_healthz_payload_shape_on_reachable_store(tmp_path, monkeypatch):
     from cairn.mcp_server._server_core import healthz_payload
 
-    monkeypatch.setenv("CAIRN_DB", _scratch_store(tmp_path))
+    db = _scratch_store(tmp_path)
+    monkeypatch.setenv("CAIRN_DB", db)
     monkeypatch.setenv("CAIRN_READ_ONLY", "1")
     payload = healthz_payload()
-    assert set(payload) == {"status", "store_reachable", "read_only", "degradations"}
+    assert set(payload) == {"status", "store_reachable", "read_only", "degradations", "db"}
     assert payload["status"] == "ok"
     assert payload["store_reachable"] is True
     assert payload["read_only"] is True
     assert isinstance(payload["degradations"], int) and payload["degradations"] >= 0
+    assert payload["db"] == db, "the served store identity must be probeable via /healthz"
 
 
 def test_healthz_payload_unhealthy_when_store_missing(tmp_path, monkeypatch):
@@ -422,9 +424,10 @@ def test_healthz_payload_unhealthy_when_store_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("CAIRN_DB", str(missing))
     monkeypatch.setenv("CAIRN_READ_ONLY", "1")
     payload = healthz_payload()
-    assert set(payload) == {"status", "store_reachable", "read_only", "degradations"}
+    assert set(payload) == {"status", "store_reachable", "read_only", "degradations", "db"}
     assert payload["status"] == "unhealthy"
     assert payload["store_reachable"] is False
+    assert payload["db"] == str(missing)
 
 
 # --- serve CLI flag wiring ---------------------------------------------------
@@ -527,7 +530,7 @@ def test_keyed_loopback_rejects_unauthenticated_and_serves_keyed(tmp_path):
         status, _, body = _http_get(health_url)
         assert status == 200, "/healthz must answer unauthenticated"
         payload = json.loads(body)
-        assert set(payload) == {"status", "store_reachable", "read_only", "degradations"}
+        assert set(payload) == {"status", "store_reachable", "read_only", "degradations", "db"}
         assert payload["status"] == "ok"
         assert payload["store_reachable"] is True
 

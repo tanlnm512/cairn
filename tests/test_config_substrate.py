@@ -388,3 +388,62 @@ class TestEmptyObject:
         emb.reset_backend_cache()
         blob, dim = emb.embed_query("x")
         assert dim == emb.DEFAULT_DIM
+
+
+# ---------------------------------------------------------------------------
+# (i) Registry (workspaces.json): atomic write + corrupt-file degradation.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def registry_home(tmp_path, monkeypatch):
+    """Point CAIRN_HOME/REGISTRY_FILE at a sandbox dir."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(paths, "CAIRN_HOME", home)
+    monkeypatch.setattr(paths, "REGISTRY_FILE", home / "workspaces.json")
+    return home
+
+
+class TestRegistryPersistence:
+    def test_roundtrip_registers_and_leaks_no_tmp(self, registry_home, tmp_path):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        paths.register_workspace(ws)
+        assert paths.is_registered(ws)
+        data = json.loads(
+            (registry_home / "workspaces.json").read_text(encoding="utf-8")
+        )
+        assert data == {str(ws.resolve()): paths.store_key(ws.resolve())}
+        assert list(registry_home.glob(".workspaces-*.tmp")) == []
+
+    def test_corrupt_registry_warns_and_reads_empty(self, registry_home, caplog):
+        (registry_home / "workspaces.json").write_text("{not json", encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="cairn.paths"):
+            assert paths._load_registry() == {}
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "not valid JSON" in warnings[0].getMessage()
+
+    def test_failed_replace_keeps_previous_registry_and_leaks_no_tmp(
+        self, registry_home, tmp_path, monkeypatch
+    ):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        paths.register_workspace(ws)
+        registry_path = registry_home / "workspaces.json"
+        before = registry_path.read_text(encoding="utf-8")
+
+        def boom(src, dst):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(paths.os, "replace", boom)
+
+        ws2 = tmp_path / "ws2"
+        ws2.mkdir()
+        with pytest.raises(OSError):
+            paths.register_workspace(ws2)
+
+        assert registry_path.read_text(encoding="utf-8") == before
+        assert list(registry_home.glob(".workspaces-*.tmp")) == []
+        assert not paths.is_registered(ws2)

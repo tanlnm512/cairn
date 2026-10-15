@@ -285,3 +285,23 @@ def test_dashboard_db_defaults_to_central_store(monkeypatch, tmp_path):
     )
     assert _resolve_db(None) == str(central)
     assert _resolve_db("/tmp/other.db") == "/tmp/other.db"
+
+
+def test_dashboard_ctrl_c_exits_zero(monkeypatch, tmp_path):
+    """Ctrl-C — the documented way to stop the dashboard — exits 0 with a
+    quiet line, never Click's "Aborted!" error exit."""
+    import uvicorn
+    from click.testing import CliRunner
+
+    from cairn.cli import main
+
+    def _interrupt(*args, **kwargs):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(uvicorn, "run", _interrupt)
+    result = CliRunner().invoke(
+        main, ["dashboard", "--db", str(tmp_path / "dash.kg")],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    assert "dashboard stopped" in result.output
