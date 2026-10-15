@@ -7,6 +7,7 @@ determinism*, not specific timings or ratios (machine-dependent).
 from __future__ import annotations
 
 import json
+import os
 
 from importlib.util import find_spec
 
@@ -128,6 +129,58 @@ class TestAgentSuite:
         assert [t.label for t in a.tasks] == [t.label for t in b.tasks]
         assert a.seed == 1 and b.seed == 2
 
+    def test_env_pins_restored_when_setup_fails(self, tmp_path, monkeypatch):
+        """A failure after the env pins are set still restores them: every
+        mutation lives inside the suite's try/finally."""
+        pinned = ("CAIRN_DB", "CAIRN_EMBED_BACKEND", "CAIRN_RERANK",
+                  "CAIRN_MAX_RESULT_CHARS")
+        for var in pinned:
+            monkeypatch.delenv(var, raising=False)
+        import cairn.graph.embeddings as emb
+
+        calls = {"n": 0}
+
+        def _boom_once():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(emb, "reset_backend_cache", _boom_once)
+        repo = generate_corpus(tmp_path / "leak", 3, complexity="low")
+        with pytest.raises(RuntimeError, match="boom"):
+            run_agent_suite(str(repo), str(tmp_path / "leak.db"), runs=1)
+        for var in pinned:
+            assert var not in os.environ
+
+    def test_result_cap_pinned_for_the_run(self, tmp_path, monkeypatch):
+        """The cairn arm's per-call cap reads the pinned deployment default,
+        not an ambient CAIRN_MAX_RESULT_CHARS override (restored after)."""
+        monkeypatch.setenv("CAIRN_MAX_RESULT_CHARS", "123")
+        import cairn.bench.agent_suite as suite_mod
+
+        real = suite_mod._result_cap
+        seen = set()
+
+        def _spy():
+            seen.add(real())
+            return real()
+
+        monkeypatch.setattr(suite_mod, "_result_cap", _spy)
+        _run_suite(tmp_path, name="cap")
+        assert seen == {60000}
+        assert os.environ["CAIRN_MAX_RESULT_CHARS"] == "123"
+
+    def test_control_agent_tolerates_non_utf8_files(self, tmp_path):
+        """Non-UTF8 .py files are read with replacement chars, like the build
+        path, instead of aborting the suite."""
+        from cairn.bench.agent_suite import _ControlAgent
+
+        (tmp_path / "binary.py").write_bytes(b"\xff\xfe class Cls0000_0:\n    pass\n")
+        agent = _ControlAgent(str(tmp_path))
+        agent.read(agent.grep("class Cls0000_0"))
+        assert agent.calls == 2
+        assert agent.chars > 0
+
 
 # --- payload shape ----------------------------------------------------------
 
@@ -198,6 +251,22 @@ class TestCompareAgentReports:
             self._payload(100, 100),
         )
         assert "old" not in deltas
+
+    def test_new_task_reported_as_unbaselined(self):
+        """A current label missing from the baseline surfaces as an
+        unbaselined entry instead of vanishing from the gate."""
+        deltas = compare_agent_reports(
+            {"tasks": [{"label": "t1", "cairn": {"est_tokens": 100}}]},
+            {"tasks": [
+                {"label": "t1", "cairn": {"est_tokens": 100}},
+                {"label": "t-new", "cairn": {"est_tokens": 50}},
+            ]},
+        )
+        assert deltas["t-new"]["unbaselined"] is True
+        assert deltas["t-new"]["regressed"] is False
+        assert deltas["t-new"]["baseline_tokens"] is None
+        assert deltas["t-new"]["delta_pct"] is None
+        assert deltas["t1"].get("unbaselined") is None
 
 
 # --- dataclass rendering (no build needed) ----------------------------------
@@ -351,3 +420,47 @@ class TestAgentBaselineCli:
         ])
         assert result.exit_code == 2, result.output
         assert "REGRESSED" in result.output
+
+    def test_task_missing_from_baseline_renders_no_baseline_marker(
+        self, tmp_path, monkeypatch
+    ):
+        """A task absent from the baseline renders an '(no baseline)' row and
+        does not gate — visible signal, not a silent drop."""
+        from click.testing import CliRunner
+
+        from cairn.bench.datasource import machine_profile
+        from cairn.cli import main
+
+        report = AgentReport(tasks=[
+            TaskEffort(
+                label="definition-lookup", question="q",
+                cairn=ArmEffort(2, 400, 100, 0.01),
+                control=ArmEffort(10, 4000, 1000, 0.02),
+            ),
+            TaskEffort(
+                label="brand-new-task", question="q",
+                cairn=ArmEffort(2, 400, 100, 0.01),
+                control=ArmEffort(10, 4000, 1000, 0.02),
+            ),
+        ])
+        monkeypatch.setattr(
+            "cairn.bench.agent_suite.run_agent_suite", lambda *a, **k: report
+        )
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("RUNNER_NAME", raising=False)
+        baseline = {
+            "tasks": [{"label": "definition-lookup", "cairn": {"est_tokens": 100}}],
+            "machine_profile": machine_profile(),
+        }
+        root = tmp_path / "benchmarks" / "baselines" / "DS-ag"
+        root.mkdir(parents=True)
+        (root / "agent.json").write_text(json.dumps(baseline), encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "ag_new.db"))
+
+        result = CliRunner().invoke(main, [
+            "bench", "--suite", "agent", "--n-files", "3", "--complexity", "low",
+            "--embed-backend", "hash", "--runs", "1", "--baseline", "DS-ag",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "brand-new-task (no baseline)" in result.output

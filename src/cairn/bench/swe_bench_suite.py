@@ -17,6 +17,7 @@ from .agent_suite import (
     TaskEffort,
     _CairnArm,
     _ControlAgent,
+    _RESULT_CAP_CHARS,
     _payload_chars,
     _result_cap,
 )
@@ -112,21 +113,7 @@ def run_swe_bench_suite(
     *,
     runs: int = 3,
 ) -> dict:
-    """Run the deterministic SWE-bench suite over injected tasks.
-
-    ``tasks`` is a sequence of the loader's five-field task dicts;
-    ``workspaces`` maps each ``instance_id`` to its checked-out repo tree.
-    Builds the graph per task's workspace into ``db_path`` (per-repo rebuild,
-    closure included), plays both scripted arms ``runs`` times, and returns
-    the report payload: ``tasks`` (input-order rows keyed by ``instance_id``
-    with ArmEffort-shaped ``cairn``/``control`` arms and ``reduction``),
-    ``medians`` (cross-task, both arms), ``runs``, ``chars_per_token``.
-
-    Raises ValueError on duplicate instance ids, an instance id without a
-    mapped workspace, or ``runs < 1``. Deterministic in calls/est_tokens
-    across fresh builds; wall time is advisory. Env pins are restored before
-    return.
-    """
+    """Run the deterministic SWE-bench suite over five-field task dicts; returns per-task effort rows plus medians; ValueError on bad ids/workspaces/probe targets/runs."""
     task_list = list(tasks)
     ids = [t["instance_id"] for t in task_list]
     if not ids:
@@ -145,26 +132,32 @@ def run_swe_bench_suite(
             + ", ".join(repr(i) for i in missing)
         )
 
-    # Same env discipline as run_agent_suite: pin DB/backend for the build
-    # and the reranker OFF; snapshot + restore around the whole run.
-    saved_env = snapshot_env(("CAIRN_DB", "CAIRN_EMBED_BACKEND", "CAIRN_RERANK"))
-
-    os.environ["CAIRN_DB"] = db_path
-    os.environ["CAIRN_EMBED_BACKEND"] = "hash"
-    os.environ["CAIRN_RERANK"] = "0"
-
-    from cairn.graph import embeddings as emb
-    from cairn.graph.builder import build_graph
-    from cairn.graph.dataflow import build_transitive_closure
-    from cairn.graph.schema import get_db
-
-    emb.reset_backend_cache()
+    # Pins (DB/backend/reranker/result-cap) set inside the try so no failure leaks them.
+    saved_env = snapshot_env(
+        ("CAIRN_DB", "CAIRN_EMBED_BACKEND", "CAIRN_RERANK", "CAIRN_MAX_RESULT_CHARS")
+    )
     try:
+        os.environ["CAIRN_DB"] = db_path
+        os.environ["CAIRN_EMBED_BACKEND"] = "hash"
+        os.environ["CAIRN_RERANK"] = "0"
+        os.environ["CAIRN_MAX_RESULT_CHARS"] = str(_RESULT_CAP_CHARS)
+
+        from cairn.graph import embeddings as emb
+        from cairn.graph.builder import build_graph
+        from cairn.graph.dataflow import build_transitive_closure
+        from cairn.graph.schema import get_db
+
+        emb.reset_backend_cache()
         rows: List[dict] = []
         for task in task_list:
             instance_id = task["instance_id"]
             workspace = workspaces[instance_id]
             target = _probe_target(task)
+            if not target:
+                raise ValueError(
+                    f"task {instance_id!r}: problem_statement has no code-like "
+                    "identifier to probe"
+                )
 
             build_graph(workspace=workspace, db_path=db_path)
             conn = get_db(db_path)

@@ -94,13 +94,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "comment:44efe0872e690703fcc88be200cd57d99e412abf86e211c811abed4203f8c22b",
-      "paths": [
-        "src/cairn/bench/scaling_suite.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "comment:4e8ca2858fdb1859dcf15938ece42668e026bcfc282c3158f0e37cf77602ac78",
       "paths": [
         "src/cairn/bench/scaling_suite.py"
@@ -909,20 +902,6 @@
       "fingerprint": "docstring:72de0a91a38f6ba81f2488a1cbf70cf955ad7f661c36c740aa3ee343ffe365a1",
       "paths": [
         "src/cairn/llm/tasks.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:781d87e298581ffada7194d33e8c23081d13dc646b6f46e2c452f708e4b559ad",
-      "paths": [
-        "src/cairn/bench/swe_bench_suite.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:78fa801398fb978ae7ff471e8f89bf73ccac1ee69ab37236ad4c1b11b4245432",
-      "paths": [
-        "src/cairn/bench/agent_suite.py"
       ]
     },
     {

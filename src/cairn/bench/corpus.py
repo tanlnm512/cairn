@@ -89,6 +89,12 @@ def generate_corpus(
 def corpus_stats(repo: Path) -> dict:
     """Quick counts for a generated corpus (files, lines, bytes)."""
     py_files = list(repo.rglob("*.py"))
-    lines = sum(sum(1 for _ in p.open(encoding="utf-8")) for p in py_files)
+    lines = 0
+    for p in py_files:
+        try:
+            with p.open(encoding="utf-8", errors="replace") as fh:
+                lines += sum(1 for _ in fh)
+        except OSError:
+            continue
     bytes_ = sum(p.stat().st_size for p in py_files)
     return {"files": len(py_files), "lines": lines, "bytes": bytes_}

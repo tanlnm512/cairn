@@ -125,7 +125,13 @@ def load_tasks(
     if fetch is None:
         fetch = fetch_dataset_rows
     rows = fetch(manifest["dataset_revision_sha"])
-    by_id = {row["instance_id"]: row for row in rows}
+    by_id: dict = {}
+    for row in rows:
+        if not isinstance(row, dict) or "instance_id" not in row:
+            raise ValueError(
+                "fetched row is missing required field(s): instance_id"
+            )
+        by_id[row["instance_id"]] = row
     tasks: list[dict] = []
     for instance_id in manifest["subset"]:
         row = by_id.get(instance_id)
