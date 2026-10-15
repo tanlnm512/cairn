@@ -128,6 +128,39 @@ def test_p3_semantic_search_fusion_runs(tmp_path, monkeypatch):
         emb.reset_backend_cache()
 
 
+def test_dense_leg_without_stored_rows_rides_sparse_rescue(tmp_path, monkeypatch):
+    """Zero stored embeddings under the current model must not zero out the
+    pipeline: the dense leg degrades to [] + dense_lost (the embed-failure
+    shape), so fusion still returns the bm25 hits instead of silently
+    returning nothing."""
+    from cairn.graph import embeddings as emb
+    from cairn.graph.semantic import semantic_search
+    from cairn.graph.schema import get_db
+
+    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
+    monkeypatch.setenv("CAIRN_ANN_BACKEND", "off")
+    emb.reset_backend_cache()
+
+    conn = get_db(str(tmp_path / "dense_none.db"))
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('demo', 'demo', '/demo')")
+    conn.execute("INSERT INTO files (id, repo_id, path, hash, line_count, language) "
+                 "VALUES (1, 'demo', 'demo/Helper.kt', 'h1', 10, 'kotlin')")
+    conn.execute("INSERT INTO symbols (id, file_id, name, kind, qualified_name, "
+                 "docstring, line_start, line_end) VALUES ('s1', 1, 'api_helper', "
+                 "'function', 'util.api_helper', 'A small api helper.', 1, 10)")
+    conn.commit()
+
+    try:
+        # Deliberately no embeddings rows: the dense leg has nothing to scan.
+        results = semantic_search(conn, "api helper", limit=5)
+        assert results, "sparse rescue must replace the pre-fix zero-result None"
+        assert [r["name"] for r in results] == ["api_helper"]
+        assert all(r["provenance"] == "bm25" for r in results)
+    finally:
+        conn.close()
+        emb.reset_backend_cache()
+
+
 # ---------------------------------------------------------------------------
 # P4: _clear_repo must reset resolution='unresolved' on orphaned edges.
 # ---------------------------------------------------------------------------

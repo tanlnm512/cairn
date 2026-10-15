@@ -304,7 +304,10 @@ def _dense_retrieve(context):
                 )
             )
         if not rows:
-            return None
+            # No stored vectors for this model: same shape as a failed embed
+            # so the sparse/fusion rescue still runs.
+            context.dense_lost = True
+            return []
 
         from cairn.retrieval import cosine_scan
 

@@ -82,7 +82,9 @@ def expand(
         # no corpus-aware signal left to expand with.
         return _empty()
 
-    # Steps 4-5: RM3 drift cap, then deterministic order and cut.
+    # Steps 4-5: drift cap -- fb_lambda weights expansion aggressiveness
+    # (1.0 keeps every candidate, 0.0 only the top term) -- then the
+    # deterministic order and cut.
     cap = (1.0 - fb_lambda) * max_weight
     kept = sorted(
         (token for token, w in weights.items() if w >= cap),

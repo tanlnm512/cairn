@@ -17,6 +17,7 @@ def download_reranker(model_name):
     """Download the reranker model and enable reranking persistently (CAIRN_RERANK=0 forces it off).
     Needs the optional [semantic] extra: pip install 'cairn-intel[semantic]'."""
     from ..graph.reranker import (
+        _rerank_marker_path,
         current_rerank_model, download_reranker_model, install_hint,
         reranker_available, set_rerank_enabled_persistently,
     )
@@ -33,6 +34,14 @@ def download_reranker(model_name):
         # can't export an env var into its parent shell, so we write a marker
         # file that rerank_enabled() honors as if CAIRN_RERANK=1 were set.
         set_rerank_enabled_persistently()
+        if not _rerank_marker_path().exists():
+            click.echo(
+                "Reranker downloaded, but the persistent-enable marker could "
+                "not be written; reranking stays off. Set CAIRN_RERANK=1 to "
+                "enable it manually.",
+                err=True,
+            )
+            sys.exit(1)
         click.echo(
             "Reranking enabled for subsequent queries. "
             "(Set CAIRN_RERANK=0 to turn it back off.)"
