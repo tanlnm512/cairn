@@ -6,13 +6,17 @@ import sys
 import click
 
 from .main import DEFAULT_DB_PATH, get_db, main
+from ..paths import resolve_store
+
+_KNOWLEDGE_HELP = "Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge)."
 
 @main.command()
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def validate(knowledge):
     """Check OKF conformance of the .knowledge/ bundle."""
     from ..okf.conformance import check_bundle
 
+    knowledge = knowledge or str(resolve_store().knowledge)
     errors = check_bundle(knowledge)
     if not errors:
         click.echo(f"OKF bundle at {knowledge} is conformant (0 errors).")
@@ -29,7 +33,7 @@ def validate(knowledge):
 # --------------------------------------------------------------------------
 @main.command(name="validate-paths")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 @click.option("--mark", is_flag=True, help="Mark stale concepts (set stale=true in extensions).")
 def validate_paths(db, knowledge, mark):
     """Check all concepts for stale file/symbol references against the graph."""
@@ -41,7 +45,7 @@ def validate_paths(db, knowledge, mark):
     from cairn.refs import resolve_successor
 
     conn = get_db(db)
-    bundle = OKFBundle(knowledge)
+    bundle = OKFBundle(knowledge or str(resolve_store().knowledge))
     try:
         stale = _validate(conn, bundle)
 
@@ -101,7 +105,7 @@ def validate_paths(db, knowledge, mark):
 @main.command()
 @click.argument("doc_path")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def verify(doc_path, db, knowledge):
     """Run the deterministic critic on one compass/wiki/memory concept (read-only).
     DOC_PATH is a concept id relative to .knowledge/ without the .md suffix."""
@@ -110,7 +114,7 @@ def verify(doc_path, db, knowledge):
 
     conn = get_db(db)
     try:
-        bundle = OKFBundle(knowledge)
+        bundle = OKFBundle(knowledge or str(resolve_store().knowledge))
         try:
             concept = bundle.read_concept(doc_path)
         except Exception as e:

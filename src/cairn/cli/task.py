@@ -6,6 +6,9 @@ import sys
 from pathlib import Path
 
 from .main import DEFAULT_DB_PATH, get_db, main
+from ..paths import resolve_store
+
+_KNOWLEDGE_HELP = "Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge)."
 
 @main.group()
 def task():
@@ -18,12 +21,12 @@ def task():
 @click.option("--kind", default=None, help="Filter by task kind")
 @click.option("--kind-prefix", default=None,
               help="Filter by task kind prefix (e.g. wiki-page)")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def task_list(status, kind, kind_prefix, knowledge):
     from ..llm.tasks import list_tasks
     from ..okf.bundle import OKFBundle
 
-    bundle = OKFBundle(knowledge)
+    bundle = OKFBundle(knowledge or str(resolve_store().knowledge))
     tasks = list_tasks(bundle, status=status, kind=kind,
                        kind_prefix=kind_prefix)
     if not tasks:
@@ -35,13 +38,13 @@ def task_list(status, kind, kind_prefix, knowledge):
 
 @task.command("show")
 @click.argument("task_id")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def task_show(task_id, knowledge):
     """Show a task's full body (facts + output spec) for an agent to process."""
     from ..llm.tasks import get_task, read_result
     from ..okf.bundle import OKFBundle
 
-    bundle = OKFBundle(knowledge)
+    bundle = OKFBundle(knowledge or str(resolve_store().knowledge))
     t = get_task(bundle, task_id)
     if not t:
         click.echo(f"No task '{task_id}'.", err=True)
@@ -67,13 +70,13 @@ def task_show(task_id, knowledge):
 @task.command("claim")
 @click.argument("task_id")
 @click.option("--as", "assigned_to", default="", help="Who/what is claiming this task")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def task_claim(task_id, assigned_to, knowledge):
     """Claim a pending task (sets status in-progress)."""
     from ..llm.tasks import claim_task
     from ..okf.bundle import OKFBundle
 
-    bundle = OKFBundle(knowledge)
+    bundle = OKFBundle(knowledge or str(resolve_store().knowledge))
     t = claim_task(bundle, task_id, assigned_to=assigned_to)
     if not t:
         click.echo(f"Could not claim '{task_id}' (not pending or not found).", err=True)
@@ -92,13 +95,13 @@ def task_claim(task_id, assigned_to, knowledge):
 @click.option("--as", "claimer", default="",
               help="Claimer identity; must match the task's --as at claim time.")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def task_complete(task_id, result, result_file, claimer, db, knowledge):
     """Mark a task done. Runs the deterministic critic automatically."""
     from ..llm.tasks import complete_task, MAX_REVISE_CYCLES
     from ..okf.bundle import OKFBundle
 
-    bundle = OKFBundle(knowledge)
+    bundle = OKFBundle(knowledge or str(resolve_store().knowledge))
     if result_file:
         result = Path(result_file).read_text(encoding="utf-8")
     if not result:
@@ -152,13 +155,13 @@ def task_complete(task_id, result, result_file, claimer, db, knowledge):
 
 @task.command("drop")
 @click.argument("task_id")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def task_drop(task_id, knowledge):
     """Drop a pending or in-progress task (terminal; never claimable again)."""
     from ..llm.tasks import drop_task
     from ..okf.bundle import OKFBundle
 
-    bundle = OKFBundle(knowledge)
+    bundle = OKFBundle(knowledge or str(resolve_store().knowledge))
     outcome = drop_task(bundle, task_id)
     if not outcome["dropped"]:
         reasons = "; ".join(outcome["errors"]) or "not droppable"

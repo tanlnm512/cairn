@@ -1862,3 +1862,74 @@ class TestDroidCliRegistration:
         res = next(r for r in rep.results if r.client == "droid")
         assert not any("Removed MCP registration" in n for n in res.notes)
         assert any("exited 1" in n and "not found" in n for n in res.notes)
+
+
+# --------------------------------------------------------------------------
+# Uninstall CLI: registry prune failures are visible
+# --------------------------------------------------------------------------
+
+
+def test_uninstall_cli_warns_when_registry_prune_fails(tmp_path, monkeypatch):
+    """A failing workspaces.json prune is reported, never swallowed, so the
+    registry cannot silently keep pointing at the removed store."""
+    from cairn.cli.uninstall import uninstall
+    from cairn.paths import store_key
+
+    home = tmp_path / "cairn_home"
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    key = store_key(ws.resolve())
+    (home / key).mkdir(parents=True)
+    registry = home / "workspaces.json"
+    registry.write_text(json.dumps({str(ws.resolve()): key}), encoding="utf-8")
+    monkeypatch.setenv("CAIRN_HOME", str(home))
+
+    def boom(path, text):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("cairn.agent_install.merge._atomic_write_text", boom)
+
+    result = CliRunner().invoke(
+        uninstall, ["--graph-only", "-y", "--workspace", str(ws)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "registry prune failed" in result.output
+    assert "still references the removed store" in result.output
+
+
+def test_install_agents_client_all_does_not_imply_git_hooks(tmp_path, monkeypatch):
+    """`--client all` installs client configs only; git hooks ride on the
+    explicit --git-hooks flag alone."""
+    from cairn.agent_install import InstallReport, InstallResult
+    from cairn.cli.agents import install_agents
+
+    captured = {}
+
+    def fake_install(ws, **kwargs):
+        captured.update(kwargs)
+        return InstallReport(
+            detections=[],
+            results=[InstallResult(client="claude")],
+            cross_tool=None,
+        )
+
+    monkeypatch.setattr("cairn.agent_install.install", fake_install)
+    monkeypatch.setattr("cairn.mcp_server.lifecycle.healthz_responds", lambda: True)
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    plain = CliRunner().invoke(
+        install_agents,
+        ["--client", "all", "--scope", "workspace", "--workspace", str(ws)],
+    )
+    assert plain.exit_code == 0, plain.output
+    assert captured["include_git_hooks"] is False
+
+    flagged = CliRunner().invoke(
+        install_agents,
+        ["--client", "all", "--scope", "workspace", "--workspace", str(ws),
+         "--git-hooks"],
+    )
+    assert flagged.exit_code == 0, flagged.output
+    assert captured["include_git_hooks"] is True

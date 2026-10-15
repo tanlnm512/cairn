@@ -7,11 +7,16 @@ from pathlib import Path
 
 from .main import DEFAULT_DB_PATH, DEFAULT_KNOWLEDGE_PATH, main, scanner_mod
 
+def _diff_ref_endpoints(diff_ref: str) -> list[str]:
+    """Endpoints of an A..B / A...B range (a bare ref passes through)."""
+    sep = "..." if "..." in diff_ref else ".."
+    return [p for p in diff_ref.split(sep) if p]
+
 @main.command()
 @click.option("--repo", default=None, help="Specific repo to update.")
 @click.option("--file", "file_path", default=None, help="Specific file changed (for PostToolUse hooks)")
 @click.option("--diff-ref", "diff_ref", default=None,
-              help="Git ref range A..B to scope changed-file detection to (e.g. HEAD@{1}..HEAD).")
+              help="Git ref range A..B or A...B to scope changed-file detection to (e.g. HEAD@{1}..HEAD).")
 @click.option("--workspace", default=scanner_mod.DEFAULT_WORKSPACE)
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_KNOWLEDGE_PATH),
@@ -59,7 +64,7 @@ def update(repo, file_path, workspace, db, knowledge, diff_ref):
         )
         for r in repos:
             repo_path = scanner_mod.resolve_repo_path(workspace, r)
-            for endpoint in (p for p in diff_ref.split("..") if p):
+            for endpoint in _diff_ref_endpoints(diff_ref):
                 if _run_git(["rev-parse", "-q", "--verify", endpoint], str(repo_path)) is None:
                     display.error(
                         f"--diff-ref endpoint '{endpoint}' does not resolve in {repo_path}"
@@ -151,5 +156,10 @@ def update(repo, file_path, workspace, db, knowledge, diff_ref):
         except Exception as e:
             # Memory hints are advisory; never fail the update over them.
             display.warning(f"Memory staleness scan failed (non-critical): {e}")
+
+    # Non-zero when the reindex itself failed so scripts can detect a
+    # stale-graph outcome; the advisory warnings above never set the code.
+    if errors:
+        sys.exit(1)
 
 

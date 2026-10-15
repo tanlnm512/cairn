@@ -142,3 +142,18 @@ def test_empty_knowledge_still_packages_symbols(cli_env):
     assert result.exit_code == 0, result.stdout
     text = _skill_text(cli_env)
     assert "zeta_hub" in text
+
+
+def test_default_knowledge_falls_back_to_resolved_store(tmp_path, monkeypatch):
+    """_default_knowledge resolves the store bundle at call time, never the
+    import-time DEFAULT_DB_PATH parent."""
+    home = tmp_path / "cairn_home"
+    monkeypatch.setattr("cairn.paths.CAIRN_HOME", home)
+    monkeypatch.delenv("CAIRN_KNOWLEDGE", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    from cairn.cli.skill import _default_knowledge
+    from cairn.paths import resolve_store
+
+    assert _default_knowledge() == str(resolve_store().knowledge)
+    assert _default_knowledge().startswith(str(home))

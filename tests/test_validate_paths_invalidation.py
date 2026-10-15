@@ -397,3 +397,20 @@ class TestSuccessorResolver:
         assert resolve_successor(
             db, "Applies while `ApiClient.safe_api_call_v2` exists"
         ) is None
+
+
+def test_validate_without_knowledge_flag_resolves_store_bundle(tmp_path):
+    """Omitting --knowledge validates the resolved store's bundle
+    (CAIRN_KNOWLEDGE-aware), never the import-time DEFAULT_DB_PATH parent."""
+    from click.testing import CliRunner
+
+    from cairn.cli import main
+    from cairn.paths import resolve_store
+
+    knowledge_dir = resolve_store().knowledge
+    knowledge_dir.mkdir(parents=True, exist_ok=True)
+
+    result = CliRunner().invoke(main, ["validate"])
+
+    assert result.exit_code == 0, result.output
+    assert str(knowledge_dir) in result.output

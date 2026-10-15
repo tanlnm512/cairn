@@ -161,3 +161,38 @@ def test_max_depth_bounds_traversal_and_validates_input(tmp_path):
     invalid = _invoke_taint(ws, db, "--from", "http", "--to", "sql", "--max-depth", "0")
     assert invalid.exit_code != 0
     assert "--max-depth" in invalid.output
+
+_MULTI_ENTRY_APP = '''\
+def entry_one(urlopen, db):
+    raw = urlopen("/in")
+    return db.cursor().execute(raw)
+
+
+def entry_two(urlopen, db):
+    raw = urlopen("/in")
+    return db.cursor().execute(raw)
+
+
+def entry_three(urlopen, db):
+    raw = urlopen("/in")
+    return db.cursor().execute(raw)
+'''
+
+
+def test_limit_caps_printed_paths_and_validates_input(tmp_path):
+    """--limit bounds the printed paths at the shared DEFAULT_PATH_LIMIT
+    surface default; values under 1 are a usage error."""
+    ws = _make_ws(tmp_path, {"app.py": _MULTI_ENTRY_APP})
+    db = _build_db(ws, tmp_path)
+
+    all_paths = _invoke_taint(ws, db, "--from", "http", "--to", "sql")
+    assert all_paths.exit_code == 0
+    assert all_paths.output.count("taint path ") == 3
+
+    capped = _invoke_taint(ws, db, "--from", "http", "--to", "sql", "--limit", "2")
+    assert capped.exit_code == 0
+    assert capped.output.count("taint path ") == 2
+
+    invalid = _invoke_taint(ws, db, "--from", "http", "--to", "sql", "--limit", "0")
+    assert invalid.exit_code != 0
+    assert "--limit" in invalid.output

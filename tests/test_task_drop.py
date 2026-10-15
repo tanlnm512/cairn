@@ -279,3 +279,15 @@ def test_complete_cli_passes_claimer_to_ownership_guard(cli_env, tmp_path):
     )
     assert right.exit_code == 0, right.output
     assert get_task(bundle, queued.id).status == "done"
+
+
+def test_task_list_without_knowledge_flag_reads_the_env_store(cli_env):
+    """Omitting --knowledge resolves the bundle via resolve_store()
+    (CAIRN_KNOWLEDGE-aware), so the listing finds the env store's tasks."""
+    bundle = _bundle(cli_env)
+    queued = create_task(bundle, "wiki-page", "mod-a")
+
+    listing = CliRunner().invoke(task, ["list"])
+
+    assert listing.exit_code == 0, listing.output
+    assert queued.id in listing.stdout
