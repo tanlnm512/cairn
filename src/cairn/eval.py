@@ -592,7 +592,7 @@ def run_evaluation(
         stats[c_type]["recall"] += rec
         stats[c_type]["mrr"] += rr
 
-    report = {}
+    report: Dict[str, Any] = {}
     for c_key in ["L1", "L4", "L5"]:
         cnt = stats[c_key]["count"]
         if cnt > 0:
