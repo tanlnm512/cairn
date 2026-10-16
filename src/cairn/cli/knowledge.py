@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from .main import DEFAULT_DB_PATH, get_db, main
+from .main import get_db, main
 
 
 def _split(csv: str) -> list[str]:
@@ -217,7 +217,7 @@ def knowledge_ingest(files, dirs, include_drafts, outbox, repos, do_ingest):
 
 
 @knowledge.command("rebuild")
-@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--db", default=None)
 def knowledge_rebuild(db):
     """Rebuild the derived knowledge_edges / knowledge_doc_refs index (idempotent) and queue island doc-link tasks."""
     from cairn.knowledge.index import rebuild_knowledge_index
@@ -247,7 +247,7 @@ def knowledge_rebuild(db):
 
 @knowledge.command("islands")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--db", default=None)
 def knowledge_islands(as_json, db):
     """List isolated doc components and their doc-link tasks; read-only, queueing runs on ingest."""
     from cairn.knowledge.islands import DOC_LINK_KIND, doc_islands
@@ -304,11 +304,14 @@ def _require_store_bundle():
     return OKFBundle(str(resolve_store().knowledge))
 
 
-def _require_db_dir(db: str) -> None:
+def _require_db_dir(db: str | None) -> None:
     """Exit cleanly when the db parent is missing (get_db would raise)."""
-    if not Path(db).parent.exists():
+    from ..paths import resolve_store
+
+    path = Path(db) if db else resolve_store().db
+    if not path.parent.exists():
         click.echo(
-            f"Error: store directory does not exist: {Path(db).parent}. "
+            f"Error: store directory does not exist: {path.parent}. "
             "Run `cairn init && cairn build` first.",
             err=True,
         )
@@ -341,7 +344,7 @@ def _resolve_or_exit(bundle, doc_id: str):
 @knowledge.command("related")
 @click.argument("doc_id")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--db", default=None)
 def knowledge_related(doc_id, as_json, db):
     """List a doc's relationship neighbors (relation + kind per row) in both index directions."""
     from cairn.knowledge.index import related_docs
@@ -374,7 +377,7 @@ def knowledge_related(doc_id, as_json, db):
 @knowledge.command("chain")
 @click.argument("doc_id")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--db", default=None)
 def knowledge_chain(doc_id, as_json, db):
     """Print the supersede chain containing a doc (oldest -> newest); any member may be the argument."""
     from cairn.knowledge.index import supersede_chain
@@ -407,7 +410,7 @@ def knowledge_chain(doc_id, as_json, db):
 @click.option("--limit", default=20, type=int)
 @click.option("--threshold", default=0.3, type=float)
 @click.option("--json", "as_json", is_flag=True)
-@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--db", default=None)
 def knowledge_search(query, limit, threshold, as_json, db):
     """Search knowledge docs (lexical + semantic + graph bridge)."""
     from cairn.knowledge.search import search_knowledge
@@ -418,7 +421,7 @@ def knowledge_search(query, limit, threshold, as_json, db):
     bundle = OKFBundle(str(store.knowledge))
     # Guard before the DB is opened: a fresh environment has neither the
     # knowledge bundle nor the default db parent, and get_db would raise.
-    if not bundle.root.exists() or not Path(db).parent.exists():
+    if not bundle.root.exists() or not Path(db or str(resolve_store().db)).parent.exists():
         click.echo(f"No knowledge documents matching '{query}'.")
         return
     conn = get_db(db)
@@ -477,7 +480,7 @@ def knowledge_list(doc_type, status, tag, as_json):
 
 
 @knowledge.command("embed")
-@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--db", default=None)
 @click.option("--batch-size", default=64, type=int)
 def knowledge_embed(db, batch_size):
     """Build the knowledge embedding index."""
@@ -536,7 +539,7 @@ def knowledge_embed(db, batch_size):
 
 @knowledge.command("impact")
 @click.argument("query")
-@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--db", default=None)
 @click.option("--limit", default=10, type=int)
 def knowledge_impact(query, db, limit):
     """Search knowledge + full graph impact bridge."""
@@ -545,7 +548,7 @@ def knowledge_impact(query, db, limit):
     from ..paths import resolve_store
 
     bundle = OKFBundle(str(resolve_store().knowledge))
-    if not bundle.root.exists() or not Path(db).parent.exists():
+    if not bundle.root.exists() or not Path(db or str(resolve_store().db)).parent.exists():
         click.echo(f"No knowledge documents matching '{query}'.")
         return
     conn = get_db(db)
@@ -584,7 +587,7 @@ def knowledge_impact(query, db, limit):
 
 @knowledge.command("remove")
 @click.argument("doc_id")
-@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--db", default=None)
 def knowledge_remove(doc_id, db):
     """Delete a knowledge document and its embedding rows."""
     from cairn.knowledge.store import delete_document
@@ -594,7 +597,7 @@ def knowledge_remove(doc_id, db):
     bundle = OKFBundle(str(resolve_store().knowledge))
     # Guard before the DB is opened: a delete on a missing store is a
     # not-found, never a store-creation side effect.
-    if not bundle.root.exists() or not Path(db).parent.exists():
+    if not bundle.root.exists() or not Path(db or str(resolve_store().db)).parent.exists():
         click.echo(f"Not found: '{doc_id}'.", err=True)
         sys.exit(1)
     conn = get_db(db)
@@ -796,7 +799,7 @@ def knowledge_workflow_trace(ref, as_json):
 @click.option("--all", "sync_all", is_flag=True, help="Sync all workflows.")
 @click.option("--dry-run", is_flag=True, help="Show staleness report without writing.")
 @click.option("--max-steps", default=20, type=click.IntRange(min=1), help="Cap workflow steps (default 20).")
-@click.option("--db", default=str(DEFAULT_DB_PATH))
+@click.option("--db", default=None)
 @click.option(
     "--knowledge", default=None,
     help="Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge).",
@@ -820,7 +823,7 @@ def knowledge_workflow_sync(ref, sync_all, dry_run, max_steps, db, knowledge):
     store = resolve_store()
     bundle = OKFBundle(knowledge or str(store.knowledge))
     # Guard before the DB is opened: no workflows exist without the bundle.
-    if not bundle.root.exists() or not Path(db).parent.exists():
+    if not bundle.root.exists() or not Path(db or str(resolve_store().db)).parent.exists():
         click.echo("No workflows to sync.")
         return
     conn = get_db(db)
