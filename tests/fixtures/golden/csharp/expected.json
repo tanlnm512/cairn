@@ -50,7 +50,7 @@
     {
       "name": "Active",
       "kind": "enum_case",
-      "qualified_name": "App.Models.Active",
+      "qualified_name": "App.Models.Status.Active",
       "line_start": 42,
       "line_end": 42,
       "column_start": 8,
@@ -63,7 +63,7 @@
     {
       "name": "Inactive",
       "kind": "enum_case",
-      "qualified_name": "App.Models.Inactive",
+      "qualified_name": "App.Models.Status.Inactive",
       "line_start": 43,
       "line_end": 43,
       "column_start": 8,

@@ -188,13 +188,8 @@ class PythonParser(BaseParser, TreeSitterParserBase):
                 break
         if not name:
             return None
-        # Python defs are nested under block; the grandparent identifies a class.
-        kind = "function"
-        parent = node.parent
-        if parent is not None and parent.type == "block":
-            grandparent = parent.parent
-            if grandparent is not None and grandparent.type == "class_definition":
-                kind = "method"
+        # Class ownership sees through the decorated_definition wrapper.
+        kind = "method" if self._is_class_owned(node) else "function"
         self._emit_decorator_edges(node, source, name)
         self._emit_type_references(node, source, name)
         mods = self._collect_decorators(node, source)

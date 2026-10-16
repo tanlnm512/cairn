@@ -78,6 +78,8 @@ class _JSFamilyParser(BaseParser, TreeSitterParserBase):
         self._pending_decorators: List[str] = []
         self._func_depth = 0
         self._types = ScopeTypeTracker()
+        self._scope = []
+        self._callable_scope = []
 
         self._walk(tree.root_node, source, pf)
         pf.edges.extend(self._pending_edges)
