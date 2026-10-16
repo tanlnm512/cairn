@@ -13,6 +13,7 @@ _UNSUPPORTED_DESKTOP = "remove-unsupported-desktop"
 _UNREADABLE_CONFIG = "unreadable-config"
 _MALFORMED_CONFIG = "malformed-config"
 _UNREPLACEABLE = "unrecognized-shape"
+_WRITE_FAILED = "write-failed"
 
 
 def _url_config(client: str) -> dict | None:
@@ -125,7 +126,11 @@ def apply_doctor_fixes(db: str) -> list[dict]:
         if not _replace_registration(data, client):
             actions.append(action(_UNREPLACEABLE, _registration_url(entry)))
             continue
-        _backup_to_bak(path, "doctor-fix", InstallResult(client))
-        _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
+        try:
+            _backup_to_bak(path, "doctor-fix", InstallResult(client))
+            _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
+        except (OSError, RuntimeError):
+            actions.append(action(_WRITE_FAILED, _registration_url(entry)))
+            continue
         actions.append(action(_REPOINTED, destination))
     return actions

@@ -666,11 +666,18 @@ _REG_HOME_FILES: dict[str, tuple[str, ...]] = {
     "cursor": ("~/.cursor/mcp.json",),
     "droid": ("~/.factory/mcp.json",),
     "zcode": ("~/.zcode/config.json", "~/.zcode/cli/config.json"),
-    "agy": ("~/.gemini/config/mcp_config.json",),
     "opencode": ("~/.config/opencode/opencode.json",),
     "kilo": ("~/.config/kilo/kilo.json",),
     "omp": ("~/.omp/agent/mcp.json",),
 }
+
+
+def _scrub_safe_display(path: Path) -> str:
+    """Display path with a ``~/`` prefix when it sits under home, else absolute."""
+    try:
+        return "~/" + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
 
 
 def _client_config_paths(client: str) -> list[tuple[Path, str, bool]]:
@@ -683,11 +690,12 @@ def _client_config_paths(client: str) -> list[tuple[Path, str, bool]]:
         from ...agent_install import claude_desktop_config_path
 
         path = claude_desktop_config_path()
-        try:
-            disp = "~/" + str(path.relative_to(Path.home()))
-        except ValueError:
-            disp = str(path)
-        pairs.append((path, disp, False))
+        pairs.append((path, _scrub_safe_display(path), False))
+    if client == "agy":
+        from ...agent_install.clients.agy import agy_config_path
+
+        path = agy_config_path()
+        pairs.append((path, _scrub_safe_display(path), False))
     for rel in _REG_HOME_FILES.get(client, ()):
         pairs.append((Path.home() / rel.removeprefix("~/"), rel, False))
     return pairs
@@ -899,6 +907,7 @@ def _fix_summary_lines(actions: list[dict]) -> list[str]:
         _UNREADABLE_CONFIG,
         _UNREPLACEABLE,
         _UNSUPPORTED_DESKTOP,
+        _WRITE_FAILED,
     )
 
     lines: list[str] = []
@@ -940,6 +949,11 @@ def _fix_summary_lines(actions: list[dict]) -> list[str]:
             lines.append(
                 f"could not repoint {config}: unrecognized registration "
                 "shape; edit it manually"
+            )
+        elif name == _WRITE_FAILED:
+            lines.append(
+                f"failed to repoint {config}: backup or write error; fix the "
+                "file and re-run `cairn doctor --fix`"
             )
         else:
             lines.append(f"{client} {config}: {name} ({url})")

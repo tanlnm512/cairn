@@ -146,11 +146,12 @@ def _flush_cli_metrics():
                 except Exception:
                     pass
         with _CLI_LOCK:
-            for _ in range(len(batch)):
+            # Identity-based drain: a count-based popleft could drop rows enqueued during the DB work above.
+            for row in batch:
                 try:
-                    _CLI_BUFFER.popleft()
-                except IndexError:
-                    break
+                    _CLI_BUFFER.remove(row)
+                except ValueError:
+                    pass
 
 
 def configure_conn(conn_factory: Callable[[], "object"]) -> None:

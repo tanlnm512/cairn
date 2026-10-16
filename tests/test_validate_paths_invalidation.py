@@ -119,6 +119,7 @@ class TestMarkAutoInvalidation:
         assert db.execute(
             "SELECT COUNT(*) FROM memory_validity WHERE concept_id = ?", (cid,)
         ).fetchone()[0] == 1
+        assert "marked 1 stale concept(s)" in result.output
 
     def test_mark_does_not_touch_existing_successor_link(self, db, bundle, db_path):
         cid, _ = _seed_stale_memory(db, bundle)
@@ -414,3 +415,23 @@ def test_validate_without_knowledge_flag_resolves_store_bundle(tmp_path):
 
     assert result.exit_code == 0, result.output
     assert str(knowledge_dir) in result.output
+
+
+class TestMarkReporting:
+    def test_mark_reports_successful_marks_not_attempts(
+            self, db, bundle, db_path, monkeypatch):
+        cid, _ = _seed_stale_memory(db, bundle)
+
+        import cairn.memory.store as store_mod
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("projection unavailable")
+
+        monkeypatch.setattr(store_mod, "write_validity", _boom)
+
+        result = _run_validate_paths(db_path, bundle, "--mark")
+
+        assert result.exit_code != 0
+        assert "(mark failed: projection unavailable)" in result.output
+        # The reported count tracks successes, not stale-detection attempts.
+        assert "marked 0 stale concept(s)" in result.output

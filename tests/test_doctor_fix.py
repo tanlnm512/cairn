@@ -285,3 +285,63 @@ def test_workspace_owned_config_is_skipped_and_guided(tmp_path, monkeypatch, ent
     assert actions[0]["config"] == "config/.mcp.json"
     assert json.loads(path.read_text(encoding="utf-8")) == initial
     assert not path.with_suffix(".json.bak").exists()
+
+
+def test_write_failure_is_recorded_and_remaining_fixes_continue(
+    tmp_path, monkeypatch
+):
+    """A failed backup/write records a write-failed action and the run
+    continues to the remaining clients instead of aborting with a traceback."""
+    import cairn.agent_install.merge as merge_mod
+    from cairn.cli.system.doctor_fix import apply_doctor_fixes
+
+    bad = tmp_path / "bad.json"
+    good = tmp_path / "good.json"
+    bad.write_text(
+        json.dumps({"mcpServers": {"cairn": copy.deepcopy(_STDIO_SEED)}}),
+        encoding="utf-8",
+    )
+    good.write_text(
+        json.dumps({
+            "mcpServers": {
+                "other": copy.deepcopy(_FOREIGN),
+                "cairn": copy.deepcopy(_STDIO_SEED),
+            }
+        }),
+        encoding="utf-8",
+    )
+    _age(bad)
+    _age(good)
+    doctor = import_module("cairn.cli.system.doctor")
+
+    def enumerate_two():
+        from cairn.agent_install import _registration_entry
+
+        return [
+            ("claude", bad, "config/bad.json", _registration_entry(str(bad)), False),
+            ("cursor", good, "config/good.json", _registration_entry(str(good)), False),
+        ]
+
+    monkeypatch.setattr(doctor, "_enumerate_registrations", enumerate_two)
+
+    real_backup = merge_mod._backup_to_bak
+
+    def _backup_boom(path, reason, result, dry_run=False):
+        if path == bad:
+            raise RuntimeError("refusing to overwrite: could not back it up")
+        return real_backup(path, reason, result, dry_run)
+
+    monkeypatch.setattr(merge_mod, "_backup_to_bak", _backup_boom)
+
+    actions = apply_doctor_fixes(str(tmp_path / "store.db"))
+
+    assert [a["action"] for a in actions] == ["write-failed", "repointed-to-url"]
+    assert actions[0]["config"] == "config/bad.json"
+    assert actions[1]["config"] == "config/good.json"
+    assert json.loads(bad.read_text(encoding="utf-8")) == {
+        "mcpServers": {"cairn": _STDIO_SEED}
+    }
+    assert not bad.with_suffix(".json.bak").exists()
+    assert "127.0.0.1:9876" in good.read_text(encoding="utf-8")
+    summary = doctor._fix_summary_lines(actions)
+    assert any("backup or write error" in line for line in summary)
