@@ -29,7 +29,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
         # Beyond sqlite's 64-bit range the bind itself raises OverflowError;
         # no such community id can exist, so it parses as no selection.
         community_id = (
-            int(raw) if raw.isdigit() and int(raw) <= 2**63 - 1 else None
+            int(raw) if raw.isdecimal() and int(raw) <= 2**63 - 1 else None
         )
         fragment = is_hx_request(request)
         selected_db, _, store_key = resolve_selection(
