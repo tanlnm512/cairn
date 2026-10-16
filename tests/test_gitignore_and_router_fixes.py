@@ -121,3 +121,19 @@ class TestKnowledgeLayerRouting:
         assert not result.get("degraded"), (
             "a hit in the targeted layer must not fall back to degraded mode"
         )
+
+
+class TestDegradedLayersQueried:
+    def test_degraded_fallback_recomputes_layers_queried(self, fresh_db, tmp_path):
+        """After the degraded fallback swaps the results, layers_queried must
+        name the layers actually in the response — not the stale targeted
+        layer the empty first pass queried."""
+        bundle = OKFBundle(str(tmp_path / "knowledge"))
+        # "how does X work" routes to L2 (wiki); an empty bundle yields
+        # nothing there, so the router degrades to the derived/asserted tiers.
+        result = route_query("how does ZipFrobnicate work", fresh_db, bundle)
+
+        assert result.get("degraded"), "an all-empty first pass must degrade"
+        assert result["layers_queried"] == list(result["results"].keys()), (
+            "layers_queried must match the swapped results' keys"
+        )

@@ -339,3 +339,69 @@ def test_queue_accepted_bogus_result_still_needs_gate(cli_env):
     assert "no_such_symbol_anywhere" in _streams(rerun)
 
 
+
+
+def test_polish_stage_exception_still_writes_deterministic_skill(
+    cli_env, monkeypatch
+):
+    """A raised exception in the --polish stage must not abort the run or
+    suppress the already-gated deterministic SKILL.md write."""
+    import cairn.cli.skill as skill_cli
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("queue bundle unwritable")
+
+    monkeypatch.setattr(skill_cli, "_polish_stage", _boom)
+    tmp = cli_env
+    _indexed_workspace(tmp)
+    result = _polish_once(tmp)
+    assert result.exit_code == 0, _streams(result)
+    assert "Polish stage unavailable" in _streams(result)
+    assert (tmp / "out" / "SKILL.md").exists()
+
+
+def test_oversized_reference_section_must_pass_the_gate(cli_env):
+    """Section bytes moved verbatim into references/ get the same critic
+    gate as the inline document: an unverified backtick ref in a split-off
+    section aborts the generation with nothing written."""
+    tmp = cli_env
+    _indexed_workspace(tmp)
+    knowledge = tmp / "knowledge"
+    bundle = OKFBundle(str(knowledge))
+    concept = bundle.read_concept("compass/pkg_a")
+    concept.body = (
+        "Hub: `zeta_hub` in `pkg_a/core.py`.\n\n"
+        + "filler line\n" * 500
+        + "See `no_such_ref_anywhere` for details.\n"
+    )
+    bundle.write_concept(concept)
+
+    result = _generate(
+        "pkg_a", "--output", str(tmp / "out"), "--knowledge", str(knowledge)
+    )
+    assert result.exit_code != 0, _streams(result)
+    assert "no_such_ref_anywhere" in _streams(result)
+    assert not (tmp / "out" / "SKILL.md").exists()
+    assert not (tmp / "out" / "references").exists()
+
+
+def test_missing_result_reports_readable_result_reason(cli_env):
+    """An 'unavailable' outcome for a done task whose result is unreadable
+    must say the result is missing, not claim a queue-critic failure
+    (skill-polish results are critic-exempt and always pass)."""
+    tmp = cli_env
+    _indexed_workspace(tmp)
+    knowledge = tmp / "knowledge"
+    assert _polish_once(tmp).exit_code == 0
+    (task,) = _polish_tasks(knowledge)
+
+    bundle = OKFBundle(str(knowledge))
+    assert claim_task(bundle, task.id) is not None
+    outcome = complete_task(bundle, task.id, "polished body")
+    assert outcome["errors"] == []
+
+    (knowledge / TASK_DIR / f"{task.id}.result.md").unlink()
+    rerun = _polish_once(tmp)
+    assert rerun.exit_code == 0, _streams(rerun)
+    assert "without a readable result" in _streams(rerun)
+    assert (tmp / "out" / "SKILL.md").exists()

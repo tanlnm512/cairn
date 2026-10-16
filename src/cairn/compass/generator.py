@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ..graph.queries import trace_flow
+from ..graph.traversal import find_definition, find_definition_by_id
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 
 # Cap revise cycles to bound the generator->critic->revise loop.
 from ..llm.tasks import MAX_REVISE_CYCLES
 from .critic import preserved_concept_notes
-from .flow_gaps import _coverage_resource, _name_files
+from .flow_gaps import _coverage_resource, _name_files, _same_file_ids
 
 # LIKE escape char: literal '%'/'_' in module paths must not act as wildcards.
 LIKE_ESCAPE_CHAR = "\\"
@@ -619,6 +620,27 @@ def _flow_template_body(facts: Dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _flow_coverage_key(
+    conn: sqlite3.Connection, entry: str, entry_id: Optional[str],
+    facts: Dict[str, Any],
+) -> str:
+    """The flow-gaps coverage key for the traced entry symbol, shared by detection and generation."""
+    rows = (
+        find_definition_by_id(conn, entry_id) if entry_id
+        else find_definition(conn, entry, limit=1)
+    )
+    row = rows[0] if rows else None
+    entry_file = (
+        row["file_path"] if row
+        else (facts.get("chain_raw") or [{}])[0].get("file", "")
+    )
+    return _coverage_resource(
+        entry, entry_file, _name_files(conn, entry),
+        local_ids=_same_file_ids(conn, entry, entry_file),
+        symbol_id=row["id"] if row else "",
+    )
+
+
 def generate_flow_compass(
     entry: str,
     conn: sqlite3.Connection,
@@ -635,12 +657,7 @@ def generate_flow_compass(
     # concept_id must be filesystem-safe and unique. The resource defaults
     # to the flow-gaps coverage key, so the written concept marks its own
     # gap covered; sanitize it into the concept_id.
-    if resource:
-        key = resource
-    else:
-        chain = facts.get("chain_raw") or []
-        entry_file = chain[0]["file"] if chain else ""
-        key = _coverage_resource(entry, entry_file, _name_files(conn, entry))
+    key = resource or _flow_coverage_key(conn, entry, entry_id, facts)
     safe_id = key.replace("/", "-").replace(".", "-").replace("#", "-")
     concept_id = f"compass/flow-{safe_id}"
     return OKFConcept(

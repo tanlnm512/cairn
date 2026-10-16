@@ -68,13 +68,19 @@ def run_polish_stage(
         latest = latest_task(done)
         # The concept wrapper pads the stored body; strip back to the document.
         polished = (read_result(bundle, latest.id) or "").lstrip("\n") or None
-        if polished and not _result_rejected(bundle, latest.id):
-            return _gate(conn, latest.id, rendered, polished)
-        return PolishOutcome(
-            "unavailable",
-            task_id=latest.id,
-            reason="the last polish result failed the queue critic",
-        )
+        if polished is None:
+            return PolishOutcome(
+                "unavailable",
+                task_id=latest.id,
+                reason="the last polish task completed without a readable result",
+            )
+        if _result_rejected(bundle, latest.id):
+            return PolishOutcome(
+                "unavailable",
+                task_id=latest.id,
+                reason="the last polish result failed the queue critic",
+            )
+        return _gate(conn, latest.id, rendered, polished)
     task = create_task(
         bundle,
         POLISH_KIND,

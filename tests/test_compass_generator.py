@@ -362,3 +362,42 @@ class TestCompassGenerateCLI:
             )
             assert result.exit_code == 0, result.output
             assert "passed: True" in result.output
+
+
+class _LowQualityClient:
+    """Minimal LLM client whose draft has zero fact errors but no recognized
+    sections, so the critic's quality verdict fails with an empty error list."""
+
+    def synthesize(self, kind, facts):
+        return "Plain prose without section headings or backtick references.\n"
+
+    def revise(self, kind, draft, errors, facts):
+        return self.synthesize(kind, facts)
+
+
+def test_use_llm_sync_write_gated_on_critic_verdict(monkeypatch):
+    """The sync-LLM path must refuse to write a draft the critic rejects on
+    quality even when its fact-error list is empty (same gate as the
+    deterministic path)."""
+    import cairn.llm.client as llm_client
+
+    monkeypatch.setattr(llm_client, "get_client", lambda bundle: _LowQualityClient())
+    monkeypatch.setenv("CAIRN_LLM_BACKEND", "claude")
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmp:
+        db = str(Path(tmp) / "test.db")
+        know = str(Path(tmp) / ".knowledge")
+        Path(know).mkdir(parents=True, exist_ok=True)
+        from cairn.graph.schema import get_db
+        c = get_db(db)
+        _seed_workspace(c)
+        c.close()
+        from cairn.cli import main
+        result = runner.invoke(
+            main,
+            ["compass", "generate", "polaris-app/app", "--use-llm",
+             "--db", db, "--knowledge", know],
+        )
+        assert result.exit_code == 1, result.output
+        assert "not written" in result.output
+        assert not list(Path(know).rglob("compass/*.md"))

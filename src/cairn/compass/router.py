@@ -124,6 +124,7 @@ def route_query(
         }
         route["results"] = {k: v for k, v in fb.items() if _nonempty(v)}
         route["degraded"] = True
+        route["layers_queried"] = list(route["results"].keys())
 
     # Add explicit empty flag to indicate when all layers returned nothing
     route["empty"] = not any(_nonempty(v) for v in route["results"].values())

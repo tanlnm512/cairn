@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
+from ..graph.traversal import STRUCTURAL_EDGE_KINDS
 from ..okf.bundle import OKFBundle
 
 
@@ -26,11 +27,25 @@ def _name_files(conn: sqlite3.Connection, name: str) -> set:
     return {r["path"] for r in rows}
 
 
-def _coverage_resource(name: str, file: str, files: set) -> str:
-    """The coverage key shared by detection and generation: bare name when
-    unique across files, basename suffix on collisions, parent-dir suffix
-    when basenames also collide."""
-    if len(files) <= 1:
+def _same_file_ids(conn: sqlite3.Connection, name: str, file: str) -> list:
+    """Ids of the symbols named ``name`` defined in ``file`` — the same-name-same-file collision evidence."""
+    return [
+        r["id"]
+        for r in conn.execute(
+            "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE s.name = ? AND f.path = ?",
+            (name, file),
+        ).fetchall()
+    ]
+
+
+def _coverage_resource(
+    name: str, file: str, files: set,
+    local_ids: Sequence[str] = (), symbol_id: str = "",
+) -> str:
+    """The coverage key shared by detection and generation: bare name when unique, basename/parent-dir suffix on
+    file collisions, plus the symbol id when one file holds several same-named symbols."""
+    if len(files) <= 1 and len(local_ids) <= 1:
         return name
     base = file.split("/")[-1] if file else "?"
     bcounts: dict[str, int] = {}
@@ -39,9 +54,12 @@ def _coverage_resource(name: str, file: str, files: set) -> str:
         bcounts[b] = bcounts.get(b, 0) + 1
     if bcounts.get(base, 0) > 1:
         parts = [p for p in file.split("/") if p]
-        disambiguator = "/".join(parts[-2:]) if len(parts) >= 2 else base
-        return _flow_resource(name, file, disambiguator=disambiguator)
-    return _flow_resource(name, file)
+        suffix = "/".join(parts[-2:]) if len(parts) >= 2 else base
+    else:
+        suffix = base
+    if len(local_ids) > 1 and symbol_id:
+        suffix = f"{suffix}-{symbol_id}"
+    return _flow_resource(name, file, disambiguator=suffix)
 
 
 def detect_flow_gaps(
@@ -69,9 +87,12 @@ def detect_flow_gaps(
     for c in candidates:
         entry = dict(c)
         files = _name_files(conn, c["name"])
-        resource = _coverage_resource(c["name"], c["file"], files)
+        local_ids = _same_file_ids(conn, c["name"], c["file"])
+        resource = _coverage_resource(
+            c["name"], c["file"], files, local_ids=local_ids, symbol_id=c["id"],
+        )
         entry["resource"] = resource
-        entry["colliding"] = len(files) > 1
+        entry["colliding"] = len(files) > 1 or len(local_ids) > 1
         entry["covered"] = resource in covered_resources
         if entry["covered"]:
             covered.append(entry)
@@ -82,23 +103,26 @@ def detect_flow_gaps(
 
 
 def _get_flow_candidates(conn: sqlite3.Connection, min_edges: int) -> List[dict]:
-    """Find functions and methods with resolved outgoing edge count >= min_edges.
+    """Functions/methods with >= min_edges resolved outgoing edges of the structural kinds the flow trace walks.
 
-    Groups by symbol ID to keep duplicate symbol names distinct.
+    Groups by symbol ID to keep duplicate symbol names distinct; reference-only
+    edges never mint candidates the trace cannot document.
     """
     cur = conn.cursor()
+    kind_ph = ",".join("?" * len(STRUCTURAL_EDGE_KINDS))
     rows = cur.execute(
-        """SELECT s.id, s.name, s.kind, f.path AS file_path, f.repo_id AS repo,
+        f"""SELECT s.id, s.name, s.kind, f.path AS file_path, f.repo_id AS repo,
                   COUNT(e.id) AS out_edges
            FROM symbols s
            JOIN files f ON s.file_id = f.id
            JOIN edges e ON e.source_id = s.id
            WHERE e.target_id IS NOT NULL
+             AND e.kind IN ({kind_ph})
              AND s.kind IN ('function', 'method')
            GROUP BY s.id
            HAVING out_edges >= ?
            ORDER BY out_edges DESC""",
-        (min_edges,),
+        (*STRUCTURAL_EDGE_KINDS, min_edges),
     ).fetchall()
     return [
         {
