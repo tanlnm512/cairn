@@ -113,7 +113,7 @@ class TestDaemonizeFallback:
         monkeypatch.setattr(
             lc,
             "ensure_daemon_running",
-            lambda port, host: (DAEMON_PID, f"http://{host}:{port}/mcp", True),
+            lambda port, host, *args, **kwargs: (DAEMON_PID, f"http://{host}:{port}/mcp", True),
             raising=False,
         )
         result = CliRunner().invoke(main, ["serve", "start"])
@@ -233,9 +233,14 @@ class TestMacOSManagerCycle:
         monkeypatch.setattr(lc, "is_loaded", lambda: False)
         monkeypatch.setattr(lc, "load", lambda: True)
         unloaded: list[int] = []
+        loaded = {"state": True}
+
+        def _is_loaded() -> bool:
+            return loaded["state"]
 
         def _unload() -> bool:
             unloaded.append(1)
+            loaded["state"] = False
             return True
 
         monkeypatch.setattr(lc, "unload", _unload)
@@ -248,7 +253,7 @@ class TestMacOSManagerCycle:
         assert start.exit_code == 0, start.output
         assert "/mcp" in start.output, "the managed daemon serves the /mcp endpoint"
 
-        monkeypatch.setattr(lc, "is_loaded", lambda: True)
+        monkeypatch.setattr(lc, "is_loaded", _is_loaded)
         status = runner.invoke(main, ["serve", "status", "--port", "9876"])
         assert status.exit_code == 0, status.output
         assert "4321" in status.output and "HEALTHY" in status.output
@@ -259,7 +264,8 @@ class TestMacOSManagerCycle:
 
         stop = runner.invoke(main, ["serve", "stop"])
         assert stop.exit_code == 0, stop.output
-        assert len(unloaded) >= 2
+        assert len(unloaded) == 1, "the post-restart stop finds nothing left to unload"
+        assert "stopped." in stop.output
 
 
 class TestCgBinResolution:
@@ -475,3 +481,171 @@ class TestServeStatusResolvesDaemonBind:
 
         assert result.exit_code == 0, result.output
         assert probed == [(9443, lc.DEFAULT_HOST)]
+
+
+class TestServeRestartResolvesDaemonBind:
+    """serve_restart stops/starts on the daemon's configured bind, never on
+    the fixed CLI defaults (a custom-port daemon must survive a restart)."""
+
+    def test_restart_reuses_the_configured_bind(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(lc, "is_macos", lambda: True)
+        monkeypatch.setattr(lc, "is_loaded", lambda: False)
+        monkeypatch.setattr(lc, "pidfile_pid", lambda: None)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        monkeypatch.setattr(lc, "daemon_bind", lambda: (9999, "127.0.0.1"))
+        monkeypatch.setattr("time.sleep", lambda s: None)
+        monkeypatch.setenv("CAIRN_HOME", str(tmp_path))
+        starts: list[tuple[int, str]] = []
+
+        def _ensure(port, host, *args, **kwargs):
+            starts.append((port, host))
+            return 4321, f"http://{host}:{port}/mcp", True
+
+        monkeypatch.setattr(lc, "ensure_daemon_running", _ensure)
+
+        result = CliRunner().invoke(main, ["serve", "restart"])
+
+        assert result.exit_code == 0, result.output
+        assert "stopped." in result.output, "restart keeps its stop+start composition"
+        assert starts == [(9999, "127.0.0.1")], (
+            "restart must restart the daemon on its configured bind"
+        )
+
+
+class TestServeStopVerifiesShutdown:
+    """serve stop must not report success while the managed daemon survives."""
+
+    def test_stop_fails_when_the_daemon_is_still_there(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(lc, "is_macos", lambda: True)
+        monkeypatch.setattr(lc, "is_loaded", lambda: True)
+        monkeypatch.setattr(lc, "running_pid", lambda: 4321)
+        monkeypatch.setattr(lc, "pidfile_pid", lambda: None)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        monkeypatch.setattr("time.sleep", lambda s: None)
+        monkeypatch.setenv("CAIRN_HOME", str(tmp_path))
+
+        result = CliRunner().invoke(main, ["serve", "stop"])
+
+        assert result.exit_code == 1, result.output
+        assert "still running" in result.output
+        assert "stopped." not in result.output
+
+
+class TestServeRestartSurvivesFailedStop:
+    """A failed stop must not abort the restart with the daemon down: the
+    start attempt reuses a healthy daemon or cycles a wedged one."""
+
+    def test_restart_starts_after_a_failed_stop(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(lc, "is_macos", lambda: True)
+        monkeypatch.setattr(lc, "is_loaded", lambda: True)
+
+        def _boom():
+            raise RuntimeError("launchctl unload timed out after 15s")
+
+        monkeypatch.setattr(lc, "unload", _boom)
+        monkeypatch.setattr(lc, "running_pid", lambda: None)
+        monkeypatch.setattr(lc, "pidfile_pid", lambda: None)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        monkeypatch.setattr("time.sleep", lambda s: None)
+        monkeypatch.setenv("CAIRN_HOME", str(tmp_path))
+        starts: list[tuple[int, str]] = []
+
+        def _ensure(port, host, *args, **kwargs):
+            starts.append((port, host))
+            return 4321, f"http://{host}:{port}/mcp", True
+
+        monkeypatch.setattr(lc, "ensure_daemon_running", _ensure)
+
+        result = CliRunner().invoke(main, ["serve", "restart"])
+
+        assert starts == [(lc.DEFAULT_PORT, lc.DEFAULT_HOST)], (
+            "restart must attempt the start even though stop failed"
+        )
+        assert result.exit_code == 0, result.output
+
+
+class TestPlistCarriesApiKey:
+    """A keyed non-loopback daemon must reach launchd with its key: the plist
+    env carries CAIRN_MCP_API_KEY, else the bind guard exits and KeepAlive
+    crash-loops."""
+
+    def test_render_plist_embeds_the_api_key(self):
+        plist = lc.render_plist(port=9876, host="0.0.0.0", api_key="secret-1")
+        assert plist["EnvironmentVariables"]["CAIRN_MCP_API_KEY"] == "secret-1"
+
+    def test_render_plist_omits_the_key_when_none(self):
+        plist = lc.render_plist(port=9876, host="127.0.0.1")
+        assert "CAIRN_MCP_API_KEY" not in plist["EnvironmentVariables"]
+
+    def test_ensure_daemon_running_threads_the_key_into_the_plist(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(lc, "is_macos", lambda: True)
+        monkeypatch.setattr(lc, "is_loaded", lambda: False)
+        monkeypatch.setattr(lc, "find_strays", lambda db_path: [])
+        written: list[dict] = []
+        monkeypatch.setattr(lc, "write_plist", lambda plist: written.append(plist))
+        monkeypatch.setattr(lc, "load", lambda: True)
+        monkeypatch.setattr(lc, "healthz_responds", lambda *a, **k: True, raising=False)
+        monkeypatch.setattr(lc, "running_pid", lambda: 4321)
+        monkeypatch.setenv("CAIRN_HOME", str(tmp_path))
+        monkeypatch.setenv("CAIRN_WORKSPACE", str(tmp_path / "ws"))
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "ws" / ".kg" / "graph.db"))
+
+        pid, url, started = lc.ensure_daemon_running(
+            9876, "0.0.0.0", api_key="secret-1",
+        )
+
+        assert started is True
+        assert written, "the launchd path must (re)write the plist"
+        assert written[0]["EnvironmentVariables"]["CAIRN_MCP_API_KEY"] == "secret-1"
+
+    def test_serve_start_resolves_the_key_explicit_then_env(self, monkeypatch):
+        monkeypatch.setattr(lc, "is_macos", lambda: False)
+        seen: list[dict] = []
+
+        def _ensure(port, host, *args, **kwargs):
+            seen.append(kwargs)
+            return 4321, f"http://{host}:{port}/mcp", True
+
+        monkeypatch.setattr(lc, "ensure_daemon_running", _ensure)
+        monkeypatch.setenv("CAIRN_MCP_API_KEY", "env-key")
+
+        env_only = CliRunner().invoke(main, ["serve", "start", "--port", "9876"])
+        assert env_only.exit_code == 0, env_only.output
+        explicit = CliRunner().invoke(
+            main, ["serve", "start", "--port", "9876", "--api-key", "flag-key"],
+        )
+        assert explicit.exit_code == 0, explicit.output
+
+        assert seen[0].get("api_key") == "env-key"
+        assert seen[1].get("api_key") == "flag-key"
+
+
+class TestDaemonizeExecFailureLogging:
+    """A daemon exec failure must land in the daemon log (stderr is redirected
+    there) instead of dying silently behind a misleading healthz timeout."""
+
+    def test_exec_failure_writes_the_log_and_exits_1(self, monkeypatch, capsys):
+        monkeypatch.setattr(os, "setsid", lambda: None)
+        monkeypatch.setattr(os, "open", lambda *a, **k: 3)
+        monkeypatch.setattr(os, "dup2", lambda *a, **k: None)
+        monkeypatch.setattr(os, "close", lambda fd: None)
+
+        def _boom(*a, **k):
+            raise OSError("no such file")
+
+        monkeypatch.setattr(os, "execvpe", _boom)
+        codes: list[int] = []
+
+        def _exit(code):
+            codes.append(code)
+            raise _ExecHalt
+
+        monkeypatch.setattr(os, "_exit", _exit)
+
+        with pytest.raises(_ExecHalt):
+            lc._daemonize_exec(9876, "127.0.0.1", "/nope/cairn", {})
+
+        assert codes == [1]
+        assert "failed to exec" in capsys.readouterr().err

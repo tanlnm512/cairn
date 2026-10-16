@@ -114,6 +114,7 @@ def render_plist(
     db_path: str | None = None,
     knowledge_path: str | None = None,
     read_only: bool = False,
+    api_key: str | None = None,
 ) -> dict:
     """Build the LaunchAgent plist dict for a read-write-by-default `cairn serve run` daemon."""
     bin_ = cg_bin()
@@ -131,6 +132,10 @@ def render_plist(
         env["CAIRN_DB"] = str(db_path)
     if knowledge_path:
         env["CAIRN_KNOWLEDGE"] = str(knowledge_path)
+    if api_key:
+        # launchd does not inherit the shell env: without this a keyed
+        # non-loopback daemon exits at the bind guard and crash-loops.
+        env["CAIRN_MCP_API_KEY"] = api_key
     args = [bin_, "serve", "run", "--port", str(port), "--host", str(host)]
     if read_only:
         args.append("--read-only")
@@ -529,7 +534,7 @@ def _wait_for_healthz(port: int, host: str, attempts: int = 60, delay: float = 0
     return False
 
 
-def _ensure_running_launchd(port: int, host: str) -> tuple[int | None, str, bool]:
+def _ensure_running_launchd(port: int, host: str, api_key: str | None = None) -> tuple[int | None, str, bool]:
     """macOS core: reuse the loaded healthy agent, else sweep, write plist, load, wait."""
     if is_loaded():
         if healthz_responds(port, host):
@@ -546,6 +551,7 @@ def _ensure_running_launchd(port: int, host: str) -> tuple[int | None, str, bool
         workspace=str(store.workspace),
         db_path=str(store.db),
         knowledge_path=str(store.knowledge),
+        api_key=api_key,
     ))
     if not load():
         raise RuntimeError("launchctl load failed")
@@ -571,7 +577,10 @@ def _daemonize_exec(port: int, host: str, bin_: str, env: dict[str, str]) -> Non
         os.execvpe(
             bin_, [bin_, "serve", "run", "--port", str(port), "--host", str(host)], env
         )
-    except OSError:
+    except OSError as exc:
+        # stderr already points at the daemon log: record the failure there
+        # instead of dying silently behind a misleading healthz timeout.
+        print(f"cairn: failed to exec {bin_} serve run: {exc}", file=sys.stderr, flush=True)
         os._exit(1)
 
 
@@ -590,7 +599,7 @@ def _cycle_wedged_daemon(port: int, host: str, db_path: str) -> None:
     pidfile_path().unlink(missing_ok=True)
 
 
-def _ensure_running_daemonize(port: int, host: str) -> tuple[int | None, str, bool]:
+def _ensure_running_daemonize(port: int, host: str, api_key: str | None = None) -> tuple[int | None, str, bool]:
     """Non-macOS core: reuse a healthy daemon, else fork a detached serve run."""
     if healthz_responds(port, host):
         return pidfile_pid(), mcp_url(port, host), False
@@ -603,6 +612,8 @@ def _ensure_running_daemonize(port: int, host: str) -> tuple[int | None, str, bo
         "CAIRN_DB": str(store.db),
         "CAIRN_KNOWLEDGE": str(store.knowledge),
     }
+    if api_key:
+        env["CAIRN_MCP_API_KEY"] = api_key
     bin_ = cg_bin()
     pid = os.fork()
     if pid == 0:
@@ -615,10 +626,10 @@ def _ensure_running_daemonize(port: int, host: str) -> tuple[int | None, str, bo
 
 
 def ensure_daemon_running(
-    port: int = DEFAULT_PORT, host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT, host: str = DEFAULT_HOST, api_key: str | None = None,
 ) -> tuple[int | None, str, bool]:
     """Bring up the shared HTTP daemon; returns (pid, mcp_url, started)."""
     with _start_lock():
         if is_macos():
-            return _ensure_running_launchd(port, host)
-        return _ensure_running_daemonize(port, host)
+            return _ensure_running_launchd(port, host, api_key)
+        return _ensure_running_daemonize(port, host, api_key)
