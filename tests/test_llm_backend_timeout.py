@@ -186,7 +186,22 @@ def test_subprocess_fallback_methods_propagate_timeout(
     assert backend.synthesize("prompt", {}, timeout=0.2) == "synthesized"
     assert backend.revise("prompt", "draft", [], {}, timeout=0.2) == "revised"
     assert backend.judge("prompt", "draft", {}, timeout=0.2) == {"score": 1.0}
-    assert backend.extract("transcript", timeout=0.2) == [{"value": "transcript"}]
 
-    assert execution_timeouts == [0.2, 0.2, 0.2, 0.2]
-    assert fallback.calls == [0.2, 0.2, 0.2, 0.2]
+    assert execution_timeouts == [0.2, 0.2, 0.2]
+    assert fallback.calls == [0.2, 0.2, 0.2]
+
+
+def test_subprocess_extract_failure_skips_queue_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed exec returns [] without the create-then-wait queue fallback,
+    so the caller's own queue path never sees a duplicate memory-extract
+    task."""
+    backend = SubprocessBackend(_NoDiskBundle(), cli="droid")
+    fallback = _RecordingFallback()
+
+    monkeypatch.setattr(backend, "_exec", lambda prompt, timeout: "")
+    monkeypatch.setattr(backend, "_fallback", fallback)
+
+    assert backend.extract("transcript", timeout=0.2) == []
+    assert fallback.calls == []

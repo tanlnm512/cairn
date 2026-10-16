@@ -115,7 +115,9 @@ def claim_task(bundle: OKFBundle, task_id: str, assigned_to: str = "") -> Option
 
     Uses os.open(O_CREAT|O_EXCL) on a claim-marker file; two concurrent claims
     on the same pending task yield exactly one winner. A `.claim` marker older
-    than CLAIM_STALE_SECONDS is treated as leaked and reclaimed.
+    than CLAIM_STALE_SECONDS is treated as leaked and reclaimed; when that
+    marker was stale and the task's own claim is equally stale (claimant died
+    mid-task), the in-progress task is reclaimed too.
     """
     # Create claim marker path (sibling to the task file)
     claim_marker = bundle.root / f"{TASK_DIR}/{task_id}.claim"
@@ -123,6 +125,7 @@ def claim_task(bundle: OKFBundle, task_id: str, assigned_to: str = "") -> Option
         # A TASK_ID escaping the bundle root must not write outside it.
         return None
 
+    stale_collision = False
     try:
         # Create the claim marker atomically (O_EXCL fails if already claimed).
         fd = os.open(claim_marker, os.O_CREAT | os.O_EXCL)
@@ -132,6 +135,7 @@ def claim_task(bundle: OKFBundle, task_id: str, assigned_to: str = "") -> Option
         # creation and status update) before giving up.
         if not _try_remove_stale_marker(claim_marker):
             return None
+        stale_collision = True
         # Stale marker removed: retry once. A concurrent winner raises again.
         try:
             fd = os.open(claim_marker, os.O_CREAT | os.O_EXCL)
@@ -145,21 +149,30 @@ def claim_task(bundle: OKFBundle, task_id: str, assigned_to: str = "") -> Option
         return None
 
     try:
-        # Re-read task status to ensure it's still pending
-        task = _read(bundle, task_id)
-        if task is None or task.status != "pending":
-            # Task not claimable - remove marker and return None
-            try:
-                os.remove(claim_marker)
-            except OSError:
-                pass
-            return None
+        # Read-check-write under the bundle lock so a concurrent drop or
+        # completion cannot interleave.
+        with bundle.lock():
+            # Re-read task status to ensure it's still claimable
+            task = _read(bundle, task_id)
+            reclaimable = (
+                stale_collision
+                and task is not None
+                and task.status == "in-progress"
+                and _claim_is_stale(task)
+            )
+            if task is None or (task.status != "pending" and not reclaimable):
+                # Task not claimable - remove marker and return None
+                try:
+                    os.remove(claim_marker)
+                except OSError:
+                    pass
+                return None
 
-        # Claim the task
-        task.status = "in-progress"
-        task.assigned_to = assigned_to
-        task.claimed_at = _now()
-        bundle.write_concept(_task_to_concept(task))
+            # Claim the task (or reclaim it from a dead claimant)
+            task.status = "in-progress"
+            task.assigned_to = assigned_to
+            task.claimed_at = _now()
+            bundle.write_concept(_task_to_concept(task))
         # task_lifecycle: claimed -- emit is best-effort (never raises), so a
         # telemetry outage can't block a claim.
         _emit(
@@ -197,6 +210,19 @@ def _try_remove_stale_marker(claim_marker: Path) -> bool:
         return True
     except OSError:
         return False
+
+
+def _claim_is_stale(task: Task) -> bool:
+    """True when the task's claimed_at is missing, unparseable, or older than CLAIM_STALE_SECONDS."""
+    if not task.claimed_at:
+        return True
+    try:
+        claimed = datetime.strptime(task.claimed_at, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return True
+    claimed = claimed.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - claimed
+    return age.total_seconds() >= CLAIM_STALE_SECONDS
 
 
 def _enriched_article(
@@ -488,119 +514,126 @@ def complete_task(
                 # marker is prepended so the promoted concept carries its caveat.
                 # (Un-backticked prose is NOT critic-verified.)
                 promoted = False
-                if task.task_kind in ("compass-synthesize", "compass-revise"):
-                    from ..compass.generator import _derive_title
+                # Re-check, promotions, and the terminal write share one lock
+                # hold: a completion that loses the finish race persists no
+                # promotions.
+                with bundle.lock():
+                    current = _read(bundle, task.id)
+                    if current is None or current.status != "in-progress":
+                        return _refused_outcome(task_id, [_RACE_LOST])
+                    if task.task_kind in ("compass-synthesize", "compass-revise"):
+                        from ..compass.generator import _derive_title
 
-                    module_path = task.resource
-                    promoted_body = result
-                    if critic_result.warnings:
-                        marker = "> [critic-warning] " + "; ".join(
-                            critic_result.warnings
-                        ) + "\n\n"
-                        promoted_body = marker + result
-                    compass_concept = OKFConcept(
-                        type="Compass",
-                        title=_derive_title(module_path),
-                        description=f"Navigation guide for {module_path}",
-                        resource=module_path,
-                        tags=[t for t in module_path.strip("/").split("/") if t][:6],
-                        timestamp=_now(),
-                        concept_id=f"compass/{module_path.strip('/').replace('/', '-')}",
-                        body=promoted_body,
-                    )
-                    bundle.write_concept(compass_concept)
-                    promoted = True
-
-                if task.task_kind in ("flow-synthesize", "flow-revise"):
-                    # Promote flow results to compass/flow-{entry} so flow-gaps
-                    # coverage detection recognizes them.
-                    entry = task.resource
-                    promoted_body = result
-                    if critic_result.warnings:
-                        marker = "> [critic-warning] " + "; ".join(
-                            critic_result.warnings
-                        ) + "\n\n"
-                        promoted_body = marker + result
-                    safe_id = entry.replace("/", "-").replace(".", "-").replace("#", "-")
-                    flow_concept = OKFConcept(
-                        type="Compass",
-                        title=f"Flow: {entry}",
-                        description=f"Execution flow traced from `{entry}`",
-                        resource=entry,
-                        tags=["flow", entry.split(".")[-1]][:6],
-                        timestamp=_now(),
-                        concept_id=f"compass/flow-{safe_id}",
-                        body=promoted_body,
-                    )
-                    bundle.write_concept(flow_concept)
-                    promoted = True
-
-                if task.task_kind.startswith("wiki-page"):
-                    # The repo fact was validated at the top of completion.
-                    repo = str(task.facts.get("repo") or "")
-                    # Qualified resources are "{repo}/{page_id}"; legacy bare
-                    # ids keep the slug sanitation.
-                    raw_page_id = (
-                        task.resource.partition("/")[2]
-                        if "/" in task.resource
-                        else task.resource
-                    )
-                    page_id = (
-                        raw_page_id.replace(".", "-").replace("#", "-")
-                    )
-                    # Provenance sha is resolved at completion time — the
-                    # only place content truth is written.
-                    from ..utils.git import get_repo_head
-
-                    commit_sha = get_repo_head(repo)
-                    if task.task_kind.startswith("wiki-page-enrich"):
-                        wiki_concept = _enriched_article(
-                            bundle, task, task_id, repo, page_id, result,
-                            wiki_sources, commit_sha,
-                        )
-                    else:
+                        module_path = task.resource
                         promoted_body = result
                         if critic_result.warnings:
                             marker = "> [critic-warning] " + "; ".join(
                                 critic_result.warnings
                             ) + "\n\n"
                             promoted_body = marker + result
-                        wiki_concept = OKFConcept(
-                            type="Wiki-Article",
-                            title=f"Wiki: {page_id}",
-                            description=f"Wiki article for {repo}/{page_id}",
-                            resource=page_id,
-                            tags=[repo, "wiki"],
+                        compass_concept = OKFConcept(
+                            type="Compass",
+                            title=_derive_title(module_path),
+                            description=f"Navigation guide for {module_path}",
+                            resource=module_path,
+                            tags=[t for t in module_path.strip("/").split("/") if t][:6],
                             timestamp=_now(),
-                            concept_id=f"wiki/pages/{repo}/{page_id}",
-                            sources=wiki_sources,
+                            concept_id=f"compass/{module_path.strip('/').replace('/', '-')}",
                             body=promoted_body,
-                            extensions={
-                                "page_id": page_id,
-                                "repo": repo,
-                                "input_hash": task.facts.get("input_hash"),
-                                "task_id": task_id,
-                                **(
-                                    {"commit_sha": commit_sha}
-                                    if commit_sha
-                                    else {}
-                                ),
-                            },
                         )
-                    bundle.write_concept(wiki_concept)
-                    promoted = True
+                        bundle.write_concept(compass_concept)
+                        promoted = True
 
-                if doc_link_task:
-                    # The durable record is the frontmatter (kind=inferred
-                    # relates_to entries on both docs); the index rebuild
-                    # inside makes the edge queryable immediately.
-                    from cairn.knowledge.doc_link import apply_doc_link_edges
+                    if task.task_kind in ("flow-synthesize", "flow-revise"):
+                        # Promote flow results to compass/flow-{entry} so flow-gaps
+                        # coverage detection recognizes them.
+                        entry = task.resource
+                        promoted_body = result
+                        if critic_result.warnings:
+                            marker = "> [critic-warning] " + "; ".join(
+                                critic_result.warnings
+                            ) + "\n\n"
+                            promoted_body = marker + result
+                        safe_id = entry.replace("/", "-").replace(".", "-").replace("#", "-")
+                        flow_concept = OKFConcept(
+                            type="Compass",
+                            title=f"Flow: {entry}",
+                            description=f"Execution flow traced from `{entry}`",
+                            resource=entry,
+                            tags=["flow", entry.split(".")[-1]][:6],
+                            timestamp=_now(),
+                            concept_id=f"compass/flow-{safe_id}",
+                            body=promoted_body,
+                        )
+                        bundle.write_concept(flow_concept)
+                        promoted = True
 
-                    apply_doc_link_edges(bundle, conn, doc_link_edges)
-                    promoted = True
+                    if task.task_kind.startswith("wiki-page"):
+                        # The repo fact was validated at the top of completion.
+                        repo = str(task.facts.get("repo") or "")
+                        # Qualified resources are "{repo}/{page_id}"; legacy bare
+                        # ids keep the slug sanitation.
+                        raw_page_id = (
+                            task.resource.partition("/")[2]
+                            if "/" in task.resource
+                            else task.resource
+                        )
+                        page_id = (
+                            raw_page_id.replace(".", "-").replace("#", "-")
+                        )
+                        # Provenance sha is resolved at completion time — the
+                        # only place content truth is written.
+                        from ..utils.git import get_repo_head
 
-                if not _finish_terminal(bundle, task, "done"):
-                    return _refused_outcome(task_id, [_RACE_LOST])
+                        commit_sha = get_repo_head(repo)
+                        if task.task_kind.startswith("wiki-page-enrich"):
+                            wiki_concept = _enriched_article(
+                                bundle, task, task_id, repo, page_id, result,
+                                wiki_sources, commit_sha,
+                            )
+                        else:
+                            promoted_body = result
+                            if critic_result.warnings:
+                                marker = "> [critic-warning] " + "; ".join(
+                                    critic_result.warnings
+                                ) + "\n\n"
+                                promoted_body = marker + result
+                            wiki_concept = OKFConcept(
+                                type="Wiki-Article",
+                                title=f"Wiki: {page_id}",
+                                description=f"Wiki article for {repo}/{page_id}",
+                                resource=page_id,
+                                tags=[repo, "wiki"],
+                                timestamp=_now(),
+                                concept_id=f"wiki/pages/{repo}/{page_id}",
+                                sources=wiki_sources,
+                                body=promoted_body,
+                                extensions={
+                                    "page_id": page_id,
+                                    "repo": repo,
+                                    "input_hash": task.facts.get("input_hash"),
+                                    "task_id": task_id,
+                                    **(
+                                        {"commit_sha": commit_sha}
+                                        if commit_sha
+                                        else {}
+                                    ),
+                                },
+                            )
+                        bundle.write_concept(wiki_concept)
+                        promoted = True
+
+                    if doc_link_task:
+                        # The durable record is the frontmatter (kind=inferred
+                        # relates_to entries on both docs); the index rebuild
+                        # inside makes the edge queryable immediately.
+                        from cairn.knowledge.doc_link import apply_doc_link_edges
+
+                        apply_doc_link_edges(bundle, conn, doc_link_edges)
+                        promoted = True
+
+                    if not _finish_terminal(bundle, task, "done"):
+                        return _refused_outcome(task_id, [_RACE_LOST])
                 _emit(
                     TASK_LIFECYCLE,
                     task_kind=task.task_kind,

@@ -217,8 +217,9 @@ class SubprocessBackend:
         raw = self._exec(
             _build_prompt("memory-extract", {"transcript": transcript}), timeout
         )
-        if not raw:
-            return self._fallback.extract(transcript, timeout)
+        # No create-then-wait fallback: the caller queues its own
+        # memory-extract task when no candidates come back, so queueing here
+        # would block for the poll timeout and duplicate that task.
         return _parse_extract_lines(raw)
 
 
