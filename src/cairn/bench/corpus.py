@@ -35,7 +35,11 @@ def generate_corpus(
         "medium": (5, 5, 3),
         "high": (8, 8, 6),
     }
-    n_classes, n_methods, n_calls = profiles.get(complexity, profiles["medium"])
+    if complexity not in profiles:
+        raise ValueError(
+            f"complexity: expected one of {sorted(profiles)}, got {complexity!r}"
+        )
+    n_classes, n_methods, n_calls = profiles[complexity]
 
     repo = root / "benchrepo"
     repo.mkdir(parents=True, exist_ok=True)

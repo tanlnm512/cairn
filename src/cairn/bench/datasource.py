@@ -423,6 +423,10 @@ def _dataset_block(manifest_path: Path | str | None, t3_entry) -> dict:
         block["version"] = None
         block["reason"] = f"manifest unreadable: {exc}"
         return block
+    if not isinstance(manifest, dict):
+        block["version"] = None
+        block["reason"] = f"manifest is not a JSON object: {type(manifest).__name__}"
+        return block
 
     block["version"] = manifest.get("dataset_version")
     t1 = manifest.get("t1")

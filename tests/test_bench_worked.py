@@ -159,6 +159,16 @@ class TestAtomicOverwrite:
         ]
         assert not list(target.glob("*.tmp-*"))
 
+    def test_failed_write_leaves_no_temp(self, tmp_path):
+        """A write that fails before os.replace removes its .tmp-<pid> file."""
+        from cairn.bench.worked import _atomic_write_text
+
+        target = tmp_path / "out.json"
+        target.mkdir()  # os.replace onto a directory fails
+        with pytest.raises(OSError):
+            _atomic_write_text(target, "{}")
+        assert not list(tmp_path.glob("*.tmp-*"))
+
 
 # --- privacy scrub (NFR-002) -----------------------------------------------
 

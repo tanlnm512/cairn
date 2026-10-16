@@ -14,7 +14,10 @@ def _phase_timings(workspace: str, db_path: str) -> tuple[dict, dict]:
     """Build once, capturing per-phase wall-clock time from progress events.
 
     Returns ``(build_stats, phase_seconds)`` where ``phase_seconds`` maps
-    phase names (scan/parse/insert/resolve/persist) to their elapsed time.
+    phase names (scan_walk/scan/parse/insert/resolve/persist) to their
+    elapsed time. ``scan_walk`` is the workspace walk before the builder's
+    first event, kept as its own phase so ``build.scan`` stays comparable
+    with baselines recorded from the event-only span.
 
     The build emits events in this order: ``scan`` (once), ``parse_progress``
     (per file), ``parse_done`` (once), ``insert_progress`` (per batch),
@@ -42,6 +45,7 @@ def _phase_timings(workspace: str, db_path: str) -> tuple[dict, dict]:
             return
         marks.append((ph, _t.perf_counter()))
 
+    build_start = _t.perf_counter()
     stats = build_graph(workspace=workspace, db_path=db_path, progress=_progress)
     build_end = _t.perf_counter()
 
@@ -53,6 +57,11 @@ def _phase_timings(workspace: str, db_path: str) -> tuple[dict, dict]:
         if ph not in first_ts:
             first_ts[ph] = ts
             seen_phases.append(ph)
+    # The workspace walk precedes the builder's first event; keep it as its own phase, never dropped from the sum.
+    if seen_phases and seen_phases[0] == "scan":
+        walk = first_ts["scan"] - build_start
+        if walk > 0:
+            phase_seconds["scan_walk"] = walk
     for i, ph in enumerate(seen_phases):
         start = first_ts[ph]
         end = first_ts[seen_phases[i + 1]] if i + 1 < len(seen_phases) else build_end

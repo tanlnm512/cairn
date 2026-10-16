@@ -31,7 +31,12 @@ def _validate_budgets(budgets: Mapping[str, object]) -> dict[str, float]:
             raise ValueError("budget operation names must be non-empty strings")
         if isinstance(budget, bool) or not isinstance(budget, (int, float)):
             raise ValueError(f"budget for {tool} must be a number of milliseconds")
-        value = float(budget)
+        try:
+            value = float(budget)
+        except OverflowError:
+            raise ValueError(
+                f"budget for {tool} must be a number of milliseconds"
+            ) from None
         if not math.isfinite(value) or value <= 0:
             raise ValueError(f"budget for {tool} must be finite and positive")
         validated[tool] = value
@@ -51,7 +56,11 @@ def load_budgets(path: Path | str) -> dict[str, float]:
     factor = document.get("factor")
     if isinstance(factor, bool) or not isinstance(factor, (int, float)):
         raise ValueError("budget factor must be a number")
-    if not math.isfinite(float(factor)) or factor < 10:
+    try:
+        factor_value = float(factor)
+    except OverflowError:
+        raise ValueError("budget factor must be finite and at least 10") from None
+    if not math.isfinite(factor_value) or factor_value < 10:
         raise ValueError("budget factor must be finite and at least 10")
     raw_budgets = document.get("budgets")
     if not isinstance(raw_budgets, dict):
