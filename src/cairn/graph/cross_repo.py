@@ -117,7 +117,7 @@ def cross_repo_deps(conn: sqlite3.Connection, repo: str) -> dict:
             "(imported_path = ? OR substr(imported_path, 1, ?) = ?)"
             for _ in my_namespaces
         )
-        params = [repo]
+        params: list[object] = [repo]
         for ns in my_namespaces:
             params.extend([ns, len(ns) + 1, ns + "."])
         for row in cur.execute(

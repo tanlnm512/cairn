@@ -199,7 +199,8 @@ def _collect_file_hits(
     for line_number, text in enumerate(lines, start=1):
         for match in matcher.finditer(text):
             symbol = _innermost_symbol(symbols, line_number)
-            key = (repo, path, symbol.qualified_name if symbol is not None else "")
+            qname = symbol.qualified_name if symbol is not None else ""
+            key: tuple[str, str, str] = (repo, path, qname if qname is not None else "")
             if collected >= budget:
                 # Budget exhausted: keep counting (never storing) the rest of
                 # the file so truncated scans report real lower bounds.
