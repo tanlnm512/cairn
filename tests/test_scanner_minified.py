@@ -91,3 +91,22 @@ def test_oversize_plain_file_keeps_size_cap_reason(tmp_path):
     keep, reason = classify_file(f, tmp_path, *_specs())
     assert keep is False
     assert reason == REASON_SIZE_CAP
+
+
+def test_stat_failure_reports_stat_error_not_default_skip(tmp_path, monkeypatch):
+    """A transient stat failure must not mislabel the file as default_skip."""
+    from pathlib import Path
+
+    from cairn.graph import scanner
+
+    def _boom(self):
+        raise OSError("transient")
+
+    monkeypatch.setattr(Path, "stat", _boom)
+    monkeypatch.setattr(scanner, "_is_minified", lambda p: False)
+
+    included, reason = scanner.classify_file(
+        tmp_path / "a.py", tmp_path, [], None, None
+    )
+
+    assert (included, reason) == (False, scanner.REASON_STAT_ERROR)

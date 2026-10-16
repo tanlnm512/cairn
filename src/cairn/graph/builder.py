@@ -55,6 +55,22 @@ def _scan_workspace_with_skips(
     return all_files, all_skips
 
 
+def _store_holds_graph(db_path: str) -> bool:
+    """Whether the target store file already holds indexed content."""
+    if not Path(db_path).exists():
+        return False
+    probe = sqlite3.connect(db_path)
+    try:
+        row = probe.execute(
+            "SELECT (SELECT COUNT(*) FROM files) + (SELECT COUNT(*) FROM symbols)"
+        ).fetchone()
+    except sqlite3.DatabaseError:
+        return False
+    finally:
+        probe.close()
+    return bool(row and row[0])
+
+
 def _record_skips(cur, skips: list) -> int:
     """Return the number of skip rows recorded without failing the build."""
     recorded = 0
@@ -393,6 +409,12 @@ def _build_graph_impl(
         skip_count = _record_skips(cur, skips) if skips else 0
         conn.commit()
         if skip_count and in_memory:
+            if _store_holds_graph(resolved_db):
+                raise ValueError(
+                    f"scan found no indexable files ({skip_count} skipped) but "
+                    f"{resolved_db} already holds a graph — refusing to replace "
+                    "it; check the workspace path and skip configuration"
+                )
             backup_to(conn, resolved_db)
         return {
             "repos": 0,

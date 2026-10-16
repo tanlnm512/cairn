@@ -210,3 +210,39 @@ def test_checkpoint_non_db_file_errors_cleanly(tmp_path):
 
     assert result.exit_code != 0
     assert "checkpoint failed" in result.output
+
+
+def test_non_staging_build_refuses_all_skipped_swap_over_existing(tmp_path):
+    """A full build whose scan indexes nothing (all files skipped) must not
+    swap the empty in-memory graph over a populated store."""
+    import pytest
+
+    from cairn.graph.builder import build_graph
+
+    good_ws = tmp_path / "good"
+    repo = good_ws / "demo"
+    repo.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    db = str(tmp_path / "graph.db")
+    build_graph(workspace=str(good_ws), db_path=db, verbose=False)
+    conn = sqlite3.connect(db)
+    before = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+    conn.close()
+    assert before > 0
+
+    skipped_ws = tmp_path / "skipped"
+    repo2 = skipped_ws / "demo"
+    repo2.mkdir(parents=True)
+    (repo2 / ".git").mkdir()
+    (repo2 / ".gitignore").write_text("*.py\n", encoding="utf-8")
+    (repo2 / "b.py").write_text("def g():\n    return 2\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="refusing to replace"):
+        build_graph(workspace=str(skipped_ws), db_path=db, verbose=False)
+
+    conn = sqlite3.connect(db)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] == before
+    finally:
+        conn.close()
