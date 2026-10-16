@@ -79,7 +79,7 @@ def search_knowledge(query: str, type_filter: str = "", limit: int = 10, full_bo
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 @instrument
 def ask_compass(query: str, file_path: str = "") -> str:
-    """Route a natural-language query across graph/wiki/compass/memory; file_path loads file-aware context."""
+    """Route a natural-language query across graph/wiki/compass/memory; file_path (without query) loads file-aware context instead."""
     from cairn.compass.router import route_query
 
     bundle = _bundle()
@@ -138,7 +138,8 @@ def ask_compass(query: str, file_path: str = "") -> str:
                     break
         return "\n".join(out)
 
-    # Normal NL routing mode (with optional file-path context boost).
+    # Normal NL routing mode; file_path context applies only when query is
+    # empty (the file-aware branch above).
     conn = _conn()
     try:
         result = route_query(query, conn, bundle)
@@ -150,6 +151,11 @@ def ask_compass(query: str, file_path: str = "") -> str:
         + (f"; queried: {', '.join(layers_queried)}" if layers_queried else "")
         + ")"
     ]
+    if file_path:
+        out.append(
+            f"(file_path '{file_path}' is ignored in routing mode; pass it with "
+            "an empty query to load file-aware context.)"
+        )
     if result.get("degraded"):
         out.append("(Showing fallback results — targeted layer had no coverage.)")
     # Empty across ALL queried layers: say so explicitly, so an agent drills
