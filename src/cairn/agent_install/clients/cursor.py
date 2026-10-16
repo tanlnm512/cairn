@@ -13,6 +13,7 @@ from .._common import (
 from ..merge import (
     _merge_json_file,
     _rm_if_ours,
+    _rmdir_if_empty,
     _strip_cursor_hooks,
     _strip_mcp,
     _write_file,
@@ -64,3 +65,6 @@ def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
         _rm_if_ours(base / ".cursor" / "subagents" / "knowledge-steward.json",
                     _read_template("cursor/knowledge-steward.json"), res)
         _strip_cursor_hooks(base / ".cursor" / "hooks.json", res)
+        _rmdir_if_empty(base / ".cursor" / "rules", res)
+        _rmdir_if_empty(base / ".cursor" / "subagents", res)
+        _rmdir_if_empty(base / ".cursor", res)

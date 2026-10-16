@@ -102,6 +102,7 @@ class InstallReport:
     results: list[InstallResult]
     cross_tool: Optional[InstallResult]
     git_hooks_installed: list[str] = field(default_factory=list)
+    git_hooks_error: Optional[str] = None
 
 
 def install_cross_tool(workspace: str, force: bool, dry_run: bool = False) -> InstallResult:
@@ -227,6 +228,22 @@ def _verify_results(results: list[InstallResult]) -> None:
                 "fail", f"daemon at {host}:{port} unreachable — run `cairn connect` to start it")
 
 
+def _note_embedded_key(results: list[InstallResult]) -> None:
+    """Warn once per client when a written config embeds the persisted API key."""
+    from ._common import auth_headers
+
+    if not auth_headers():
+        return
+    for res in results:
+        for written in res.written:
+            entry = _registration_entry(written)
+            if isinstance(entry, dict) and entry.get("headers"):
+                res.notes.append(
+                    f"NOTE: {written} embeds the daemon API key; add it to "
+                    ".gitignore before committing the workspace.")
+                break
+
+
 def install(
     workspace: str,
     clients: Optional[list[str]] = None,
@@ -247,14 +264,21 @@ def install(
 
     results: list[InstallResult] = []
     for client in [c for c in CLIENTS if c in target]:
-        results.append(_INSTALLERS[client](workspace, force, dry_run, scope=scope))
+        try:
+            results.append(_INSTALLERS[client](workspace, force, dry_run, scope=scope))
+        except Exception as e:
+            failed = InstallResult(client)
+            failed.notes.append(f"install failed: {e!r}; other clients continued.")
+            results.append(failed)
 
     if not dry_run:
         _verify_results(results)
+        _note_embedded_key(results)
 
     cross = install_cross_tool(workspace, force, dry_run=dry_run) if target else None
 
     git_installed: list[str] = []
+    git_hooks_error: Optional[str] = None
     if include_git_hooks and target and not dry_run:
         try:
             from ..graph import scanner as scanner_mod
@@ -266,18 +290,20 @@ def install(
             ]
             git_installed = install_hooks(repos, workspace)
         except ValueError as e:
-            print(f"warning: git hooks skipped — {e}")
+            git_hooks_error = f"git hooks skipped — {e}"
         except Exception as e:
-            print(f"warning: git hooks skipped — {e!r}")
+            git_hooks_error = f"git hooks skipped — {e!r}"
+        if git_hooks_error:
+            print(f"warning: {git_hooks_error}")
 
-    return InstallReport(detections, results, cross, git_installed)
+    return InstallReport(detections, results, cross, git_installed, git_hooks_error)
 
 
 def uninstall(workspace: str, clients: Optional[list[str]] = None,
               scope: str = "workspace") -> InstallReport:
     """Remove cairn entries for the install scope; the operation is idempotent."""
     from ._common import _claude_agent_md, _read_template
-    from .merge import _rm_if_ours, _rm_tree_if_cairn
+    from .merge import _rm_if_ours, _rm_tree_if_cairn, _rmdir_if_empty
 
     detections = detect_clients(workspace)
     if clients:
@@ -292,7 +318,10 @@ def uninstall(workspace: str, clients: Optional[list[str]] = None,
     results: list[InstallResult] = []
     for client in [c for c in CLIENTS if c in target]:
         res = InstallResult(client)
-        _UNINSTALLERS[client](ws, res, scope=scope)
+        try:
+            _UNINSTALLERS[client](ws, res, scope=scope)
+        except Exception as e:
+            res.notes.append(f"uninstall failed: {e!r}; other clients continued.")
         results.append(res)
 
     cross = InstallResult("cross-tool")
@@ -305,5 +334,9 @@ def uninstall(workspace: str, clients: Optional[list[str]] = None,
                     _claude_agent_md(), cross)
         _rm_if_ours(ws / ".agents" / "agents" / "knowledge-steward.md",
                     _claude_agent_md("cursor/knowledge-steward.json"), cross)
+        _rmdir_if_empty(ws / ".agents" / "commands", cross)
+        _rmdir_if_empty(ws / ".agents" / "agents", cross)
+        _rmdir_if_empty(ws / ".agents" / "skills", cross)
+        _rmdir_if_empty(ws / ".agents", cross)
 
     return InstallReport(detections, results, cross if target else None)

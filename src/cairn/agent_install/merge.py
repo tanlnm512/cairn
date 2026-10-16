@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 from ._common import (
@@ -135,12 +134,10 @@ def _merge_json_file(path: Path, merger: dict, force: bool, result: InstallResul
             existing = _backup_to_bak(path, "malformed", result, dry_run)
         elif isinstance(loaded, dict):
             if _merge_keys_non_object(loaded, merger):
-                # Valid object, but a key we must merge into (mcpServers/mcp/
-                # hooks) holds a non-object value. Same discipline as malformed:
-                # back up, then start fresh.
-                existing = _backup_to_bak(path, "non-object", result, dry_run)
-            else:
-                existing = loaded
+                # Back up the offending value, but merge into the loaded dict:
+                # _deep_merge replaces only that key and preserves the rest.
+                _backup_to_bak(path, "non-object", result, dry_run)
+            existing = loaded
         else:
             # Valid JSON but not an object (e.g. a bare array/string). Preserve
             # it as-is by backing up and starting fresh.
@@ -314,8 +311,14 @@ def _deep_merge(existing: dict, addition: dict, *, config_key: str = "mcpServers
             servers.update(val.get("servers", {}))
             mcp_out["servers"] = servers
             out["mcp"] = mcp_out
-            # Remove stale mcpServers key if present (ZCode doesn't use it).
-            out.pop("mcpServers", None)
+            # Drop only a stale cairn-stamped mcpServers entry; keep user servers.
+            prev_top = out.get("mcpServers")
+            if isinstance(prev_top, dict) and "cairn" in prev_top:
+                remaining = {k: v for k, v in prev_top.items() if k != "cairn"}
+                if remaining:
+                    out["mcpServers"] = remaining
+                else:
+                    out.pop("mcpServers", None)
         elif key == "mcp" and config_key in ("opencode", "kilo") and isinstance(val, dict):
             # opencode/kilo: mcp.<name> = {...}; replace the named server in
             # place. Unlike ZCode there is no nested "servers" sub-key.
@@ -353,8 +356,17 @@ def _rm_if_exists(path: Path, res: InstallResult) -> None:
         res.written.append(f"removed {path}")
 
 
+def _rmdir_if_empty(path: Path, res: InstallResult) -> None:
+    """Remove path itself only when it is an empty directory."""
+    try:
+        path.rmdir()
+        res.written.append(f"removed empty dir {path}")
+    except OSError:
+        pass
+
+
 def _rm_tree_if_cairn(path: Path, res: InstallResult) -> None:
-    """Remove a cairn-named directory tree, refusing any broader path."""
+    """Remove a cairn-named tree, deleting only files matching the skill templates."""
     if not (path.is_dir() and path.exists()):
         return
     if path.name != "cairn":
@@ -363,8 +375,35 @@ def _rm_tree_if_cairn(path: Path, res: InstallResult) -> None:
             f"named 'cairn'). Remove manually if intended."
         )
         return
-    shutil.rmtree(path)
-    res.written.append(f"removed {path}/")
+    from ._common import _TEMPLATE_DIR
+
+    src_dir = _TEMPLATE_DIR / "skill"
+    kept = 0
+    for f in sorted(path.rglob("*")):
+        if not f.is_file():
+            continue
+        if f.suffix in (".pyc", ".pyo") or f.parent.name == "__pycache__":
+            f.unlink()  # bytecode caches are derived, never user data
+            continue
+        src = src_dir / f.relative_to(path)
+        try:
+            ours = src.is_file() and f.read_bytes() == src.read_bytes()
+        except OSError:
+            ours = False
+        if ours:
+            f.unlink()
+        else:
+            kept += 1
+    for d in sorted((p for p in path.rglob("*") if p.is_dir()), reverse=True):
+        _rmdir_if_empty(d, res)
+    try:
+        path.rmdir()
+        res.written.append(f"removed {path}/")
+    except OSError:
+        res.notes.append(
+            f"kept {kept} modified/non-template file(s) in {path}/; "
+            f"remove manually if intended."
+        )
 
 
 def _rm_if_ours(path: Path, expected: str, res: InstallResult) -> None:
@@ -395,7 +434,7 @@ def _strip_mcp(path: Path, res) -> None:
         res.written.append(f"stripped cairn from {path}")
 
 
-def _strip_mcp_zcode(path: Path, res) -> None:
+def _strip_mcp_zcode(path: Path, res, dry_run: bool = False) -> None:
     """Remove cairn from ZCode config and prune emptied MCP containers."""
     data = _load_json_or_none(path)
     if not isinstance(data, dict):
@@ -415,6 +454,9 @@ def _strip_mcp_zcode(path: Path, res) -> None:
         data["mcp"] = mcp
     else:
         data.pop("mcp", None)
+    if dry_run:
+        res.written.append(f"would strip cairn from {path}")
+        return
     _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
     res.written.append(f"stripped cairn from {path}")
 
@@ -478,10 +520,11 @@ def _strip_hooks(path: Path, res: InstallResult) -> None:
             if not isinstance(entry, dict):
                 kept.append(entry)
                 continue
-            inner = entry.get("hooks", [])
-            if any(isinstance(h, dict)
-                   and any(m in h.get("command", "") for m in markers)
-                   for h in inner):
+            inner = entry.get("hooks")
+            if (isinstance(inner, list)
+                    and any(isinstance(h, dict)
+                            and any(m in (h.get("command") or "") for m in markers)
+                            for h in inner)):
                 changed = True
                 continue  # drop this cairn entry
             kept.append(entry)
@@ -514,7 +557,8 @@ def _strip_cursor_hooks(path: Path, res: InstallResult) -> None:
         if not isinstance(entries, list):
             continue
         kept = [e for e in entries
-                if not (isinstance(e, dict) and any(m in e.get("command", "") for m in markers))]
+                if not (isinstance(e, dict)
+                        and any(m in (e.get("command") or "") for m in markers))]
         if len(kept) != len(entries):
             changed = True
         if kept:

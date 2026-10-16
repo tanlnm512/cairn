@@ -1969,7 +1969,9 @@ def test_install_agents_client_all_does_not_imply_git_hooks(tmp_path, monkeypatc
         )
 
     monkeypatch.setattr("cairn.agent_install.install", fake_install)
-    monkeypatch.setattr("cairn.mcp_server.lifecycle.healthz_responds", lambda: True)
+    monkeypatch.setattr(
+        "cairn.mcp_server.lifecycle.healthz_responds", lambda **kw: True
+    )
 
     ws = tmp_path / "ws"
     ws.mkdir()
