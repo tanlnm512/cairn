@@ -120,8 +120,10 @@ def create_memory(
 def _rel_id(bundle: OKFBundle, concept_id: str) -> str:
     """Normalize a concept_id to bundle-relative (from_file sets absolute paths)."""
     try:
-        return str(Path(concept_id).relative_to(bundle.root))
-    except ValueError:
+        # Resolve both sides: from_file concept_ids carry the resolved root,
+        # so a symlinked bundle root defeats plain lexical relative_to.
+        return str(Path(concept_id).resolve().relative_to(Path(bundle.root).resolve()))
+    except (ValueError, OSError):
         return concept_id
 
 
@@ -210,18 +212,28 @@ def store_memory(
             concept.concept_id = f"{TIER_DIRS[t]}/{slug}-{unique_suffix}"
     # Keep tier metadata in sync with file location.
     concept.extensions["memory_tier"] = t
-    write_validity(
-        concept,
-        valid_from=(
-            concept.extensions.get("valid_from")
-            or concept.timestamp
-            or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        ),
-        valid_until=concept.extensions.get("valid_until") or None,
-        successor_symbol=concept.extensions.get("successor_symbol") or None,
-        bundle=bundle,
-        conn=conn,
-    )
+    try:
+        write_validity(
+            concept,
+            valid_from=(
+                concept.extensions.get("valid_from")
+                or concept.timestamp
+                or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            ),
+            valid_until=concept.extensions.get("valid_until") or None,
+            successor_symbol=concept.extensions.get("successor_symbol") or None,
+            bundle=bundle,
+            conn=conn,
+        )
+    except Exception:
+        # A failed move must not leave the new-tier file beside the untouched
+        # old-tier file: unlink the copy so retries re-do the move cleanly.
+        if old_rel and old_rel != concept.concept_id:
+            new_file = Path(bundle.root) / f"{concept.concept_id}.md"
+            if new_file.exists():
+                new_file.unlink()
+                bundle.invalidate_search_index()
+        raise
     # Clean up old tier file only when the id actually moved.
     if old_rel and old_rel != concept.concept_id:
         old_file = Path(bundle.root) / f"{old_rel}.md"
@@ -435,14 +447,7 @@ def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
         # concept stays searchable.
         bundle.invalidate_search_index()
     if conn is not None:
-        ref_ids = [cid]
-        if abs_cid != cid:
-            ref_ids.append(abs_cid)
-        placeholders = ",".join("?" * len(ref_ids))
-        conn.execute(
-            f"DELETE FROM memory_refs WHERE memory_path IN ({placeholders})",
-            ref_ids,
-        )
+        _delete_memory_rows(bundle, abs_cid, conn)
     return True
 
 
@@ -477,7 +482,7 @@ def demote_memory(bundle: OKFBundle, memory_path: str, target_tier: str = "raw",
         return new_id
 
 
-def purge_archived(bundle: OKFBundle, max_days: int = 90) -> int:
+def purge_archived(bundle: OKFBundle, max_days: int = 90, conn=None) -> int:
     """Delete archived memories older than max_days. Returns count purged."""
     now = datetime.now(timezone.utc)
     purged = 0
@@ -492,7 +497,27 @@ def purge_archived(bundle: OKFBundle, max_days: int = 90) -> int:
                     file_path.unlink()
                     bundle.invalidate_search_index()
                     purged += 1
+                    _delete_memory_rows(bundle, concept.concept_id, conn)
     return purged
+
+
+def _delete_memory_rows(bundle: OKFBundle, concept_id: str, conn) -> None:
+    """Drop the validity, ref, and embedding rows keyed to a deleted memory."""
+    if conn is None:
+        return
+    ref_ids = [_rel_id(bundle, concept_id)]
+    if concept_id != ref_ids[0]:
+        ref_ids.append(concept_id)
+    placeholders = ",".join("?" * len(ref_ids))
+    conn.execute(
+        f"DELETE FROM memory_refs WHERE memory_path IN ({placeholders})", ref_ids
+    )
+    conn.execute(
+        f"DELETE FROM memory_validity WHERE concept_id IN ({placeholders})", ref_ids
+    )
+    conn.execute(
+        f"DELETE FROM memory_embeddings WHERE doc_id IN ({placeholders})", ref_ids
+    )
 
 
 def _slugify(text: str) -> str:
@@ -502,7 +527,7 @@ def _slugify(text: str) -> str:
     return re.sub(r"[-\s]+", "-", text).strip("-")
 
 
-def consolidate_memories(bundle: OKFBundle) -> int:
+def consolidate_memories(bundle: OKFBundle, conn=None) -> int:
     """Merge duplicate raw memories and archive their sources."""
     with bundle.lock():
         raw_ids = bundle.list_concepts(prefix="memory/raw")
@@ -552,6 +577,17 @@ def consolidate_memories(bundle: OKFBundle) -> int:
                 },
             )
             bundle.write_concept(unified_concept)
+            if conn is not None:
+                write_validity(
+                    unified_concept,
+                    valid_from=(
+                        unified_concept.extensions.get("valid_from")
+                        or unified_concept.timestamp
+                        or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    ),
+                    bundle=None,
+                    conn=conn,
+                )
 
             for c in group:
                 if c.concept_id and c.concept_id != unified_concept.concept_id:
@@ -568,6 +604,14 @@ def consolidate_memories(bundle: OKFBundle) -> int:
                         if old_file.exists():
                             old_file.unlink()
                             bundle.invalidate_search_index()
+                        if conn is not None:
+                            conn.execute(
+                                "UPDATE memory_validity SET concept_id = ?"
+                                " WHERE concept_id = ?",
+                                (c.concept_id, source_id),
+                            )
+                            from ..graph.embeddings import rename_memory_embedding
+                            rename_memory_embedding(conn, source_id, c.concept_id)
                         consolidated_count += 1
                     except Exception:
                         logger.warning(

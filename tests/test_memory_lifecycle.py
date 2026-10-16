@@ -485,6 +485,64 @@ class TestPromotionLifecycleRegressions:
         actions = [h["action"] for h in mems[0].extensions["promotion_history"]]
         assert actions[-1] == "keep_draft"
 
+    def test_batch_critic_db_failure_leaves_no_cross_tier_copy(self, db, bundle):
+        """A mid-move DB failure unlinks the new-tier file so the draft stays the sole copy."""
+        store_memory(
+            create_memory(
+                type_="decision", title="critic dup target",
+                body="see `src/missing_ref.py`", confidence=0.1,
+            ),
+            bundle, tier="drafts", conn=db,
+        )
+
+        class _ValidityFailConn:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def execute(self, sql, *a, **k):
+                if "INSERT INTO memory_validity" in sql:
+                    raise sqlite3.OperationalError("attempt to write a readonly database")
+                return self._conn.execute(sql, *a, **k)
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+        with pytest.raises(sqlite3.OperationalError):
+            batch_critic(_ValidityFailConn(db), bundle)
+
+        assert len(list_memories(bundle, tier="drafts")) == 1
+        assert list_memories(bundle, tier="archived") == []
+        assert list_memories(bundle, tier="tribal") == []
+
+        # A healthy retry re-does the move once instead of accumulating copies.
+        batch_critic(db, bundle)
+        assert list_memories(bundle, tier="drafts") == []
+        assert len(list_memories(bundle, tier="archived")) == 1
+
+    def test_batch_critic_renames_embedding_on_tier_move(self, db, bundle):
+        """A critic tier move carries the embedding row to the new concept id."""
+        cid = store_memory(
+            create_memory(
+                type_="decision", title="critic embed target",
+                body="see `src/missing_ref.py`", confidence=0.1,
+            ),
+            bundle, tier="drafts", conn=db,
+        )
+        db.execute(
+            "INSERT INTO memory_embeddings"
+            " (doc_id, chunk_index, model, dim, vec, chunk, embedded_at)"
+            " VALUES (?, 0, 't-model', 1, x'00', 'c', '2026-01-01T00:00:00')",
+            (cid,),
+        )
+
+        result = batch_critic(db, bundle)
+
+        assert result["dropped"] == 1
+        docs = [row["doc_id"] for row in
+                db.execute("SELECT doc_id FROM memory_embeddings").fetchall()]
+        assert docs and all(d.startswith("memory/archived/") for d in docs)
+        assert cid not in docs
+
     def test_search_survives_corrupt_memory_file_in_broaden(self, db, bundle):
         """A corrupt memory file is skipped by the lexical broaden, not fatal to search."""
         capture_memory(
@@ -625,6 +683,8 @@ class TestMemoryCliDurability:
 
     def test_capture_embed_failure_commits_and_normalizes_type(self, runner, tmp_path, monkeypatch):
         """A failed embed still commits; off-vocabulary LLM types fall back to decision."""
+        import shutil
+
         from cairn.graph import embeddings as emb
         from cairn.llm.client import SubprocessBackend
 
@@ -636,6 +696,10 @@ class TestMemoryCliDurability:
 
         monkeypatch.setattr(SubprocessBackend, "extract", fake_extract)
         monkeypatch.setenv("CAIRN_LLM_BACKEND", "droid")
+        # The capture path skips a backend whose CLI is missing on PATH; the
+        # hermetic suite default hides the real CLIs, so present one.
+        monkeypatch.setattr(shutil, "which",
+                            lambda name, *a, **k: "/fakebin/droid" if name == "droid" else None)
 
         def boom(conn, bundle, ids):
             raise RuntimeError("alias preflight failed")
@@ -715,6 +779,93 @@ class TestMemoryCliDurability:
         ])
         assert result.exit_code == 2
         assert "non-negative" in result.output
+
+    def test_list_invalid_tier_is_usage_error(self, runner, tmp_path):
+        """An invalid --tier maps to a usage error instead of a KeyError traceback."""
+        result = runner.invoke(_main(), [
+            "memory", "list", "--tier", "bogus",
+            "--knowledge", str(tmp_path / "k"),
+        ])
+        assert result.exit_code == 2
+        assert "must be one of" in result.output
+
+    def test_capture_missing_backend_queues_one_task_without_poll(
+        self, runner, tmp_path, monkeypatch
+    ):
+        """A configured-but-missing backend queues ONE task and never enters the queue poll."""
+        import shutil
+
+        from cairn.llm import tasks as task_mod
+
+        db_path, knowledge = self._store(tmp_path)
+        monkeypatch.setenv("CAIRN_LLM_BACKEND", "droid")
+        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: None)
+
+        polled = []
+
+        def fake_run_task(self, kind, resource, facts, timeout=120):
+            polled.append(kind)
+            return ""
+
+        monkeypatch.setattr(
+            "cairn.llm.client.FileQueueBackend._run_task", fake_run_task
+        )
+        result = runner.invoke(_main(), [
+            "memory", "capture", "--session-transcript", "[]",
+            "--session-id", "s1", "--db", db_path, "--knowledge", knowledge,
+        ])
+        assert result.exit_code == 0, result.output
+        assert polled == []
+        assert "not found on PATH" in result.output
+        tasks = task_mod.list_tasks(OKFBundle(knowledge), kind="memory-extract")
+        assert len(tasks) == 1
+
+    def test_capture_reports_unrecordable_candidates(self, runner, tmp_path, monkeypatch):
+        """Malformed candidates are counted and reported, not silently dropped."""
+        import shutil
+
+        from cairn.llm.client import SubprocessBackend
+
+        db_path, knowledge = self._store(tmp_path)
+        monkeypatch.setenv("CAIRN_LLM_BACKEND", "droid")
+        monkeypatch.setattr(
+            shutil, "which",
+            lambda name, *a, **k: "/fakebin/droid" if name == "droid" else None,
+        )
+
+        def fake_extract(self, transcript, timeout=120):
+            return [
+                {"type": "decision", "title": "good note", "body": "content",
+                 "confidence": 0.9},
+                {"type": "decision", "title": "bad note", "body": "content",
+                 "confidence": "high"},
+            ]
+
+        monkeypatch.setattr(SubprocessBackend, "extract", fake_extract)
+        result = runner.invoke(_main(), [
+            "memory", "capture", "--session-transcript", "[]",
+            "--session-id", "s1", "--db", db_path, "--knowledge", knowledge,
+        ])
+        assert result.exit_code == 0, result.output
+        assert "Captured 1 memories" in result.output
+        assert "Skipped 1 unrecordable candidate(s)" in result.output
+
+    def test_record_lock_timeout_maps_to_cli_error(self, runner, tmp_path, monkeypatch):
+        """A bundle-lock timeout surfaces as a CLI error message, not a traceback."""
+        from cairn.okf.bundle import OKFBundle as _Bundle
+
+        db_path, knowledge = self._store(tmp_path)
+
+        def locked(self, timeout=5.0):
+            raise TimeoutError("another process holds the lock")
+
+        monkeypatch.setattr(_Bundle, "lock", locked)
+        result = runner.invoke(_main(), [
+            "memory", "record", "decision", "locked out",
+            "--db", db_path, "--knowledge", knowledge,
+        ])
+        assert result.exit_code == 1
+        assert "knowledge bundle is busy" in result.output
 
 
 def _main():

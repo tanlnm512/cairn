@@ -498,3 +498,101 @@ def test_consolidate_counts_only_successful_archives(tmp_path, caplog, monkeypat
     )
     assert len(bundle.list_concepts(prefix="memory/tribal")) == 1
     assert len(bundle.list_concepts(prefix="memory/raw")) == 2
+
+
+def _seed_embedding_row(conn, doc_id: str) -> None:
+    """One minimal memory_embeddings row keyed to doc_id."""
+    conn.execute(
+        "INSERT INTO memory_embeddings"
+        " (doc_id, chunk_index, model, dim, vec, chunk, embedded_at)"
+        " VALUES (?, 0, 'm', 1, x'00', 'c', '2026-01-01T00:00:00')",
+        (doc_id,),
+    )
+
+
+def test_delete_memory_removes_validity_and_embedding_rows(tmp_path, fresh_db):
+    """Deleting a memory drops its validity and embedding rows, not just refs."""
+    bundle = OKFBundle(str(tmp_path / "knowledge"))
+    mem_id = store_memory(
+        create_memory(type_="pattern", title="doomed note", body="content", confidence=0.7),
+        bundle, conn=fresh_db,
+    )
+    _seed_embedding_row(fresh_db, mem_id)
+    assert fresh_db.execute("SELECT COUNT(*) FROM memory_validity").fetchone()[0] == 1
+
+    assert delete_memory(bundle, mem_id, conn=fresh_db) is True
+
+    assert fresh_db.execute("SELECT COUNT(*) FROM memory_validity").fetchone()[0] == 0
+    assert fresh_db.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0] == 0
+    assert fresh_db.execute("SELECT COUNT(*) FROM memory_refs").fetchone()[0] == 0
+
+
+def test_demote_renames_embedding_through_symlinked_root(tmp_path, fresh_db):
+    """A symlinked bundle root still resolves absolute concept ids for the rename."""
+    real = tmp_path / "real"
+    link = tmp_path / "link"
+    real.mkdir()
+    link.symlink_to(real)
+    bundle = OKFBundle(str(link / "k"))
+    mem_id = store_memory(
+        create_memory(type_="pattern", title="symlink demote", body="content", confidence=0.7),
+        bundle,
+    )
+    _seed_embedding_row(fresh_db, mem_id)
+
+    new_id = demote_memory(bundle, mem_id, target_tier="raw", conn=fresh_db)
+
+    assert new_id is not None
+    docs = [r["doc_id"] for r in
+            fresh_db.execute("SELECT doc_id FROM memory_embeddings").fetchall()]
+    assert docs == [new_id]
+
+
+def test_purge_archived_deletes_db_rows(tmp_path, fresh_db):
+    """purge_archived drops the validity, ref, and embedding rows of purged files."""
+    from cairn.memory.store import purge_archived
+
+    bundle = OKFBundle(str(tmp_path / "knowledge"))
+    old = store_memory(
+        create_memory(type_="pattern", title="aged row carrier", body="content", confidence=0.7),
+        bundle, tier="archived", conn=fresh_db,
+    )
+    stored = bundle.read_concept(old)
+    stored.timestamp = "2024-01-01T00:00:00Z"
+    bundle.write_concept(stored)
+    _seed_embedding_row(fresh_db, old)
+    fresh_db.execute(
+        "INSERT INTO memory_refs (id, memory_path, session_id, referenced_at, context)"
+        " VALUES ('r1', ?, 's1', '2026-01-01T00:00:00', '')",
+        (old,),
+    )
+
+    purged = purge_archived(bundle, max_days=90, conn=fresh_db)
+
+    assert purged == 1
+    assert fresh_db.execute("SELECT COUNT(*) FROM memory_validity").fetchone()[0] == 0
+    assert fresh_db.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0] == 0
+    assert fresh_db.execute("SELECT COUNT(*) FROM memory_refs").fetchone()[0] == 0
+
+
+def test_consolidate_carries_rows_to_new_ids(tmp_path, fresh_db):
+    """Consolidation renames source rows to the archived ids and rows the unified concept."""
+    bundle = OKFBundle(str(tmp_path / "knowledge"))
+    ids = []
+    for body in ("v1", "v2"):
+        ids.append(store_memory(
+            create_memory(type_="pattern", title="dup rows", body=body, confidence=0.1),
+            bundle, tier="raw", conn=fresh_db,
+        ))
+    _seed_embedding_row(fresh_db, ids[0])
+
+    count = consolidate_memories(bundle, conn=fresh_db)
+
+    assert count == 2
+    validity_ids = {r["concept_id"] for r in
+                    fresh_db.execute("SELECT concept_id FROM memory_validity").fetchall()}
+    embed_ids = {r["doc_id"] for r in
+                 fresh_db.execute("SELECT doc_id FROM memory_embeddings").fetchall()}
+    assert not any(i in validity_ids for i in ids)
+    assert len(validity_ids) == 3
+    assert embed_ids and all(i.startswith("memory/archived/") for i in embed_ids)
