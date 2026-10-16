@@ -121,9 +121,26 @@ def _as_tags(value: object) -> list[str]:
     return [str(item).strip() for item in items if str(item).strip()]
 
 
+def _unfenced_lines(body: str) -> list[str]:
+    """Body lines outside ``` / ~~~ fences (ingest/adr.py's fence scheme)."""
+    lines: list[str] = []
+    fence = ""
+    for line in body.splitlines():
+        stripped = line.strip()
+        if fence:
+            if stripped.startswith(fence):
+                fence = ""
+            continue
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            fence = stripped[:3]
+            continue
+        lines.append(line)
+    return lines
+
+
 def _inline_status(body: str) -> str | None:
     """Read a ``**Status:**`` value or ``## Status`` marker from the body."""
-    lines = body.splitlines()
+    lines = _unfenced_lines(body)
     for i, line in enumerate(lines):
         value = _marker_value(line)
         if value is None:
@@ -156,8 +173,8 @@ def _marker_value(line: str) -> str | None:
 
 
 def _first_heading(body: str) -> str | None:
-    """Text of the body's first ATX heading, if any."""
-    for line in body.splitlines():
+    """Text of the body's first ATX heading outside fences, if any."""
+    for line in _unfenced_lines(body):
         match = _HEADING_RE.match(line)
         if match is not None:
             return match.group(1).strip()

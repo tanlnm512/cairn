@@ -82,6 +82,11 @@ def knowledge_import(dir_path, doc_type, tags, affects):
     from cairn.okf.bundle import OKFBundle
     from ..paths import resolve_store
 
+    # Validate the source before ensure(): a bad path must not materialize
+    # the store directory tree as a side effect.
+    if not Path(dir_path).is_dir():
+        click.echo(f"Error: Import directory does not exist: {dir_path}", err=True)
+        sys.exit(1)
     store = resolve_store()
     store.ensure()
     bundle = OKFBundle(str(store.knowledge))
@@ -223,6 +228,7 @@ def knowledge_rebuild(db):
     store = resolve_store()
     store.ensure()
     bundle = OKFBundle(str(store.knowledge))
+    _require_db_dir(db)
     conn = get_db(db)
     try:
         report = rebuild_knowledge_index(conn, bundle)
@@ -251,6 +257,7 @@ def knowledge_islands(as_json, db):
     if not bundle.root.exists():
         click.echo("No knowledge store; nothing to inspect.")
         return
+    _require_db_dir(db)
     conn = get_db(db)
     try:
         islands = doc_islands(conn, bundle)
@@ -297,6 +304,17 @@ def _require_store_bundle():
     return OKFBundle(str(resolve_store().knowledge))
 
 
+def _require_db_dir(db: str) -> None:
+    """Exit cleanly when the db parent is missing (get_db would raise)."""
+    if not Path(db).parent.exists():
+        click.echo(
+            f"Error: store directory does not exist: {Path(db).parent}. "
+            "Run `cairn init && cairn build` first.",
+            err=True,
+        )
+        sys.exit(1)
+
+
 def _resolve_or_exit(bundle, doc_id: str):
     """Resolve a doc id before the DB is opened, so an unknown id writes
     nothing at all (not even creating the store directories, which a
@@ -330,6 +348,7 @@ def knowledge_related(doc_id, as_json, db):
 
     bundle = _require_store_bundle()
     _resolve_or_exit(bundle, doc_id)
+    _require_db_dir(db)
     conn = get_db(db)
     try:
         neighbors = related_docs(conn, bundle, doc_id)
@@ -362,6 +381,7 @@ def knowledge_chain(doc_id, as_json, db):
 
     bundle = _require_store_bundle()
     _resolve_or_exit(bundle, doc_id)
+    _require_db_dir(db)
     conn = get_db(db)
     try:
         chain = supersede_chain(conn, bundle, doc_id)
@@ -452,7 +472,8 @@ def knowledge_list(doc_type, status, tag, as_json):
         return
     for c in docs:
         st = c.extensions.get("doc_status", "?")
-        click.echo(f"  [{st}] {c.title}  ({c.concept_id})")
+        concept_id = normalize_doc_id(bundle, c.concept_id)
+        click.echo(f"  [{st}] {c.title}  ({concept_id})")
 
 
 @knowledge.command("embed")
@@ -471,18 +492,12 @@ def knowledge_embed(db, batch_size):
         sys.exit(1)
 
     store = resolve_store()
-    if not Path(db).parent.exists():
-        click.echo(
-            f"Error: store directory does not exist: {Path(db).parent}. "
-            "Run `cairn init && cairn build` first.",
-            err=True,
-        )
-        sys.exit(1)
+    _require_db_dir(db)
     store.ensure()
     bundle = OKFBundle(str(store.knowledge))
     conn = get_db(db)
     try:
-        display.info(f"Embedding knowledge docs with {emb.current_model()}")
+        display.info(f"Embedding knowledge docs with {emb.current_model(corpus='knowledge')}")
 
         bar_state = {"bar": None, "task": None}
         def progress(done, total):
@@ -496,11 +511,16 @@ def knowledge_embed(db, batch_size):
 
         import time
         t0 = time.time()
-        with display.progress_bar(description="Embedding docs", total=None, unit="docs") as bar:
-            bar_state["bar"] = bar
-            bar_state["task"] = bar._cg_task_id
-            summary = emb.embed_knowledge(conn, bundle, batch_size=batch_size, progress=progress)
-            bar_state["bar"] = None
+        try:
+            with display.progress_bar(description="Embedding docs", total=None, unit="docs") as bar:
+                bar_state["bar"] = bar
+                bar_state["task"] = bar._cg_task_id
+                summary = emb.embed_knowledge(conn, bundle, batch_size=batch_size, progress=progress)
+                bar_state["bar"] = None
+        except RuntimeError as e:
+            # A deliberate embed abort (e.g. the alias parity preflight refusal) is a CLI error, not a traceback.
+            display.error(str(e))
+            sys.exit(1)
         elapsed = time.time() - t0
 
         display.summary_panel(
@@ -646,7 +666,12 @@ def knowledge_export(out_path):
         click.echo(f"Exported knowledge bundle tarball to {dst}")
     else:
         dst.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(kn_dir, dst / ".knowledge", dirs_exist_ok=True)
+        target = dst / ".knowledge"
+        # A re-export mirrors the bundle: drop the previous copy so documents
+        # removed since the last export don't survive in the backup.
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(kn_dir, target)
         click.echo(f"Exported knowledge bundle directory to {dst}")
 
 
@@ -679,6 +704,7 @@ def knowledge_workflow():
 @click.option("--resource", default="", help="Canonical URI (Jira/Confluence/runbook).")
 def knowledge_workflow_add(title, steps_raw, steps_file, tags, affects, affects_modules, resource):
     """Add a workflow with an ordered list of steps."""
+    from cairn.knowledge.store import doc_concept_id, get_document
     from cairn.knowledge.workflow import add_workflow
     from cairn.okf.bundle import OKFBundle
     from ..paths import resolve_store
@@ -714,6 +740,8 @@ def knowledge_workflow_add(title, steps_raw, steps_file, tags, affects, affects_
     store = resolve_store()
     store.ensure()
     bundle = OKFBundle(str(store.knowledge))
+    # Same title replaces the prior workflow in place; say so.
+    replaced = get_document(bundle, doc_concept_id(title, "workflow")) is not None
     try:
         cid = add_workflow(
             bundle, title=title, steps=steps,
@@ -723,7 +751,8 @@ def knowledge_workflow_add(title, steps_raw, steps_file, tags, affects, affects_
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-    click.echo(f"Stored: {cid} ({len(steps)} step(s))")
+    note = " (replaced an existing workflow with the same title)" if replaced else ""
+    click.echo(f"Stored: {cid}{note} ({len(steps)} step(s))")
 
 
 @knowledge_workflow.command("trace")
@@ -766,7 +795,7 @@ def knowledge_workflow_trace(ref, as_json):
 @click.argument("ref", required=False)
 @click.option("--all", "sync_all", is_flag=True, help="Sync all workflows.")
 @click.option("--dry-run", is_flag=True, help="Show staleness report without writing.")
-@click.option("--max-steps", default=20, type=int, help="Cap workflow steps (default 20).")
+@click.option("--max-steps", default=20, type=click.IntRange(min=1), help="Cap workflow steps (default 20).")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option(
     "--knowledge", default=None,
@@ -777,7 +806,7 @@ def knowledge_workflow_sync(ref, sync_all, dry_run, max_steps, db, knowledge):
     from cairn.knowledge.workflow import (
         check_all_workflows, check_workflow_staleness, sync_workflow,
     )
-    from cairn.knowledge.store import list_documents
+    from cairn.knowledge.store import list_documents, normalize_doc_id
     from cairn.okf.bundle import OKFBundle
     from ..paths import resolve_store
 
@@ -850,7 +879,9 @@ def knowledge_workflow_sync(ref, sync_all, dry_run, max_steps, db, knowledge):
         errors = 0
         for w in workflows:
             conn = get_db(db)
-            result = sync_workflow(conn, bundle, w.title or w.concept_id, max_steps=max_steps)
+            # Sync each listed doc by its own concept id: title resolution
+            # lets same-title docs shadow each other.
+            result = sync_workflow(conn, bundle, normalize_doc_id(bundle, w.concept_id), max_steps=max_steps)
             conn.close()
             if result is None:
                 continue

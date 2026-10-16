@@ -387,3 +387,155 @@ def test_workflow_sync_rejects_ref_with_all(cli_env):
     assert "Error:" in result.stderr
     assert "not both" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+# --- logic-flow audit round 2 (batch A7) ------------------------------------
+
+
+def test_workflow_sync_rejects_max_steps_below_one_at_the_option(cli_env):
+    # --max-steps 0 must be a usage error at the option boundary, not a sync
+    # that rewrites the doc to a lone truncation pseudo-step.
+    steps_file = cli_env / "steps.yaml"
+    steps_file.write_text("- name: Deploy\n  description: Ship it\n", encoding="utf-8")
+    added = CliRunner().invoke(knowledge, [
+        "workflow", "add", "--title", "Deploy flow",
+        "--steps-file", str(steps_file),
+    ])
+    assert added.exit_code == 0, added.stdout
+
+    result = CliRunner().invoke(knowledge, [
+        "workflow", "sync", "Deploy flow", "--max-steps", "0",
+        "--db", str(cli_env / "graph.db"),
+    ])
+    assert result.exit_code != 0
+    assert "--max-steps" in result.stderr
+    assert "not in the range" in result.stderr
+    assert "Traceback" not in result.stderr
+
+    from cairn.knowledge.workflow import trace_workflow
+    from cairn.okf.bundle import OKFBundle
+
+    traced = trace_workflow(OKFBundle(str(cli_env / "knowledge")), "Deploy flow")
+    assert [s["name"] for s in traced["steps"]] == ["Deploy"], (
+        "the workflow doc must be untouched by the rejected invocation"
+    )
+
+
+@pytest.mark.parametrize("command", [
+    ["related", "knowledge/spec/refund-policy"],
+    ["chain", "knowledge/spec/refund-policy"],
+    ["islands"],
+    ["rebuild"],
+])
+def test_missing_db_parent_is_a_clean_error_not_a_traceback(cli_env, command):
+    # Sibling commands (search/remove/embed) guard the db parent before
+    # opening it; related/chain/islands/rebuild must do the same instead of
+    # surfacing get_db's raw OperationalError.
+    added = CliRunner().invoke(knowledge, [
+        "add", "--title", "Refund policy", "--body", "Body.",
+    ])
+    assert added.exit_code == 0, added.stdout
+
+    result = CliRunner().invoke(knowledge, [
+        *command, "--db", str(cli_env / "no-such-dir" / "kg"),
+    ])
+    assert result.exit_code == 1
+    assert "store directory does not exist" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "Traceback" not in result.stdout
+
+
+def test_list_text_output_prints_relative_ids(cli_env):
+    added = CliRunner().invoke(knowledge, [
+        "add", "--title", "Refund policy", "--body", "Body.",
+    ])
+    assert added.exit_code == 0, added.stdout
+
+    result = CliRunner().invoke(knowledge, ["list"])
+    assert result.exit_code == 0, result.stdout
+    assert "knowledge/spec/refund-policy" in result.stdout
+    assert str(cli_env) not in result.stdout
+
+
+def test_embed_announces_the_knowledge_corpus_model(cli_env, monkeypatch):
+    import cairn.graph.embeddings as emb
+
+    corpora = []
+
+    def fake_current_model(corpus="code"):
+        corpora.append(corpus)
+        return f"stamp-{corpus}"
+
+    monkeypatch.setattr(emb, "current_model", fake_current_model)
+
+    result = CliRunner().invoke(knowledge, [
+        "embed", "--db", str(cli_env / "graph.db"),
+    ])
+    assert result.exit_code == 0, result.stdout
+    assert corpora and corpora[0] == "knowledge", (
+        f"embed must announce the knowledge-corpus stamp, announced {corpora}"
+    )
+
+
+def test_embed_abort_is_a_clean_error_not_a_traceback(cli_env, hash_backend, monkeypatch):
+    import cairn.graph.embeddings as emb
+
+    def _parity_boom(*args, **kwargs):
+        raise RuntimeError(
+            "CAIRN_EMBED_MODEL_STAMP 'x' failed the alias parity preflight "
+            "(stale rows); no rows were written"
+        )
+
+    monkeypatch.setattr(emb, "embed_knowledge", _parity_boom)
+    result = CliRunner().invoke(knowledge, [
+        "embed", "--db", str(cli_env / "graph.db"),
+    ])
+    assert result.exit_code == 1
+    assert "alias parity preflight" in result.stdout
+    assert "Traceback" not in result.stdout
+    # A clean CLI exit, not the raw RuntimeError escaping to the runner.
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_reexport_does_not_keep_docs_removed_since_last_export(cli_env):
+    added = CliRunner().invoke(knowledge, [
+        "add", "--title", "Refund policy", "--body", "v1 body.",
+    ])
+    assert added.exit_code == 0, added.stdout
+    backup = cli_env / "backup"
+    first = CliRunner().invoke(knowledge, ["export", "--out", str(backup)])
+    assert first.exit_code == 0, first.stdout
+
+    removed = CliRunner().invoke(knowledge, ["remove", "knowledge/spec/refund-policy"])
+    assert removed.exit_code == 0, removed.stdout
+
+    second = CliRunner().invoke(knowledge, ["export", "--out", str(backup)])
+    assert second.exit_code == 0, second.stdout
+    assert not (backup / ".knowledge" / "knowledge" / "spec" / "refund-policy.md").exists(), (
+        "a re-export must mirror the bundle, not merge into the stale copy"
+    )
+
+
+def test_workflow_add_same_title_reports_the_replacement(cli_env):
+    steps_file = cli_env / "steps.yaml"
+    steps_file.write_text("- name: Deploy\n  description: Ship it\n", encoding="utf-8")
+    args = ["workflow", "add", "--title", "Rollout", "--steps-file", str(steps_file)]
+
+    first = CliRunner().invoke(knowledge, args)
+    assert first.exit_code == 0, first.stdout
+    assert "replaced" not in first.stdout
+
+    second = CliRunner().invoke(knowledge, args)
+    assert second.exit_code == 0, second.stdout
+    assert "(replaced an existing workflow with the same title)" in second.stdout
+
+
+def test_import_missing_dir_does_not_materialize_the_store_tree(cli_env):
+    # store.ensure() must not run before the source path is validated: a bad
+    # import path used to create the store directories as a side effect.
+    missing = cli_env / "no-such-docs"
+    result = CliRunner().invoke(knowledge, ["import", str(missing)])
+    assert result.exit_code == 1
+    assert "Error:" in result.stderr
+    assert str(missing) in result.stderr
+    assert not (cli_env / "knowledge").exists()
