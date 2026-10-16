@@ -108,6 +108,14 @@ class TestBuildArtifactStamp:
         assert stamp["dataset"]["version"] is None
         assert stamp["dataset"]["reason"].startswith("manifest unreadable")
 
+    def test_manifest_non_object_json_degrades(self, tmp_path):
+        """Valid-JSON non-object manifests degrade with a reason, never raise."""
+        bad = tmp_path / "manifest.json"
+        bad.write_text("[1, 2, 3]", encoding="utf-8")
+        stamp = build_artifact_stamp(manifest_path=bad)
+        assert stamp["dataset"]["version"] is None
+        assert "not a JSON object" in stamp["dataset"]["reason"]
+
     def test_missing_identity_size_entry_degrades(self, tmp_path):
         manifest = _synthetic_manifest(tmp_path / "m.json", sizes=(100, 500))
         stamp = build_artifact_stamp(manifest_path=manifest)

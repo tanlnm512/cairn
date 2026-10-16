@@ -166,10 +166,10 @@ def _session_id() -> str:
     return f"mcp-{os.getpid()}-{date.today().isoformat()}"
 
 
-def _repo_of(conn, name: str) -> str:
-    """Look up the repo that defines a symbol."""
-    rows = find_definition(conn, name, limit=1)
-    return rows[0]["repo"] if rows else ""
+def _definer_repos(conn, name: str) -> list[str]:
+    """Distinct repos defining ``name`` (exact-first resolution), for cross-repo scoping."""
+    rows = find_definition(conn, name, limit=200)
+    return sorted({row["repo"] for row in rows if row["repo"]})
 
 
 def _staleness_banner(conn, file_paths) -> str:

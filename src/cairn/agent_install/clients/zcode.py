@@ -17,6 +17,7 @@ from ..merge import (
     _merge_json_file,
     _rm_if_ours,
     _rm_tree_if_cairn,
+    _rmdir_if_empty,
     _strip_mcp_zcode,
     _write_file,
     _write_tree,
@@ -40,8 +41,7 @@ def install_zcode(workspace: str, force: bool, dry_run: bool,
     mcp_path = base / ".zcode" / "config.json"
     if scope == "global":
         mcp_path = base / ".zcode" / "cli" / "config.json"
-        if not dry_run:
-            _strip_mcp_zcode(base / ".zcode" / "config.json", res)
+        _strip_mcp_zcode(base / ".zcode" / "config.json", res, dry_run=dry_run)
     _merge_json_file(mcp_path, zcode_mcp_config_json(), force, res, config_key="zcode", dry_run=dry_run)
 
     _write_tree(base / ".zcode" / "skills" / "cairn", _TEMPLATE_DIR / "skill", force, res, dry_run=dry_run)
@@ -79,3 +79,9 @@ def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
                     _claude_agent_md(), res)
         _rm_if_ours(base / ".zcode" / "agents" / "knowledge-steward.md",
                     _claude_agent_md("cursor/knowledge-steward.json"), res)
+        _rmdir_if_empty(base / ".zcode" / "commands", res)
+        _rmdir_if_empty(base / ".zcode" / "agents", res)
+        _rmdir_if_empty(base / ".zcode" / "skills", res)
+        _rmdir_if_empty(base / ".zcode", res)
+    if scope in ("workspace", "all"):
+        _rm_if_ours(ws / "AGENTS.md", _agents_instructions(), res)

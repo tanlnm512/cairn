@@ -119,3 +119,8 @@ def test_store_build_age_absent_paths():
     assert store_build_age(sqlite3.connect(":memory:")) is None
     assert store_build_age(_conn_with_build_runs([])) is None
     assert store_build_age(_conn_with_build_runs(["garbage"])) is None
+
+
+def test_store_build_age_naive_timestamp_yields_none():
+    """A naive (offset-less) timestamp is unreadable, never a crash."""
+    assert store_build_age(_conn_with_build_runs(["2026-10-16T20:00:00"])) is None

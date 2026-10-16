@@ -90,6 +90,44 @@ def test_non_dry_run_removes_store():
         assert not store.exists()
 
 
+def test_failed_store_removal_warns_and_keeps_registry_entry():
+    """A store that survives rmtree (read-only dir) draws a warning; the
+    command leaves both the store and its registry entry in place."""
+    import json
+    import os
+
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp) / "ws"
+        ws.mkdir()
+        home = Path(tmp) / "fake_home"
+        store = home / store_key(ws.resolve())
+        (store / ".knowledge").mkdir(parents=True)
+        (store / ".kg").write_bytes(b"\x00")
+        registry = home / "workspaces.json"
+        registry.write_text(
+            json.dumps({str(ws.resolve()): store_key(ws.resolve())}),
+            encoding="utf-8",
+        )
+
+        os.chmod(store, 0o555)
+        try:
+            result = runner.invoke(
+                main,
+                ["uninstall", "--graph-only", "-y", "--workspace", str(ws)],
+                env={"CAIRN_HOME": str(home)},
+            )
+        finally:
+            os.chmod(store, 0o755)
+
+        assert result.exit_code == 0, result.output
+        assert "could not be fully removed" in result.output
+        assert store.exists()
+        assert json.loads(registry.read_text(encoding="utf-8")) == {
+            str(ws.resolve()): store_key(ws.resolve())
+        }
+
+
 def test_full_and_only_flags_are_mutually_exclusive():
     """--full combined with any --*-only must be rejected (exit code 2).
 

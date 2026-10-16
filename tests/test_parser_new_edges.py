@@ -53,6 +53,21 @@ class TestJavaNewAndFieldEdges:
         pf = _parse(JavaParser, src, ".java")
         assert "Bar" in _call_targets(pf)
 
+    def test_generic_new_uses_base_name(self):
+        """``new Foo<Integer>(1)`` emits the constructor edge for ``Foo``."""
+        src = b"class S { void f() { Foo<Integer> x = new Foo<Integer>(1); } }\n"
+        pf = _parse(JavaParser, src, ".java")
+        assert "Foo" in _call_targets(pf)
+
+    def test_generic_scoped_new_uses_simple_name(self):
+        """``new java.util.ArrayList<String>()`` targets ``ArrayList``."""
+        src = (
+            b"class S { void f() { java.util.List<String> l = "
+            b"new java.util.ArrayList<String>(); } }\n"
+        )
+        pf = _parse(JavaParser, src, ".java")
+        assert "ArrayList" in _call_targets(pf)
+
 
 class TestPhpNewEdge:
     def test_new_expression_emits_constructor_call(self):

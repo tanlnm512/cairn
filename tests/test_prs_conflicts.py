@@ -224,3 +224,30 @@ def test_prs_conflicts_empty_tables_shows_hint_without_pairs(
     assert "cairn communities" in result.output
     assert "shared" not in result.output
     assert "Traceback" not in result.output
+
+
+def test_prs_conflicts_reports_one_failed_diff_inline(
+    prs_workspace, tmp_path, monkeypatch
+):
+    """A PR whose diff fetch fails is reported inline; the rest of the report survives."""
+    diff_path = tmp_path / "diff_43.patch"
+    diff_path.write_text(DIFF_TOUCHES_DIRECT, encoding="utf-8")
+    body = (
+        'case "$2" in\n'
+        f'  list) cat \'{FIXTURES / "pr_list.json"}\' ;;\n'
+        "  diff) case \"$3\" in\n"
+        "      42) echo 'gh: simulated transient failure' >&2 ; exit 1 ;;\n"
+        f"      43) cat '{diff_path}' ;;\n"
+        "    esac ;;\n"
+        "esac"
+    )
+    _install_gh_stub(tmp_path, monkeypatch, body)
+
+    result = _invoke_prs(prs_workspace, "--conflicts")
+
+    assert result.exit_code == 0, result.output
+    assert "Diff fetch failures:" in result.output
+    assert "#42: gh: simulated transient failure" in result.output
+    assert "Merge-order risk" in result.output
+    assert "#43" in result.output
+    assert "Traceback" not in result.output

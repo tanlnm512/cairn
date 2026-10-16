@@ -12,12 +12,34 @@ if TYPE_CHECKING:
 from . import DashboardContext
 
 
+def _host_is_loopbind(host: str) -> bool:
+    """True when a Host header names the loopback bind (localhost, 127/8, ::1)."""
+    from ipaddress import ip_address
+
+    name = host.strip()
+    if name.startswith("["):  # [::1]:8765
+        name = name[1:].split("]", 1)[0]
+    elif name.count(":") == 1:  # host:port
+        name = name.split(":", 1)[0]
+    if name.lower() == "localhost":
+        return True
+    try:
+        return ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
 def _reject_cross_site(request: Request) -> Response | None:
-    """Reject browser POSTs naming another origin; headerless clients stay allowed."""
+    """Reject POSTs whose Host is not the loopback bind or that name another origin."""
     from starlette.responses import PlainTextResponse
 
+    host = (request.headers.get("Host") or "").strip()
     site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
-    if site:
+    # DNS rebinding lands with Sec-Fetch-Site "same-origin" and Origin==Host,
+    # so the Host itself must name the loopback bind before any header verdict.
+    if not _host_is_loopbind(host):
+        trusted = False
+    elif site:
         # "same-site" is not trusted: another localhost port counts as
         # same-site and is exactly the cross-site write shape.
         trusted = site in ("same-origin", "none")
@@ -25,9 +47,7 @@ def _reject_cross_site(request: Request) -> Response | None:
         origin = (request.headers.get("Origin") or "").strip() or (
             request.headers.get("Referer") or ""
         ).strip()
-        trusted = not origin or urlsplit(origin).netloc == (
-            request.headers.get("Host") or ""
-        )
+        trusted = not origin or urlsplit(origin).netloc == host
     if trusted:
         return None
     return PlainTextResponse(
@@ -197,10 +217,14 @@ def _base_url_needs_confirmation(submitted: dict[str, str], form) -> bool:
     )
 
 
-def _save_values(submitted: dict[str, str]) -> dict[str, str]:
+def _save_values(
+    submitted: dict[str, str],
+) -> tuple[dict[str, str], list[str]]:
+    """Split submitted knobs into writable values and keys dropped as invalid."""
     from ..app import SETTINGS_BACKENDS
 
-    values = {}
+    values: dict[str, str] = {}
+    dropped: list[str] = []
     for key, value in submitted.items():
         if key == "CAIRN_EMBED_API_KEY":
             if value:  # write-only: blank submit leaves the key untouched
@@ -208,12 +232,14 @@ def _save_values(submitted: dict[str, str]) -> dict[str, str]:
         elif key == "CAIRN_EMBED_BACKEND":
             if value in SETTINGS_BACKENDS:  # never write an unknown arm
                 values[key] = value
+            else:
+                dropped.append(key)
         elif value:
             # A blank submit means "no change", never a write of "":
             # treating it as one silently CLEARED the stored value. A
             # knob is cleared by editing config.json, not from the form.
             values[key] = value
-    return values
+    return values, dropped
 
 
 async def _settings_save(
@@ -262,7 +288,18 @@ async def _settings_save(
             ),
             status_code=400,
         )
-    values = _save_values(submitted)
+    values, dropped = _save_values(submitted)
+    if dropped and not values:
+        return context.render(
+            request,
+            "settings.html",
+            _settings_context(
+                store_key,
+                error="Refused: no savable value for "
+                f"{', '.join(dropped)}; nothing was saved.",
+            ),
+            status_code=400,
+        )
     if not paths.set_config_values(values):
         return context.render(
             request,
@@ -279,7 +316,17 @@ async def _settings_save(
     paths.reset_config_cache()
     embeddings.reset_backend_cache()  # this process re-resolves on next use
     return context.render(
-        request, "settings.html", _settings_context(store_key, saved=True)
+        request,
+        "settings.html",
+        _settings_context(
+            store_key,
+            saved=True,
+            error=(
+                f"Saved, dropping {', '.join(dropped)}: no savable value."
+                if dropped
+                else ""
+            ),
+        ),
     )
 
 

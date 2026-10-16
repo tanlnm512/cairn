@@ -224,8 +224,9 @@ def check_all_workflows(
     by stale step count (most stale first)."""
     reports = []
     for concept in list_documents(bundle, doc_type=DOC_TYPE):
-        ref = concept.title or concept.concept_id
-        report = check_workflow_staleness(conn, bundle, ref)
+        # Resolve each doc by its own concept id: title resolution lets
+        # same-title docs shadow each other.
+        report = check_workflow_staleness(conn, bundle, normalize_doc_id(bundle, concept.concept_id))
         if report and report["stale_count"] > 0:
             reports.append(report)
     reports.sort(key=lambda r: -r["stale_count"])
@@ -249,6 +250,20 @@ def sync_workflow(
     resource = concept.resource or ""
     old_steps = concept.extensions.get("steps", [])
     old_names = {s.get("name", "") for s in old_steps}
+
+    # An absent entry symbol is not a broken trace: say so accurately instead
+    # of letting an empty-string lookup fuzzy-match an arbitrary symbol.
+    if not resource:
+        return {
+            "concept_id": normalize_doc_id(bundle, concept.concept_id),
+            "title": concept.title or "",
+            "resource": "",
+            "old_step_count": len(old_steps),
+            "new_step_count": 0,
+            "added": [],
+            "removed": [],
+            "error": "Workflow has no resource (entry symbol) recorded — nothing to re-trace. Workflow left unchanged.",
+        }
 
     # Re-trace from the current graph.
     facts = _gather_flow_facts(conn, resource)

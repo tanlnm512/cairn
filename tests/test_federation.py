@@ -705,10 +705,18 @@ class FederatedAskTests(FederationStoreCase):
             self.assertEqual(payload["states"], {ws_a: "error", ws_b: "error"})
             self.assertEqual(payload["answers"], {})
             self.assertEqual(payload["dropped"], [ws_a, ws_b])
+            self.assertEqual(
+                payload["errors"],
+                {
+                    ws_a: "RuntimeError: router exploded",
+                    ws_b: "RuntimeError: router exploded",
+                },
+            )
 
             text = self._invoke_ask("--all-repos", "authenticate")
             self.assertEqual(text.exit_code, 0, text.output)
             self.assertIn(f"error: {ws_a}", text.output)
+            self.assertIn(f"error: {ws_a} (RuntimeError: router exploded)", text.output)
             self.assertNotIn(f"locked: {ws_a}", text.output)
 
     def test_ask_all_repos_names_dropped_stores(self):

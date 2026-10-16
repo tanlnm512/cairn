@@ -154,6 +154,12 @@ def record_memory(
             conn, bundle, type_=type, title=title, body=body,
             resource=resource or None, confidence=confidence, stance=stance,
         )
+        # capture_memory leaves the validity DML uncommitted; the pooled
+        # close() below is a no-op, so only this commit lands the rows.
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
     embed_buffering.enqueue(result["path"])

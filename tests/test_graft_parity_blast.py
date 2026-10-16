@@ -551,6 +551,56 @@ def test_unknown_base_reports_fetch_depth_guidance(merge_base_workspace):
     assert "fetch-depth" in message or "shallow" in message
 
 
+def test_disjoint_base_reports_no_common_ancestor(tmp_path):
+    """A merge-base failure after a valid rev-parse surfaces as BlastBaseError."""
+    from cairn.graph.blast import BlastBaseError, _resolve_base
+
+    repo = tmp_path / "disjoint"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "checkout", "-b", "main")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    (repo / "one.txt").write_text("one\n")
+    _commit(repo, "one")
+    _git(repo, "checkout", "--orphan", "isolated")
+    (repo / "two.txt").write_text("two\n")
+    _commit(repo, "two")
+
+    with pytest.raises(BlastBaseError, match="no common ancestor"):
+        _resolve_base(repo, "main")
+
+
+def test_base_without_checkout_under_workspace_fails_closed(
+    tmp_path, monkeypatch
+):
+    """--base with no registered repo checkout under the workspace errors instead of rendering an empty pack."""
+    from cairn.graph.schema import get_db
+
+    workspace = tmp_path / "empty-workspace"
+    workspace.mkdir()
+    db_path = tmp_path / "graph.db"
+    conn = get_db(str(db_path))
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO repos (id, name, path, language, indexed_at) "
+            "VALUES ('ghost', 'ghost', 'ghost', 'python', ?)",
+            (now,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    monkeypatch.setenv("CAIRN_WORKSPACE", str(workspace))
+    monkeypatch.setenv("CAIRN_DB", str(db_path))
+
+    result = _blast(db_path, "--base", "main")
+
+    assert result.exit_code != 0
+    assert "main" in result.output.lower()
+    assert "Basis:" not in result.output
+
+
 @pytest.mark.parametrize(
     ("output_format", "expected"),
     [
@@ -780,6 +830,36 @@ def test_git_and_refresh_failures_render_as_clean_cli_errors(
     assert result.exit_code == 1
     assert not isinstance(result.exception, RuntimeError), result.exception
     assert "fatal: not a git repository" in result.stderr
+
+
+def test_git_timeout_maps_to_clean_cli_error(radius_workspace, monkeypatch):
+    """A git subprocess timeout converts to RuntimeError, so the CLI renders a single-line error."""
+    import cairn.graph.blast as blast_graph
+
+    def timing_out_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["git"], timeout=10)
+
+    monkeypatch.setattr(blast_graph.subprocess, "run", timing_out_run)
+    _workspace, _repo, db_path = radius_workspace
+
+    result = _run_blast(db_path, "--no-refresh")
+
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, RuntimeError), result.exception
+    assert "timed out" in result.stderr
+
+
+def test_output_write_failure_maps_to_clean_cli_error(radius_workspace, tmp_path):
+    """An unwritable --output target surfaces as a single-line error, never a traceback."""
+
+    _workspace, _repo, db_path = radius_workspace
+    blocked = tmp_path / "no-such-dir" / "blast.txt"
+
+    result = _run_blast(db_path, "--no-refresh", "--output", str(blocked))
+
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, OSError), result.exception
+    assert "cannot write" in result.stderr
 
 
 def test_stale_graph_and_truncation_notes_render_in_every_format():

@@ -8,10 +8,13 @@ Tests follow TDD: they fail before the fix, then pass after.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
+import pytest
 
 from cairn.llm.tasks import (
     MAX_REVISE_CYCLES,
@@ -418,6 +421,106 @@ class TestClaimTaskAtomicity:
         concept = bundle.read_concept(task.concept_id)
         assert concept.extensions.get("claimed_at") == claimed.claimed_at
 
+    def test_stale_marker_and_stale_claim_reclaim_in_progress_task(self, tmp_path):
+        """A claimant that died after writing in-progress is reclaimable once
+        both its claim marker and its claimed_at pass the staleness horizon."""
+        from cairn.llm.tasks import (
+            CLAIM_STALE_SECONDS,
+            _task_to_concept,
+            get_task,
+        )
+
+        bundle = _create_bundle(tmp_path)
+        task = create_task(
+            bundle,
+            task_kind="compass-synthesize",
+            resource="test",
+            facts={},
+        )
+        first = claim_task(bundle, task.id, "agent1")
+        assert first is not None
+
+        # Simulate the dead claimant: backdate the claim timestamp and marker.
+        stale = get_task(bundle, task.id)
+        stale.claimed_at = "2000-01-01T00:00:00Z"
+        bundle.write_concept(_task_to_concept(stale))
+        marker = bundle.root / "_tasks" / f"{task.id}.claim"
+        old = time.time() - CLAIM_STALE_SECONDS - 60
+        os.utime(marker, (old, old))
+
+        second = claim_task(bundle, task.id, "agent2")
+
+        assert second is not None
+        assert second.assigned_to == "agent2"
+        assert second.claimed_at != stale.claimed_at
+        reloaded = get_task(bundle, task.id)
+        assert reloaded.status == "in-progress"
+        assert reloaded.assigned_to == "agent2"
+
+    def test_stale_marker_with_fresh_claim_is_never_stolen(self, tmp_path):
+        """A stale marker alone must not steal a live claim: claimed_at
+        freshness gates the in-progress reclaim."""
+        from cairn.llm.tasks import CLAIM_STALE_SECONDS, get_task
+
+        bundle = _create_bundle(tmp_path)
+        task = create_task(
+            bundle,
+            task_kind="compass-synthesize",
+            resource="test",
+            facts={},
+        )
+        assert claim_task(bundle, task.id, "agent1") is not None
+
+        marker = bundle.root / "_tasks" / f"{task.id}.claim"
+        old = time.time() - CLAIM_STALE_SECONDS - 60
+        os.utime(marker, (old, old))
+
+        assert claim_task(bundle, task.id, "agent2") is None
+        assert get_task(bundle, task.id).assigned_to == "agent1"
+
+    def test_drop_landing_in_claim_window_cannot_resurrect(self, tmp_path, monkeypatch):
+        """A drop racing the claim's read-check-write serializes on the bundle
+        lock: a successful drop is never followed by a resurrecting claim
+        write (the task must not read in-progress after drop won)."""
+        import cairn.llm.tasks as tasks_mod
+
+        bundle = _create_bundle(tmp_path)
+        task = create_task(
+            bundle,
+            task_kind="compass-synthesize",
+            resource="test",
+            facts={},
+        )
+        real_to_concept = tasks_mod._task_to_concept
+        claim_writing = threading.Event()
+
+        def slow_once(t):
+            concept = real_to_concept(t)
+            if t.status == "in-progress" and not claim_writing.is_set():
+                claim_writing.set()
+                time.sleep(0.3)  # widen the claim write window for the racer
+            return concept
+
+        monkeypatch.setattr(tasks_mod, "_task_to_concept", slow_once)
+        drop_outcome = {}
+
+        def do_drop():
+            claim_writing.wait(timeout=5)
+            drop_outcome["value"] = tasks_mod.drop_task(bundle, task.id)
+
+        dropper = threading.Thread(target=do_drop)
+        dropper.start()
+        claimed = claim_task(bundle, task.id, "agent")
+        dropper.join(timeout=10)
+
+        dropped_ok = drop_outcome.get("value", {}).get("dropped") is True
+        final_status = tasks_mod.get_task(bundle, task.id).status
+        assert not (dropped_ok and final_status == "in-progress"), (
+            "a successful drop must not be resurrected by the concurrent claim"
+        )
+        if dropped_ok and claimed is None:
+            assert final_status == "dropped"
+
 
 class TestTaskDataclassWithClaimedAt:
     """Verify Task dataclass has claimed_at field and it round-trips correctly."""
@@ -506,3 +609,49 @@ class TestCompleteDropRaceSafety:
 
         final_status = get_task(bundle, task.id).status
         assert final_status == ("dropped" if drop_won else "done")
+
+
+class TestLosingCompletionPersistsNoPromotions:
+    """A completion that loses the terminal race is refused and must not
+    leave its promotion writes behind."""
+
+    def test_race_lost_promotions_do_not_persist(self, fresh_db, tmp_path, monkeypatch):
+        """Another writer finishing the task first forces the refusal before
+        any promotion write: the compass concept never lands."""
+        from cairn.llm.tasks import _RACE_LOST, _task_to_concept, get_task
+
+        conn = _conn_with_fixture(fresh_db)
+        bundle = _create_bundle(tmp_path)
+        task = create_task(
+            bundle,
+            task_kind="compass-synthesize",
+            resource="test",
+            facts={"key_files": ["src/graph/queries.py"]},
+        )
+        claim_task(bundle, task.id, "agent")
+
+        real_write = bundle.write_concept
+
+        def rival_finishes_then_write(concept):
+            if concept.concept_id == task.result_concept_id:
+                rival = get_task(bundle, task.id)
+                rival.status = "done"
+                rival.completed_at = "2000-01-01T00:00:00Z"
+                real_write(_task_to_concept(rival))
+            return real_write(concept)
+
+        monkeypatch.setattr(bundle, "write_concept", rival_finishes_then_write)
+
+        passing_result = (
+            "# What Does This Module Do?\nSee `src/graph/queries.py`.\n"
+            "# Common Modification Patterns\n...\n"
+            "# Build-Failure Patterns\n...\n"
+            "# Cross-Module Dependencies\n...\n"
+            "# Tribal Knowledge\n...\n"
+        )
+        outcome = complete_task(bundle, task.id, passing_result, conn=conn)
+
+        assert outcome["refused"] is True
+        assert outcome["errors"] == [_RACE_LOST]
+        with pytest.raises(FileNotFoundError):
+            bundle.read_concept("compass/test")

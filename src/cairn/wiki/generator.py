@@ -14,6 +14,16 @@ from ..graph.queries import cross_repo_deps, get_stats
 from ..okf.bundle import OKFBundle
 from ..okf.concept import OKFConcept
 
+# The section headings every generated architecture report carries; the
+# critic's quality heuristic scores against these, not the compass rubric.
+_REPORT_SECTION_VOCAB = (
+    "## Overview",
+    "## Symbol Distribution",
+    "## Core Abstractions (most-referenced classes)",
+    "## Cross-Repo Dependencies",
+    "## Dependents",
+)
+
 
 def generate_wiki_with_critic(
     repo: str, conn: sqlite3.Connection, bundle: OKFBundle
@@ -25,7 +35,10 @@ def generate_wiki_with_critic(
     warnings or block on hard errors.
     """
     concepts = _graph_derived_wiki(repo, conn, bundle)
-    results = [critic_concept(c, conn) for c in concepts]
+    results = [
+        critic_concept(c, conn, section_vocab=_REPORT_SECTION_VOCAB)
+        for c in concepts
+    ]
     return concepts, results
 
 

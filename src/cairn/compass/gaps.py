@@ -65,7 +65,10 @@ def _get_all_modules(conn: sqlite3.Connection) -> List[str]:
             parts = rel.split("/")
             # Heuristic: take first 3 segments as a module identifier.
             if len(parts) >= 3:
-                dirs.add(f"{repo['id']}/" + "/".join(parts[:3]))
+                # The last segment is a filename, so an exactly-3-segment
+                # path contributes only its 2 directory segments.
+                segments = parts[:3] if len(parts) > 3 else parts[:-1]
+                dirs.add(f"{repo['id']}/" + "/".join(segments))
         # Only keep dirs that have a reasonable number of symbols (real modules).
         for d in sorted(dirs):
             # Repo-scoped, segment-anchored count over both stored path

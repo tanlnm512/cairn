@@ -193,6 +193,29 @@ def test_knowledge_error_reason(fresh_db, monkeypatch):
     ]
 
 
+def test_knowledge_error_logs_distinctly_from_empty_corpus(caplog, fresh_db, monkeypatch):
+    """A backend failure logs 'knowledge semantic search failed' at WARNING, so
+    an operator can tell it apart from a merely-empty corpus (both return [])."""
+    from cairn.graph import embeddings as emb
+    from cairn.knowledge.search import _semantic_search
+
+    monkeypatch.setattr(emb, "embeddings_available", lambda: True)
+    monkeypatch.setattr(emb, "embed_knowledge_count", lambda conn: 7)
+
+    def _boom(query):
+        raise RuntimeError("simulated embed failure")
+
+    monkeypatch.setattr(emb, "embed_query", _boom)
+
+    caplog.set_level(logging.WARNING, logger="cairn.knowledge.search")
+    assert _semantic_search(fresh_db, None, "query", 5, 0.3) == []
+    assert any(
+        r.levelno == logging.WARNING
+        and "knowledge semantic search failed" in r.getMessage()
+        for r in caplog.records
+    ), "the error degrade must be visible in the search module's own log"
+
+
 def test_explore_and_knowledge_surface_guards_independent(fresh_db, monkeypatch):
     """One event per surface: two surfaces degrading in one process -> two
     events total (the bounded 2-row worst case), each with its own reason."""

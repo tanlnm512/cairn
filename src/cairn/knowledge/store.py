@@ -133,11 +133,14 @@ def add_document(
         # Verified doc->code refs (D1.3): OKF v0.2 family, wiki pattern.
         verified=list(verified_refs) if verified_refs else None,
     )
-    # A same-title+type write replaces the prior document in place; surface
-    # it so the loss of the old content is never silent.
-    if get_document(bundle, concept_id) is not None:
-        logger.info("Overwriting existing knowledge document: %s", concept_id)
-    bundle.write_concept(concept)
+    # Same lock discipline as update_status/delete_document: the exists
+    # check + write below is a read-modify-write mutation of the bundle.
+    with bundle.lock():
+        # A same-title+type write replaces the prior document in place; surface
+        # it so the loss of the old content is never silent.
+        if get_document(bundle, concept_id) is not None:
+            logger.info("Overwriting existing knowledge document: %s", concept_id)
+        bundle.write_concept(concept)
     return concept_id
 
 
@@ -203,8 +206,10 @@ def update_status(bundle: OKFBundle, doc_id: str, new_status: str) -> bool:
         if not concept:
             return False
         current = concept.extensions.get("doc_status", "active")
+        # An unrecognized stored status is corrupt: refuse rather than coerce
+        # it to active, or the corrupt doc bypasses the forward-only ordering.
         if current not in DOC_STATUSES:
-            current = "active"
+            return False
         if DOC_STATUSES.index(new_status) < DOC_STATUSES.index(current):
             return False
         concept.extensions["doc_status"] = new_status

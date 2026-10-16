@@ -198,3 +198,18 @@ def test_killed_daemon_replaced_with_orphan_swept_first(monkeypatch):
     assert calls.index("sweep") < calls.index("ensure")
     assert _url_base() in result.output
     assert _STARTED.search(result.output)
+
+
+def test_lock_timeout_fails_connect_without_sweep_or_start(monkeypatch):
+    """A connect that cannot take the start lock must fail loudly instead of
+    sweeping/starting unsynchronized against the lock holder."""
+    from cairn.cli import connect as connect_cli
+
+    state = _patch_lifecycle(monkeypatch, healthy=False)
+    monkeypatch.setattr(connect_cli, "_acquire_start_lock", lambda timeout: None)
+
+    result = _invoke_connect()
+
+    assert result.exit_code == 1, result.output
+    assert "start lock" in result.output
+    assert state["calls"] == [], "no sweep or start may run without the lock"

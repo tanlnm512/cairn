@@ -61,9 +61,9 @@ def _age_str(started_at) -> str | None:
         return None
     try:
         dt = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
-    except ValueError:
+        secs = int((datetime.now(timezone.utc) - dt).total_seconds())
+    except (TypeError, ValueError):
         return None
-    secs = int((datetime.now(timezone.utc) - dt).total_seconds())
     if secs < 0:
         return "just now"
     if secs >= 86400:

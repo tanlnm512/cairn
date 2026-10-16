@@ -29,6 +29,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -1527,3 +1528,16 @@ def test_fix_refuses_fresh_config_with_guidance(tmp_path, monkeypatch):
     assert "retry" in human.output
     assert "tradeoff" in human.output
     assert "stdio" in human.output and "daemon" in human.output
+
+
+def test_client_config_paths_agy_follow_the_installer_resolver(tmp_path, monkeypatch):
+    """agy's config path is platform/XDG-dependent; the audit consults the
+    installer's own resolver, not a hardcoded home-relative default."""
+    import cairn.agent_install.clients.agy as agy_mod
+
+    doctor = import_module("cairn.cli.system.doctor")
+
+    fake = tmp_path / "xdg" / "gemini" / "config" / "mcp_config.json"
+    monkeypatch.setattr(agy_mod, "agy_config_path", lambda: fake)
+
+    assert doctor._client_config_paths("agy") == [(fake, str(fake), False)]

@@ -95,16 +95,28 @@ def _render(payload: dict) -> str:
         lines.extend([""] + _render_impact(payload["store"], payload["impact"]))
     if payload.get("conflicts") is not None:
         lines.extend([""] + _render_conflicts(payload["conflicts"]))
+    failures = payload.get("pr_diff_failures") or []
+    if failures:
+        lines.extend(["", "Diff fetch failures:"])
+        lines.extend(f"  {failure}" for failure in failures)
     return "\n".join(lines)
 
 
-def _per_pr_seeds(conn, repo: Path, records) -> dict[int, list[str]]:
+def _per_pr_seeds(
+    conn, repo: Path, records
+) -> tuple[dict[int, list[str]], list[str]]:
+    """Per-PR seed ids; a PR whose diff fetch fails is reported, not fatal."""
     per_pr: dict[int, list[str]] = {}
+    failures: list[str] = []
     for record in records:
-        diff_text = fetch_pr_diff(repo, record.number)
+        try:
+            diff_text = fetch_pr_diff(repo, record.number)
+        except GhError as exc:
+            failures.append(f"#{record.number}: {exc}")
+            continue
         seeds, _unindexed = pr_seed_symbols(conn, str(repo), diff_text)
         per_pr[record.number] = [seed["id"] for seed in seeds]
-    return per_pr
+    return per_pr, failures
 
 
 def _assemble(repo: Path, db: str, impact_ref: str | None, with_conflicts: bool) -> dict:
@@ -119,8 +131,10 @@ def _assemble(repo: Path, db: str, impact_ref: str | None, with_conflicts: bool)
                 conn, str(repo), diff_text=diff_text, base_ref=base_ref
             )
         conflicts = None
+        diff_failures: list[str] = []
         if with_conflicts:
-            conflicts = community_overlaps(conn, _per_pr_seeds(conn, repo, records))
+            per_pr, diff_failures = _per_pr_seeds(conn, repo, records)
+            conflicts = community_overlaps(conn, per_pr)
         built = store_build_age(conn)
     finally:
         conn.close()
@@ -129,6 +143,7 @@ def _assemble(repo: Path, db: str, impact_ref: str | None, with_conflicts: bool)
         "prs": [asdict(record) for record in records],
         "impact": impact,
         "conflicts": conflicts,
+        "pr_diff_failures": diff_failures,
     }
 
 

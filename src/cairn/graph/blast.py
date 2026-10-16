@@ -34,17 +34,25 @@ class BlastBaseError(RuntimeError):
     """A requested base reference cannot be resolved."""
 
 
-def _git(repo: Path, args: list[str]) -> str:
+def _run_git(repo: Path, args: list[str]) -> subprocess.CompletedProcess:
     # Diff syntax tolerates replaced payload bytes; paths stay byte-compatible.
-    result = subprocess.run(
-        ["git", "-c", "core.quotePath=false", *args],
-        cwd=str(repo),
-        capture_output=True,
-        text=True,
-        errors="replace",
-        timeout=10,
-    )
-    if result.returncode != 0:
+    try:
+        return subprocess.run(
+            ["git", "-c", "core.quotePath=false", *args],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"git {args[0]} timed out") from exc
+
+
+def _git(repo: Path, args: list[str], *, check: bool = True) -> str:
+    """Return git stdout; raise RuntimeError on failure or timeout unless ``check`` is off."""
+    result = _run_git(repo, args)
+    if check and result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "git command failed")
     return result.stdout
 
@@ -130,18 +138,8 @@ def _repo_path(workspace: Path, stored_path: str) -> Path:
 
 
 def _resolve_base(repo: Path, base: str) -> str:
-    verify = subprocess.run(
-        [
-            "git",
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            f"{base}^{{commit}}",
-        ],
-        cwd=str(repo),
-        capture_output=True,
-        text=True,
-        timeout=10,
+    verify = _run_git(
+        repo, ["rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"]
     )
     if verify.returncode != 0:
         raise BlastBaseError(
@@ -149,7 +147,7 @@ def _resolve_base(repo: Path, base: str) -> str:
             "(git fetch <remote> <ref>; in CI avoid shallow clones or use "
             "fetch-depth: 0)."
         )
-    merge_base = _git(repo, ["merge-base", base, "HEAD"]).strip()
+    merge_base = _git(repo, ["merge-base", base, "HEAD"], check=False).strip()
     if not merge_base:
         raise BlastBaseError(f"Base ref '{base}' has no common ancestor with HEAD.")
     return merge_base
@@ -184,10 +182,12 @@ def _changed_files(conn, workspace: Path, base: str | None) -> tuple[dict, list[
         "base": base or "HEAD",
     }
     changed: list[dict] = []
+    validated = 0
     for repo in repos:
         repo_path = _repo_path(workspace, repo["path"])
         if not (repo_path / ".git").exists():
             continue
+        validated += 1
         if base is None:
             left = "HEAD"
         else:
@@ -202,6 +202,12 @@ def _changed_files(conn, workspace: Path, base: str | None) -> tuple[dict, list[
             entry = _changed_entry(repo["id"], parsed)
             if entry is not None:
                 changed.append(entry)
+    if base is not None and validated == 0:
+        raise BlastBaseError(
+            f"Base ref '{base}' could not be validated: no registered "
+            "repository with a .git directory exists under the workspace; "
+            "run from the workspace root or re-index with 'cairn update'."
+        )
     return basis, changed
 
 

@@ -88,9 +88,14 @@ def init(ws_arg, legacy_dir, no_build, import_docs, with_hooks):
         if legacy_db.exists() and not store.db.exists():
             size_kb = legacy_db.stat().st_size // 1024
             store.db.parent.mkdir(parents=True, exist_ok=True)
+            # Copy + atomic replace: a failed cross-fs move must not leave a
+            # partial store.db that blocks the migration retry.
+            migrate_tmp = store.db.with_name(store.db.name + ".migrate-tmp")
             try:
-                shutil.move(str(legacy_db), str(store.db))
+                shutil.copyfile(str(legacy_db), str(migrate_tmp))
+                os.replace(str(migrate_tmp), str(store.db))
             except OSError as e:
+                migrate_tmp.unlink(missing_ok=True)
                 r.warn(f"legacy .kg migration failed: {e}")
             else:
                 migrated.append(f".kg ({size_kb} KB)")
@@ -223,11 +228,13 @@ def config(list_all, mcp_config, db_only, as_json):
         return
 
     if mcp_config:
-        from ..mcp_server.auth import persisted_api_key
+        from ..mcp_server.auth import persisted_api_key, resolve_api_key
         from ..mcp_server.lifecycle import mcp_url
 
         entry: dict = {"type": "http", "url": mcp_url()}
-        key = persisted_api_key()
+        # env key wins: daemons enforce resolve_api_key (explicit > env), the
+        # persisted file is only the init-time fallback.
+        key = resolve_api_key(None) or persisted_api_key()
         if key:
             entry["headers"] = {"Authorization": f"Bearer {key}"}
         snippet = {"mcpServers": {"cairn": entry}}
@@ -372,6 +379,10 @@ def build(repo, workspace, db, verbose, staging, lsp, with_closure):
                     workspace=workspace, repo_filter=repo, db_path=target_db,
                     verbose=verbose, progress=on_progress, lsp=lsp,
                 )
+            except ValueError as e:
+                # build_graph refuses an all-skipped full build over a populated
+                # store; surface the refusal as a CLI error, not a traceback.
+                raise click.ClickException(str(e)) from e
             except Exception:
                 # --staging writes to a temp DB; remove the half-built temp DB on
                 # failure so a failed staging build doesn't leak. The rail's

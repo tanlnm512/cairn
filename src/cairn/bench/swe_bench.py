@@ -131,6 +131,10 @@ def load_tasks(
             raise ValueError(
                 "fetched row is missing required field(s): instance_id"
             )
+        if row["instance_id"] in by_id:
+            raise ValueError(
+                f"fetched rows contain duplicate instance id {row['instance_id']!r}"
+            )
         by_id[row["instance_id"]] = row
     tasks: list[dict] = []
     for instance_id in manifest["subset"]:

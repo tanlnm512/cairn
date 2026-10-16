@@ -296,6 +296,25 @@ def test_task_list_without_knowledge_flag_reads_the_env_store(cli_env):
 # --- escaping TASK_ID (bundle-root guard) --------------------------------
 
 
+def test_complete_missing_result_file_reports_cli_error(cli_env):
+    """A missing --result-file surfaces as a clean CLI error, never a raw
+    FileNotFoundError traceback."""
+    bundle = _bundle(cli_env)
+    t = create_task(bundle, "compass-synthesize", "test", facts={})
+    assert claim_task(bundle, t.id, "agent") is not None
+
+    missing = cli_env / "nope.txt"
+    result = CliRunner().invoke(
+        task, ["complete", t.id, "--result-file", str(missing)]
+    )
+
+    assert result.exit_code == 1
+    assert "nope.txt" in result.output
+    assert "Traceback" not in result.output
+    # The completion never ran: the task is untouched.
+    assert get_task(bundle, t.id).status == "in-progress"
+
+
 def test_escaping_task_id_reads_as_not_found_not_a_traceback(cli_env, tmp_path):
     """A TASK_ID escaping the bundle root must surface as the ordinary
     not-found path in show/claim/complete/drop (clean exit 1), never a raw

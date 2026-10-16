@@ -35,11 +35,16 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
             if backend in ("droid", "opencode", "claude"):
                 # Synchronous subprocess: agent runs inline, revise loop completes.
                 from ..compass.generator import generate_compass_with_llm
+                from ..compass.critic import critic_concept
                 from ..llm.client import get_client
 
                 client = get_client(bundle)
                 outcome = generate_compass_with_llm(module, conn, bundle, repo=repo, client=client)
                 concept = outcome["concept"]
+                # The revise loop retries on fact errors only; the critic's
+                # quality/warnings verdict is enforced here on the final bytes.
+                result = critic_concept(concept, conn)
+                fact_errors = outcome.get("fact_errors") or []
 
                 # --show-rejections: surface the per-cycle critic trace that the
                 # default path discards. This is the "agent being fact-checked" view.
@@ -60,15 +65,15 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
                 if dry_run:
                     click.echo(f"Would write compass ({outcome['mode']}): {concept.concept_id}")
                     click.echo(f"  revise cycles: {outcome.get('cycles', 0)}")
-                    errs = outcome.get("fact_errors") or []
-                    click.echo(f"  fact errors: {len(errs)}")
-                    for e in errs[:5]:
+                    click.echo(f"  critic verdict: passed={result.passed} "
+                               f"quality={result.quality_score:.2f} "
+                               f"errors={len(result.errors)} warnings={len(result.warnings)}")
+                    for e in fact_errors[:5]:
                         click.echo(f"    {e}")
                     click.echo("\n--- body (not written) ---\n")
                     click.echo(concept.body)
                     return
 
-                fact_errors = outcome.get("fact_errors") or []
                 if fact_errors:
                     # A concept that exhausted its revise cycles with remaining
                     # fact errors must NOT ship to disk.
@@ -79,6 +84,15 @@ def compass_generate(module, repo, db, knowledge, use_llm, dry_run, show_rejecti
                     )
                     for e in fact_errors[:5]:
                         click.echo(f"    {e}")
+                    sys.exit(1)
+
+                if not result.passed:
+                    click.echo(f"Compass rejected by critic (quality={result.quality_score:.2f}, "
+                               f"{len(result.errors)} error(s)) — not written.")
+                    for e in result.errors:
+                        click.echo(f"  ERROR: {e}")
+                    for w in result.warnings:
+                        click.echo(f"  warn: {w}")
                     sys.exit(1)
 
                 bundle.write_concept(concept)
@@ -207,6 +221,9 @@ def compass_validate(db, knowledge):
             result = critic_concept(concept, conn)
             status = "OK" if result.passed else "FAIL"
             click.echo(f"  [{status}] {cid} (quality={result.quality_score:.2f})")
+            if not result.passed:
+                # A quality-only failure has no errors to count; it is still a fail.
+                total_errors += 1
             for e in result.errors:
                 click.echo(f"      ERROR: {e}")
                 total_errors += 1
@@ -261,16 +278,15 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm,
 
     conn = get_db(db)
     steps = []
-    workflow_cid = None
     try:
         bundle = OKFBundle(knowledge)
 
-        # A bare name that matches several definitions would trace an
-        # arbitrary one; refuse and point at the ids instead.
+        # A bare or qualified name that matches several definitions would
+        # trace an arbitrary one; refuse and point at the ids instead.
         if entry_id is None:
             from ..graph.traversal import find_definition
             defs = [d for d in find_definition(conn, entry, limit=50)
-                    if d["name"] == entry]
+                    if d["name"] == entry or d["qualified_name"] == entry]
             if len(defs) > 1:
                 click.echo(f"`{entry}` is ambiguous: {len(defs)} symbols share the name.")
                 for d in defs:
@@ -298,7 +314,12 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm,
                 click.echo("Re-run without --dry-run to enqueue it.")
                 return
             from ..llm.tasks import create_task
-            t = create_task(bundle, "flow-synthesize", entry, facts=facts)
+            from ..compass.generator import _flow_coverage_key
+            # The queue critic promotes to compass/flow-{task.resource}; using
+            # the coverage key keeps the promoted compass collision-safe and
+            # recognized by flow-gaps detection.
+            key = _flow_coverage_key(conn, entry, entry_id, facts)
+            t = create_task(bundle, "flow-synthesize", key, facts=facts)
             click.echo(f"Traced {facts['total_steps']} step(s) from `{entry}` "
                        f"across {len(facts['modules'])} module(s).")
             click.echo(f"Queued flow task: {t.id}")
@@ -306,7 +327,8 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm,
             click.echo(f"  cairn task show {t.id}        # view the task + facts")
             click.echo(f"  cairn task claim {t.id}       # claim it")
             click.echo(f"  cairn task complete {t.id} --result-file <path>   # submit result")
-            click.echo("On completion, the critic auto-promotes to compass/flow-{entry}.")
+            safe_id = key.replace("/", "-").replace(".", "-").replace("#", "-")
+            click.echo(f"On completion, the critic auto-promotes to compass/flow-{safe_id}.")
             return
 
         click.echo(f"Traced {facts['total_steps']} step(s) from `{entry}` "
@@ -325,7 +347,7 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm,
         # dry-run return so --dry-run reflects the real verdict.
         result = critic_concept(concept, conn)
 
-        # --- Workflow generation (procedural knowledge) ---
+        # --- Workflow steps (procedural knowledge; the doc is written after the compass) ---
         if as_workflow:
             from ..knowledge.workflow import flow_to_workflow
             steps = flow_to_workflow(facts, max_steps=max_steps)
@@ -336,9 +358,6 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm,
                     if step.get("description"):
                         click.echo(f"     {step['description']}")
                 click.echo("")
-            elif result.passed:
-                workflow_cid = generate_flow_workflow(
-                    entry, conn, bundle, facts=facts, max_steps=max_steps)
     finally:
         conn.close()
 
@@ -368,16 +387,18 @@ def compass_flow(entry, db, knowledge, dry_run, as_workflow, max_steps, use_llm,
                    "graph (run `cairn build`) or a generator bug.")
         sys.exit(1)
 
-    if workflow_cid:
-        click.echo(f"Generated flow workflow: {workflow_cid} ({len(steps)} steps)")
-        click.echo(f"  Trace with: cairn knowledge workflow trace \"Flow: {entry}\"")
-        click.echo("")
-
+    # Compass first: a failed compass write must not leave an orphan workflow.
     bundle.write_concept(concept)
     click.echo(f"Generated flow compass: {concept.concept_id}")
     click.echo(f"  quality: {result.quality_score:.2f}, errors: {len(result.errors)}")
     click.echo("\n--- body ---\n")
     click.echo(concept.body)
+
+    if as_workflow:
+        workflow_cid = generate_flow_workflow(
+            entry, conn, bundle, facts=facts, max_steps=max_steps)
+        click.echo(f"Generated flow workflow: {workflow_cid} ({len(steps)} steps)")
+        click.echo(f"  Trace with: cairn knowledge workflow trace \"Flow: {entry}\"")
 
 
 @compass.command("flow-gaps")
@@ -452,6 +473,7 @@ def compass_flow_gaps(min_edges, generate, limit, dry_run, db, knowledge):
                     concept = generate_flow_compass(
                         name, conn, bundle,
                         entry_id=sym_id, resource=resource, title=display_title,
+                        facts=facts,
                     )
                     # The critic runs in dry-run too, so WOULD reflects the
                     # verdict the write path would have hit.

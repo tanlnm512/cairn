@@ -188,3 +188,34 @@ okf_version: 0.1
     parsed = OKFConcept._from_text(legacy, concept_id="legacy")
     assert parsed.timestamp == "2023-05-01T08:00:00Z"
     assert parsed.type == "Metric"
+
+
+def test_frontmatter_value_containing_dashes_parses_whole():
+    """A '---' inside a frontmatter value must not truncate the parse: the
+    closing delimiter is found by line position, so later fields and the
+    body all survive intact."""
+    text = (
+        "---\n"
+        "type: Compass\n"
+        "title: Retry---Backoff Policy\n"
+        "status: stable\n"
+        "---\n"
+        "\n"
+        "Body a\n"
+    )
+    parsed = OKFConcept._from_text(text, concept_id="x")
+    assert parsed.title == "Retry---Backoff Policy"
+    assert parsed.status == "stable"
+    assert parsed.body == "Body a\n"
+
+
+def test_frontmatter_body_separator_still_splits():
+    """A '---' separator inside the body stays in the body."""
+    text = "---\ntype: Compass\ntitle: T\n---\n\nBody\n---\nmore\n"
+    parsed = OKFConcept._from_text(text, concept_id="x")
+    assert parsed.title == "T"
+    assert parsed.body == "Body\n---\nmore\n"
+
+
+def test_unclosed_frontmatter_is_treated_as_body():
+    assert OKFConcept._from_text("---\ntype: Compass\nno closer").type == ""

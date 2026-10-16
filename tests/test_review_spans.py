@@ -147,3 +147,30 @@ def test_invalid_locations_raise_value_error(file_path, line):
             resolve_comment_symbols(conn, file_path, line)
     finally:
         conn.close()
+
+
+def test_repo_filter_scopes_same_path_symbols_to_one_repo(fresh_db):
+    """An explicit repo scopes resolution so a same-path file in another
+    repo cannot key the comment to foreign symbols."""
+    from cairn.review.spans import resolve_comment_symbols
+
+    conn = fresh_db
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('r1', 'r1', '/r1')")
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('r2', 'r2', '/r2')")
+    conn.executemany(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (?, ?, 'src/pkg/mod.py', 'python')",
+        [("f1", "r1"), ("f2", "r2")],
+    )
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, line_start, line_end) "
+        "VALUES ('s1', 'f1', 'alpha', 'function', 'mod.alpha', 1, 10)"
+    )
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, qualified_name, line_start, line_end) "
+        "VALUES ('s2', 'f2', 'beta', 'function', 'mod.beta', 1, 10)"
+    )
+    conn.commit()
+
+    scoped = resolve_comment_symbols(conn, "src/pkg/mod.py", 5, repo="r1")
+
+    assert [s.name for s in scoped.symbols] == ["alpha"]

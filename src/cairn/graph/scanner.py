@@ -107,6 +107,7 @@ REASON_CONFIG_EXCLUDE = "config_exclude"
 REASON_SIZE_CAP = "size_cap"
 REASON_MINIFIED = "minified_asset"
 REASON_PARSER_UNAVAILABLE = "parser_unavailable"
+REASON_STAT_ERROR = "stat_error"
 
 # Workspace root resolved from the current context (see src/paths.py):
 #   CAIRN_WORKSPACE env > registered ancestor > cwd. Resolved at import time;
@@ -412,7 +413,7 @@ def classify_file(
         try:
             size = abs_path.stat().st_size
         except OSError:
-            return False, REASON_DEFAULT_SKIP
+            return False, REASON_STAT_ERROR
         if size > MAX_FILE_SIZE:
             return False, REASON_SIZE_CAP
         return True, ""
@@ -435,7 +436,7 @@ def classify_file(
     try:
         size = abs_path.stat().st_size
     except OSError:
-        return False, REASON_DEFAULT_SKIP
+        return False, REASON_STAT_ERROR
     if size > MAX_FILE_SIZE:
         return False, REASON_SIZE_CAP
 

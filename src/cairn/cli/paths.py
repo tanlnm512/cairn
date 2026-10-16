@@ -42,6 +42,8 @@ from .main import DEFAULT_DB_PATH, get_db, main
 )
 def path(db, from_pattern, to_pattern, fuzzy, max_depth, limit):
     """Print shortest structural paths between two symbol patterns."""
+    if not from_pattern.strip() or not to_pattern.strip():
+        raise click.UsageError("--from/--to patterns must be non-empty.")
     if max_depth is not None and max_depth < 1:
         raise click.UsageError("--max-depth must be >= 1.")
     if limit < 1:

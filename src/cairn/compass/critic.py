@@ -24,13 +24,29 @@ _SAME_OR_HIGHER_HEADING_RE = re.compile(
 )
 
 
+def _section_end(body: str, start: int) -> int:
+    """Offset of the first same-or-higher heading at/after ``start`` that sits outside fenced code blocks."""
+    fence = ""
+    offset = start
+    for line in body[start:].splitlines(keepends=True):
+        stripped = line.lstrip(" \t")
+        if fence:
+            if stripped.startswith(fence * 3):
+                fence = ""
+        elif stripped.startswith("```") or stripped.startswith("~~~"):
+            fence = stripped[:1]
+        elif _SAME_OR_HIGHER_HEADING_RE.match(line):
+            return offset
+        offset += len(line)
+    return len(body)
+
+
 def split_notes(body: str) -> tuple[str, str]:
     """Return ``(Notes section, body without Notes)`` with bytes intact."""
     heading = _NOTES_HEADING_RE.search(body)
     if heading is None:
         return "", body
-    boundary = _SAME_OR_HIGHER_HEADING_RE.search(body, heading.end())
-    end = boundary.start() if boundary is not None else len(body)
+    end = _section_end(body, heading.end())
     return body[heading.start() : end], body[: heading.start()] + body[end:]
 
 

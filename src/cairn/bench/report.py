@@ -157,19 +157,22 @@ class ScalingReport:
 
 
 def compare_reports(baseline: dict, current: dict, threshold: float = 0.15) -> dict:
-    """Compare two perf reports and flag regressions beyond ``threshold``.
-
-    ``baseline``/``current`` are the dicts from ``PerfReport.to_dict()``.
-    Returns a dict mapping operation name → {baseline_ms, current_ms, delta_pct,
-    regressed(bool)}. An op is "regressed" if current median is more than
-    ``threshold`` (default 15%) slower than baseline.
-    """
+    """Ops → {baseline_ms, current_ms, delta_pct, regressed, unbaselined?} against a threshold."""
     base_ops = {op["name"]: op["median_ms"] for op in baseline.get("ops", [])}
     cur_ops = {op["name"]: op["median_ms"] for op in current.get("ops", [])}
     result = {}
     for name, cur_ms in cur_ops.items():
         base_ms = base_ops.get(name)
-        if base_ms is None or base_ms == 0:
+        if base_ms is None:
+            result[name] = {
+                "baseline_ms": None,
+                "current_ms": round(cur_ms, 2),
+                "delta_pct": None,
+                "regressed": False,
+                "unbaselined": True,
+            }
+            continue
+        if base_ms == 0:
             continue
         delta = (cur_ms - base_ms) / base_ms
         result[name] = {

@@ -699,7 +699,12 @@ def _panel_client(tmp_path, db_file: str, knowledge_dir: str):
 
     from cairn.dashboard.app import create_app
 
-    return TestClient(create_app(db_path=db_file, knowledge_dir=knowledge_dir))
+    # The settings POST guard requires a loopback Host header; the default
+    # testserver host would read as a DNS-rebinding attempt.
+    return TestClient(
+        create_app(db_path=db_file, knowledge_dir=knowledge_dir),
+        base_url="http://127.0.0.1:8765",
+    )
 
 
 def _reset_probe_cache() -> None:
@@ -2729,7 +2734,10 @@ def _switch_client(tmp_path, monkeypatch) -> tuple:
         "2026-08-20T08:00:00Z", calls=2,
     )
     monkeypatch.setattr(paths, "CAIRN_HOME", home)
-    return TestClient(create_app(db_path=str(launch_db))), home
+    return TestClient(
+        create_app(db_path=str(launch_db)),
+        base_url="http://127.0.0.1:8765",
+    ), home
 
 
 def test_store_param_serves_the_selected_workspace(tmp_path, monkeypatch):
@@ -2937,10 +2945,12 @@ def test_settings_post_actions_carry_the_store_in_the_url(tmp_path, monkeypatch)
 
 def test_settings_post_actions_reject_cross_site_requests(tmp_path, monkeypatch):
     """Both settings POST actions return 403 for browser cross-site requests
-    (mismatched Sec-Fetch-Site/Origin) before touching config. Sec-Fetch-Site
-    "same-site" is also rejected — another localhost port is same-site but is
-    exactly the cross-site write shape. Same-origin requests reach the
-    handler: the invalid knob forces the no-write refusal re-render (400)."""
+    (mismatched Sec-Fetch-Site/Origin) and for DNS-rebinding shapes (a forged
+    non-loopback Host, with or without agreeing Origin/Sec-Fetch-Site) before
+    touching config. Sec-Fetch-Site "same-site" is also rejected — another
+    localhost port is same-site but is exactly the cross-site write shape.
+    Same-origin loopback requests reach the handler: the invalid knob forces
+    the no-write refusal re-render (400)."""
     client, _ = _switch_client(tmp_path, monkeypatch)
 
     cross_site = (
@@ -2953,10 +2963,32 @@ def test_settings_post_actions_reject_cross_site_requests(tmp_path, monkeypatch)
             resp = client.post(path, data={"CAIRN_EMBED_TIMEOUT": "1"}, headers=headers)
             assert resp.status_code == 403, (path, headers)
 
+    # The rebind write shape: the attacker's domain resolves to the loopback,
+    # so Origin/Sec-Fetch-Site agree with the (forged) Host — still refused.
+    rebind = (
+        {"Host": "attacker.example:8765", "Origin": "http://attacker.example:8765"},
+        {"Host": "attacker.example:8765", "Sec-Fetch-Site": "same-origin"},
+        {"Host": "attacker.example"},
+    )
+    for path in ("/settings/save", "/settings/parity-check"):
+        for headers in rebind:
+            resp = client.post(
+                path, data={"CAIRN_EMBED_TIMEOUT": "1"}, headers=headers
+            )
+            assert resp.status_code == 403, (path, headers)
+
     resp = client.post(
         "/settings/save",
         data={"CAIRN_EMBED_TIMEOUT": "not-a-number"},
         headers={"Sec-Fetch-Site": "same-origin"},
+    )
+    assert resp.status_code == 400
+    assert "Refused" in resp.text
+
+    resp = client.post(
+        "/settings/save",
+        data={"CAIRN_EMBED_TIMEOUT": "not-a-number"},
+        headers={"Origin": "http://127.0.0.1:8765"},
     )
     assert resp.status_code == 400
     assert "Refused" in resp.text
@@ -3927,6 +3959,28 @@ def test_settings_refuses_non_numeric_timeout_without_writing(tmp_path):
     assert "Refused" in resp.text
     assert "CAIRN_EMBED_TIMEOUT" in resp.text
     assert _saved_config() == {}
+
+
+def test_settings_save_reports_dropped_values_not_a_false_saved(tmp_path):
+    """A submitted value the form cannot keep is reported on the page: a
+    fully-dropped save is a refusal (no saved banner, config unwritten), a
+    partial one warns by key while still saving the savable knobs."""
+    client = _settings_client(tmp_path)
+
+    full = client.post("/settings/save", data={"CAIRN_EMBED_BACKEND": "cohere"})
+    assert full.status_code == 400
+    assert "Settings saved" not in full.text
+    assert "CAIRN_EMBED_BACKEND" in full.text
+    assert _saved_config() == {}
+
+    partial = client.post(
+        "/settings/save",
+        data={"CAIRN_EMBED_BACKEND": "cohere", "CAIRN_EMBED_TIMEOUT": "45"},
+    )
+    assert partial.status_code == 200
+    assert "Settings saved" in partial.text
+    assert "CAIRN_EMBED_BACKEND" in partial.text
+    assert _saved_config() == {"CAIRN_EMBED_TIMEOUT": "45"}
 
 
 def test_settings_save_refused_in_read_only_mode(tmp_path, monkeypatch):

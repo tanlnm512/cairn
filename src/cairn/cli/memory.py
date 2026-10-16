@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import click
+import functools
 import os
 import re
+import shutil
 import sqlite3
 import sys
 from pathlib import Path
@@ -11,6 +13,19 @@ from pathlib import Path
 from .main import DEFAULT_DB_PATH, get_db, main
 
 MEMORY_TYPES = ("decision", "pattern", "mistake", "workaround")
+
+
+def _guard_lock_timeout(f):
+    """Map an OKF bundle-lock timeout to a CLI error instead of a traceback."""
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except TimeoutError as exc:
+            raise click.ClickException(
+                f"knowledge bundle is busy: {exc}"
+            ) from exc
+    return wrapper
 
 
 def _embed_saved_memories(conn, bundle, paths) -> None:
@@ -83,6 +98,7 @@ def memory():
                    "conflict.")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@_guard_lock_timeout
 def memory_record(mtype, title, body, resource, confidence, recurrence_key, stance, db, knowledge):
     """Record a learning: decision|pattern|mistake|workaround.
     For decision/mistake/workaround, structure --body as the fact/rule, then a
@@ -120,6 +136,7 @@ def memory_record(mtype, title, body, resource, confidence, recurrence_key, stan
 @memory.command("reflect")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@_guard_lock_timeout
 def memory_reflect(db, knowledge):
     """Recompute memory stances from supersession and citation evidence; writes frontmatter only, idempotent."""
     from ..memory.stance import reflect_store
@@ -146,6 +163,7 @@ def memory_reflect(db, knowledge):
 @click.option("--body", default=None, help="New body for the revised memory.")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@_guard_lock_timeout
 def memory_evolve(memory_path, title, body, db, knowledge):
     """Revise a memory: the new version supersedes the old and inherits its version chain."""
     from ..memory.promotion import evolve_memory
@@ -293,6 +311,7 @@ def memory_timeline(symbol, db, knowledge):
 @click.option("--session-id", default="hook", help="Origin session id")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@_guard_lock_timeout
 def memory_capture(session_transcript, session_transcript_stdin, session_id, db, knowledge):
     """Extract learnings from a session transcript (inline or --session-transcript-stdin, stdin wins); records or queues them."""
 
@@ -310,9 +329,16 @@ def memory_capture(session_transcript, session_transcript_stdin, session_id, db,
             transcript = session_transcript or "[]"
 
         # Try synchronous extraction via a configured subprocess backend.
+        # A missing backend skips the queue wait: SubprocessBackend's own
+        # fallback would block for its poll timeout and queue a duplicate task.
         backend = os.environ.get("CAIRN_LLM_BACKEND", "").lower()
         candidates = []
-        if backend in ("droid", "opencode", "claude"):
+        if backend and shutil.which(backend) is None:
+            click.echo(
+                f"LLM backend '{backend}' not found on PATH; queueing memory-extract task.",
+                err=True,
+            )
+        elif backend in ("droid", "opencode", "claude"):
             from ..llm.client import SubprocessBackend
 
             client = SubprocessBackend(bundle, cli=backend)
@@ -323,6 +349,7 @@ def memory_capture(session_transcript, session_transcript_stdin, session_id, db,
 
         # If we got candidates, record them now.
         recorded = 0
+        failed = 0
         captured_paths = []
         for cand in candidates:
             try:
@@ -340,6 +367,7 @@ def memory_capture(session_transcript, session_transcript_stdin, session_id, db,
                 captured_paths.append(result["path"])
                 recorded += 1
             except Exception:
+                failed += 1
                 continue
 
         if captured_paths:
@@ -348,7 +376,12 @@ def memory_capture(session_transcript, session_transcript_stdin, session_id, db,
 
         if recorded:
             click.echo(f"Captured {recorded} memories from session {session_id}.")
-        else:
+        if failed:
+            click.echo(
+                f"Skipped {failed} unrecordable candidate(s) from session {session_id}.",
+                err=True,
+            )
+        if not recorded:
             # The queued task .md persists the transcript-derived facts, so redact
             # before queueing.
             from ..memory.privacy import strip_private_data
@@ -378,6 +411,10 @@ def memory_list(tier, tag, db, knowledge):
     from ..memory import store as store_mod
     from ..okf.bundle import OKFBundle
 
+    if tier is not None and tier not in store_mod.TIERS:
+        raise click.UsageError(
+            f"--tier must be one of {', '.join(store_mod.TIERS)}, got '{tier}'."
+        )
     bundle = OKFBundle(knowledge)
     mems = store_mod.list_memories(bundle, tier=tier, tag=tag)
     if not mems:
@@ -448,6 +485,7 @@ def memory_digest(limit, db, knowledge):
 @click.argument("path")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@_guard_lock_timeout
 def memory_promote(path, db, knowledge):
     """Force-promote a memory to canonical (compass/wiki)."""
     from ..memory.promotion import promote_memory
@@ -474,6 +512,7 @@ def memory_promote(path, db, knowledge):
 @memory.command("decay")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@_guard_lock_timeout
 def memory_decay(db, knowledge):
     """Expire raw memories >7d, archive tribal >90d stale."""
     from ..memory.promotion import decay
@@ -544,6 +583,7 @@ def memory_batch_critic(db, knowledge):
 @click.argument("memory_path")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@_guard_lock_timeout
 def memory_forget(memory_path, db, knowledge):
     """Permanently delete a memory and its cross-session refs."""
     from ..memory.store import delete_memory
@@ -573,6 +613,7 @@ def memory_forget(memory_path, db, knowledge):
 @click.option("--tier", "target_tier", default="raw", help="Target tier (raw or archived).")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@_guard_lock_timeout
 def memory_demote(memory_path, target_tier, db, knowledge):
     """Demote a memory to a lower tier (rejects promotions)."""
     from ..memory.store import demote_memory
@@ -602,8 +643,10 @@ def memory_demote(memory_path, target_tier, db, knowledge):
 @memory.command("purge")
 @click.option("--max-days", default=90, type=int, help="Delete archived memories older than this.")
 @click.option("--dry-run", is_flag=True, help="List candidates without deleting.")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def memory_purge(max_days, dry_run, knowledge):
+@_guard_lock_timeout
+def memory_purge(max_days, dry_run, db, knowledge):
     """Purge old archived memories (CLI-only — not exposed as MCP)."""
     from ..memory.store import list_memories, parse_memory_timestamp, purge_archived
     from ..okf.bundle import OKFBundle
@@ -628,19 +671,31 @@ def memory_purge(max_days, dry_run, knowledge):
             click.echo(f"  {cid}  ({age}d)")
         return
 
-    purged = purge_archived(bundle, max_days=max_days)
+    conn = get_db(db)
+    try:
+        purged = purge_archived(bundle, max_days=max_days, conn=conn)
+        conn.commit()
+    finally:
+        conn.close()
     click.echo(f"Purged {purged} archived memory(ies) older than {max_days} days.")
 
 
 @memory.command("consolidate")
+@click.option("--db", default=str(DEFAULT_DB_PATH))
 @click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
-def memory_consolidate(knowledge):
+@_guard_lock_timeout
+def memory_consolidate(db, knowledge):
     """Consolidate redundant raw memories into unified tribal knowledge."""
     from ..memory.store import consolidate_memories
     from ..okf.bundle import OKFBundle
 
     bundle = OKFBundle(knowledge)
-    count = consolidate_memories(bundle)
+    conn = get_db(db)
+    try:
+        count = consolidate_memories(bundle, conn=conn)
+        conn.commit()
+    finally:
+        conn.close()
     click.echo(f"Consolidated {count} raw memories into tribal knowledge.")
 
 

@@ -304,18 +304,25 @@ class JavaParser(BaseParser, TreeSitterParserBase):
         )
 
     def _parse_new(self, node: Node, source: bytes) -> Optional[Edge]:
-        # The trailing type identifier names the constructed class.
+        # The trailing type identifier names the constructed class; a
+        # generic_type wraps it (new Foo<Integer>(1) -> Foo).
         owner = self._current_edge_owner()
         for child in node.children:
             if child.type == "argument_list":
                 break
-            if child.type in ("type_identifier", "class_type", "scoped_type_identifier"):
-                txt = self._node_text(child, source).strip()
-                callee = txt.split(".")[-1]
+            if child.type in (
+                "type_identifier",
+                "class_type",
+                "scoped_type_identifier",
+                "generic_type",
+            ):
+                txt = self._extract_type_name(child, source)
+                if not txt:
+                    continue
                 return Edge(
                     source_name=owner,
                     kind="calls",
-                    target_name=callee,
+                    target_name=txt.split(".")[-1],
                     line=node.start_point[0] + 1,
                     receiver_type=None,
                     call_arity=self._call_arity(node),

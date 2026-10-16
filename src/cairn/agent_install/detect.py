@@ -119,8 +119,12 @@ def _json_has_cairn(path: Path) -> bool:
         servers = data.get("mcpServers", {})
         if isinstance(servers, dict) and "cairn" in servers:
             return True
-        # Check top-level cairn key (some configs)
-        if "cairn" in data:
+        # Check top-level cairn key (legacy shape); it must look like an MCP
+        # registration, not an unrelated tool's namespaced setting.
+        cairn = data.get("cairn")
+        if isinstance(cairn, dict) and any(
+            k in cairn for k in ("url", "serverUrl", "command")
+        ):
             return True
         # ZCode nested shape: mcp.servers.cairn
         mcp = data.get("mcp", {})

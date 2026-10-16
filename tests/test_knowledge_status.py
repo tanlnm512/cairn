@@ -60,6 +60,16 @@ class TestUpdateStatusValidation:
         cid = add_document(bundle, "Refund Policy", "body", "business-rule")
         assert update_status(bundle, cid, "active") is True
 
+    def test_corrupt_stored_status_refused_not_coerced(self, bundle):
+        """An unrecognized stored doc_status must be refused, not coerced to
+        active: the coercion let a corrupt doc bypass the forward-only order."""
+        cid = add_document(bundle, "Refund Policy", "body", "business-rule")
+        concept = get_document(bundle, cid)
+        concept.extensions["doc_status"] = "archivd"
+        bundle.write_concept(concept)
+        assert update_status(bundle, cid, "superseded") is False
+        assert get_document(bundle, cid).extensions["doc_status"] == "archivd"
+
     def test_missing_doc_returns_false(self, bundle):
         assert update_status(bundle, "knowledge/business-rule/nope", "archived") is False
 

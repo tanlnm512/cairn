@@ -76,3 +76,28 @@ def test_records_for_symbol_ids_filter_and_order(db):
 
 def test_records_for_symbol_ids_empty_input(db):
     assert records_for_symbol_ids(db, []) == []
+
+
+def test_records_for_symbol_ids_chunks_large_id_lists(db, monkeypatch):
+    """IN-lists are chunked (taint.py's 400-param convention): a list spanning
+    several chunks returns the same complete, line-ordered rows."""
+    from cairn.graph import rationale as rationale_mod
+
+    monkeypatch.setattr(rationale_mod, "_IN_CHUNK", 2)
+    _insert(db, "a.py", [(6, "why", "in fn"), (2, "note", "file level")])
+    _insert(db, "b.py", [(15, "hack", "in other")])
+    symbol_ids = [
+        r["id"] for r in db.execute("SELECT id FROM symbols ORDER BY id")
+    ]
+    assert len(symbol_ids) >= 4
+
+    rows = records_for_symbol_ids(
+        db, symbol_ids + ["missing-1", "missing-2", "missing-3"]
+    )
+
+    assert [(r["line"], r["kind"], r["text"]) for r in rows] == [
+        (6, "why", "in fn"),
+        (15, "hack", "in other"),
+    ]
+    lines = [r["line"] for r in rows]
+    assert lines == sorted(lines)

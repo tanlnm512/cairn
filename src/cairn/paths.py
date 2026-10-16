@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import hashlib
+import errno
+import fcntl
 import json
 import logging
 import os
 import tempfile
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -190,6 +194,41 @@ def _save_registry(reg: dict[str, str]) -> None:
         raise
 
 
+# Bounded wait for the registry lock before a writer proceeds unlocked.
+_REGISTRY_LOCK_TIMEOUT = 5.0
+_REGISTRY_LOCK_POLL = 0.01
+
+
+@contextmanager
+def _registry_lock(timeout: float = _REGISTRY_LOCK_TIMEOUT):
+    """Bounded exclusive flock serializing registry read-modify-write cycles; proceeds unlocked on timeout."""
+    lock_path = REGISTRY_FILE.with_name(REGISTRY_FILE.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o644)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                    raise
+                if time.monotonic() >= deadline:
+                    _logger.warning(
+                        "registry lock %s busy; writing without it",
+                        lock_path,
+                    )
+                    break
+                time.sleep(_REGISTRY_LOCK_POLL)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 def register_workspace(workspace: Path) -> StorePaths:
     """Register a workspace (creates its store dir + registry entry)."""
     ws = workspace.resolve()
@@ -200,9 +239,10 @@ def register_workspace(workspace: Path) -> StorePaths:
         db=CAIRN_HOME / key / ".kg",
         knowledge=CAIRN_HOME / key / ".knowledge",
     ).ensure()
-    reg = _load_registry()
-    reg[str(ws)] = key
-    _save_registry(reg)
+    with _registry_lock():
+        reg = _load_registry()
+        reg[str(ws)] = key
+        _save_registry(reg)
     return paths
 
 

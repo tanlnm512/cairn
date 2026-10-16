@@ -44,6 +44,13 @@ def _result_cap() -> int:
     return MAX_RESULT_CHARS
 
 
+def _reset_result_cap() -> None:
+    """Re-read the cap so the env pin beats a frozen import-time value."""
+    from ..mcp_server.metric_buffering import reset_result_cap
+
+    reset_result_cap()
+
+
 def _payload_chars(result: Any) -> int:
     """Chars of context one cairn call returns, as the agent receives it.
 
@@ -612,6 +619,8 @@ def run_agent_suite(
     ``generate_corpus``'s own default).
     """
     # Pins (DB/backend/reranker/result-cap) set inside the try so no failure leaks them.
+    if runs < 1:
+        raise ValueError(f"runs must be >= 1, got {runs}")
     saved_env = snapshot_env(
         ("CAIRN_DB", "CAIRN_EMBED_BACKEND", "CAIRN_RERANK", "CAIRN_MAX_RESULT_CHARS")
     )
@@ -620,6 +629,7 @@ def run_agent_suite(
         os.environ["CAIRN_EMBED_BACKEND"] = embed_backend
         os.environ["CAIRN_RERANK"] = "0"
         os.environ["CAIRN_MAX_RESULT_CHARS"] = str(_RESULT_CAP_CHARS)
+        _reset_result_cap()
 
         from cairn.graph import embeddings as emb
         from cairn.graph.builder import build_graph
@@ -716,3 +726,4 @@ def run_agent_suite(
             conn.close()
     finally:
         restore_env(saved_env)
+        _reset_result_cap()

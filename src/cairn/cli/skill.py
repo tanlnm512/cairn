@@ -78,10 +78,23 @@ def generate(selectors, output, top_k, top_n, db, polish, knowledge):
         # The skill name matches the landing directory name; loaders key on it.
         rendered = render_skill(f"cairn-{slug}", description, inline)
         _verify_or_abort(conn, rendered)
+        for _, content in references:
+            # Reference files carry the section bytes verbatim; they get the
+            # same gate as the inline document.
+            _verify_or_abort(conn, content)
         if polish:
-            polish_outcome = _polish_stage(
-                conn, knowledge or _default_knowledge(), slug, rendered, target
-            )
+            try:
+                polish_outcome = _polish_stage(
+                    conn, knowledge or _default_knowledge(), slug, rendered, target
+                )
+            except Exception as exc:
+                # Polish is optional; its failure must not suppress the
+                # already-gated deterministic write.
+                polish_outcome = None
+                click.echo(
+                    f"Polish stage unavailable ({exc}); the deterministic skill stands.",
+                    err=True,
+                )
     finally:
         conn.close()
 

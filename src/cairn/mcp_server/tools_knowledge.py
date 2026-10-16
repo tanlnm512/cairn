@@ -5,7 +5,7 @@ import logging
 
 from mcp.types import ToolAnnotations
 
-from ._server_core import _bundle, _conn, _rw_conn, mcp
+from ._server_core import _bundle, _conn, _read_only_mode, _rw_conn, mcp
 from .metric_buffering import instrument
 from .tools_graph import _clamp
 
@@ -29,6 +29,10 @@ def knowledge_add(
     comma-separated. Returns the concept_id on success."""
     from cairn.knowledge.store import add_document, doc_concept_id, get_document
     from cairn.paths import resolve_store
+
+    if _read_only_mode():
+        return ("read-only server: knowledge_add writes the knowledge store; "
+                "run it on the writable side")
 
     # Ensure the knowledge dir exists.
     resolve_store().ensure()
@@ -106,6 +110,10 @@ def knowledge_delete(doc_id: str) -> str:
         get_document,
     )
 
+    if _read_only_mode():
+        return ("read-only server: knowledge_delete writes the knowledge "
+                "store; run it on the writable side")
+
     bundle = _bundle()
     try:
         _refuse_out_of_namespace(bundle, doc_id, get_document(bundle, doc_id))
@@ -138,6 +146,10 @@ def knowledge_delete(doc_id: str) -> str:
 def knowledge_status(doc_id: str, new_status: str) -> str:
     """Update doc_status on a knowledge document (active → superseded → archived); a write, not idempotent."""
     from cairn.knowledge.store import _refuse_out_of_namespace, get_document, update_status
+
+    if _read_only_mode():
+        return ("read-only server: knowledge_status writes the knowledge "
+                "store; run it on the writable side")
 
     bundle = _bundle()
     try:

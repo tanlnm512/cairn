@@ -546,3 +546,37 @@ def test_flush_cycle_lock_serializes_overlapping_cycles(cli_store):
 
     assert [row[0] for row in written] == ["cli:first", "cli:second"]
     assert not cli_metrics._CLI_BUFFER
+
+
+# ---------------------------------------------------------------------------
+# flush drain: maxlen eviction during the DB window must not drop new rows
+# ---------------------------------------------------------------------------
+
+
+def test_flush_drain_never_drops_rows_enqueued_during_db_window(cli_store):
+    """When the batch rows leave the buffer via maxlen eviction while the
+    flush is inside its DB window, the drain removes only the batch rows --
+    never pops unflushed rows from the head."""
+    cli_metrics._reset_for_tests()
+
+    class _EvictingConn:
+        def executemany(self, sql, batch):
+            pass
+
+        def commit(self):
+            # Concurrent producers fill the deque to maxlen mid-flush: the
+            # snapshot row is evicted before the drain runs.
+            for i in range(cli_metrics._CLI_BUFFER.maxlen):
+                cli_metrics._CLI_BUFFER.append(("late", i))
+
+        def close(self):
+            pass
+
+    cli_metrics.configure_conn(lambda: _EvictingConn())
+
+    cli_metrics.record_cli_invocation("only", ["one"], 1.0, "ok")
+    cli_metrics._flush_cli_metrics()
+
+    # A count-based popleft would have dropped one never-flushed "late" row.
+    assert len(cli_metrics._CLI_BUFFER) == cli_metrics._CLI_BUFFER.maxlen
+    assert cli_metrics._CLI_BUFFER[-1] == ("late", cli_metrics._CLI_BUFFER.maxlen - 1)

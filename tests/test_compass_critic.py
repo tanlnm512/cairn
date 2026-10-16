@@ -376,3 +376,65 @@ class TestCompassValidateCLI:
             assert "[ERROR] compass/00-bad" in result.output
             assert "compass/a-b-c" in result.output
             assert "total errors" in result.output
+
+
+class TestSplitNotesFences:
+    def test_hash_lines_inside_fences_are_not_boundaries(self):
+        from cairn.compass.critic import split_notes
+
+        body = (
+            "Intro\n"
+            "## Notes\n"
+            "```python\n"
+            "# not a heading\n"
+            "```\n"
+            "more notes\n"
+        )
+        notes, rest = split_notes(body)
+        assert rest == "Intro\n"
+        assert "# not a heading" in notes
+        assert "more notes" in notes
+
+    def test_boundary_after_fence_close_still_splits(self):
+        from cairn.compass.critic import split_notes
+
+        body = "## Notes\n```\n## fake\n```\n## Next\nx\n"
+        notes, rest = split_notes(body)
+        assert rest == "## Next\nx\n"
+        assert "## fake" in notes
+
+    def test_without_notes_ignores_fenced_hash_lines(self):
+        from cairn.compass.critic import without_notes
+
+        body = "## Notes\nRun:\n```\n# comment\n```\n"
+        assert without_notes(body) == ""
+
+
+class TestCompassValidateCLIQualityFail:
+    def test_quality_only_failure_exits_nonzero(self):
+        """A compass that fails on quality alone (no factual errors) prints
+        [FAIL] and must exit nonzero, matching the FAIL it prints."""
+        import tempfile
+        from click.testing import CliRunner
+
+        from cairn.cli import main
+        from cairn.okf.bundle import OKFBundle
+
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "test.db")
+            know = str(Path(tmp) / ".knowledge")
+            Path(know).mkdir(parents=True, exist_ok=True)
+            from cairn.graph.schema import get_db
+            get_db(db).close()
+            OKFBundle(know).write_concept(OKFConcept(
+                type="Compass", title="Thin", resource="a/b/c.py",
+                concept_id="compass/a-b-c",
+                body="Just some prose, no recognized sections.\n",
+            ))
+
+            result = runner.invoke(
+                main, ["compass", "validate", "--db", db, "--knowledge", know]
+            )
+            assert "[FAIL]" in result.output
+            assert result.exit_code == 1

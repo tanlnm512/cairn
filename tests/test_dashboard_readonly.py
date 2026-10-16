@@ -675,3 +675,19 @@ def test_communities_huge_id_renders_not_found(tmp_path):
     resp = _fetch(client, "/communities?community=" + "9" * 25)
 
     assert 'id="community-members"' in resp.text
+
+
+def test_unicode_digit_params_degrade_to_the_designed_fallback(tmp_path):
+    """Unicode digit lookalikes ("²") satisfy isdigit() but not int(): the
+    numeric query-param guards must fall back, never raise a 500."""
+    client, _ = _guard_world(tmp_path, name="unicode-digit-params.db")
+
+    communities = _fetch(client, "/communities?community=²")
+    assert 'id="community-members"' in communities.text
+
+    graph = _fetch(client, "/graph?scope=symbol&focus=alpha_main&depth=²")
+    assert 'id="graph-data"' in graph.text
+
+    neighbors = client.get("/graph/neighbors?name=alpha_main&depth=²")
+    assert neighbors.status_code == 200
+    assert "nodes" in neighbors.json()

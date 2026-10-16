@@ -397,14 +397,10 @@ def promote_memory(bundle: OKFBundle, memory_path: str, conn=None) -> Optional[s
         concept.type = new_type
         concept.extensions["memory_status"] = "canonical"
         concept.extensions.pop("memory_tier", None)
-        old_id = concept.concept_id
         # from_file leaves concept_id as an ABSOLUTE path, but embedding doc_ids
         # are stored relative (they originate from store_memory's return value).
         # Normalize so the embedding rename below matches the persisted row.
-        try:
-            old_id = str(Path(old_id).relative_to(bundle.root))
-        except ValueError:
-            pass  # already relative, or escapes root -- keep as-is
+        old_id = _norm_cid(bundle, concept.concept_id)
         concept.concept_id = new_id
         # Append the promotion-history entry BEFORE writing so the new file is
         # written exactly once with history included (no crash window between
@@ -445,6 +441,7 @@ def batch_critic(
         # promotion_history records which decision was reached.
         new_tier = store_mod.tier_for_score(signals["score"])
         old_id = concept.concept_id  # capture before re-tier for cleanup
+        old_rel = _norm_cid(bundle, old_id)
         if signals["score"] < 0.3:
             decision = Decision.ARCHIVE
         elif new_tier == "tribal":
@@ -455,14 +452,19 @@ def batch_critic(
         # (same append-then-write order as promote_memory).
         _append_promotion(concept, decision, signals["score"])
         if decision is Decision.ARCHIVE:
-            store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id, conn=conn)
+            new_id = store_mod.store_memory(concept, bundle, tier="archived", old_id=old_id, conn=conn)
             dropped += 1
         elif decision is Decision.PROMOTE:
-            store_mod.store_memory(concept, bundle, tier="tribal", old_id=old_id, conn=conn)
+            new_id = store_mod.store_memory(concept, bundle, tier="tribal", old_id=old_id, conn=conn)
             tribal += 1
         else:
-            store_mod.store_memory(concept, bundle, tier="drafts", old_id=old_id, conn=conn)
+            new_id = store_mod.store_memory(concept, bundle, tier="drafts", old_id=old_id, conn=conn)
             promoted += 1  # remains a candidate
+        # Carry the embedding forward across the tier move (a critic pass never
+        # changes content, so re-embedding identical text would be wasted work).
+        if conn is not None and new_id != old_rel:
+            from cairn.graph import embeddings as _emb
+            _emb.rename_memory_embedding(conn, old_rel, new_id)  # caller commits
     return {"processed": len(drafts), "tribal": tribal, "dropped": dropped, "remaining_drafts": promoted}
 
 

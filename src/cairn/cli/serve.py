@@ -135,10 +135,22 @@ def _serve_foreground(db, port=None, read_only=None, host=None, api_key=None, st
 @serve.command("start")
 @click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"HTTP daemon port (default {lc.DEFAULT_PORT}).")
 @click.option("--host", default=lc.DEFAULT_HOST, help=f"Bind host (default {lc.DEFAULT_HOST}, loopback).")
-def serve_start(port, host):
+@click.option(
+    "--api-key",
+    default=None,
+    help=(
+        "Bearer API key required by the HTTP daemon on non-loopback binds. "
+        "Takes precedence over CAIRN_MCP_API_KEY; prefer the env var (this flag is visible in process listings)."
+    ),
+)
+def serve_start(port, host, api_key):
     """Start the persistent shared HTTP daemon (launchd on macOS, daemonized otherwise); idempotent."""
+    from ..mcp_server.auth import resolve_api_key
+
     try:
-        pid, url, started = lc.ensure_daemon_running(port, host)
+        pid, url, started = lc.ensure_daemon_running(
+            port, host, api_key=resolve_api_key(api_key),
+        )
     except RuntimeError as exc:
         click.echo(f"ERROR: {exc}. Check the daemon log: {lc.daemon_log_path()}")
         sys.exit(1)
@@ -188,6 +200,9 @@ def serve_stop():
 
     time.sleep(0.5)
     if unload_error is not None:
+        sys.exit(1)
+    if lc.is_loaded() and lc.running_pid() is not None:
+        click.echo("ERROR: the daemon is still running after stop; check `cairn serve status`.")
         sys.exit(1)
     click.echo("stopped.")
 
@@ -253,10 +268,24 @@ def serve_status(port, host):
 
 
 @serve.command("restart")
-@click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"HTTP daemon port (default {lc.DEFAULT_PORT}).")
-@click.option("--host", default=lc.DEFAULT_HOST)
+@click.option("--port", default=None, type=int,
+              help="HTTP daemon port (default: the managed daemon's configured port).")
+@click.option("--host", default=None,
+              help="HTTP daemon host (default: the managed daemon's configured host).")
 @click.pass_context
 def serve_restart(ctx, port, host):
     """Stop then start the daemon."""
-    ctx.invoke(serve_stop)
+    # Defer to the daemon's configured bind so a restart never rebinds a
+    # custom-port daemon to the defaults.
+    d_port, d_host = lc.daemon_bind()
+    if port is None:
+        port = d_port if d_port is not None else lc.DEFAULT_PORT
+    if host is None:
+        host = d_host if d_host is not None else lc.DEFAULT_HOST
+    # A failed stop must not leave the daemon down: start reuses a healthy
+    # daemon or cycles a wedged one.
+    import contextlib
+
+    with contextlib.suppress(SystemExit):
+        ctx.invoke(serve_stop)
     ctx.invoke(serve_start, port=port, host=host)

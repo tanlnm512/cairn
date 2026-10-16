@@ -1274,3 +1274,286 @@ class TestWorkflowSync:
             ])
             assert result.exit_code == 0
             assert "Sync complete" in result.output
+
+
+class TestWorkflowSyncGuards:
+    """Sync-path guards: accurate empty-resource refusal + per-doc resolution."""
+
+    def test_sync_without_resource_refuses_accurately(self, fresh_db, tmp_path):
+        """An absent entry symbol is not a broken trace: find_definition('')
+        would fuzzy-match an arbitrary symbol, so the empty resource must be
+        refused before any lookup, and the doc left unchanged."""
+        from cairn.knowledge.workflow import add_workflow, sync_workflow, trace_workflow
+        from cairn.okf.bundle import OKFBundle
+        _seed_chain(fresh_db)
+        bundle = OKFBundle(str(tmp_path / ".knowledge"))
+        add_workflow(bundle, "Deploy runbook", steps=[
+            {"name": "ssh to host", "description": "ssh to the host"},
+        ])
+        result = sync_workflow(fresh_db, bundle, "Deploy runbook")
+        assert result is not None
+        assert "no resource" in result["error"]
+        assert "no longer traces" not in result["error"]
+        assert result["removed"] == []
+        traced = trace_workflow(bundle, "Deploy runbook")
+        assert [s["name"] for s in traced["steps"]] == ["ssh to host"]
+
+    def test_check_all_resolves_same_title_docs_individually(self, fresh_db, tmp_path):
+        """Same-title workflow docs must not shadow each other in the batch
+        staleness check: each listed doc is resolved by its own concept id."""
+        from cairn.knowledge.store import add_document
+        from cairn.knowledge.workflow import check_all_workflows
+        from cairn.okf.bundle import OKFBundle
+        _seed_chain(fresh_db)
+        bundle = OKFBundle(str(tmp_path / ".knowledge"))
+        add_document(bundle, "Deploy Service", "fresh doc", "workflow",
+                     steps=[{"name": "checkout", "symbol": "checkout",
+                             "file": "/repo/api/checkout.py"}],
+                     slug="deploy")
+        add_document(bundle, "Deploy Service", "stale doc", "workflow",
+                     steps=[{"name": "gone", "symbol": "gone", "file": "/repo/x.py"}],
+                     slug="deploy-b")
+        reports = check_all_workflows(fresh_db, bundle)
+        assert len(reports) == 1, "the fresh same-title doc must not mask the stale one"
+        assert reports[0]["concept_id"] == "knowledge/workflow/deploy-b"
+
+    def test_cli_sync_all_syncs_same_title_workflows_individually(self):
+        """`workflow sync --all` must sync each listed doc by its own concept
+        id: title resolution synced the first same-title doc twice."""
+        from cairn.graph.schema import get_db
+        from cairn.knowledge.store import add_document, get_document
+        from cairn.okf.bundle import OKFBundle
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "test.db")
+            know = str(Path(tmp) / ".knowledge")
+            Path(know).mkdir(parents=True)
+            conn = get_db(db)
+            _seed_chain(conn)
+            conn.close()
+            bundle = OKFBundle(know)
+            add_document(bundle, "Deploy Service", "traces checkout", "workflow",
+                         steps=[{"name": "old-a", "symbol": "old-a"}],
+                         resource="checkout", slug="deploy")
+            add_document(bundle, "Deploy Service", "traces chargeCard", "workflow",
+                         steps=[{"name": "old-b", "symbol": "old-b"}],
+                         resource="chargeCard", slug="deploy-b")
+
+            result = runner.invoke(main, [
+                "knowledge", "workflow", "sync", "--all",
+                "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 0, result.output
+            assert "Sync complete" in result.output
+
+            fresh = get_document(OKFBundle(know), "knowledge/workflow/deploy")
+            shadowed = get_document(OKFBundle(know), "knowledge/workflow/deploy-b")
+            a_syms = {s.get("symbol") for s in fresh.extensions["steps"] if s.get("symbol")}
+            b_syms = {s.get("symbol") for s in shadowed.extensions["steps"] if s.get("symbol")}
+            assert "checkout" in a_syms, f"deploy should re-trace checkout: {a_syms}"
+            assert "chargeCard" in b_syms, (
+                f"deploy-b must be synced from its own resource, not shadowed: {b_syms}"
+            )
+
+
+# ─── round-2 audit regression tests ────────────────────────────────────────
+
+def _seed_qualified_collision(conn: sqlite3.Connection) -> None:
+    """Two symbols sharing one qualified_name across repos."""
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('r1', 'app', '/repo1')")
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('r2', 'app', '/repo2')")
+    _row(conn, "files", id="f1", repo_id="r1", path="/repo1/a.py", language="python")
+    _row(conn, "files", id="f2", repo_id="r2", path="/repo2/a.py", language="python")
+    _row(conn, "symbols", id="q1", file_id="f1", name="handle", qualified_name="api.handler.handle", kind="function", line_start=1, line_end=10)
+    _row(conn, "symbols", id="q2", file_id="f2", name="handle", qualified_name="api.handler.handle", kind="function", line_start=1, line_end=10)
+    _row(conn, "symbols", id="q3", file_id="f1", name="solo", qualified_name="api.solo.run", kind="function", line_start=1, line_end=10)
+    _row(conn, "edges", id="eq1", source_id="q3", target_id="q1", target_name="handle", kind="call", line=5, column=0, resolution="exact")
+    conn.commit()
+
+
+def _seed_same_file_collision(conn: sqlite3.Connection) -> None:
+    """Two handle methods in the SAME file — both qualify as flows."""
+    conn.execute("INSERT INTO repos (id, name, path) VALUES ('r1', 'app', '/repo')")
+    _row(conn, "files", id="f1", repo_id="r1", path="/repo/views.py", language="python")
+    for i in range(5):
+        _row(conn, "files", id=f"ft{i}", repo_id="r1", path=f"/repo/leaf{i}.py", language="python")
+        _row(conn, "symbols", id=f"st{i}", file_id=f"ft{i}", name=f"leaf{i}", qualified_name=f"l.leaf{i}", kind="function", line_start=1, line_end=5)
+    _row(conn, "symbols", id="d1", file_id="f1", name="handle", qualified_name="Chat.handle", kind="method", line_start=1, line_end=20)
+    _row(conn, "symbols", id="d2", file_id="f1", name="handle", qualified_name="Home.handle", kind="method", line_start=30, line_end=50)
+    for i in range(5):
+        _row(conn, "edges", id=f"ed1{i}", source_id="d1", target_id=f"st{i}", target_name=f"leaf{i}", kind="call", line=5+i, column=0, resolution="exact")
+        _row(conn, "edges", id=f"ed2{i}", source_id="d2", target_id=f"st{i}", target_name=f"leaf{i}", kind="call", line=35+i, column=0, resolution="exact")
+    conn.commit()
+
+
+class TestQualifiedEntryGuard:
+    def test_qualified_ambiguous_entry_refuses_arbitrary_trace(self):
+        """A qualified name matching several symbols must hit the ambiguity
+        guard, not silently trace find_definition's arbitrary first row."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "test.db")
+            know = str(Path(tmp) / ".knowledge")
+            Path(know).mkdir(parents=True, exist_ok=True)
+            from cairn.graph.schema import get_db
+            conn = get_db(db)
+            _seed_qualified_collision(conn)
+            conn.close()
+            result = runner.invoke(main, [
+                "compass", "flow", "api.handler.handle", "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 1
+            assert "ambiguous" in result.output
+            assert not list(Path(know).rglob("compass/*.md"))
+
+    def test_unique_qualified_entry_traces(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "test.db")
+            know = str(Path(tmp) / ".knowledge")
+            Path(know).mkdir(parents=True, exist_ok=True)
+            from cairn.graph.schema import get_db
+            conn = get_db(db)
+            _seed_qualified_collision(conn)
+            conn.close()
+            result = runner.invoke(main, [
+                "compass", "flow", "api.solo.run", "--entry-id", "q3",
+                "--dry-run", "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 0, result.output
+            assert "Traced" in result.output
+
+
+class TestSameFileCollision:
+    def test_same_file_collision_distinct_resources(self, fresh_db):
+        """Two same-named symbols in one file get distinct coverage keys."""
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.okf.bundle import OKFBundle
+        import tempfile
+        know = tempfile.mkdtemp()
+        bundle = OKFBundle(know)
+        _seed_same_file_collision(fresh_db)
+        result = detect_flow_gaps(fresh_db, bundle, min_edges=5)
+        handles = [e for e in result["uncovered"] if e["name"] == "handle"]
+        assert len(handles) == 2
+        resources = {e["resource"] for e in handles}
+        assert len(resources) == 2
+        assert all(e["colliding"] for e in handles)
+
+    def test_same_file_collision_batch_generates_both(self):
+        """Batch --generate writes one compass per symbol; the second must
+        not overwrite the first via a shared concept_id."""
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "test.db")
+            know = str(Path(tmp) / ".knowledge")
+            Path(know).mkdir(parents=True, exist_ok=True)
+            from cairn.graph.schema import get_db
+            conn = get_db(db)
+            _seed_same_file_collision(conn)
+            conn.close()
+            result = runner.invoke(main, [
+                "compass", "flow-gaps", "--min-edges", "5", "--generate",
+                "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 0, result.output
+            files = list(Path(know).rglob("compass/flow-*.md"))
+            assert len(files) == 2
+
+    def test_generated_resource_matches_detection_key(self, fresh_db, tmp_path):
+        """The generator's fallback key (no resource passed) equals the
+        detection key for a same-file collision."""
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.compass.generator import generate_flow_compass
+        from cairn.okf.bundle import OKFBundle
+        know = str(tmp_path / ".knowledge")
+        bundle = OKFBundle(know)
+        _seed_same_file_collision(fresh_db)
+        candidates = [
+            e for e in detect_flow_gaps(fresh_db, bundle, min_edges=5)["uncovered"]
+            if e["name"] == "handle"
+        ]
+        for candidate in candidates:
+            concept = generate_flow_compass(
+                candidate["name"], fresh_db, bundle, entry_id=candidate["id"]
+            )
+            assert concept.resource == candidate["resource"]
+
+    def test_reference_only_edges_are_not_candidates(self, fresh_db):
+        """Edge kinds the flow trace cannot walk must not mint candidates:
+        a reference-only symbol would otherwise be a permanent SKIP ghost."""
+        from cairn.compass.flow_gaps import detect_flow_gaps
+        from cairn.okf.bundle import OKFBundle
+        import tempfile
+        know = tempfile.mkdtemp()
+        bundle = OKFBundle(know)
+        conn = fresh_db
+        conn.execute("INSERT INTO repos (id, name, path) VALUES ('r1', 'app', '/repo')")
+        _row(conn, "files", id="f1", repo_id="r1", path="/repo/ref.py", language="python")
+        for i in range(5):
+            _row(conn, "files", id=f"ft{i}", repo_id="r1", path=f"/repo/leaf{i}.py", language="python")
+            _row(conn, "symbols", id=f"st{i}", file_id=f"ft{i}", name=f"leaf{i}", qualified_name=f"l.leaf{i}", kind="function", line_start=1, line_end=5)
+        _row(conn, "symbols", id="sr", file_id="f1", name="refOnly", qualified_name="r.refOnly", kind="function", line_start=1, line_end=20)
+        for i in range(5):
+            _row(conn, "edges", id=f"er{i}", source_id="sr", target_id=f"st{i}", target_name=f"leaf{i}", kind="references", line=5+i, column=0, resolution="exact")
+        conn.commit()
+        result = detect_flow_gaps(conn, bundle, min_edges=5)
+        assert result["uncovered"] == []
+        assert result["covered"] == []
+
+
+class TestFlowWriteOrdering:
+    def test_compass_write_failure_leaves_no_orphan_workflow(self, monkeypatch):
+        """The workflow is written only after the compass write succeeds."""
+        import cairn.okf.bundle as bundle_mod
+
+        real = bundle_mod.OKFBundle.write_concept
+
+        def _boom(self, concept):
+            if concept.concept_id.startswith("compass/"):
+                raise RuntimeError("disk full")
+            return real(self, concept)
+
+        monkeypatch.setattr(bundle_mod.OKFBundle, "write_concept", _boom)
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "test.db")
+            know = str(Path(tmp) / ".knowledge")
+            Path(know).mkdir(parents=True, exist_ok=True)
+            from cairn.graph.schema import get_db
+            conn = get_db(db)
+            _seed_chain(conn)
+            conn.close()
+            result = runner.invoke(main, [
+                "compass", "flow", "checkout", "--as-workflow",
+                "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code != 0
+            assert list(Path(know).rglob("knowledge/workflow/*.md")) == []
+
+    def test_batch_generate_traces_each_entry_once(self, monkeypatch):
+        import cairn.compass.generator as gen_mod
+
+        real = gen_mod._gather_flow_facts
+        calls = []
+
+        def _counting(conn, entry, entry_id=None):
+            calls.append(entry)
+            return real(conn, entry, entry_id=entry_id)
+
+        monkeypatch.setattr(gen_mod, "_gather_flow_facts", _counting)
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "test.db")
+            know = str(Path(tmp) / ".knowledge")
+            Path(know).mkdir(parents=True, exist_ok=True)
+            from cairn.graph.schema import get_db
+            conn = get_db(db)
+            _seed_flows(conn)
+            conn.close()
+            result = runner.invoke(main, [
+                "compass", "flow-gaps", "--min-edges", "3", "--generate",
+                "--db", db, "--knowledge", know,
+            ])
+            assert result.exit_code == 0, result.output
+            assert sorted(calls) == ["midFlow", "richFlow"]

@@ -39,6 +39,12 @@ def file_api(
             f"Path '{path}' exists in multiple repositories: {candidates}. "
             "Pass repo with one of those ids."
         )
+    if repo is not None and repos and repo not in repos:
+        candidates = ", ".join(repos)
+        raise ValueError(
+            f"Repository '{repo}' does not index '{path}'. "
+            f"Valid repo ids for this path: {candidates}."
+        )
     selected_repo = repo if repo is not None else repos[0] if repos else None
     rows = conn.execute(
         """

@@ -70,10 +70,11 @@ def resolve_cg_command() -> list[str]:
 
 
 def daemon_mcp_url() -> str:
-    """Return the default daemon's MCP URL (loopback, default port, /mcp path)."""
+    """Return the managed daemon's MCP URL (its actual bind when discoverable, else the default)."""
     from ..mcp_server import lifecycle as lc
 
-    return lc.mcp_url()
+    port, host = lc.daemon_bind()
+    return lc.mcp_url(port=port or lc.DEFAULT_PORT, host=host or lc.DEFAULT_HOST)
 
 
 def auth_headers() -> dict:

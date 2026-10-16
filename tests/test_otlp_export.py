@@ -555,3 +555,36 @@ def test_read_only_daemon_taps_and_exports_nothing(monkeypatch):
 
     assert len(sink._BUFFER) == 0
     assert len(otel._PENDING) == 0
+
+
+def test_success_drain_never_drops_records_enqueued_during_export(monkeypatch):
+    """When the snapshot records leave _PENDING via maxlen eviction during
+    the export, the success drain removes only the batch records -- never
+    pops unexported records from the head."""
+    monkeypatch.setenv("CAIRN_OTEL_ENDPOINT", _ENDPOINT)
+    seen = _install_stub_sdk(monkeypatch)
+
+    emit(ANN_FALLBACK, reason="load_failed")
+    otel.flush()  # builds the exporter; baseline drain
+    assert len(otel._PENDING) == 0
+
+    maxlen = otel._PENDING.maxlen
+    inner = otel._otlp_tracker.inner
+    original_export = inner.export
+
+    def _evicting_export(batch):
+        # Concurrent producers fill the deque to maxlen mid-export: every
+        # snapshot record is evicted before the success drain runs.
+        for i in range(maxlen):
+            otel._PENDING.append(("late", i))
+        return original_export(batch)
+
+    monkeypatch.setattr(inner, "export", _evicting_export)
+
+    emit(LOCK_CONTENTION)
+    otel.flush()
+
+    assert seen["exports"] == 2, "the second export ran"
+    # A count-based popleft would have dropped one never-exported "late" row.
+    assert len(otel._PENDING) == maxlen
+    assert otel._PENDING[-1] == ("late", maxlen - 1)

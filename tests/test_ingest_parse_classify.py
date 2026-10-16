@@ -411,3 +411,49 @@ def test_classify_from_parsed_source_doc():
     assert result.doc_type == "decision"
     assert result.extra_tags == []
     assert result.skip_reason is None
+
+# --- fenced code blocks are doc content, not metadata ---
+
+
+def test_status_marker_inside_fence_is_ignored():
+    """A ``` fence is an example, so a Status marker in it sets no status."""
+    text = (
+        "# Deploy guide\n\n"
+        "```markdown\n"
+        "**Status:** Superseded\n"
+        "```\n\n"
+        "Real body.\n"
+    )
+    doc = parse_source_doc(text)
+    assert doc.status is None
+
+
+def test_status_marker_inside_tilde_fence_is_ignored():
+    text = "~~~\n**Status:** Superseded\n~~~\n\nReal body.\n"
+    doc = parse_source_doc(text)
+    assert doc.status is None
+
+
+def test_status_marker_after_closed_fence_still_reads():
+    """A marker outside any fence still applies when a fence closed earlier."""
+    text = (
+        "```python\n"
+        "**Status:** Superseded\n"
+        "```\n\n"
+        "**Status:** Accepted\n"
+    )
+    doc = parse_source_doc(text)
+    assert doc.status == "Accepted"
+
+
+def test_heading_inside_fence_is_not_the_title():
+    """A '#' line inside a fence is code, so the title comes from real prose."""
+    text = (
+        "```python\n"
+        "# just a comment\n"
+        "```\n\n"
+        "# Real Title\n\n"
+        "Body.\n"
+    )
+    doc = parse_source_doc(text)
+    assert doc.title == "Real Title"

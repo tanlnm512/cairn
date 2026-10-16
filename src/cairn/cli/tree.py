@@ -21,4 +21,6 @@ def tree(repo, db):
         sys.exit(1)
     for key, count in buckets[:30]:
         click.echo(f"  {count:>6}  {key}")
+    if len(buckets) > 30:
+        click.echo(f"  ... and {len(buckets) - 30} more directories")
 

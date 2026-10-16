@@ -63,7 +63,10 @@ def load_eval_queries(path: Optional[Path] = None) -> List[Dict[str, Any]]:
     if not p.exists():
         return []
     with open(p, "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or []
+        try:
+            return yaml.safe_load(fh) or []
+        except yaml.YAMLError as exc:
+            raise ValueError(f"{p.name}: not valid YAML: {exc}") from exc
 
 
 # --------------------------------------------------------------------------
@@ -575,6 +578,10 @@ def run_evaluation(
             continue
 
         expect = item.get("expect", [])
+        if not isinstance(expect, list) or not all(isinstance(e, str) for e in expect):
+            raise ValueError(
+                f"queries item {idx}: 'expect' must be a list of strings; got {expect!r}"
+            )
         notes: List[str] = []
 
         if c_type == "L1":

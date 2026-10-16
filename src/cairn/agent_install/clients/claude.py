@@ -23,6 +23,7 @@ from ..merge import (
     _rm_if_exists,
     _rm_if_ours,
     _rm_tree_if_cairn,
+    _rmdir_if_empty,
     _strip_hooks,
     _write_file,
     _write_tree,
@@ -188,5 +189,11 @@ def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
                     _claude_agent_md("cursor/knowledge-steward.json"), res)
         _rm_if_exists(base / ".claude" / "agents" / "cairn-agent.md", res)  # legacy filename cleanup
         _strip_hooks(base / ".claude" / "settings.json", res)
+        _rmdir_if_empty(base / ".claude" / "commands", res)
+        _rmdir_if_empty(base / ".claude" / "agents", res)
+        _rmdir_if_empty(base / ".claude" / "skills", res)
+        _rmdir_if_empty(base / ".claude", res)
+    if scope in ("workspace", "all"):
+        _rm_if_ours(ws / "CLAUDE.md", _claude_instructions(), res)
     if scope in ("global", "all"):
         _mcp_remove_user_scope(res)

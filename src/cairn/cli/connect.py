@@ -80,6 +80,15 @@ def connect(port, host):
         _report(lc.mcp_url(port, host), started=False)
         return
     fd = _acquire_start_lock(_LOCK_WAIT_SECONDS)
+    if fd is None:
+        # Proceeding unsynchronized would let a racing connect sweep-kill a
+        # daemon that is mid-start; fail instead.
+        click.echo(
+            f"ERROR: timed out after {_LOCK_WAIT_SECONDS:.0f}s waiting for the "
+            f"connect start lock ({_lockfile_path()}); retry after the other "
+            f"connect finishes."
+        )
+        sys.exit(1)
     try:
         if _try_reuse(port, host):
             _report(lc.mcp_url(port, host), started=False)

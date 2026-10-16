@@ -12,9 +12,9 @@ from ._server_core import (
     _append_embed_degradation_footnote,
     _bundle,
     _conn,
+    _definer_repos,
     _fresh_graph,
     _read_only_mode,
-    _repo_of,
     _session_id,
     _staleness_banner,
     mcp,
@@ -47,6 +47,18 @@ def _with_freshness(text: str, freshness) -> str:
 
 def _prepend_banner(text: str, banner: str) -> str:
     return f"{banner}\n{text}" if banner else text
+
+
+def _cross_repo_xref(conn, name: str) -> dict:
+    """Cross-repo dependents merged over every repo defining ``name``."""
+    from cairn.graph import queries
+
+    merged: dict[str, dict] = {}
+    for repo in _definer_repos(conn, name):
+        for d in queries.cross_repo_deps(conn, repo).get("dependents", []):
+            agg = merged.setdefault(d["repo"], {"repo": d["repo"], "count": 0})
+            agg["count"] += d["count"]
+    return {"dependents": list(merged.values())}
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
@@ -271,7 +283,7 @@ def impact_analysis(
 
         # Live path: recursive caller traversal.
         result = queries.impact_analysis(conn, name, max_depth=depth, fuzzy=fuzzy, limit=limit)
-        xref = queries.cross_repo_deps(conn, _repo_of(conn, name) or "")
+        xref = _cross_repo_xref(conn, name)
     finally:
         conn.close()
 

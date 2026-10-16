@@ -201,6 +201,24 @@ def test_repo_selects_one_duplicate_relative_path(graph_conn):
     ]
 
 
+def test_unknown_repo_raises_naming_valid_ids(graph_conn):
+    """An unknown repo id must not render as 'No indexed symbols' — the valid
+    ids are already resolved, so surface them."""
+    with pytest.raises(ValueError) as error:
+        _file_symbols(graph_conn, DUPLICATE_FILE, repo="nope")
+
+    message = str(error.value)
+    assert "'nope'" in message
+    assert "r, r2" in message
+
+
+def test_unknown_repo_on_single_repo_path_raises(graph_conn):
+    with pytest.raises(ValueError) as error:
+        _file_symbols(graph_conn, ORDERED_FILE, repo="r2")
+
+    assert "Valid repo ids for this path: r." in str(error.value)
+
+
 def test_mcp_file_api_returns_the_domain_symbol_surface(
     graph_conn, monkeypatch
 ):

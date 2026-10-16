@@ -210,11 +210,12 @@ def _flush_otlp() -> None:
             )
             return
         with _LOCK:
-            for _ in range(len(batch)):
+            # Identity-based drain: a count-based popleft could drop records enqueued during the export above.
+            for pending in batch:
                 try:
-                    _PENDING.popleft()
-                except IndexError:
-                    break
+                    _PENDING.remove(pending)
+                except ValueError:
+                    pass
 
 
 def flush() -> None:

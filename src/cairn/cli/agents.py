@@ -141,11 +141,13 @@ def install_agents(clients, ws_arg, scope_arg, force, dry_run, git_hooks, yes):
                      scope=scope)
 
     # Daemon gate: probe healthz so registrations are traced to a live daemon.
-    from ..mcp_server.lifecycle import healthz_responds, mcp_url
+    from ..agent_install._common import daemon_mcp_url
+    from ..mcp_server.lifecycle import daemon_bind, healthz_responds
 
-    url = mcp_url()
+    url = daemon_mcp_url()
+    port, host = daemon_bind()
     click.echo(f"MCP server: {url} (URL + key registrations)")
-    if not healthz_responds():
+    if not healthz_responds(port=port or 9876, host=host or "127.0.0.1"):
         click.echo(f"  note: daemon at {url} unreachable — run `cairn connect` to start it.")
     click.echo("")
 
