@@ -55,7 +55,7 @@ def _conn_store_workspace(conn: sqlite3.Connection) -> str | None:
     """Registered workspace whose canonical store backs conn, else None."""
     try:
         rows = conn.execute("PRAGMA database_list").fetchall()
-    except sqlite3.Error:
+    except (sqlite3.Error, AttributeError):
         return None
     db_file = next((row[2] for row in rows if row[1] == "main" and row[2]), None)
     if not db_file:

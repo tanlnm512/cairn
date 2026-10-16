@@ -99,11 +99,11 @@ def test_impact_and_deps_json_empty_exit_nonzero(tmp_path, monkeypatch):
 
     result = runner.invoke(main, ["impact", "alpha", "--json", "--db", str(db)])
     assert result.exit_code == 1, result.output
-    assert json.loads(result.output)["total"] == 0
+    assert json.loads(result.stdout)["total"] == 0
 
     result = runner.invoke(main, ["deps", "r1", "--json", "--db", str(db)])
     assert result.exit_code == 1, result.output
-    assert json.loads(result.output) == {"dependencies": [], "dependents": []}
+    assert json.loads(result.stdout) == {"dependencies": [], "dependents": []}
 
 
 # --- G121: unbounded --depth is rejected at the CLI boundary -----------------
