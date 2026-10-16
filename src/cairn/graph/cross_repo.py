@@ -28,10 +28,6 @@ _DEFAULT_NAMESPACES: Dict[str, str] = {
 REPO_NAMESPACES = _DEFAULT_NAMESPACES
 
 
-def _escape_like(value: str) -> str:
-    """Escape LIKE meta-characters so ``value`` matches literally."""
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
 # Namespace cache keys use the resolved workspace path.
 _namespaces_cache: Dict[str, Dict[str, str]] = {}
 
@@ -111,22 +107,19 @@ def cross_repo_deps(conn: sqlite3.Connection, repo: str) -> dict:
                 d = deps.setdefault(owner, {"repo": owner, "type": "import", "evidence": ns, "count": 0})
                 d["count"] += 1
 
-    # Dependent namespace matching stays in SQL and escapes LIKE metacharacters.
+    # Dependent matching stays in SQL; substr keeps it case-sensitive like the
+    # dependencies loop (module paths are case-sensitive): exact ns or ns-prefix
+    # at a dot boundary.
     my_namespaces = [ns for ns, owner in namespaces.items() if owner == repo]
     dependents: dict[str, dict] = {}
     if my_namespaces:
-        escaped_ns = [_escape_like(ns) for ns in my_namespaces]
-        # Each namespace contributes an exact match plus a dot-boundary
-        # extension (``ns`` / ``ns || '.%'``); ESCAPE is a per-LIKE modifier,
-        # so it is repeated on every term.
         where_clause = " OR ".join(
-            "(imported_path LIKE ? ESCAPE '\\' "
-            "OR imported_path LIKE ? || '.%' ESCAPE '\\')"
-            for _ in escaped_ns
+            "(imported_path = ? OR substr(imported_path, 1, ?) = ?)"
+            for _ in my_namespaces
         )
         params = [repo]
-        for ns in escaped_ns:
-            params.extend([ns, ns])
+        for ns in my_namespaces:
+            params.extend([ns, len(ns) + 1, ns + "."])
         for row in cur.execute(
             f"""SELECT imported_path, repo_id
                 FROM imports JOIN files ON imports.file_id = files.id

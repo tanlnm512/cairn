@@ -8,6 +8,10 @@ from typing import List, Optional, Tuple
 # Structural edges are followed by default; service edges require opt-in.
 STRUCTURAL_EDGE_KINDS: Tuple[str, ...] = ("calls", "call", "extends", "implements")
 
+# Cap on user-supplied traversal depth: the DFS spends ~2 Python frames per
+# level and must stay far under the interpreter recursion limit.
+MAX_TRAVERSAL_DEPTH = 100
+
 
 def _escape_like(value: str) -> str:
     """Escape LIKE meta-characters so ``value`` matches literally."""
@@ -311,19 +315,26 @@ def trace_flow(
     cycles: list[dict] = []
     cycles_seen: set[str] = set()
     truncated = False
-    # Per-call lookup memos do not change traversal results.
+    # Per-call lookup memos keyed by node id ("name:<n>" for unresolved
+    # callees) so same-named symbols never merge into one flow.
     callees_memo: dict[str, list] = {}
     defn_memo: dict[str, list] = {}
 
-    def _callees(n: str) -> list:
-        if n not in callees_memo:
-            callees_memo[n] = get_callees(conn, n, limit=50, fuzzy=fuzzy)
-        return callees_memo[n]
+    def _callees(cid: str, cname: str) -> list:
+        if cid not in callees_memo:
+            callees_memo[cid] = get_callees(
+                conn, cname, limit=50, fuzzy=fuzzy,
+                symbol_id=None if cid.startswith("name:") else cid,
+            )
+        return callees_memo[cid]
 
-    def _defn(n: str) -> list:
-        if n not in defn_memo:
-            defn_memo[n] = find_definition(conn, n, limit=1)
-        return defn_memo[n]
+    def _defn(cid: str, cname: str) -> list:
+        if cid not in defn_memo:
+            if cid.startswith("name:"):
+                defn_memo[cid] = find_definition(conn, cname, limit=1)
+            else:
+                defn_memo[cid] = find_definition_by_id(conn, cid)
+        return defn_memo[cid]
 
     # Seed the chain with the entry symbol itself.
     if entry_id:
@@ -333,7 +344,7 @@ def trace_flow(
     entry_file = entry_row[0]["file_path"] if entry_row else ""
     entry_repo = entry_row[0]["repo"] if entry_row else ""
     entry_kind = entry_row[0]["kind"] if entry_row else "function"
-    entry_row_id = entry_row[0]["id"] if entry_row else entry
+    entry_row_id = entry_row[0]["id"] if entry_row else f"name:{entry}"
     visited[entry_row_id] = {
         "symbol": entry, "kind": entry_kind, "file": entry_file,
         "repo": entry_repo, "depth": 0, "parent": None,
@@ -350,7 +361,7 @@ def trace_flow(
             return
 
         on_path.add(sym_id)
-        callees = _callees(sym_name)
+        callees = _callees(sym_id, sym_name)
 
         if not callees:
             if sym_id != entry_row_id:
@@ -381,7 +392,7 @@ def trace_flow(
             if cid not in visited:
                 # Resolve the callee's DEFINITION location (not the call site):
                 # where the symbol is actually declared.
-                defn = _defn(cname)
+                defn = _defn(cid, cname)
                 if defn:
                     d = defn[0]
                     cfile = d["file_path"]
