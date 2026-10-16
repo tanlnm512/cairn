@@ -111,14 +111,7 @@ def list_tasks(
 
 
 def claim_task(bundle: OKFBundle, task_id: str, assigned_to: str = "") -> Optional[Task]:
-    """Atomically claim a pending task. Returns None if not claimable.
-
-    Uses os.open(O_CREAT|O_EXCL) on a claim-marker file; two concurrent claims
-    on the same pending task yield exactly one winner. A `.claim` marker older
-    than CLAIM_STALE_SECONDS is treated as leaked and reclaimed; when that
-    marker was stale and the task's own claim is equally stale (claimant died
-    mid-task), the in-progress task is reclaimed too.
-    """
+    """Claim a pending task under its marker; None when unclaimable or the claimant is live."""
     # Create claim marker path (sibling to the task file)
     claim_marker = bundle.root / f"{TASK_DIR}/{task_id}.claim"
     if not claim_marker.resolve().is_relative_to(bundle.root.resolve()):

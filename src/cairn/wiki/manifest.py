@@ -100,18 +100,7 @@ def _normalize_rows(doc: Dict[str, Any]) -> None:
 
 
 def load_manifest(bundle_or_knowledge_root: Any) -> Dict[str, Any]:
-    """Load the manifest for a bundle or knowledge root.
-
-    Accepts an ``OKFBundle``, a ``Path``, or a path string. A missing
-    manifest file returns the empty document (not an error); a document
-    without a ``pages`` section loads with empty pages; unknown top-level
-    sections are preserved. A document in a schema older than
-    :data:`MANIFEST_SCHEMA` is upgraded in memory (never written back) --
-    an ``OKFBundle`` source also lets the row's task facts identify the
-    repo. Malformed JSON, a non-JSON-object document, a ``pages`` section
-    that is not a mapping, or a page row that is not a JSON object raise
-    ``ValueError``.
-    """
+    """Load (and in-memory upgrade) a manifest; malformed shapes raise ValueError."""
     path = _manifest_path(_root_of(bundle_or_knowledge_root))
     if not path.is_file():
         return {"schema": MANIFEST_SCHEMA, "pages": {}}

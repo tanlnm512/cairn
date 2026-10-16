@@ -15,12 +15,7 @@ class WikiPlannerError(Exception):
 
 
 def _module_of(path: str, repo_root: str) -> str:
-    """Bucket a file path into its module directory (first 2-3 segments).
-
-    Mirrors ``graph.stats.group_by_top_level`` exactly, including the
-    strip of legacy absolute paths (rows written before paths became
-    repo-relative).
-    """
+    """Module directory for a path; mirrors graph.stats.group_by_top_level exactly."""
     if repo_root and path.startswith(repo_root + "/"):
         path = path[len(repo_root) + 1:]
     parts = path.split("/")

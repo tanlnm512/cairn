@@ -11,20 +11,7 @@ from .timing import time_call
 
 
 def _phase_timings(workspace: str, db_path: str) -> tuple[dict, dict]:
-    """Build once, capturing per-phase wall-clock time from progress events.
-
-    Returns ``(build_stats, phase_seconds)`` where ``phase_seconds`` maps
-    phase names (scan_walk/scan/parse/insert/resolve/persist) to their
-    elapsed time. ``scan_walk`` is the workspace walk before the builder's
-    first event, kept as its own phase so ``build.scan`` stays comparable
-    with baselines recorded from the event-only span.
-
-    The build emits events in this order: ``scan`` (once), ``parse_progress``
-    (per file), ``parse_done`` (once), ``insert_progress`` (per batch),
-    ``resolve_start``/``resolve_done`` (per repo), ``persist`` (once). We map
-    each to a phase by tracking transitions: a phase starts at its first event
-    and ends at the first event of the next phase.
-    """
+    """Build once; returns (stats, phase_seconds) keyed by phase name, with scan_walk the pre-first-event walk."""
     from cairn.graph.builder import build_graph
 
     PHASE_OF = {

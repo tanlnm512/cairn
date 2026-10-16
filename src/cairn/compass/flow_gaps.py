@@ -103,11 +103,7 @@ def detect_flow_gaps(
 
 
 def _get_flow_candidates(conn: sqlite3.Connection, min_edges: int) -> List[dict]:
-    """Functions/methods with >= min_edges resolved outgoing edges of the structural kinds the flow trace walks.
-
-    Groups by symbol ID to keep duplicate symbol names distinct; reference-only
-    edges never mint candidates the trace cannot document.
-    """
+    """Candidates with >= min_edges resolved structural outgoing edges, grouped by symbol id."""
     cur = conn.cursor()
     kind_ph = ",".join("?" * len(STRUCTURAL_EDGE_KINDS))
     rows = cur.execute(

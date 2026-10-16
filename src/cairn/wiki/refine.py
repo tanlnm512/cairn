@@ -52,10 +52,7 @@ def _effective_entry(
     repo: str,
     used_ids: set,
 ) -> Optional[Dict[str, Any]]:
-    """The effective record for one refined entry, or None when the entry
-    is rejected (the deterministic plan still owns its module's page via
-    the append pass in ``validate_refined_outline``). The record's page id
-    is de-collided against ``used_ids``."""
+    """Effective record for a refined entry (None = rejected); page ids de-collide against used_ids."""
     if not isinstance(entry, dict):
         return None
     module = entry.get("module")
@@ -105,10 +102,7 @@ def validate_refined_outline(
     conn: sqlite3.Connection,
     repo: str,
 ) -> List[Dict[str, Any]]:
-    """Validate a refined catalog outline: the effective plan in refined order
-    with the planner's record shape; rejected entries revert to their module's
-    deterministic entry, duplicate modules keep the first, dropped ones appended,
-    and every page id is unique (collisions get a numeric suffix)."""
+    """Validate a refined outline: effective entries in order, rejects revert, ids unique."""
     det_by_module = {entry["module"]: entry for entry in deterministic_plan}
     effective: List[Dict[str, Any]] = []
     used_ids: set = set()
