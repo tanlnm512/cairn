@@ -47,6 +47,21 @@ def test_base_mode_maps_runtime_failures_to_clean_errors(
     assert "parse exploded" in result.stderr
 
 
+def test_missing_store_parent_maps_to_clean_error(tmp_path):
+    """A --db under a missing parent directory renders as click's single-line error."""
+    import cairn.cli.review as review_cli
+
+    db = tmp_path / "no-such-dir" / "graph.db"
+
+    result = CliRunner().invoke(
+        review_cli.review, ["--base", "main", "--db", str(db)]
+    )
+
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, sqlite3.Error), result.exception
+    assert "cannot read store" in result.stderr
+
+
 def test_gate_fails_closed_when_memory_reader_errors(tmp_path, monkeypatch):
     """--gate with an unreadable memory store must not pass silently."""
     import cairn.cli.review as review_cli

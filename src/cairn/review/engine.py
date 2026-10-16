@@ -13,7 +13,6 @@ MARKDOWN_FORMAT = "markdown"
 PACK_FORMATS = (TEXT_FORMAT, MARKDOWN_FORMAT)
 
 _MEMORY_TYPE_DEFAULT = "decision"
-_COMPASS_MISS_PREFIX = "No compass file found for "
 
 # Memory types the pre-submit guard warns about.
 PRE_SUBMIT_MEMORY_TYPES = ("mistake", "pattern")
@@ -62,8 +61,8 @@ def enrich_pack(conn: sqlite3.Connection, workspace: str, pack: dict) -> dict:
     seeds = pack.get("seeds") or []
     modules = sorted({_module_of(seed["file_path"]) for seed in seeds})
     pack["memories"] = _memory_section(conn, workspace, seeds)
-    pack["compass"] = _compass_section(modules)
-    pack["wiki"] = _wiki_section(modules)
+    pack["compass"] = _compass_section(workspace, modules)
+    pack["wiki"] = _wiki_section(workspace, modules)
     return pack
 
 
@@ -164,10 +163,8 @@ def _memory_section(conn: sqlite3.Connection, workspace: str, seeds: list[dict])
         return section
     try:
         from ..memory.promotion import search_memory
-        from ..okf.bundle import OKFBundle
-        from ..paths import resolve_store
 
-        bundle = OKFBundle(str(resolve_store(workspace).knowledge))
+        bundle = _workspace_bundle(workspace)
         for seed, query in queries:
             concepts = search_memory(conn, bundle, query) or []
             section["entries"].append(
@@ -191,33 +188,53 @@ def _memory_section(conn: sqlite3.Connection, workspace: str, seeds: list[dict])
     return section
 
 
-def _compass_section(modules: list[str]) -> dict:
+def _workspace_bundle(workspace: str):
+    from ..okf.bundle import OKFBundle
+    from ..paths import resolve_store
+
+    return OKFBundle(str(resolve_store(workspace).knowledge))
+
+
+def _compass_section(workspace: str, modules: list[str]) -> dict:
     section: dict = {"entries": [], "error": None}
     if not modules:
         return section
     try:
-        from ..mcp_server.tools_compass import get_compass
+        from ..mcp_server.tools_compass import find_compass_concept
 
+        bundle = _workspace_bundle(workspace)
         for module in modules:
-            guide = get_compass(module)
-            found = not guide.startswith(_COMPASS_MISS_PREFIX)
+            concept = find_compass_concept(bundle, module)
             section["entries"].append(
-                {"module": module, "guide": guide if found else "", "found": found}
+                {
+                    "module": module,
+                    "guide": (
+                        f"# {concept.title}\n\n{concept.body}"
+                        if concept is not None
+                        else ""
+                    ),
+                    "found": concept is not None,
+                }
             )
     except Exception as exc:
         section["error"] = str(exc)
     return section
 
 
-def _wiki_section(modules: list[str]) -> dict:
+def _wiki_section(workspace: str, modules: list[str]) -> dict:
     section: dict = {"entries": [], "error": None}
     if not modules:
         return section
     try:
-        from ..mcp_server.tools_compass import _render_full_body, search_knowledge_data
+        from ..mcp_server.tools_compass import _render_full_body
 
+        bundle = _workspace_bundle(workspace)
         for module in modules:
-            results = search_knowledge_data(module, type_filter="Wiki")
+            results = [
+                concept
+                for concept in bundle.search(module, limit=None)
+                if concept.type.startswith("Wiki")
+            ][:10]
             found = bool(results)
             section["entries"].append(
                 {

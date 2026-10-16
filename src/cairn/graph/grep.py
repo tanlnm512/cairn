@@ -44,7 +44,7 @@ def graph_grep(
     path_prefix: str = "",
     max_hits: int = DEFAULT_MAX_HITS,
 ) -> dict:
-    """Grouped hits by innermost symbol; ``truncated`` marks dropped counts as lower bounds."""
+    """Grouped hits by innermost symbol; ``truncated`` scans report dropped counts as lower bounds."""
     if max_hits < 1:
         raise ValueError("max_hits must be at least 1")
     expression = re.escape(pattern) if fixed else pattern
@@ -65,6 +65,8 @@ def graph_grep(
     unreadable = 0
     truncated = False
     collected_hits = 0
+    dropped_hits = 0
+    dropped_groups = 0
     groups: dict[tuple[str, str, str], _Group] = {}
     for row in file_rows:
         path = row["path"]
@@ -79,7 +81,7 @@ def graph_grep(
             unreadable += 1
             continue
         searched += 1
-        collected_hits += _collect_file_hits(
+        stored, excess_hits, excess_groups = _collect_file_hits(
             matcher,
             source.splitlines(),
             str(row["id"]),
@@ -89,6 +91,9 @@ def graph_grep(
             groups,
             max_hits - collected_hits,
         )
+        collected_hits += stored
+        dropped_hits += excess_hits
+        dropped_groups += excess_groups
         if collected_hits >= max_hits:
             truncated = True
             break
@@ -119,13 +124,12 @@ def graph_grep(
             )
             returned_hits += len(allowed)
 
-    total_hits = sum(len(group.hits) for group in ordered)
     return {
         "searched_files": searched,
         "unreadable_files": unreadable,
         "groups": [_payload_group(group) for group in capped],
-        "dropped_hits": total_hits - returned_hits,
-        "dropped_groups": len(ordered) - len(capped),
+        "dropped_hits": dropped_hits,
+        "dropped_groups": dropped_groups,
         "truncated": truncated,
     }
 
@@ -187,20 +191,22 @@ def _collect_file_hits(
     symbols: list[_SymbolSpan],
     groups: dict[tuple[str, str, str], _Group],
     budget: int,
-) -> int:
-    """Collect hits up to ``budget`` and return how many were stored."""
+) -> tuple[int, int, int]:
+    """Store up to ``budget`` hits; return stored, excess hits, excess groups."""
     collected = 0
+    excess = 0
+    excess_keys: set[tuple[str, str, str]] = set()
     for line_number, text in enumerate(lines, start=1):
         for match in matcher.finditer(text):
-            if collected >= budget:
-                return collected
             symbol = _innermost_symbol(symbols, line_number)
-            symbol_name = symbol.qualified_name if symbol is not None else ""
-            key = (
-                repo,
-                path,
-                symbol_name or "",
-            )
+            key = (repo, path, symbol.qualified_name if symbol is not None else "")
+            if collected >= budget:
+                # Budget exhausted: keep counting (never storing) the rest of
+                # the file so truncated scans report real lower bounds.
+                excess += 1
+                if key not in groups:
+                    excess_keys.add(key)
+                continue
             group = groups.get(key)
             if group is None:
                 group = _Group(repo, path, symbol, [])
@@ -213,7 +219,7 @@ def _collect_file_hits(
                 }
             )
             collected += 1
-    return collected
+    return collected, excess, len(excess_keys)
 
 
 def _innermost_symbol(

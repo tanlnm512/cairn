@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 
@@ -52,6 +53,8 @@ def blast(db, base, output_format, fuzzy, refresh, output):
     except RuntimeError as error:
         # Includes BlastBaseError; git and strict-refresh failures raise bare.
         raise click.ClickException(str(error)) from error
+    except sqlite3.Error as error:
+        raise click.ClickException(f"cannot read store {db}: {error}") from error
 
     paths = result.get("taint_paths") or []
     if output_format == "json":
@@ -67,4 +70,7 @@ def blast(db, base, output_format, fuzzy, refresh, output):
     if output is None:
         click.echo(rendered)
     else:
-        Path(output).write_text(rendered, encoding="utf-8")
+        try:
+            Path(output).write_text(rendered, encoding="utf-8")
+        except OSError as error:
+            raise click.ClickException(f"cannot write {output}: {error}") from error
