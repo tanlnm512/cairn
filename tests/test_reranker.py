@@ -135,6 +135,32 @@ class TestRerankFallback:
         assert out == []
         assert reranked is False
 
+    def test_force_bypasses_disabled_gate(self, monkeypatch):
+        """An explicit rerank=True from the caller must rerank even when the
+        env/marker gate is off (the pipeline's tri-state override contract)."""
+        monkeypatch.delenv("CAIRN_RERANK", raising=False)
+        from cairn.graph import reranker as rrk
+
+        assert rrk.rerank_enabled() is False
+        monkeypatch.setattr(rrk, "reranker_available", lambda: True)
+        monkeypatch.setattr(rrk, "reranker_model_is_cached", lambda name=None: True)
+
+        class FakeModel:
+            def predict(self, pairs):
+                return [1.0 if "backoff" in chunk else 0.1 for _, chunk in pairs]
+
+        rrk._RERANKER_CACHE[rrk.current_rerank_model()] = FakeModel()
+        try:
+            candidates = [
+                {"chunk": "formats a date for display"},
+                {"chunk": "retries with backoff"},
+            ]
+            out, reranked = rrk.rerank("retry logic", candidates, limit=2, force=True)
+            assert reranked is True
+            assert out[0]["chunk"] == "retries with backoff"
+        finally:
+            rrk._RERANKER_CACHE.clear()
+
 
 class TestRerankSuccessPath:
     def test_rerank_resorts_by_fake_model_score(self, monkeypatch):
@@ -591,7 +617,7 @@ class TestSemanticSearchPassesEnrichedQuery:
 
         recorded = {}
 
-        def fake_rerank(query, candidates, limit, structured=True):
+        def fake_rerank(query, candidates, limit, structured=True, force=False):
             recorded["query"] = query
             recorded["structured"] = structured
             out = [dict(c) for c in candidates[:limit]]
@@ -624,7 +650,7 @@ class TestSemanticSearchPassesEnrichedQuery:
 
         recorded = {}
 
-        def fake_rerank(query, candidates, limit, structured=True):
+        def fake_rerank(query, candidates, limit, structured=True, force=False):
             recorded["query"] = query
             return [dict(c) for c in candidates[:limit]], False
 
@@ -719,6 +745,32 @@ def test_reranker_model_is_cached_rejects_no_exist_sentinel(monkeypatch):
     from cairn.graph import reranker as rrk
 
     assert rrk.reranker_model_is_cached("BAAI/bge-reranker-base") is False
+
+
+def test_reranker_model_is_cached_requires_weights_beside_config(
+    monkeypatch, tmp_path
+):
+    """config.json alone must not read as cached: the download-reranker
+    short-circuit would report success for a corrupt cache and rerank would
+    silently fall back forever."""
+    import sys
+    import types
+
+    snapshot = tmp_path / "snapshots" / "rev1"
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_text("{}")
+
+    fake = types.ModuleType("huggingface_hub")
+    fake._CACHED_NO_EXIST = object()
+    fake.try_to_load_from_cache = lambda repo_id, filename: str(snapshot / filename)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake)
+
+    from cairn.graph import reranker as rrk
+
+    assert rrk.reranker_model_is_cached("BAAI/bge-reranker-base") is False
+
+    (snapshot / "model.safetensors").write_text("weights")
+    assert rrk.reranker_model_is_cached("BAAI/bge-reranker-base") is True
 
 
 # ---------------------------------------------------------------------------

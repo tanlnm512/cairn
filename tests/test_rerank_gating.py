@@ -85,7 +85,7 @@ class _RerankRecorder:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, query, candidates, limit):
+    def __call__(self, query, candidates, limit, force=False):
         self.calls.append({"query": query, "ids": [c.get("id") for c in candidates], "limit": limit})
         out = []
         for c in candidates[:limit]:
@@ -445,25 +445,27 @@ class TestPerCallOverride:
         assert len(rec.calls) == 1, "rerank=True must bypass the confidence gate"
         assert all(r["reranked"] is True for r in results)
 
-    def test_rerank_true_loses_to_kill_switch(self, monkeypatch, fresh_db):
-        """CAIRN_RERANK=0 is the hard off: even rerank=True cannot force the
-        stage (the env kill switch must win over the per-call override)."""
+    def test_rerank_true_overrides_kill_switch(self, monkeypatch, fresh_db):
+        """The per-call override is an honest tri-state: explicit True forces
+        the stage on even under CAIRN_RERANK=0 (None is what defers to the
+        env/marker gate)."""
         from cairn.graph import reranker as rrk
         from cairn.graph import embeddings as emb
 
         _seed_decisive(fresh_db)
         emb.embed_all(fresh_db)
         monkeypatch.setenv("CAIRN_RERANK", "0")
+        monkeypatch.setattr(rrk, "reranker_available", lambda: True)
         rec = _RerankRecorder()
         monkeypatch.setattr(rrk, "rerank", rec)
 
         results = _semantic_search(fresh_db, "safeApiCall", limit=5, rerank=True)
-        assert rec.calls == []
-        assert all(r["reranked"] is False for r in results)
+        assert len(rec.calls) == 1
+        assert all(r["reranked"] is True for r in results)
 
     def test_env_zero_disables_kill_switch_still_off_by_default(self, monkeypatch, fresh_db):
-        """Without enablement (no env, no marker) nothing reranks regardless
-        of the per-call override or the gate."""
+        """Without enablement (no env, no marker) the auto path never reranks:
+        None defers to the gate, which reads the kill switch as off."""
         from cairn.graph import reranker as rrk
         from cairn.graph import embeddings as emb
 
@@ -472,10 +474,9 @@ class TestPerCallOverride:
         rec = _RerankRecorder()
         monkeypatch.setattr(rrk, "rerank", rec)
 
-        for kwargs in ({}, {"rerank": True}):
-            results = _semantic_search(fresh_db, "safeApiCall", limit=5, **kwargs)
-            assert rec.calls == []
-            assert all(r["reranked"] is False for r in results)
+        results = _semantic_search(fresh_db, "safeApiCall", limit=5)
+        assert rec.calls == []
+        assert all(r["reranked"] is False for r in results)
 
 
 class TestEnvThresholdOverride:

@@ -610,8 +610,8 @@ def consolidate_memories(bundle: OKFBundle, conn=None) -> int:
                                 " WHERE concept_id = ?",
                                 (c.concept_id, source_id),
                             )
-                            from ..graph.embeddings import rename_memory_embedding
-                            rename_memory_embedding(conn, source_id, c.concept_id)
+                            from ..graph import embeddings as _emb
+                            _emb.rename_memory_embedding(conn, source_id, c.concept_id)
                         consolidated_count += 1
                     except Exception:
                         logger.warning(

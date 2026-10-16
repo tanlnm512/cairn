@@ -1001,7 +1001,7 @@ class _RerankRecorder:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, query, candidates, limit):
+    def __call__(self, query, candidates, limit, force=False):
         self.calls.append(
             {"query": query, "limit": limit, "n_candidates": len(candidates)}
         )

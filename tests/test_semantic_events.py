@@ -53,7 +53,7 @@ def _reset_sink_and_env(monkeypatch):
     monkeypatch.setenv("CAIRN_ANN_BACKEND", "off")
     monkeypatch.setattr(rrk, "rerank_enabled", lambda: False)
     monkeypatch.setattr(
-        rrk, "rerank", lambda query, candidates, limit: (candidates[:limit], False)
+        rrk, "rerank", lambda query, candidates, limit, force=False: (candidates[:limit], False)
     )
     emb.reset_backend_cache()
     yield
@@ -262,7 +262,7 @@ def test_rerank_degrade_reports_zero_and_degraded_flag(fresh_db, monkeypatch):
     monkeypatch.setattr(rrk, "rerank_enabled", lambda: True)
     # Stub the actual rerank to its documented fallback so no model is loaded.
     monkeypatch.setattr(
-        rrk, "rerank", lambda query, candidates, limit: (candidates[:limit], False)
+        rrk, "rerank", lambda query, candidates, limit, force=False: (candidates[:limit], False)
     )
 
     results = semantic_search(fresh_db, "safeApiCall", limit=5, threshold=-1.0)
@@ -284,7 +284,7 @@ def test_rerank_success_reports_one_and_no_degradation(fresh_db, monkeypatch):
     emb.embed_all(fresh_db)
     monkeypatch.setattr(rrk, "rerank_enabled", lambda: True)
     monkeypatch.setattr(
-        rrk, "rerank", lambda query, candidates, limit: (candidates[:limit], True)
+        rrk, "rerank", lambda query, candidates, limit, force=False: (candidates[:limit], True)
     )
 
     semantic_search(fresh_db, "safeApiCall", limit=5, threshold=-1.0)
@@ -641,7 +641,8 @@ def test_active_rung1_adoption_carries_the_dense_leg(fresh_db, monkeypatch):
 def test_pass_level_failure_maps_to_rung_instead_of_raising(fresh_db, monkeypatch):
     """A residual hard failure from the dense pass (here: the ANN gate
     raising with a healthy embed) is caught at the _run_pass call site --
-    ladder evaluated once, no raise, zero candidates."""
+    ladder evaluated once, no raise, and the sparse/fusion rescue still
+    delivers the bm25 leg (same shape as an empty dense leg)."""
     _seed_symbols(fresh_db)
     _server_env(monkeypatch)
     ladder = _rung3_ladder(monkeypatch)
@@ -662,7 +663,9 @@ def test_pass_level_failure_maps_to_rung_instead_of_raising(fresh_db, monkeypatc
     results = semantic_search(fresh_db, "safeApiCall", limit=5)
 
     assert calls == [1], "the call-site guard maps the failure to the ladder"
-    assert results == [], "the pass yields zero candidates instead of raising"
+    assert [r["name"] for r in results] == ["safeApiCall"], (
+        "the dense exception must not suppress the sparse/fusion rescue"
+    )
     assert ladder.degradation_active()
 
 
