@@ -1022,6 +1022,7 @@ def armed_gate(monkeypatch, fresh_db):
     _seed_decisive(fresh_db)
     emb.embed_all(fresh_db)
     monkeypatch.setattr(rrk, "_rerank_marker_path", lambda: Path("/nonexistent/marker"))
+    monkeypatch.setattr(rrk, "reranker_available", lambda: True)
     monkeypatch.setattr(emb, "is_hash_fallback", lambda: False)
     # Arm the gate despite the hash env (mirrors test_rerank_gating.py).
     monkeypatch.setattr(

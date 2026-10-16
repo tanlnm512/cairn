@@ -438,6 +438,7 @@ class TestPerCallOverride:
         _seed_decisive(fresh_db)
         emb.embed_all(fresh_db)
         monkeypatch.setenv("CAIRN_RERANK", "1")
+        monkeypatch.setattr(rrk, "reranker_available", lambda: True)
         rec = _RerankRecorder()
         monkeypatch.setattr(rrk, "rerank", rec)
 
