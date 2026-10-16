@@ -141,6 +141,22 @@ def _page_lines(out, page_id):
 # --- wiki status -----------------------------------------------------
 
 
+def test_knowledge_env_override_is_honored_without_the_flag(cli_env):
+    """CAIRN_KNOWLEDGE resolves the bundle when --knowledge is omitted,
+    matching validate/task/skill — the frozen db-relative default is gone."""
+    bundle = _bundle(cli_env)
+    queued = _queue_page(bundle, QUEUED_A)
+    _write_manifest(cli_env, {
+        _key(QUEUED_A): _row(QUEUED_A, state="queued", task_id=queued.id, attempts=1),
+    })
+
+    result = CliRunner().invoke(wiki, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert QUEUED_A in result.stdout
+    assert "No wiki pages planned" not in result.stdout
+
+
 def test_status_lists_each_page_once_with_a_state_and_aggregates(cli_env):
     """Every planned page is listed exactly once with one of the four states
     plus per-state aggregate counts; a failed row renders failed even though
@@ -417,6 +433,28 @@ def test_generate_llm_dry_run_queues_nothing(cli_env, tmp_path):
     bundle = _bundle(knowledge)
     assert list_tasks(bundle) == []
     assert not (knowledge / "_wiki" / "manifest.json").exists()
+
+
+def test_generate_dry_run_scores_reports_against_the_report_rubric(
+    cli_env, tmp_path
+):
+    """The deterministic architecture report is scored on its own section
+    vocabulary: the critic verdict is passed — never the compass rubric's
+    always-FAIL quality 0.00."""
+    db = tmp_path / "graph.db"
+    conn = get_db(str(db))
+    try:
+        _seed_indexed_repo(conn)
+    finally:
+        conn.close()
+
+    result = CliRunner().invoke(wiki, [
+        "generate", "--dry-run", "--db", str(db), "--knowledge", str(cli_env),
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert "passed: True" in result.stdout
+    assert "passed: False" not in result.stdout
 
 
 def test_generate_llm_malformed_manifest_errors_clean(cli_env, tmp_path):

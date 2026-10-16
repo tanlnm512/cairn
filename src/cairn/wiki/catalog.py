@@ -15,7 +15,7 @@ class WikiPlannerError(Exception):
 
 
 def _module_of(path: str, repo_root: str) -> str:
-    """Bucket a file path into its module (first 2-3 path segments).
+    """Bucket a file path into its module directory (first 2-3 segments).
 
     Mirrors ``graph.stats.group_by_top_level`` exactly, including the
     strip of legacy absolute paths (rows written before paths became
@@ -24,7 +24,12 @@ def _module_of(path: str, repo_root: str) -> str:
     if repo_root and path.startswith(repo_root + "/"):
         path = path[len(repo_root) + 1:]
     parts = path.split("/")
-    return "/".join(parts[:3]) if len(parts) >= 3 else parts[0]
+    # Group by directory: first 3 segments for deep paths, else the parent.
+    if len(parts) >= 4:
+        return "/".join(parts[:3])
+    if len(parts) >= 2:
+        return "/".join(parts[:-1])
+    return parts[0]
 
 
 _TEST_SEGMENTS = {"test", "tests", "spec", "specs"}
@@ -117,6 +122,18 @@ def _slug(module: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", module.lower()).strip("-")
 
 
+def _next_page_id(base_id: str, used_ids: set) -> str:
+    """``base_id`` de-collided against ``used_ids`` with a numeric suffix,
+    recorded in ``used_ids``."""
+    page_id = base_id
+    n = 2
+    while page_id in used_ids:
+        page_id = f"{base_id}-{n}"
+        n += 1
+    used_ids.add(page_id)
+    return page_id
+
+
 def _page(
     page_id: str, title: str, description: str, module: str, seeds: Dict[str, List[str]]
 ) -> Dict[str, Any]:
@@ -202,13 +219,7 @@ def build_page_plan(
     # get a numeric suffix instead of silently sharing one manifest key.
     used_ids = {"overview"}
     for module in ranked[: max(pages_cap - 1, 0)]:
-        base_id = _slug(module) or "module"
-        page_id = base_id
-        n = 2
-        while page_id in used_ids:
-            page_id = f"{base_id}-{n}"
-            n += 1
-        used_ids.add(page_id)
+        page_id = _next_page_id(_slug(module) or "module", used_ids)
         plan.append(
             _page(
                 page_id=page_id,

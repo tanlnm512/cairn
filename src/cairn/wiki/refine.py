@@ -9,7 +9,7 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 
 from ..refs import _path_match_params, _path_match_sql
-from .catalog import _like_under_prefix, _page, _slug
+from .catalog import _like_under_prefix, _next_page_id, _page, _slug
 
 _OVERVIEW_PAGE_ID = "overview"
 
@@ -50,10 +50,12 @@ def _effective_entry(
     det_by_module: Dict[str, Dict[str, Any]],
     conn: sqlite3.Connection,
     repo: str,
+    used_ids: set,
 ) -> Optional[Dict[str, Any]]:
     """The effective record for one refined entry, or None when the entry
     is rejected (the deterministic plan still owns its module's page via
-    the append pass in ``validate_refined_outline``)."""
+    the append pass in ``validate_refined_outline``). The record's page id
+    is de-collided against ``used_ids``."""
     if not isinstance(entry, dict):
         return None
     module = entry.get("module")
@@ -81,8 +83,15 @@ def _effective_entry(
         isinstance(p, str) and _file_in_repo(conn, repo, p) for p in seeds["files"]
     ):
         return None
+    # The overview id is reserved for the module-"" entry; _slug is not
+    # injective so module collisions get a numeric suffix.
+    page_id = (
+        _OVERVIEW_PAGE_ID
+        if module == ""
+        else _next_page_id(_slug(module) or "module", used_ids)
+    )
     return _page(
-        page_id=_OVERVIEW_PAGE_ID if module == "" else _slug(module),
+        page_id=page_id,
         title=entry.get("title", ""),
         description=entry.get("description", ""),
         module=module,
@@ -98,17 +107,31 @@ def validate_refined_outline(
 ) -> List[Dict[str, Any]]:
     """Validate a refined catalog outline: the effective plan in refined order
     with the planner's record shape; rejected entries revert to their module's
-    deterministic entry, duplicate modules keep the first, dropped ones appended."""
+    deterministic entry, duplicate modules keep the first, dropped ones appended,
+    and every page id is unique (collisions get a numeric suffix)."""
     det_by_module = {entry["module"]: entry for entry in deterministic_plan}
     effective: List[Dict[str, Any]] = []
+    used_ids: set = set()
     covered = set()
     for entry in refined:
-        record = _effective_entry(entry, det_by_module, conn, repo)
+        record = _effective_entry(entry, det_by_module, conn, repo, used_ids)
         if record is None or record["module"] in covered:
             continue
         covered.add(record["module"])
         effective.append(record)
     for entry in deterministic_plan:
-        if entry["module"] not in covered:
-            effective.append(entry)
+        if entry["module"] in covered:
+            continue
+        if entry["page_id"] in used_ids:
+            # Rebuild (rehashing the record) under the collision-free id.
+            entry = _page(
+                page_id=_next_page_id(entry["page_id"], used_ids),
+                title=entry["title"],
+                description=entry["description"],
+                module=entry["module"],
+                seeds=entry["seeds"],
+            )
+        else:
+            used_ids.add(entry["page_id"])
+        effective.append(entry)
     return effective
