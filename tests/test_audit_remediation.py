@@ -541,6 +541,35 @@ def test_context_cli_renders_memory_section(tmp_path, monkeypatch):
     assert "engine init is lazy" in result.output
 
 
+def test_context_cli_survives_unreadable_compass_file(tmp_path, monkeypatch):
+    """One non-UTF-8 compass file must not crash `cairn context`; readable
+    compass concepts still render."""
+    from click.testing import CliRunner
+
+    from cairn.cli.main import main
+
+    db, knowledge, _ = _make_knowledge_store(tmp_path, [
+        OKFConcept(
+            concept_id="compass/engine",
+            type="Compass",
+            title="engine compass",
+            resource="src/mod/ledger/engine.kt",
+            body="engine module guide",
+        ),
+    ])
+    (knowledge / "compass" / "broken.md").write_bytes(b"\xff\xfe not utf-8")
+    monkeypatch.setenv("CAIRN_DB", str(db))
+    monkeypatch.setenv("CAIRN_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("CAIRN_NO_REFRESH", "1")
+
+    result = CliRunner().invoke(
+        main, ["context", "src/mod/ledger/engine.kt", "--knowledge", str(knowledge)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "# Compass: engine compass" in result.output
+
+
 def test_ask_rejects_blank_question_on_single_store_path(tmp_path):
     """A blank question is a usage error on the single-store path, matching --all-repos."""
     from click.testing import CliRunner

@@ -33,6 +33,7 @@ def _ask_all_repos(question, as_json):
 
     answers = {}
     states = {}
+    errors = {}
     dropped = []
     for ws_path, store in iter_stores():
         state = _classify_store(store)
@@ -45,15 +46,21 @@ def _ask_all_repos(question, as_json):
                 try:
                     bundle = OKFBundle(str(store.knowledge))
                     answers[ws_path] = route_query(question, conn, bundle)
-                except Exception:
+                except Exception as exc:
                     state = "error"
+                    errors[ws_path] = f"{type(exc).__name__}: {exc}"
                 finally:
                     conn.close()
         states[ws_path] = state
         if state != "ok":
             dropped.append(ws_path)
     if as_json:
-        payload = {"answers": answers, "states": states, "dropped": dropped}
+        payload = {
+            "answers": answers,
+            "states": states,
+            "errors": errors,
+            "dropped": dropped,
+        }
         click.echo(json.dumps(payload, indent=2, default=str))
         return
     if not states:
@@ -65,7 +72,9 @@ def _ask_all_repos(question, as_json):
     if dropped:
         click.echo("\nDropped stores:")
         for ws_path in dropped:
-            click.echo(f"  {states[ws_path]}: {ws_path}")
+            detail = errors.get(ws_path)
+            suffix = f" ({detail})" if detail else ""
+            click.echo(f"  {states[ws_path]}: {ws_path}{suffix}")
 
 
 @main.command()
@@ -129,7 +138,10 @@ def context(file_path, knowledge, refresh):
     module_guess = "/".join(parts[:4]) if len(parts) >= 4 else file_path
     out = [f"Context for {file_path}:", f"  inferred module: {module_guess}"]
     for cid in bundle.list_concepts(prefix="compass/"):
-        c = bundle.read_concept(cid)
+        try:
+            c = bundle.read_concept(cid)
+        except Exception:
+            continue
         if c.resource and (c.resource in file_path or file_path in c.resource):
             out.append(f"\n# Compass: {c.title}\n{c.body}")
             break

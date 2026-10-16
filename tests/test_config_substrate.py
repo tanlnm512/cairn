@@ -447,3 +447,41 @@ class TestRegistryPersistence:
         assert registry_path.read_text(encoding="utf-8") == before
         assert list(registry_home.glob(".workspaces-*.tmp")) == []
         assert not paths.is_registered(ws2)
+
+    def test_registration_waits_for_registry_lock(self, registry_home, tmp_path):
+        """register_workspace serializes its read-modify-write on the registry
+        lock: a concurrent registration blocks while the lock is held, then
+        lands without dropping the holder's entry."""
+        import fcntl
+        import threading
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        paths.register_workspace(ws)
+
+        lock_path = registry_home / "workspaces.json.lock"
+        holder = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+        try:
+            fcntl.flock(holder, fcntl.LOCK_EX)
+            ws2 = tmp_path / "ws2"
+            ws2.mkdir()
+            done = threading.Event()
+
+            def _register():
+                paths.register_workspace(ws2)
+                done.set()
+
+            thread = threading.Thread(target=_register)
+            thread.start()
+            try:
+                assert not done.wait(0.5), (
+                    "registration completed while the registry lock was held"
+                )
+            finally:
+                fcntl.flock(holder, fcntl.LOCK_UN)
+            assert done.wait(5), "registration never completed after lock release"
+            thread.join(5)
+            assert paths.is_registered(ws)
+            assert paths.is_registered(ws2)
+        finally:
+            os.close(holder)

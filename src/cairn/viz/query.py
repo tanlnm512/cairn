@@ -211,7 +211,7 @@ def _curated_scope_graph(
 
     cur = conn.cursor()
     nodes: dict[str, dict] = {}
-    where = "WHERE f.path LIKE ?" if path_filter else ""
+    where = "WHERE f.path LIKE ? ESCAPE '\\'" if path_filter else ""
     params = (path_filter,) if path_filter else ()
     rows = cur.execute(
         f"SELECT s.name, s.kind, f.path, f.repo_id, s.qualified_name, "
@@ -288,8 +288,10 @@ def get_module_graph(
     conn: sqlite3.Connection, module: str = "", include_tests: bool = False
 ) -> Dict:
     """Symbols in a module plus internal edges, degree-ranked and curated with honest metadata."""
+    from ..graph.traversal import _escape_like
+
     nodes, edges, meta = _curated_scope_graph(
-        conn, include_tests, path_filter=f"%{module}%"
+        conn, include_tests, path_filter=f"%{_escape_like(module)}%"
     )
     return {
         "nodes": list(nodes.values()),

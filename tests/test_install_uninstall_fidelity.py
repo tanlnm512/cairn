@@ -588,6 +588,62 @@ class TestGitHookInstallCoverage:
             encoding="utf-8"
         ) == POST_COMMIT_TEMPLATE.format(repo="repo")
 
+    def test_git_file_checkout_installs_into_resolved_hooks_dir(
+        self, tmp_path, monkeypatch
+    ):
+        """A linked-worktree checkout (.git as a file) resolves its real
+        hooks dir via git instead of crashing with NotADirectoryError."""
+        monkeypatch.delenv("CAIRN_HOME", raising=False)
+        ws = tmp_path / "ws"
+        main_repo = ws / "main-repo"
+        main_repo.mkdir(parents=True)
+        git_env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+
+        def git(*args: str) -> None:
+            subprocess.run(
+                ["git", *args],
+                cwd=str(main_repo),
+                check=True,
+                capture_output=True,
+                env=git_env,
+            )
+
+        git("init", "-q")
+        git("commit", "-q", "--allow-empty", "-m", "init")
+        git("worktree", "add", "-q", "-b", "wt", "../linked-wt")
+
+        from cairn.hooks.git_hooks import (
+            discover_hook_repos,
+            install_hooks,
+            uninstall_hooks,
+        )
+
+        repos = discover_hook_repos(str(ws))
+        assert set(repos) == {"main-repo", "linked-wt"}
+        assert set(install_hooks(repos, str(ws))) == set(repos)
+
+        # Both repos share the common hooks dir; the per-worktree git dir
+        # must stay hook-free.
+        common = main_repo / ".git" / "hooks"
+        assert (common / "post-commit").exists()
+        assert (common / "post-checkout").exists()
+        assert not (
+            main_repo / ".git" / "worktrees" / "linked-wt" / "hooks" / "post-commit"
+        ).exists()
+
+        # The shared hooks file is removed once; whichever repo unlinks it
+        # leaves both hook names gone.
+        removed = uninstall_hooks(repos, str(ws))
+        assert removed and set(removed) <= set(repos)
+        assert not (common / "post-commit").exists()
+        assert not (common / "post-checkout").exists()
+
     def test_uninstall_removes_only_cairn_marked_files(self, tmp_path, monkeypatch):
         monkeypatch.delenv("CAIRN_HOME", raising=False)
         ws = tmp_path / "ws"
