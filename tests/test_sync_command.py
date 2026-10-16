@@ -1,6 +1,7 @@
 """Contracts for the ``cairn sync`` command's change detection and derived-index refresh."""
 from __future__ import annotations
 
+import contextlib
 import importlib
 import sqlite3
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 import click
 import pytest
 
-from cairn.graph.schema import init_db
+from cairn.graph.schema import build_lock, init_db
 
 # cairn.cli.system re-exports the `sync` Command over the submodule attribute,
 # so tests reach the module through sys.modules.
@@ -118,3 +119,59 @@ def test_repo_file_changes_raises_when_files_table_unreadable():
             _repo_file_changes(conn, "/nonexistent-workspace", Path("/nonexistent-workspace/repo"))
     finally:
         conn.close()
+
+
+def test_run_sync_holds_build_lock_across_the_write_sequence(tmp_path, monkeypatch):
+    """Prestate, reindex, derived refresh, and telemetry all run under build_lock."""
+    calls: list[str] = []
+    _patch_incremental(monkeypatch, calls)
+    _patch_overlay(monkeypatch, calls)
+
+    import cairn.graph.builder as builder_mod
+    import cairn.graph.schema as schema_mod
+
+    real_build_lock = schema_mod.build_lock
+
+    @contextlib.contextmanager
+    def tracking_build_lock(db_path):
+        calls.append("lock")
+        with real_build_lock(db_path):
+            yield
+        calls.append("unlock")
+
+    monkeypatch.setattr(schema_mod, "build_lock", tracking_build_lock)
+    monkeypatch.setattr(builder_mod, "record_build_run", lambda *a, **k: calls.append("record"))
+
+    conn = _conn(tmp_path)
+    try:
+        sync_mod._run_sync(conn, str(tmp_path), ["src/a.py"], str(tmp_path / "store.db"))
+    finally:
+        conn.close()
+
+    assert calls == [
+        "lock",
+        "prestate",
+        "reindex",
+        "overlay",
+        "maintain",
+        "record",
+        "unlock",
+    ]
+
+
+def test_run_sync_refuses_while_a_build_lock_is_held(tmp_path, monkeypatch):
+    """A concurrent build holding the lock fails sync loudly instead of racing the store swap."""
+    calls: list[str] = []
+    _patch_incremental(monkeypatch, calls)
+    _patch_overlay(monkeypatch, calls)
+
+    db = str(tmp_path / "store.db")
+    conn = _conn(tmp_path)
+    try:
+        with build_lock(db):
+            with pytest.raises(RuntimeError, match="Cannot acquire build lock"):
+                sync_mod._run_sync(conn, str(tmp_path), ["src/a.py"], db)
+    finally:
+        conn.close()
+
+    assert calls == []
