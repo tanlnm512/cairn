@@ -54,6 +54,7 @@ def validate_paths(db, knowledge, mark):
             return
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        marked = 0
         for entry in stale:
             cid = entry["concept_id"]
             score = entry["verified"]
@@ -88,13 +89,16 @@ def validate_paths(db, knowledge, mark):
                         bundle.write_concept(c)
                 except Exception as e:
                     click.echo(f"    (mark failed: {e})")
+                else:
+                    marked += 1
         if mark:
             conn.commit()
     finally:
         conn.close()
 
     action = "marked" if mark else "found"
-    click.echo(f"\n{action} {len(stale)} stale concept(s).")
+    count = marked if mark else len(stale)
+    click.echo(f"\n{action} {count} stale concept(s).")
     # Exit non-zero so CI/scripts can detect stale concepts.
     sys.exit(1)
 
