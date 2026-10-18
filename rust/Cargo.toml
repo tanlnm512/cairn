@@ -7,6 +7,7 @@ members = [
     "crates/cairn-parse",
     "crates/cairn-query",
     "crates/cairn-store",
+    "vendor/tree-sitter-dart",
 ]
 
 [workspace.package]

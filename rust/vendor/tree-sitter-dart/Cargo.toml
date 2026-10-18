@@ -1,0 +1,16 @@
+[package]
+name = "cairn-tree-sitter-dart"
+description = "Vendored dart tree-sitter grammar exposed as a LanguageFn."
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[build-dependencies]
+cc = "1"
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[lints]
+workspace = true
