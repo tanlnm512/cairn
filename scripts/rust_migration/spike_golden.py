@@ -216,12 +216,23 @@ def main(argv: list[str] | None = None) -> int:
                                           scratch.corpus_ws)
         captures = capture_all(scratch.db, queries, rules, read_only=False)
 
-        golden_scope = golden_record.compare_scope(fixture)
+        # BM25/query tie order is volatile across builds (parity.py's
+        # SORT_LINES_TOOLS ruling): compare rank-insensitively, sorted lines.
+        sorted_golden = golden_record.normalize_response(
+            fixture["response"], rules, sort_lines=True)
+        sorted_actual = golden_record.normalize_response(
+            captures[0], rules, sort_lines=True)
+        golden_scope = golden_record.compare_scope({
+            "schema": fixture["schema"], "tool": fixture["tool"],
+            "arguments": {"pattern": queries[0]},
+            "normalization": fixture["normalization"],
+            "response": sorted_golden,
+        })
         actual_scope = golden_record.compare_scope({
             "schema": fixture["schema"], "tool": fixture["tool"],
             "arguments": {"pattern": queries[0]},
             "normalization": fixture["normalization"],
-            "response": captures[0],
+            "response": sorted_actual,
         })
         diff = golden_record._diff_path(golden_scope, actual_scope)
         if diff:
@@ -239,6 +250,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         _note("slim store is response-equal for every query")
 
+        # Keep the fixture response and spike_queries[0] byte-equal (the Rust
+        # spike test asserts it): both carry this build's capture. Rank-order
+        # drift across builds is masked by the parity runner's sort_lines.
+        fixture["response"] = captures[0]
         fixture["spike_queries"] = [
             {"pattern": q, "response": r} for q, r in zip(queries, captures)
         ]

@@ -10,14 +10,14 @@
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "8c5a6d18b11e89967d644588d36d5f969e106703",
-      "git_dirty_entries": 110
+      "git_commit": "9009416037f9a2f05d9dd528eb3df2b37db77fe0",
+      "git_dirty_entries": 99
     },
     "store": {
       "repos": 1,
-      "files": 686,
-      "symbols": 11617,
-      "edges": 78988
+      "files": 694,
+      "symbols": 11933,
+      "edges": 82724
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
@@ -25,7 +25,7 @@
       "CAIRN_WATCH": "0"
     },
     "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T20:23:56.031682+00:00"
+    "captured_at": "2026-10-18T21:51:06.034820+00:00"
   },
   "normalization": {
     "rules": [
@@ -52,11 +52,11 @@
     "content": [
       {
         "type": "text",
-        "text": "9 memories matching 'invoke':\n  [tribal 0.632, refs-verified=n/a (0 refs)] Kotlin call edges resolve operator-invoke properties to types\n    Kotlin call edges resolve operator-invoke properties to types\n  [tribal 0.578, refs-verified=n/a (0 refs)] Concurrent CLI agent tests run subprocesses, not CliRunner threads\n    Concurrent CLI agent tests run subprocesses, not CliRunner threads\n  [tribal 0.625, refs-verified=n/a (0 refs)] History paging is keyset-based and treats null timestamps as pre-window\n    History paging is keyset-based and treats null timestamps as pre-window\n  [archived 0.642, refs-verified=n/a (0 refs)] Audit batch <DATE> closed via PR #141 (merged 43d58c5)\n    Audit batch <DATE> closed via PR #141 (merged 43d58c5)\n  [tribal 0.632, refs-verified=n/a (0 refs)] Embedding alias gates prove parity before writes\n    Embedding alias gates prove parity before writes\n  [tribal 0.625, refs-verified=n/a (0 refs)] Empty graph filters draw capped overviews, not empty graphs\n    Empty graph filters draw capped overviews, not empty graphs\n  [tribal 0.625, refs-verified=n/a (0 refs)] Run package module commands through the venv interpreter\n    Run package module commands through the venv interpreter\n  [tribal 0.625, refs-verified=n/a (0 refs)] Session chains never split on unknown timestamps\n    Session chains never split on unknown timestamps\n  [tribal 0.621, refs-verified=n/a (0 refs)] Tool-count guard runs at server start, not import time\n    Tool-count guard runs at server start, not import time\n(501 of 502 memories not yet embedded -- run `cairn memory embed` for semantic recall)"
+        "text": "9 memories matching 'invoke':\n  [tribal 0.632, refs-verified=n/a (0 refs)] Kotlin call edges resolve operator-invoke properties to types\n    Kotlin call edges resolve operator-invoke properties to types\n  [tribal 0.578, refs-verified=n/a (0 refs)] Concurrent CLI agent tests run subprocesses, not CliRunner threads\n    Concurrent CLI agent tests run subprocesses, not CliRunner threads\n  [tribal 0.625, refs-verified=n/a (0 refs)] History paging is keyset-based and treats null timestamps as pre-window\n    History paging is keyset-based and treats null timestamps as pre-window\n  [archived 0.642, refs-verified=n/a (0 refs)] Audit batch <DATE> closed via PR #141 (merged 43d58c5)\n    Audit batch <DATE> closed via PR #141 (merged 43d58c5)\n  [tribal 0.632, refs-verified=n/a (0 refs)] Embedding alias gates prove parity before writes\n    Embedding alias gates prove parity before writes\n  [tribal 0.625, refs-verified=n/a (0 refs)] Empty graph filters draw capped overviews, not empty graphs\n    Empty graph filters draw capped overviews, not empty graphs\n  [tribal 0.625, refs-verified=n/a (0 refs)] Run package module commands through the venv interpreter\n    Run package module commands through the venv interpreter\n  [tribal 0.625, refs-verified=n/a (0 refs)] Session chains never split on unknown timestamps\n    Session chains never split on unknown timestamps\n  [tribal 0.621, refs-verified=n/a (0 refs)] Tool-count guard runs at server start, not import time\n    Tool-count guard runs at server start, not import time\n(502 of 502 memories not yet embedded -- run `cairn memory embed` for semantic recall)"
       }
     ],
     "structuredContent": {
-      "result": "9 memories matching 'invoke':\n  [tribal 0.632, refs-verified=n/a (0 refs)] Kotlin call edges resolve operator-invoke properties to types\n    Kotlin call edges resolve operator-invoke properties to types\n  [tribal 0.578, refs-verified=n/a (0 refs)] Concurrent CLI agent tests run subprocesses, not CliRunner threads\n    Concurrent CLI agent tests run subprocesses, not CliRunner threads\n  [tribal 0.625, refs-verified=n/a (0 refs)] History paging is keyset-based and treats null timestamps as pre-window\n    History paging is keyset-based and treats null timestamps as pre-window\n  [archived 0.642, refs-verified=n/a (0 refs)] Audit batch <DATE> closed via PR #141 (merged 43d58c5)\n    Audit batch <DATE> closed via PR #141 (merged 43d58c5)\n  [tribal 0.632, refs-verified=n/a (0 refs)] Embedding alias gates prove parity before writes\n    Embedding alias gates prove parity before writes\n  [tribal 0.625, refs-verified=n/a (0 refs)] Empty graph filters draw capped overviews, not empty graphs\n    Empty graph filters draw capped overviews, not empty graphs\n  [tribal 0.625, refs-verified=n/a (0 refs)] Run package module commands through the venv interpreter\n    Run package module commands through the venv interpreter\n  [tribal 0.625, refs-verified=n/a (0 refs)] Session chains never split on unknown timestamps\n    Session chains never split on unknown timestamps\n  [tribal 0.621, refs-verified=n/a (0 refs)] Tool-count guard runs at server start, not import time\n    Tool-count guard runs at server start, not import time\n(501 of 502 memories not yet embedded -- run `cairn memory embed` for semantic recall)"
+      "result": "9 memories matching 'invoke':\n  [tribal 0.632, refs-verified=n/a (0 refs)] Kotlin call edges resolve operator-invoke properties to types\n    Kotlin call edges resolve operator-invoke properties to types\n  [tribal 0.578, refs-verified=n/a (0 refs)] Concurrent CLI agent tests run subprocesses, not CliRunner threads\n    Concurrent CLI agent tests run subprocesses, not CliRunner threads\n  [tribal 0.625, refs-verified=n/a (0 refs)] History paging is keyset-based and treats null timestamps as pre-window\n    History paging is keyset-based and treats null timestamps as pre-window\n  [archived 0.642, refs-verified=n/a (0 refs)] Audit batch <DATE> closed via PR #141 (merged 43d58c5)\n    Audit batch <DATE> closed via PR #141 (merged 43d58c5)\n  [tribal 0.632, refs-verified=n/a (0 refs)] Embedding alias gates prove parity before writes\n    Embedding alias gates prove parity before writes\n  [tribal 0.625, refs-verified=n/a (0 refs)] Empty graph filters draw capped overviews, not empty graphs\n    Empty graph filters draw capped overviews, not empty graphs\n  [tribal 0.625, refs-verified=n/a (0 refs)] Run package module commands through the venv interpreter\n    Run package module commands through the venv interpreter\n  [tribal 0.625, refs-verified=n/a (0 refs)] Session chains never split on unknown timestamps\n    Session chains never split on unknown timestamps\n  [tribal 0.621, refs-verified=n/a (0 refs)] Tool-count guard runs at server start, not import time\n    Tool-count guard runs at server start, not import time\n(502 of 502 memories not yet embedded -- run `cairn memory embed` for semantic recall)"
     }
   }
 }

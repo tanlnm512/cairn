@@ -10,14 +10,14 @@
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "8c5a6d18b11e89967d644588d36d5f969e106703",
-      "git_dirty_entries": 110
+      "git_commit": "9009416037f9a2f05d9dd528eb3df2b37db77fe0",
+      "git_dirty_entries": 99
     },
     "store": {
       "repos": 1,
-      "files": 686,
-      "symbols": 11617,
-      "edges": 78988
+      "files": 694,
+      "symbols": 11933,
+      "edges": 82724
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
@@ -25,7 +25,7 @@
       "CAIRN_WATCH": "0"
     },
     "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T20:23:56.029575+00:00"
+    "captured_at": "2026-10-18T21:51:06.032408+00:00"
   },
   "normalization": {
     "rules": [
@@ -52,11 +52,11 @@
     "content": [
       {
         "type": "text",
-        "text": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [8 members]\n  callers: [10 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 18\n  seed_count: 13\n  seeds: [13 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
+        "text": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [11 members]\n  callers: [11 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 22\n  seed_count: 15\n  seeds: [15 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
       }
     ],
     "structuredContent": {
-      "result": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [8 members]\n  callers: [10 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 18\n  seed_count: 13\n  seeds: [13 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
+      "result": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [11 members]\n  callers: [11 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 22\n  seed_count: 15\n  seeds: [15 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
     }
   }
 }

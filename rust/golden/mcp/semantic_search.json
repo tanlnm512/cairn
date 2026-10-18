@@ -11,14 +11,14 @@
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "8c5a6d18b11e89967d644588d36d5f969e106703",
-      "git_dirty_entries": 110
+      "git_commit": "9009416037f9a2f05d9dd528eb3df2b37db77fe0",
+      "git_dirty_entries": 99
     },
     "store": {
       "repos": 1,
-      "files": 686,
-      "symbols": 11617,
-      "edges": 78988
+      "files": 694,
+      "symbols": 11933,
+      "edges": 82724
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
@@ -26,7 +26,7 @@
       "CAIRN_WATCH": "0"
     },
     "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T20:23:56.026951+00:00"
+    "captured_at": "2026-10-18T21:51:06.029417+00:00"
   },
   "normalization": {
     "rules": [
@@ -53,11 +53,11 @@
     "content": [
       {
         "type": "text",
-        "text": "No matches for 'how does the build resolve call edges' -- neither the vector scan nor the BM25 fallback found anything. The corpus may not be embedded yet (run `cairn embed` to index), or the wording may not match any token. Try search_symbols(\"...\") for a lexical match, or rephrase with more specific terms."
+        "text": "Semantic index is empty. Run `cairn embed` once to index the corpus (build-time, ~1-2 min for 50k symbols), then retry this query. Embedding is not done lazily during search to avoid write-lock contention with the running server."
       }
     ],
     "structuredContent": {
-      "result": "No matches for 'how does the build resolve call edges' -- neither the vector scan nor the BM25 fallback found anything. The corpus may not be embedded yet (run `cairn embed` to index), or the wording may not match any token. Try search_symbols(\"...\") for a lexical match, or rephrase with more specific terms."
+      "result": "Semantic index is empty. Run `cairn embed` once to index the corpus (build-time, ~1-2 min for 50k symbols), then retry this query. Embedding is not done lazily during search to avoid write-lock contention with the running server."
     }
   }
 }
