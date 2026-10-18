@@ -41,6 +41,18 @@ adopted only through 2a revalidation.
   schemars/serde). Binary-size delta not measurable yet (no Rust build
   exists) — record it at P0-5 when the spike builds. Platform coverage:
   unrestricted (pure Rust; fits the P0-1 matrix incl. musl).
+- **P0-5 amendment — spike direct deps**: the daemon crate declares the
+  rmcp dependency stack directly to build the P0-5 spike, at the versions
+  rmcp 3.5.1 itself resolves (Cargo.lock): `axum 0.8`
+  (default-features off, `http1`+`tokio` — rmcp's own manifest pins), `tokio 1`
+  (`rt-multi-thread`/`net`/`macros`/`signal`), `tokio-util 0.7` (type of
+  `StreamableHttpServerConfig::cancellation_token`), `serde_json 1`
+  (rmcp model types). Test-only: `regex 1` (fixture normalization port).
+  No new pins — all resolve inside the D-001 stack already in Cargo.lock;
+  cargo-deny advisories/licenses gate them from P0-1. Measured delta: the
+  P0-5 example binary linking the full stack (rmcp + axum/hyper + bundled
+  SQLite + sqlite-vec, strip=true, aarch64-macOS release) is **6,115,808 B
+  (~5.8 MB)** (`cargo build --release -p cairn-daemon --example serve_search`).
 
 ## D-002: rusqlite =0.40.2, feature `bundled` — the `.kg` store
 

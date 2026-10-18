@@ -1,5 +1,9 @@
 //! Daemon layer: streamable-HTTP MCP server, bearer auth, healthz, reuse lifecycle.
 
+pub mod search;
+pub mod server;
+pub mod store;
+
 /// Returns the crate name; skeleton smoke contract.
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")

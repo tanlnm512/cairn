@@ -8,6 +8,16 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+rmcp = { version = "=3.5.1", features = ["transport-streamable-http-server"] }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+sqlite-vec = "=0.1.9"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "signal"] }
+tokio-util = "0.7"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+
+[dev-dependencies]
+regex = "1"
 
 [lints]
 workspace = true
