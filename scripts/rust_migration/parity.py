@@ -279,11 +279,35 @@ SORT_LINES_TOOLS = {"search_symbols", "find_definition", "path"}
 # the hop itself stays visible via the masked marker.
 DISPATCH_LIST_RE = re.compile(r"could dispatch to: .*")
 
+# Live self-store counters (graph sizes, hub degrees, memory totals) move with
+# every store update; numeric parity for them is owned by the corpus stores,
+# so self-store captures mask the counts and keep structure golden.
+SELF_COUNTER_RULES = [
+    ("memory_total", re.compile(r"\d+ of \d+ memories not yet embedded"),
+     "<N> of <N> memories not yet embedded"),
+    ("lang_totals", re.compile(r"\d+ files, \d+ symbols, \d+ edges"),
+     "<N> files, <N> symbols, <N> edges"),
+    ("in_degree", re.compile(r"\bin-degree \d+\b"), "in-degree <N>"),
+    ("dropped_hubs", re.compile(r"\bdropped hubs: \d+\b"), "dropped hubs: <N>"),
+    ("dropped_hotspots", re.compile(r"\bdropped hotspots: \d+\b"),
+     "dropped hotspots: <N>"),
+    ("dropped_clusters", re.compile(r"\bdropped clusters: \d+\b"),
+     "dropped clusters: <N>"),
+]
+
 
 def extended_rules(rules: list) -> list:
     """Append parity-owned mask rules to the recorder's scrub rules."""
     return rules + [("dispatch_candidates", DISPATCH_LIST_RE,
                      "could dispatch to: <CANDIDATES>")]
+
+
+def parity_rules(store: str, scratch: Path, workspace: Path) -> list:
+    """Scrub + parity-owned rules; the live self store also masks counters."""
+    rules = extended_rules(gr.scrub_rules(scratch, scratch / "home", workspace))
+    if store == "self":
+        rules += SELF_COUNTER_RULES
+    return rules
 
 
 def apply_volatility(entries: list[dict]) -> None:
@@ -408,7 +432,7 @@ def record(store: str, out_dir: Path, scratch: Path, cfg: dict) -> int:
     workspace: Path = prep["workspace"]
     db = scratch / DB_NAME
     knowledge = scratch / ".knowledge"
-    rules = extended_rules(gr.scrub_rules(scratch, scratch / "home", workspace))
+    rules = parity_rules(store, scratch, workspace)
     meta = {
         "impl": "python",
         "harness": "scripts/rust_migration/parity.py",
@@ -452,7 +476,7 @@ def replay(out_dir: Path, scratch: Path, cfg: dict, store: str,
     workspace: Path = prep["workspace"]
     db = scratch / DB_NAME
     knowledge = scratch / ".knowledge"
-    rules = extended_rules(gr.scrub_rules(scratch, scratch / "home", workspace))
+    rules = parity_rules(store, scratch, workspace)
     targets = gr.refine_targets(
         db, baseline.choose_targets(db, workspace, knowledge)
     )

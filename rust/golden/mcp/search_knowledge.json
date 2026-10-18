@@ -11,22 +11,22 @@
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "5bd65ddd52de2dd64d1b2dafe8d8ed029776c86f",
-      "git_dirty_entries": 154
+      "git_commit": "350643089ec5e88ce9f2376ba4156d1425924783",
+      "git_dirty_entries": 74
     },
     "store": {
       "repos": 1,
-      "files": 694,
-      "symbols": 11934,
-      "edges": 82742
+      "files": 703,
+      "symbols": 11969,
+      "edges": 82818
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:22.225898+00:00"
+    "knowledge_bundle_seeded_files": 505,
+    "captured_at": "2026-10-18T23:04:44.829316+00:00"
   },
   "normalization": {
     "rules": [
@@ -43,7 +43,13 @@
       "id12",
       "id6",
       "float",
-      "dispatch_candidates"
+      "dispatch_candidates",
+      "memory_total",
+      "lang_totals",
+      "in_degree",
+      "dropped_hubs",
+      "dropped_hotspots",
+      "dropped_clusters"
     ],
     "sort_lines": false,
     "mask_list_lines": false
