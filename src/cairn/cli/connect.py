@@ -74,8 +74,16 @@ def _try_reuse(port: int, host: str) -> bool:
 @main.command()
 @click.option("--port", default=lc.DEFAULT_PORT, type=int, help=f"HTTP daemon port (default {lc.DEFAULT_PORT}).")
 @click.option("--host", default=lc.DEFAULT_HOST, help=f"HTTP daemon host (default {lc.DEFAULT_HOST}, loopback).")
-def connect(port, host):
+@click.option(
+    "--impl",
+    default=None,
+    type=click.Choice(["python", "rust"]),
+    help="Daemon implementation a start launches (default: CAIRN_DAEMON_IMPL or python).",
+)
+def connect(port, host, impl):
     """Start or reuse the shared HTTP daemon and print its MCP URL."""
+    if impl is not None:
+        os.environ[lc.DAEMON_IMPL_ENV] = impl
     if _try_reuse(port, host):
         _report(lc.mcp_url(port, host), started=False)
         return

@@ -213,3 +213,45 @@ def test_lock_timeout_fails_connect_without_sweep_or_start(monkeypatch):
     assert result.exit_code == 1, result.output
     assert "start lock" in result.output
     assert state["calls"] == [], "no sweep or start may run without the lock"
+
+
+def test_daemon_impl_env_selects_rust_binary_and_default_unchanged(monkeypatch, tmp_path):
+    """CAIRN_DAEMON_IMPL=rust makes a cold connect exec the CAIRN_RUST_BIN
+    binary; with the env unset the start still execs cg_bin's resolution."""
+    from click.testing import CliRunner
+
+    from cairn.cli import main
+    from cairn.mcp_server import lifecycle as lc
+
+    rust_bin = tmp_path / "cairn-rust"
+    rust_bin.write_text("#!/bin/sh\n")
+    monkeypatch.setenv("CAIRN_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CAIRN_WORKSPACE", str(tmp_path / "ws"))
+    monkeypatch.setenv("CAIRN_DB", str(tmp_path / "ws" / "graph.db"))
+    monkeypatch.setenv("CAIRN_KNOWLEDGE", str(tmp_path / "ws" / ".knowledge"))
+    monkeypatch.setenv("CAIRN_RUST_BIN", str(rust_bin))
+    monkeypatch.setattr(lc, "is_macos", lambda: True)
+    monkeypatch.setattr(lc, "healthz_json", lambda *a, **k: None)
+    monkeypatch.setattr(lc, "sweep_strays", lambda *a, **k: 0)
+    monkeypatch.setattr(lc, "is_loaded", lambda: False)
+    monkeypatch.setattr(lc, "load", lambda: True)
+    monkeypatch.setattr(lc, "healthz_responds", lambda *a, **k: True)
+    monkeypatch.setattr(lc, "running_pid", lambda: 4321)
+    written: list[dict] = []
+    monkeypatch.setattr(lc, "write_plist", written.append)
+
+    runner = CliRunner()
+    monkeypatch.setenv("CAIRN_DAEMON_IMPL", "rust")
+    result = runner.invoke(main, ["connect"])
+    assert result.exit_code == 0, result.output
+    assert "started" in result.output
+    assert written, "a cold connect must write the launchd plist"
+    assert written[-1]["ProgramArguments"][0] == str(rust_bin)
+
+    monkeypatch.delenv("CAIRN_DAEMON_IMPL")
+    written.clear()
+    result = runner.invoke(main, ["connect"])
+    assert result.exit_code == 0, result.output
+    assert written, "the default-start connect must write the launchd plist"
+    assert written[-1]["ProgramArguments"][0] == lc.cg_bin()
+    assert written[-1]["ProgramArguments"][0] != str(rust_bin)

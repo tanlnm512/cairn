@@ -86,6 +86,7 @@ _JSON_CHECK_NAMES = [
     "tool_health",
     "memory_staleness",
     "config",
+    "daemon",
     "environment",
 ]
 _HEALTH_STATUSES = {"PASS", "WARN", "FAIL"}
@@ -967,6 +968,7 @@ def test_embed_server_informational_when_disabled(tmp_path, monkeypatch):
         "tool_health",
         "memory_staleness",
         "config",
+        "daemon",
         "environment",
     ]
     row = _by_name(data, "embed_server")

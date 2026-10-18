@@ -53,6 +53,7 @@ HEALTH_CHECKS: tuple[HealthCheck, ...] = (
         lambda db, conn: [_check_memory_staleness(conn, db)],
     ),
     HealthCheck("config", lambda _db, _conn: [_check_config()]),
+    HealthCheck("daemon", lambda _db, _conn: [_check_daemon()]),
     HealthCheck("environment", lambda db, _conn: [_check_environment(db)]),
 )
 
@@ -645,6 +646,22 @@ def _check_config() -> dict:
     return _result("config", _PASS, "; ".join(f"{k}={v}" for k, v in knobs))
 
 
+def _check_daemon() -> dict:
+    """Daemon: which implementation is serving, from the managed daemon's live /healthz; report-only."""
+    from ...mcp_server import lifecycle
+
+    d_port, d_host = lifecycle.daemon_bind()
+    port = d_port if d_port is not None else lifecycle.DEFAULT_PORT
+    host = d_host if d_host is not None else lifecycle.DEFAULT_HOST
+    url = lifecycle.mcp_url(port, host)
+    payload = lifecycle.healthz_json(port, host)
+    if payload is None:
+        return _result("daemon", _PASS, f"no daemon serving at {url}")
+    # The impl marker is rust-announced; a payload without it is the Python daemon.
+    impl = payload.get("impl") or "python"
+    return _result("daemon", _PASS, f"{impl} daemon serving at {url}")
+
+
 # Environment wiring is appended to both doctor return paths. It reports
 # store-presence and registration transport-class findings; only a
 # non-daemon endpoint FAILs.
@@ -829,6 +846,7 @@ def _db_unavailable_results(error: Exception | None) -> list[dict]:
         _result("tool_health", _WARN, "database unavailable (see schema)"),
         _result("memory_staleness", _WARN, "database unavailable (see schema)"),
         _check_config(),
+        _check_daemon(),
     ]
 
 
