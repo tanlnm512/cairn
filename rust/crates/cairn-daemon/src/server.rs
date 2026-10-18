@@ -87,6 +87,7 @@ impl ServerHandler for CairnServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let name = request.name.to_string();
+        let tool_name = name.clone();
         let args = request
             .arguments
             .map(Value::Object)
@@ -96,7 +97,7 @@ impl ServerHandler for CairnServer {
             .await
             .map_err(|e| ErrorData::internal_error(format!("tool task failed: {e}"), None))?;
         let text = match outcome {
-            Ok(text) => text,
+            Ok(text) => truncate_result(&tool_name, text),
             Err(failure) => {
                 let mut result = CallToolResult::error(vec![ContentBlock::text(failure.0.clone())]);
                 result.structured_content = Some(json!({ "result": failure.0 }));
@@ -107,6 +108,31 @@ impl ServerHandler for CairnServer {
         result.structured_content = Some(json!({ "result": text }));
         Ok(result.into())
     }
+}
+
+/// Hard cap on one tool result, cut at the last newline with a fixed notice
+/// (the `@instrument` decorator's central truncation contract).
+fn truncate_result(name: &str, result: String) -> String {
+    let cap: usize = std::env::var("CAIRN_MAX_RESULT_CHARS")
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(60_000);
+    let char_count = result.chars().count();
+    if char_count <= cap {
+        return result;
+    }
+    let mut head: String = result.chars().take(cap).collect();
+    if let Some(cut) = head.rfind('\n')
+        && cut > 0
+    {
+        head.truncate(cut);
+    }
+    format!(
+        "{head}\n\n[TRUNCATED: '{name}' returned {char_count} chars, over the \
+         {cap}-char cap. Narrow the query -- e.g. pass a smaller `limit`, use \
+         fuzzy=False, a more specific pattern, or a lower `depth` -- rather \
+         than relying on this truncated output.]"
+    )
 }
 
 fn unauthorized() -> Response {

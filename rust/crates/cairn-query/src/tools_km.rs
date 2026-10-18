@@ -303,7 +303,8 @@ pub fn file_exists(conn: &Connection, ref_: &str) -> Result<bool, rusqlite::Erro
     Ok(hit.is_ok())
 }
 
-fn path_match_params(ref_: &str) -> (String, String, String, String) {
+/// The 4 LIKE params matching a path ref (exact, suffix, root prefix, mid prefix).
+pub fn path_match_params(ref_: &str) -> (String, String, String, String) {
     let e = escape_like(ref_);
     (
         ref_.to_string(),
@@ -1783,7 +1784,8 @@ fn visible(
 }
 
 /// Record sanitized memory references in one best-effort transaction.
-fn record_references_batch(conn: &Connection, refs: &[(String, String)], session_id: &str) {
+/// Credit refs for memories surfaced in a rendered response (analytics only).
+pub fn record_references_batch(conn: &Connection, refs: &[(String, String)], session_id: &str) {
     if refs.is_empty() {
         return;
     }
@@ -2912,6 +2914,443 @@ fn search_knowledge_data(
     }
     results.truncate(limit);
     Ok(results)
+}
+
+// --- flow compass (compass/generator.py + compass/critic.py port) ------------
+
+/// Default step cap for flow-to-workflow conversion (the MCP tool default).
+pub const DEFAULT_FLOW_STEP_LIMIT: usize = 20;
+
+/// Graph-grounded facts for one flow trace.
+struct FlowFacts {
+    entry: String,
+    total_steps: usize,
+    truncated: bool,
+    chain_lines: Vec<String>,
+    chain_raw: Vec<crate::graph::FlowNode>,
+    branches: Vec<(String, Vec<String>)>,
+    leaves: Vec<String>,
+    modules: Vec<String>,
+    cycles: Vec<(String, i64)>,
+}
+
+fn repo_roots(conn: &Connection) -> Result<HashMap<String, String>, rusqlite::Error> {
+    let mut stmt = conn.prepare("SELECT id, path FROM repos")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+    rows.collect()
+}
+
+fn rel_path(path: &str, repo: &str, roots: &HashMap<String, String>) -> String {
+    if let Some(root) = roots.get(repo)
+        && let Some(stripped) = path.strip_prefix(&format!("{root}/"))
+    {
+        return stripped.to_string();
+    }
+    path.to_string()
+}
+
+fn gather_flow_facts(conn: &Connection, entry: &str) -> Result<FlowFacts, rusqlite::Error> {
+    let flow = crate::graph::trace_flow(conn, entry, 8);
+    let roots = repo_roots(conn)?;
+    let mut chain_lines = Vec::new();
+    for node in &flow.chain {
+        let indent = "  ".repeat(node.depth.max(0) as usize);
+        let fname = if node.file.is_empty() {
+            "?".to_string()
+        } else {
+            node.file
+                .rsplit('/')
+                .next()
+                .unwrap_or(&node.file)
+                .to_string()
+        };
+        chain_lines.push(format!(
+            "{indent}- `{}` ({}, {}:{})",
+            node.symbol, node.kind, fname, node.repo
+        ));
+    }
+    Ok(FlowFacts {
+        entry: entry.to_string(),
+        total_steps: flow.total,
+        truncated: flow.truncated,
+        chain_lines,
+        chain_raw: flow
+            .chain
+            .iter()
+            .map(|node| {
+                let mut node = node.clone();
+                node.file = rel_path(&node.file, &node.repo, &roots);
+                node
+            })
+            .collect(),
+        branches: flow.branches,
+        leaves: flow.leaves,
+        modules: flow.modules,
+        cycles: flow.cycles,
+    })
+}
+
+/// Deterministic 5-section body for a flow compass.
+fn flow_template_body(facts: &FlowFacts) -> String {
+    let mut lines: Vec<String> = vec![
+        "# What Does This Flow Do?".to_string(),
+        format!("- Entry point: `{}`", facts.entry),
+        format!(
+            "- Traces {} call step(s) across {} module(s).",
+            facts.total_steps,
+            facts.modules.len()
+        ),
+    ];
+    if facts.truncated {
+        lines.push("- (trace truncated at the node limit; some branches omitted)".to_string());
+    }
+    lines.push(String::new());
+
+    lines.push("# Call Sequence".to_string());
+    if facts.chain_lines.is_empty() {
+        lines.push("- (no outgoing calls traced from the entry point)".to_string());
+    } else {
+        lines.extend(facts.chain_lines.iter().cloned());
+    }
+    lines.push(String::new());
+
+    lines.push("# Failure-Prone Steps".to_string());
+    if !facts.branches.is_empty() {
+        for (symbol, callees) in facts.branches.iter().take(5) {
+            let shown: Vec<String> = callees.iter().take(4).map(|c| format!("`{c}`")).collect();
+            lines.push(format!(
+                "- `{symbol}` branches to {} -- a change here ripples to \
+                 multiple downstream paths.",
+                shown.join(", ")
+            ));
+        }
+    }
+    if !facts.leaves.is_empty() {
+        let sample: Vec<String> = facts
+            .leaves
+            .iter()
+            .take(5)
+            .map(|l| format!("`{l}`"))
+            .collect();
+        lines.push(format!(
+            "- Terminal calls (side effects): {}.",
+            sample.join(", ")
+        ));
+    }
+    if facts.branches.is_empty() && facts.leaves.is_empty() {
+        lines.push("- (no branch points or terminal calls detected)".to_string());
+    }
+    lines.push(String::new());
+
+    lines.push("# Modules Spanned".to_string());
+    let mut seen_files: Vec<String> = Vec::new();
+    for node in &facts.chain_raw {
+        if !node.file.is_empty() && !seen_files.contains(&node.file) {
+            seen_files.push(node.file.clone());
+        }
+    }
+    if !seen_files.is_empty() {
+        seen_files.sort();
+        for f in seen_files.iter().take(8) {
+            let fname = f.rsplit('/').next().unwrap_or(f);
+            lines.push(format!("- `{fname}` (`{f}`)"));
+        }
+    } else if !facts.modules.is_empty() {
+        for module in facts.modules.iter().take(6) {
+            lines.push(module.clone());
+        }
+    } else {
+        lines.push("- (single module)".to_string());
+    }
+    lines.push(String::new());
+
+    lines.push("# Tribal Knowledge".to_string());
+    if !facts.cycles.is_empty() {
+        let cyc: Vec<String> = facts
+            .cycles
+            .iter()
+            .take(3)
+            .map(|(s, _)| format!("`{s}`"))
+            .collect();
+        lines.push(format!(
+            "- Recursive/cyclic calls detected at: {}.",
+            cyc.join(", ")
+        ));
+    }
+    lines.push("- (populated from code comments and TODOs when an LLM is available)".to_string());
+    lines.join("\n") + "\n"
+}
+
+fn flow_name_files(conn: &Connection, name: &str) -> Result<Vec<String>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id \
+         WHERE s.name = ?",
+    )?;
+    let rows = stmt.query_map([name], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
+fn flow_same_file_ids(
+    conn: &Connection,
+    name: &str,
+    file: &str,
+) -> Result<Vec<String>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id \
+         WHERE s.name = ? AND f.path = ?",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![name, file], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
+/// The collision-safe coverage key shared by detection and generation.
+fn coverage_resource(
+    name: &str,
+    file: &str,
+    files: &[String],
+    local_ids: &[String],
+    symbol_id: &str,
+) -> String {
+    if files.len() <= 1 && local_ids.len() <= 1 {
+        return name.to_string();
+    }
+    let base = file.rsplit('/').next().unwrap_or("?");
+    let mut bcounts: HashMap<&str, i64> = HashMap::new();
+    for f in files {
+        let b = f.rsplit('/').next().unwrap_or("?");
+        *bcounts.entry(b).or_insert(0) += 1;
+    }
+    let suffix = if bcounts.get(base).copied().unwrap_or(0) > 1 {
+        let parts: Vec<&str> = file.split('/').filter(|p| !p.is_empty()).collect();
+        if parts.len() >= 2 {
+            parts[parts.len() - 2..].join("/")
+        } else {
+            base.to_string()
+        }
+    } else {
+        base.to_string()
+    };
+    let mut suffix = suffix;
+    if local_ids.len() > 1 && !symbol_id.is_empty() {
+        suffix = format!("{suffix}-{symbol_id}");
+    }
+    format!("{name}#{suffix}")
+}
+
+fn flow_coverage_key(
+    conn: &Connection,
+    entry: &str,
+    facts: &FlowFacts,
+) -> Result<String, rusqlite::Error> {
+    let row = crate::graph::find_definition(conn, entry, 1)?
+        .into_iter()
+        .next();
+    let entry_file = match &row {
+        Some(r) => r.file_path.clone(),
+        None => facts
+            .chain_raw
+            .first()
+            .map(|n| n.file.clone())
+            .unwrap_or_default(),
+    };
+    let files = flow_name_files(conn, entry)?;
+    let local_ids = flow_same_file_ids(conn, entry, &entry_file)?;
+    Ok(coverage_resource(
+        entry,
+        &entry_file,
+        &files,
+        &local_ids,
+        row.as_ref().map_or("", |r| &r.id),
+    ))
+}
+
+/// The flow compass concept for an entry symbol (caller runs the critic).
+fn generate_flow_compass(
+    conn: &Connection,
+    entry: &str,
+    facts: &FlowFacts,
+) -> Result<Concept, rusqlite::Error> {
+    let body = flow_template_body(facts);
+    let key = flow_coverage_key(conn, entry, facts)?;
+    let safe_id = key.replace(['/', '.', '#'], "-");
+    let last_segment = entry.rsplit('.').next().unwrap_or(entry).to_string();
+    Ok(Concept {
+        type_: "Compass".to_string(),
+        title: Some(format!("Flow: {entry}")),
+        description: Some(format!("Execution flow traced from `{entry}`")),
+        resource: Some(key),
+        tags: vec!["flow".to_string(), last_segment],
+        timestamp: Some(iso_utc_now()),
+        concept_id: format!("compass/flow-{safe_id}"),
+        body,
+        ..Default::default()
+    })
+}
+
+/// Convert flow facts into bounded annotated workflow steps.
+fn flow_to_workflow(facts: &FlowFacts, max_steps: usize) -> Vec<WorkflowStep> {
+    let branches: HashMap<&str, &Vec<String>> = facts
+        .branches
+        .iter()
+        .map(|(s, c)| (s.as_str(), c))
+        .collect();
+    let entry = &facts.entry;
+    let mut steps: Vec<WorkflowStep> = Vec::new();
+    for node in &facts.chain_raw {
+        if steps.len() >= max_steps {
+            break;
+        }
+        let sym = &node.symbol;
+        let mut desc_parts: Vec<String> = Vec::new();
+        if *sym == *entry && node.depth == 0 {
+            desc_parts.push("Entry point".to_string());
+        }
+        if !node.kind.is_empty() {
+            desc_parts.push(node.kind.clone());
+        }
+        if let Some(parent) = &node.parent {
+            desc_parts.push(format!("called by `{parent}`"));
+        }
+        if let Some(callees) = branches.get(sym.as_str()) {
+            let mut callee_str = callees
+                .iter()
+                .take(4)
+                .map(|c| format!("`{c}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if callees.len() > 4 {
+                callee_str += &format!(", +{} more", callees.len() - 4);
+            }
+            desc_parts.push(format!("branches to {callee_str}"));
+        }
+        if facts.leaves.iter().any(|l| l == sym) {
+            desc_parts.push("terminal — side effect".to_string());
+        }
+        steps.push(WorkflowStep {
+            name: Some(sym.clone()),
+            description: Some(desc_parts.join("; ")),
+            symbol: Some(sym.clone()),
+            file: Some(node.file.clone()),
+        });
+    }
+    if facts.chain_raw.len() > max_steps {
+        let omitted = facts.chain_raw.len() - max_steps;
+        steps.push(WorkflowStep {
+            name: Some(format!("(trace truncated — {omitted} more steps omitted)")),
+            description: Some("Raise --max-steps to include deeper calls.".to_string()),
+            symbol: None,
+            file: None,
+        });
+    }
+    steps
+}
+
+/// `generate_flow`: critic-gated flow compass (and optionally a workflow).
+pub fn generate_flow_tool(
+    bundle: &Bundle,
+    conn: &Connection,
+    entry: &str,
+    as_workflow: bool,
+    max_steps: usize,
+    read_only: bool,
+) -> Result<String, ToolError> {
+    if read_only {
+        return Ok(
+            "read-only server: flow generation writes the knowledge store; \
+             run it on the writable side"
+                .to_string(),
+        );
+    }
+    let facts = gather_flow_facts(conn, entry).map_err(|e| ToolError(e.to_string()))?;
+    if facts.total_steps <= 1 {
+        return Ok(format!(
+            "No outgoing calls traced from '{entry}' — nothing to document."
+        ));
+    }
+
+    let mut results: Vec<String> = Vec::new();
+    if as_workflow {
+        let steps = flow_to_workflow(&facts, max_steps);
+        if steps.is_empty() {
+            return Err(ToolError("add_workflow requires at least one step".into()));
+        }
+        let title = format!("Flow: {entry}");
+        let mut body_lines = vec![format!("# {title}\n")];
+        for (i, step) in steps.iter().enumerate() {
+            let name = step
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("Step {}", i + 1));
+            body_lines.push(format!("{}. **{name}**", i + 1));
+            if let Some(desc) = &step.description
+                && !desc.is_empty()
+            {
+                body_lines.push(format!("   {desc}"));
+            }
+            if let Some(symbol) = &step.symbol {
+                body_lines.push(format!("   - symbol: `{symbol}`"));
+            }
+            if let Some(file) = &step.file
+                && !file.is_empty()
+            {
+                body_lines.push(format!("   - file: `{file}`"));
+            }
+        }
+        let last_segment = entry.rsplit('.').next().unwrap_or(entry).to_string();
+        let cid = add_document(
+            bundle,
+            &title,
+            &format!("{}\n", body_lines.join("\n")),
+            "workflow",
+            vec!["flow".to_string(), last_segment],
+            Vec::new(),
+            Vec::new(),
+            Some(entry),
+            None,
+            None,
+            Some(steps),
+            None,
+            "",
+        )?;
+        results.push(format!("Workflow: {cid} ({max_steps} steps max)"));
+    }
+
+    let concept =
+        generate_flow_compass(conn, entry, &facts).map_err(|e| ToolError(e.to_string()))?;
+    let result = critic_concept(&concept, conn)?;
+    if !result.passed {
+        results.push(format!(
+            "Compass REJECTED by critic (quality={:.2}, {} errors, {} warnings). \
+             Workflow (if any) was still written.",
+            result.quality_score,
+            result.errors.len(),
+            result.warnings.len()
+        ));
+        for e in result.errors.iter().take(8) {
+            results.push(format!("  ERROR: {e}"));
+        }
+        for w in result.warnings.iter().take(4) {
+            results.push(format!("  warn: {w}"));
+        }
+        if !result.errors.is_empty() {
+            results.push(
+                "The body cited backtick references not found in the graph — \
+                 rebuild (cairn build) or fix the references before promoting."
+                    .to_string(),
+            );
+        }
+        results.push(critic_verdict_block(&result));
+        return Ok(results.join("\n"));
+    }
+
+    let mut concept = concept;
+    bundle.write_concept(&mut concept)?;
+    results.push(format!(
+        "Compass: {} (quality={:.2})",
+        concept.concept_id, result.quality_score
+    ));
+    results.push(critic_verdict_block(&result));
+    Ok(results.join("\n"))
 }
 
 // --- compass router ---------------------------------------------------------------
@@ -4291,7 +4730,9 @@ pub fn ask_compass(
         match data {
             Yaml::Hash(h) => {
                 for (k, v) in h {
-                    out.push(format!("  {}: {}", scalar_repr(k), scalar_repr(v)));
+                    // Hash values render as Python str(value): string-list
+                    // members come out single-quoted (the router contract).
+                    out.push(format!("  {}: {}", scalar_repr(k), python_repr(v)));
                 }
             }
             Yaml::Array(items) => {
@@ -4303,6 +4744,31 @@ pub fn ask_compass(
         }
     }
     Ok(out.join("\n"))
+}
+
+/// Python `str(value)` for router payload values: string list members quoted.
+fn python_repr(v: &Yaml) -> String {
+    match v {
+        Yaml::Array(items) => {
+            let inner: Vec<String> = items.iter().map(python_repr).collect();
+            format!("[{}]", inner.join(", "))
+        }
+        Yaml::Hash(h) => {
+            let inner: Vec<String> = h
+                .iter()
+                .map(|(k, v)| format!("{}: {}", python_repr(k), python_repr(v)))
+                .collect();
+            format!("{{{}}}", inner.join(", "))
+        }
+        Yaml::String(s) => {
+            if s.contains('\'') && !s.contains('"') {
+                format!("\"{s}\"")
+            } else {
+                format!("'{s}'")
+            }
+        }
+        other => scalar_repr(other),
+    }
 }
 
 fn ask_compass_file_context(

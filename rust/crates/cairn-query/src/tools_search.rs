@@ -242,7 +242,8 @@ fn config_value(name: &str) -> Option<String> {
         .map(String::from)
 }
 
-fn cairn_home() -> Option<PathBuf> {
+/// Effective CAIRN_HOME: the env value when set, else `~/.cairn`.
+pub fn cairn_home() -> Option<PathBuf> {
     if let Ok(home) = env::var("CAIRN_HOME")
         && !home.trim().is_empty()
     {

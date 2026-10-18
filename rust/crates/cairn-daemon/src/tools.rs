@@ -5,10 +5,13 @@ use std::path::{Path, PathBuf};
 use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::Value;
 
+use cairn_query::tools_federation as federations;
 use cairn_query::tools_flow as flow;
 use cairn_query::tools_km as km;
 use cairn_query::tools_nav as nav;
+use cairn_query::tools_repo as repo;
 use cairn_query::tools_search as search;
+use cairn_query::tools_wiki as wiki;
 use rusqlite::Connection;
 
 /// Per-call context a server instance resolves once and dispatch threads through.
@@ -217,6 +220,21 @@ pub fn catalog() -> Vec<Tool> {
             true,
         ),
         text_tool(
+            "path",
+            "Trace the shortest structural path between two symbol patterns; fuzzy follows ambiguous hops.",
+            serde_json::json!({
+                "from_pattern": prop("from_pattern", "string", "Origin symbol pattern (substring, case-insensitive)."),
+                "to_pattern": prop("to_pattern", "string", "Destination symbol pattern (substring, case-insensitive)."),
+                "fuzzy": prop_default("fuzzy", "boolean", "Follow ambiguous/unresolved hops within a repo.", Value::Bool(false)),
+                "max_depth": prop_default("max_depth", "integer", "Maximum hops (1-10).", serde_json::json!(4)),
+                "limit": prop_default("limit", "integer", "Maximum paths shown (1-1000).", serde_json::json!(50)),
+            }),
+            &["from_pattern", "to_pattern"],
+            true,
+            false,
+            true,
+        ),
+        text_tool(
             "explore",
             "Answer 'how does X work' in one call: matching source, call paths, blast radius, memory, rationale, and taint warnings.",
             serde_json::json!({
@@ -398,6 +416,67 @@ pub fn catalog() -> Vec<Tool> {
             false,
             true,
         ),
+        text_tool(
+            "repo_map",
+            "Return a deterministic repository orientation map (clusters, hubs, hotspots, dropped counts).",
+            serde_json::json!({}),
+            &[],
+            true,
+            false,
+            true,
+        ),
+        text_tool(
+            "file_api",
+            "Return every stored symbol in one indexed file (no bodies); repo disambiguates duplicate relative paths.",
+            serde_json::json!({
+                "path": prop("path", "string", "File path as stored in the graph (workspace-relative)."),
+                "repo": { "type": "string", "description": "Repo id when the path exists in several repos.", "nullable": true },
+            }),
+            &["path"],
+            true,
+            false,
+            true,
+        ),
+        text_tool(
+            "generate_flow",
+            "Generate a flow compass (and optionally a workflow) from a call-graph trace.",
+            serde_json::json!({
+                "entry": prop("entry", "string", "Entry-point symbol name."),
+                "as_workflow": prop_default("as_workflow", "boolean", "Also write a Knowledge-workflow doc.", Value::Bool(false)),
+                "max_steps": prop_default("max_steps", "integer", "Workflow step cap.", serde_json::json!(20)),
+            }),
+            &["entry"],
+            false,
+            false,
+            true,
+        ),
+        text_tool(
+            "federated_search",
+            "Search every registered store by meaning, merging rank-fused hits attributed per workspace; unavailable stores are named, never fatal.",
+            serde_json::json!({
+                "query": prop("query", "string", "Natural-language phrase."),
+                "limit": prop_default("limit", "integer", "Maximum merged hits (1-1000).", serde_json::json!(20)),
+            }),
+            &["query"],
+            true,
+            false,
+            true,
+        ),
+        text_tool(
+            "wiki_generate",
+            "Plan the deterministic wiki and queue one critic-gated task per page (refine_catalog queues the catalog task instead).",
+            serde_json::json!({
+                "repo": prop("repo", "string", "Repo id in the graph."),
+                "pages": prop_default("pages", "integer", "Page-plan cap including the overview (1-50).", serde_json::json!(10)),
+                "refine_catalog": prop_default("refine_catalog", "boolean", "Queue the catalog refinement task instead.", Value::Bool(false)),
+                "diagrams": prop_default("diagrams", "boolean", "Carry the diagrams flag into page work orders.", Value::Bool(false)),
+                "force": prop_default("force", "boolean", "Re-queue every page even when covered.", Value::Bool(false)),
+            }),
+            &["repo"],
+            false,
+            false,
+            false,
+        ),
     ]
 }
 
@@ -473,13 +552,46 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             )
             .map_err(|e| ToolFailure(e.to_string()))
         }
-        "explore" => {
+        "path" => {
             let conn = open_read_conn(ctx)?;
+            flow::path_text(
+                &conn,
+                arg_str(args, "from_pattern")
+                    .ok_or_else(|| ToolFailure("path requires a string from_pattern".into()))?,
+                arg_str(args, "to_pattern")
+                    .ok_or_else(|| ToolFailure("path requires a string to_pattern".into()))?,
+                arg_bool_or(args, "fuzzy", false),
+                arg_i64_or(args, "max_depth", 4),
+                arg_i64_or(args, "limit", 50),
+            )
+            .map_err(|e| ToolFailure(e.to_string()))
+        }
+        "repo_map" => {
+            let conn = open_read_conn(ctx)?;
+            repo::repo_map_text(&conn).map_err(|e| ToolFailure(e.to_string()))
+        }
+        "file_api" => {
+            let conn = open_read_conn(ctx)?;
+            repo::file_api_text(
+                &conn,
+                arg_str(args, "path")
+                    .ok_or_else(|| ToolFailure("file_api requires a string path".into()))?,
+                arg_str(args, "repo"),
+            )
+            .map_err(|e| ToolFailure(e.0))
+        }
+        "explore" => {
+            // A writable-capable conn: explore credits the tribal memories it
+            // renders (analytics write, the Python `_conn()` contract).
+            let conn = ctx.conn()?;
             flow::explore_text(
                 &conn,
+                Some(&ctx.bundle()),
                 &ctx.workspace,
                 arg_str(args, "query")
                     .ok_or_else(|| ToolFailure("explore requires a string query".into()))?,
+                ctx.read_only,
+                ctx.session_id.as_deref(),
             )
             .map_err(|e| ToolFailure(e.to_string()))
         }
@@ -633,6 +745,39 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
                 arg_str(args, "query")
                     .ok_or_else(|| ToolFailure("ask_compass requires a string query".into()))?,
                 arg_str_or(args, "file_path", ""),
+            )
+            .map_err(|e| ToolFailure(e.0))
+        }
+        "generate_flow" => {
+            let conn = ctx.conn()?;
+            km::generate_flow_tool(
+                &ctx.bundle(),
+                &conn,
+                arg_str(args, "entry")
+                    .ok_or_else(|| ToolFailure("generate_flow requires a string entry".into()))?,
+                arg_bool_or(args, "as_workflow", false),
+                arg_i64_or(args, "max_steps", km::DEFAULT_FLOW_STEP_LIMIT as i64) as usize,
+                ctx.read_only,
+            )
+            .map_err(|e| ToolFailure(e.0))
+        }
+        "federated_search" => federations::federated_search_text(
+            arg_str(args, "query")
+                .ok_or_else(|| ToolFailure("federated_search requires a string query".into()))?,
+            arg_i64_or(args, "limit", 20),
+        )
+        .map_err(ToolFailure),
+        "wiki_generate" => {
+            let conn = open_read_conn(ctx)?;
+            wiki::wiki_generate_text(
+                &conn,
+                &ctx.bundle(),
+                arg_str(args, "repo")
+                    .ok_or_else(|| ToolFailure("wiki_generate requires a string repo".into()))?,
+                arg_i64_or(args, "pages", 10),
+                arg_bool_or(args, "refine_catalog", false),
+                arg_bool_or(args, "diagrams", false),
+                arg_bool_or(args, "force", false),
             )
             .map_err(|e| ToolFailure(e.0))
         }

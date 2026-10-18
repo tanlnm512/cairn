@@ -53,13 +53,14 @@ fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
 }
 
 /// The registered surface: every tool cairn-query ports, in catalog order.
-const EXPECTED_TOOLS: [&str; 20] = [
+const EXPECTED_TOOLS: [&str; 26] = [
     "search_symbols",
     "semantic_search",
     "find_definition",
     "get_callers",
     "get_callees",
     "impact_analysis",
+    "path",
     "explore",
     "trace_flow",
     "cross_repo_deps",
@@ -74,6 +75,11 @@ const EXPECTED_TOOLS: [&str; 20] = [
     "get_compass",
     "search_knowledge",
     "ask_compass",
+    "repo_map",
+    "file_api",
+    "generate_flow",
+    "federated_search",
+    "wiki_generate",
 ];
 
 #[test]
