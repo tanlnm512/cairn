@@ -1,5 +1,7 @@
 //! The `cairn` binary crate.
 
+pub mod canonical_dump;
+
 /// Returns the crate name; skeleton smoke contract.
 pub fn crate_name() -> &'static str {
     env!("CARGO_PKG_NAME")

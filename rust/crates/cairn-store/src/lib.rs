@@ -1,4 +1,8 @@
-//! Store layer: `.kg` schema mirror, connection factory, vec0 helpers, canonical dump.
+//! Store layer: `.kg` connection factory, vec0 helpers, canonical dump.
+
+pub mod conn;
+pub mod dump;
+pub mod vec0;
 
 /// Returns the crate name; skeleton smoke contract.
 pub fn crate_name() -> &'static str {

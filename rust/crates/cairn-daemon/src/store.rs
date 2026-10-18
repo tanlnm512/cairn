@@ -2,37 +2,12 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Once;
-use std::time::Duration;
 
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::Connection;
 
-/// Register sqlite-vec once per process so stores carrying `vec0` tables open.
-fn register_vec0() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        // Safety: `sqlite3_vec_init` is statically compiled with SQLITE_CORE and
-        // has the `sqlite3_auto_extension` entry-point signature.
-        type VecInit = unsafe extern "C" fn(
-            *mut rusqlite::ffi::sqlite3,
-            *mut *mut std::os::raw::c_char,
-            *const rusqlite::ffi::sqlite3_api_routines,
-        ) -> std::os::raw::c_int;
-        unsafe {
-            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
-                unsafe extern "C" fn(),
-                VecInit,
-            >(sqlite_vec::sqlite3_vec_init)));
-        }
-    });
-}
-
-/// Open a `.kg` store read-only.
+/// Open a `.kg` store read-only (pragma parity + sqlite-vec via `cairn-store`).
 pub fn open_read_only(path: &Path) -> Result<Connection, rusqlite::Error> {
-    register_vec0();
-    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    conn.busy_timeout(Duration::from_millis(5000))?;
-    Ok(conn)
+    cairn_store::conn::open_read_only(path)
 }
 
 /// One `search_symbols` result row.

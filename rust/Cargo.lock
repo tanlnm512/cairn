@@ -133,11 +133,11 @@ name = "cairn-daemon"
 version = "0.22.0"
 dependencies = [
  "axum",
+ "cairn-store",
  "regex",
  "rmcp",
  "rusqlite",
  "serde_json",
- "sqlite-vec",
  "tokio",
  "tokio-util",
 ]
@@ -153,6 +153,10 @@ version = "0.22.0"
 [[package]]
 name = "cairn-store"
 version = "0.22.0"
+dependencies = [
+ "rusqlite",
+ "sqlite-vec",
+]
 
 [[package]]
 name = "cc"
