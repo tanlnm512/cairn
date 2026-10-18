@@ -1,0 +1,4 @@
+# SQLite sidecars from opening the store; the checked-in artifact is the .kg only.
+*.kg-wal
+*.kg-shm
+*.kg-journal

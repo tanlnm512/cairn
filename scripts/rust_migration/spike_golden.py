@@ -149,8 +149,15 @@ def capture_all(db: Path, queries: list[str], rules: list[tuple],
         os.environ.pop("CAIRN_READ_ONLY", None)
 
 
-def write_slim(store_db: Path, out: Path) -> int:
-    """Backup the store, drop every table search_symbols never reads, VACUUM."""
+def write_slim(store_db: Path, out: Path,
+               keep_tables: frozenset[str] | None = None) -> int:
+    """Backup the store, drop every table outside ``keep_tables``, VACUUM.
+
+    The default keep-set auto-retains ``symbols_fts`` (search_symbols reads
+    it); explicit keep-sets are honored exactly.
+    """
+    spike_default = keep_tables is None
+    keep_tables = keep_tables if keep_tables is not None else _KEEP_TABLES
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.parent / (out.name + ".tmp")
     tmp.unlink(missing_ok=True)
@@ -160,10 +167,18 @@ def write_slim(store_db: Path, out: Path) -> int:
         src.backup(dst)
         names = [r[0] for r in dst.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")]
-        keep = _KEEP_TABLES | {n for n in names if n.startswith("symbols_fts")}
+        keep = set(keep_tables)
+        if spike_default:
+            keep |= {n for n in names if n.startswith("symbols_fts")}
         for name in names:
             if not name.startswith("sqlite_") and name not in keep:
-                dst.execute(f'DROP TABLE "{name}"')
+                # Dropping a virtual table removes its shadow tables; their
+                # later loop entries no longer exist.
+                try:
+                    dst.execute(f'DROP TABLE "{name}"')
+                except sqlite3.OperationalError as e:
+                    if "no such table" not in str(e):
+                        raise
         dst.commit()
         # DELETE journal mode: a checked-in store opens read-only with no
         # -wal/-shm sidecars.
