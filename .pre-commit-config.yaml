@@ -65,6 +65,24 @@ repos:
         pass_filenames: false
         always_run: true
 
+  # --- Rust gates: local mirror of the Rust CI leg. GATE-only like ruff
+  # above (fmt runs with --check, never rewrites). Requires the rustup
+  # toolchain on PATH; runs only when rust/ files are staged.
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check (rust workspace)
+        entry: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+        language: system
+        pass_filenames: false
+        files: ^rust/.*\.rs$
+      - id: cargo-clippy
+        name: cargo clippy -D warnings (rust workspace)
+        entry: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+        language: system
+        pass_filenames: false
+        files: ^rust/(.*\.(rs|toml)|Cargo\.lock)$
+
   # NOTE: scripts/verify_no_code_change.py is deliberately NOT wired here.
   # It compares the *working tree* against HEAD, but pre-commit always stashes
   # unstaged changes and runs against the *staged* tree -- so as a hook it

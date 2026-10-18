@@ -1,0 +1,22 @@
+[package]
+name = "cairn-cli"
+description = "The `cairn` binary."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+cairn-build = { path = "../cairn-build" }
+cairn-daemon = { path = "../cairn-daemon" }
+cairn-parse = { path = "../cairn-parse" }
+cairn-query = { path = "../cairn-query" }
+cairn-store = { path = "../cairn-store" }
+
+[[bin]]
+name = "cairn"
+path = "src/main.rs"
+
+[lints]
+workspace = true

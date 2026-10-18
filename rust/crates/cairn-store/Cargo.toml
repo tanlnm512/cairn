@@ -1,0 +1,13 @@
+[package]
+name = "cairn-store"
+description = "Schema DDL mirror, connection factory, vec0 helpers, canonical dump."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

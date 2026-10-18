@@ -58,3 +58,6 @@ Thumbs.db
 
 # spec-to-prod derived spawn payloads (regenerate-only, never committed)
 specs/*/spawns/
+
+# ---- Rust (rust/ workspace) ----
+rust/target/

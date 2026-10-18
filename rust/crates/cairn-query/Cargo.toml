@@ -1,0 +1,13 @@
+[package]
+name = "cairn-query"
+description = "Read path: FTS5 search, call-graph traversal, impact, explore, trace, taint, pack."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
