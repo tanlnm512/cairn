@@ -1,1 +1,4428 @@
-//! Knowledge/memory-family tools: recall, record, knowledge search/status.
+//! Knowledge/memory-family tools: recall/record, memory lifecycle, knowledge docs, compass router.
+//!
+//! Ports `src/cairn/mcp_server/tools_memory.py`, `tools_knowledge.py`,
+//! `tools_compass.py`, and the `cairn.memory` / `cairn.knowledge` /
+//! `cairn.okf` / `cairn.refs` modules they call. Responses are byte-parity
+//! with the Python tools (see `rust/golden/mcp/*.json`).
+
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use regex::Regex;
+use rusqlite::Connection;
+use yaml_rust2::Yaml;
+use yaml_rust2::yaml::Hash;
+
+// --- errors -----------------------------------------------------------------
+
+/// Tool failure: the message a Python tool would have raised with.
+#[derive(Debug, Clone)]
+pub struct ToolError(pub String);
+
+impl fmt::Display for ToolError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ToolError {}
+
+fn err<T>(msg: impl Into<String>) -> Result<T, ToolError> {
+    Err(ToolError(msg.into()))
+}
+
+/// String-valued YAML node (never auto-typed; `Yaml::from_str` would coerce
+/// number/bool-looking titles into scalars).
+fn ys(s: impl Into<String>) -> Yaml {
+    Yaml::String(s.into())
+}
+
+// --- time helpers (no chrono dep) -------------------------------------------
+
+/// Current UTC time as `YYYY-MM-DDTHH:MM:SSZ` (Python's `%Y-%m-%dT%H:%M:%SZ`).
+pub fn iso_utc_now() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock before epoch");
+    format_iso_utc(now.as_secs() as i64)
+}
+
+/// UTC date as `YYYY-MM-DD` (Python's `%Y-%m-%d`).
+pub fn iso_utc_date_now() -> String {
+    iso_utc_now()[..10].to_string()
+}
+
+/// Format epoch seconds as `YYYY-MM-DDTHH:MM:SSZ`.
+pub fn format_iso_utc(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let (y, m, d) = civil_from_days(days);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z",
+        h = rem / 3600,
+        mi = (rem % 3600) / 60,
+        s = rem % 60,
+    )
+}
+
+/// Days-since-epoch to (year, month, day); Howard Hinnant's civil_from_days.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// (year, month, day) to days-since-epoch; Hinnant's days_from_civil.
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = if m > 2 { m - 3 } else { m + 9 } as i64;
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Parse an ISO-8601 date/datetime to epoch seconds. `naive_as_utc` mirrors
+/// Python's split: `parse_memory_timestamp` rejects naive values while
+/// `_parse_instant` accepts them as UTC.
+pub fn parse_iso_ts(value: &str, naive_as_utc: bool) -> Option<i64> {
+    let v = value.trim();
+    let re = ts_re();
+    let caps = re.captures(v)?;
+    let y: i64 = caps["y"].parse().ok()?;
+    let mo: u32 = caps["mo"].parse().ok()?;
+    let d: u32 = caps["d"].parse().ok()?;
+    let h: i64 = caps
+        .name("h")
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let mi: i64 = caps
+        .name("mi")
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let s: i64 = caps
+        .name("s")
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let mut secs = days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + s;
+    match caps.name("off") {
+        Some(off) => {
+            let off = off.as_str();
+            if off != "Z" && off != "z" {
+                let sign: i64 = if off.starts_with('-') { -1 } else { 1 };
+                let digits: String = off.chars().filter(|c| c.is_ascii_digit()).collect();
+                if digits.len() >= 2 {
+                    let oh: i64 = digits[..2].parse().ok()?;
+                    let om: i64 = digits.get(2..4).and_then(|x| x.parse().ok()).unwrap_or(0);
+                    secs -= sign * (oh * 3600 + om * 60);
+                }
+            }
+        }
+        None => {
+            if !naive_as_utc {
+                return None;
+            }
+        }
+    }
+    Some(secs)
+}
+
+fn ts_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"^(?<y>\d{4})-(?<mo>\d{2})-(?<d>\d{2})(?:[T ](?<h>\d{2}):(?<mi>\d{2})(?::(?<s>\d{2}))?(?:\.\d+)?\s*(?<off>Z|z|[+-]\d{2}:?\d{2})?)?$",
+        )
+        .expect("ts regex")
+    })
+}
+
+/// Fixed-width UTC chronological sort key (`_instant_key`).
+fn instant_key(secs: i64) -> String {
+    let mut s = format_iso_utc(secs);
+    s.truncate(19);
+    s.push_str(".000000");
+    s
+}
+
+// --- unique suffixes (Python uuid4().hex[:6] role) --------------------------
+
+fn unique_suffix() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut h = (nanos
+        ^ n.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ ((std::process::id() as u64) << 32)) as u64;
+    h ^= h << 13;
+    h ^= h >> 7;
+    h ^= h << 17;
+    format!("{:06x}", h & 0xFFFFFF)
+}
+
+fn unique_ref_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{nanos:032x}{:04x}", unique_suffix().len())
+}
+
+// --- tokenization (graph/tokenize.py port) ----------------------------------
+
+pub const BASE_STOP_WORDS: &[&str] = &[
+    "the", "how", "does", "what", "is", "where", "when", "why", "this", "that", "are", "can",
+    "work", "for", "with", "from", "into", "about", "which", "their", "there", "will", "would",
+    "should", "could", "have", "been", "some", "just", "only", "also", "did", "not", "but", "and",
+    "or", "all", "any", "use", "used", "using", "our", "my", "we", "do", "if", "has", "had", "was",
+    "were", "get", "got", "make", "made", "way",
+];
+
+/// Split on non-alphanumeric boundaries, lowercase, filter stop words.
+pub fn simple_tokenize(text: &str, extra_stop: Option<&HashSet<String>>) -> Vec<String> {
+    let stop: HashSet<&str> = BASE_STOP_WORDS.iter().copied().collect();
+    let mut tokens = Vec::new();
+    let mut seen = HashSet::new();
+    for tok in text.split(|c: char| !c.is_ascii_alphanumeric()) {
+        let tok = tok.trim().to_ascii_lowercase();
+        if tok.len() >= 3 && !stop.contains(tok.as_str()) && !seen.contains(&tok) {
+            if extra_stop.is_some_and(|extra| extra.contains(&tok)) {
+                continue;
+            }
+            seen.insert(tok.clone());
+            tokens.push(tok);
+        }
+    }
+    tokens
+}
+
+// --- reference extraction + graph existence (refs.py port) ------------------
+
+pub const FILE_EXTENSIONS: &[&str] = &[
+    ".kt", ".java", ".swift", ".py", ".ts", ".tsx", ".js", ".jsx", ".dart", ".m", ".mm",
+];
+
+fn is_file_like(token: &str) -> bool {
+    token.contains('/') || FILE_EXTENSIONS.iter().any(|e| token.ends_with(e))
+}
+
+/// Backtick-quoted file-path refs, order-preserving deduped.
+pub fn extract_file_refs(body: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    let mut seen = HashSet::new();
+    for m in backtick_tokens(body) {
+        if !is_file_like(&m) {
+            continue;
+        }
+        if m.starts_with("./") || m.starts_with("cairn ") {
+            continue;
+        }
+        if seen.insert(m.clone()) {
+            refs.push(m);
+        }
+    }
+    refs
+}
+
+/// Backtick-quoted symbol/qualified-name refs (not deduped, like Python).
+pub fn extract_symbol_refs(body: &str) -> Vec<String> {
+    static SYMBOL_RE: OnceLock<Regex> = OnceLock::new();
+    let re = SYMBOL_RE.get_or_init(|| {
+        Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?$")
+            .expect("symbol regex")
+    });
+    backtick_tokens(body)
+        .into_iter()
+        .filter(|m| !is_file_like(m) && re.is_match(m))
+        .collect()
+}
+
+fn backtick_tokens(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    while let Some(start) = rest.find('`') {
+        let after = &rest[start + 1..];
+        match after.find('`') {
+            Some(end) => {
+                out.push(after[..end].to_string());
+                rest = &after[end + 1..];
+            }
+            None => break,
+        }
+    }
+    out
+}
+
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// True when `ref` resolves to a stored file path or directory prefix.
+pub fn file_exists(conn: &Connection, ref_: &str) -> Result<bool, rusqlite::Error> {
+    let ref_ = ref_.trim_matches('/');
+    if ref_.is_empty() {
+        return Ok(false);
+    }
+    let (a, b, c, d) = path_match_params(ref_);
+    let hit = conn.query_row(
+        "SELECT 1 FROM files WHERE (path = ? OR path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\') LIMIT 1",
+        rusqlite::params![a, b, c, d],
+        |_| Ok(()),
+    );
+    if hit.is_ok() {
+        return Ok(true);
+    }
+    let Some((rid, rest)) = ref_.split_once('/') else {
+        return Ok(false);
+    };
+    let (a, b, c, d) = path_match_params(rest);
+    let hit = conn.query_row(
+        "SELECT 1 FROM files WHERE repo_id = ? AND (path = ? OR path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\') LIMIT 1",
+        rusqlite::params![rid, a, b, c, d],
+        |_| Ok(()),
+    );
+    Ok(hit.is_ok())
+}
+
+fn path_match_params(ref_: &str) -> (String, String, String, String) {
+    let e = escape_like(ref_);
+    (
+        ref_.to_string(),
+        format!("%/{e}"),
+        format!("{e}/%"),
+        format!("%/{e}/%"),
+    )
+}
+
+/// True when `name` matches a symbol name or qualified-name reference.
+pub fn symbol_exists(conn: &Connection, name: &str) -> Result<bool, rusqlite::Error> {
+    let bare = name.strip_suffix("()").unwrap_or(name);
+    let hit = conn.query_row(
+        "SELECT 1 FROM symbols WHERE name = ? OR qualified_name = ? OR qualified_name LIKE ? ESCAPE '\\' LIMIT 1",
+        rusqlite::params![bare, bare, format!("%.{}", escape_like(bare))],
+        |_| Ok(()),
+    );
+    if hit.is_ok() {
+        return Ok(true);
+    }
+    if bare.contains('.') {
+        let last = bare.rsplit('.').next().unwrap_or(bare);
+        let hit = conn.query_row(
+            "SELECT 1 FROM symbols WHERE name = ? LIMIT 1",
+            rusqlite::params![last],
+            |_| Ok(()),
+        );
+        return Ok(hit.is_ok());
+    }
+    Ok(false)
+}
+
+// --- privacy filter (memory/privacy.py port) ---------------------------------
+
+/// Strip `<private>` tags, URI credentials, and secret-looking tokens.
+pub fn strip_private_data(text: &str) -> String {
+    static PRIVACY: OnceLock<Privacy> = OnceLock::new();
+    let p = PRIVACY.get_or_init(Privacy::new);
+    let out = p.private_tag.replace_all(text, "[REDACTED]");
+    let out = p.uri_cred.replace(&out, "${1}://[REDACTED_SECRET]@");
+    let mut out = out.to_string();
+    for re in &p.secrets {
+        out = re.replace_all(&out, "[REDACTED_SECRET]").to_string();
+    }
+    out
+}
+
+struct Privacy {
+    private_tag: Regex,
+    uri_cred: Regex,
+    secrets: Vec<Regex>,
+}
+
+impl Privacy {
+    fn new() -> Self {
+        let secret_sources = [
+            r#"(?:api[_-]?key|secret|token|password|credential|auth)[\s]*[=:]\s*["']?[A-Za-z0-9_\-/.+]{20,}["']?"#,
+            r"Bearer\s+[A-Za-z0-9._\-+/=]{20,}",
+            r"sk-proj-[A-Za-z0-9\-_]{20,}",
+            r"(?:sk|pk|rk|ak)-[A-Za-z0-9][A-Za-z0-9\-_]{19,}",
+            r"sk-ant-[A-Za-z0-9\-_]{20,}",
+            r"gh[pus]_[A-Za-z0-9]{36,}",
+            r"github_pat_[A-Za-z0-9_]{22,}",
+            r"xoxb-[A-Za-z0-9\-]+",
+            r"AKIA[0-9A-Z]{16}",
+            r"AIza[A-Za-z0-9\-_]{35}",
+            r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
+            r"npm_[A-Za-z0-9]{36}",
+            r"glpat-[A-Za-z0-9\-_]{20,}",
+            r"dop_v1_[A-Za-z0-9]{64}",
+        ];
+        Self {
+            private_tag: Regex::new(r"(?is)<private>[\s\S]*?</private>").expect("private tag regex"),
+            uri_cred: Regex::new(
+                r"(?i)\b(postgres(?:ql)?|mysql|mariadb|rediss?|mongodb(?:\+srv)?|amqps?|https?|ftps?)://[^/@\s:]*:[^/@\s]+@",
+            )
+            .expect("uri cred regex"),
+            secrets: secret_sources
+                .iter()
+                .map(|s| Regex::new(&format!("(?i){s}")).expect("secret regex"))
+                .collect(),
+        }
+    }
+}
+
+// --- slugify (okf/utils.py port) ---------------------------------------------
+
+/// URL-safe slug: lowercase, non-alnum runs to hyphens, trimmed, max 60 chars.
+pub fn slugify(text: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = true; // swallows leading runs
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    trimmed.chars().take(60).collect()
+}
+
+// --- YAML frontmatter (okf/concept.py port) ----------------------------------
+
+/// An OKF concept: frontmatter fields + producer extensions + markdown body.
+#[derive(Debug, Clone, Default)]
+pub struct Concept {
+    pub type_: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub resource: Option<String>,
+    pub tags: Vec<String>,
+    pub timestamp: Option<String>,
+    pub generated_by: Option<String>,
+    pub status: Option<String>,
+    pub stale_after: Option<String>,
+    pub concept_id: String,
+    pub body: String,
+    pub extensions: Vec<(String, Yaml)>,
+}
+
+impl Concept {
+    /// Read a concept from `path`; `concept_id` is the absolute path sans .md.
+    pub fn from_file(path: &Path) -> std::io::Result<Concept> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
+        let concept_id = path.with_extension("").to_string_lossy().to_string();
+        Ok(Self::from_text(&text, concept_id))
+    }
+
+    /// Parse concept text; unparsable/absent frontmatter leaves the whole text as body.
+    pub fn from_text(text: &str, concept_id: String) -> Concept {
+        let Some((fm, body)) = split_frontmatter(text) else {
+            return Concept {
+                concept_id,
+                body: text.to_string(),
+                ..Default::default()
+            };
+        };
+        let mut ext_map = fm;
+        let take = |m: &mut Vec<(String, Yaml)>, k: &str| {
+            m.iter()
+                .position(|(key, _)| key == k)
+                .map(|i| m.remove(i).1)
+        };
+        let type_ = str_of(take(&mut ext_map, "type").as_ref()).unwrap_or_default();
+        let title = str_of(take(&mut ext_map, "title").as_ref());
+        let description = str_of(take(&mut ext_map, "description").as_ref());
+        let resource = str_of(take(&mut ext_map, "resource").as_ref());
+        let tags = take(&mut ext_map, "tags")
+            .map(|v| str_vec(&v))
+            .unwrap_or_default();
+        let mut generated_by = None;
+        let mut timestamp = None;
+        if let Some(Yaml::Hash(generated)) = take(&mut ext_map, "generated") {
+            generated_by = str_of(generated.get(&ys("by")));
+            timestamp = str_of(generated.get(&ys("at")));
+        }
+        if timestamp.is_none() {
+            timestamp = str_of(take(&mut ext_map, "timestamp").as_ref());
+        }
+        let _ = take(&mut ext_map, "okf_version");
+        let status = str_of(take(&mut ext_map, "status").as_ref());
+        let stale_after = str_of(take(&mut ext_map, "stale_after").as_ref());
+        Concept {
+            type_,
+            title,
+            description,
+            resource,
+            tags,
+            timestamp,
+            generated_by,
+            status,
+            stale_after,
+            concept_id,
+            body,
+            extensions: ext_map,
+        }
+    }
+
+    pub fn ext(&self, key: &str) -> Option<&Yaml> {
+        self.extensions
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
+    }
+
+    /// Extension value as a string exactly as stored (Python `.get(key)`).
+    pub fn ext_str(&self, key: &str) -> Option<&str> {
+        match self.ext(key) {
+            Some(Yaml::String(s)) | Some(Yaml::Real(s)) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn ext_f64(&self, key: &str) -> Option<f64> {
+        match self.ext(key) {
+            Some(Yaml::Real(s)) => s.parse().ok(),
+            Some(Yaml::Integer(i)) => Some(*i as f64),
+            _ => None,
+        }
+    }
+
+    pub fn ext_bool(&self, key: &str) -> Option<bool> {
+        match self.ext(key) {
+            Some(Yaml::Boolean(b)) => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// Render the concept as markdown with YAML frontmatter (`to_markdown`).
+    pub fn to_markdown(&self) -> String {
+        let mut fm = Hash::new();
+        fm.insert(ys("type"), ys(&self.type_));
+        if let Some(t) = &self.title {
+            fm.insert(ys("title"), ys(t));
+        }
+        if let Some(d) = &self.description {
+            fm.insert(ys("description"), ys(d));
+        }
+        if let Some(r) = &self.resource {
+            fm.insert(ys("resource"), ys(r));
+        }
+        if !self.tags.is_empty() {
+            fm.insert(ys("tags"), str_list_yaml(&self.tags));
+        }
+        let ts = self.timestamp.clone().unwrap_or_else(iso_utc_now);
+        let mut generated = Hash::new();
+        generated.insert(
+            ys("by"),
+            ys(self
+                .generated_by
+                .clone()
+                .unwrap_or_else(|| format!("cairn/{}", env!("CARGO_PKG_VERSION")))),
+        );
+        generated.insert(ys("at"), ys(&ts));
+        fm.insert(ys("generated"), Yaml::Hash(generated));
+        if let Some(s) = &self.status {
+            fm.insert(ys("status"), ys(s));
+        }
+        if let Some(s) = &self.stale_after {
+            fm.insert(ys("stale_after"), ys(s));
+        }
+        fm.insert(ys("okf_version"), ys("0.2"));
+        for (k, v) in &self.extensions {
+            fm.insert(ys(k), v.clone());
+        }
+        format!("---\n{}\n---\n\n{}", emit_yaml(&Yaml::Hash(fm)), self.body)
+    }
+
+    /// Write the concept atomically (temp file + rename).
+    pub fn to_file(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tmp = path.with_extension(format!("md.{}.{}.tmp", std::process::id(), unique_suffix()));
+        std::fs::write(&tmp, self.to_markdown())?;
+        match std::fs::rename(&tmp, path) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                Err(e)
+            }
+        }
+    }
+}
+
+fn str_of(v: Option<&Yaml>) -> Option<String> {
+    match v {
+        Some(Yaml::String(s)) => Some(s.clone()),
+        Some(Yaml::Null) | None => None,
+        Some(other) => Some(scalar_repr(other)),
+    }
+}
+
+fn str_vec(v: &Yaml) -> Vec<String> {
+    match v {
+        Yaml::Array(items) => items
+            .iter()
+            .map(|i| str_of(Some(i)).unwrap_or_default())
+            .collect(),
+        Yaml::String(s) if s.is_empty() => Vec::new(),
+        other => vec![str_of(Some(other)).unwrap_or_default()],
+    }
+}
+
+fn str_list_yaml(items: &[String]) -> Yaml {
+    Yaml::Array(items.iter().map(ys).collect())
+}
+
+/// Python-str() rendering of a non-string YAML scalar.
+fn scalar_repr(v: &Yaml) -> String {
+    match v {
+        Yaml::Boolean(true) => "True".into(),
+        Yaml::Boolean(false) => "False".into(),
+        Yaml::Integer(i) => i.to_string(),
+        Yaml::Real(s) => s.clone(),
+        Yaml::Null => "None".into(),
+        Yaml::Array(items) => {
+            let inner: Vec<String> = items.iter().map(scalar_repr).collect();
+            format!("[{}]", inner.join(", "))
+        }
+        Yaml::Hash(h) => {
+            let inner: Vec<String> = h
+                .iter()
+                .map(|(k, v)| format!("{}: {}", scalar_repr(k), scalar_repr(v)))
+                .collect();
+            format!("{{{}}}", inner.join(", "))
+        }
+        Yaml::String(s) => s.clone(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Split `---` frontmatter per `OKFConcept._split_frontmatter`.
+fn split_frontmatter(text: &str) -> Option<(Vec<(String, Yaml)>, String)> {
+    if !text.starts_with("---") {
+        return None;
+    }
+    let close = frontmatter_close(text)?;
+    let line_end = text[close..].find('\n').map(|i| close + i);
+    let body_start = line_end.map_or(text.len(), |i| i + 1);
+    let yaml_text = &text[3..close];
+    let body = text[body_start..].trim_start_matches('\n').to_string();
+    match yaml_rust2::YamlLoader::load_from_str(yaml_text) {
+        Ok(docs) => match docs.into_iter().next() {
+            Some(Yaml::Hash(h)) => Some((
+                h.into_iter().map(|(k, v)| (scalar_repr(&k), v)).collect(),
+                body,
+            )),
+            _ => None,
+        },
+        Err(_) => None,
+    }
+}
+
+/// Offset of the first line exactly `---` past the delimiter, else None.
+fn frontmatter_close(text: &str) -> Option<usize> {
+    let mut offset = 3;
+    while offset < text.len() {
+        let found = text[offset..].find('\n').map(|i| offset + i);
+        let line_end = found.unwrap_or(text.len());
+        if text[offset..line_end].trim_end_matches([' ', '\t', '\r']) == "---" {
+            return Some(offset);
+        }
+        offset = found? + 1;
+    }
+    None
+}
+
+// --- YAML emitter (PyYAML block-style compatible) -----------------------------
+
+/// Emit a Yaml value in PyYAML `safe_dump(sort_keys=False)` block style.
+fn emit_yaml(value: &Yaml) -> String {
+    let mut out = String::new();
+    emit_node(value, 0, &mut out);
+    out.trim_end_matches('\n').to_string()
+}
+
+fn emit_node(value: &Yaml, indent: usize, out: &mut String) {
+    match value {
+        Yaml::Hash(h) => {
+            if h.is_empty() {
+                out.push_str("{}\n");
+                return;
+            }
+            for (k, v) in h {
+                let key = emit_inline_scalar(k);
+                match v {
+                    Yaml::Hash(inner) if !inner.is_empty() => {
+                        out.push_str(&" ".repeat(indent));
+                        out.push_str(&format!("{key}:\n"));
+                        emit_node(v, indent + 2, out);
+                    }
+                    Yaml::Array(items)
+                        if !items.is_empty()
+                            && items
+                                .iter()
+                                .all(|i| !matches!(i, Yaml::Hash(_) | Yaml::Array(_))) =>
+                    {
+                        out.push_str(&" ".repeat(indent));
+                        out.push_str(&format!("{key}:\n"));
+                        for item in items {
+                            out.push_str(&" ".repeat(indent));
+                            out.push_str(&format!("- {}\n", emit_inline_scalar(item)));
+                        }
+                    }
+                    Yaml::Array(_) => {
+                        out.push_str(&" ".repeat(indent));
+                        out.push_str(&format!("{key}:\n"));
+                        emit_node(v, indent, out);
+                    }
+                    other => {
+                        out.push_str(&" ".repeat(indent));
+                        out.push_str(&format!("{key}: {}\n", emit_inline_scalar(other)));
+                    }
+                }
+            }
+        }
+        Yaml::Array(items) => {
+            for item in items {
+                match item {
+                    Yaml::Hash(h) if !h.is_empty() => {
+                        out.push_str(&" ".repeat(indent));
+                        out.push_str("- ");
+                        let mut inner = String::new();
+                        emit_node(item, indent + 2, &mut inner);
+                        out.push_str(inner.trim_start());
+                    }
+                    Yaml::Hash(_) => {
+                        out.push_str(&" ".repeat(indent));
+                        out.push_str("- {}\n");
+                    }
+                    other => {
+                        out.push_str(&" ".repeat(indent));
+                        out.push_str(&format!("- {}\n", emit_inline_scalar(other)));
+                    }
+                }
+            }
+        }
+        other => {
+            out.push_str(&emit_inline_scalar(other));
+            out.push('\n');
+        }
+    }
+}
+
+fn emit_inline_scalar(v: &Yaml) -> String {
+    match v {
+        Yaml::String(s) => quote_yaml(s),
+        Yaml::Integer(i) => i.to_string(),
+        Yaml::Real(s) => {
+            // Keep the value a float on re-parse ("1" would read back as int).
+            if s.contains('.') || s.contains(['e', 'E']) {
+                s.clone()
+            } else {
+                format!("{s}.0")
+            }
+        }
+        Yaml::Boolean(b) => b.to_string(),
+        Yaml::Null => "null".into(),
+        Yaml::Hash(h) if h.is_empty() => "{}".into(),
+        Yaml::Array(a) if a.is_empty() => "[]".into(),
+        other => scalar_repr(other),
+    }
+}
+
+fn quote_yaml(s: &str) -> String {
+    if plain_safe(s) {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "''"))
+    }
+}
+
+fn plain_safe(s: &str) -> bool {
+    static NUMERIC: OnceLock<Regex> = OnceLock::new();
+    static TS: OnceLock<Regex> = OnceLock::new();
+    if s.is_empty()
+        || s.starts_with(' ')
+        || s.ends_with(' ')
+        || s.contains(": ")
+        || s.contains(" #")
+        || s.contains('\n')
+        || s.contains('\t')
+        || s.ends_with(':')
+    {
+        return false;
+    }
+    if NUMERIC
+        .get_or_init(|| Regex::new(r"^-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$").expect("num regex"))
+        .is_match(s)
+    {
+        return false;
+    }
+    if matches!(
+        s.to_ascii_lowercase().as_str(),
+        "null" | "~" | "true" | "false" | "yes" | "no" | "on" | "off"
+    ) {
+        return false;
+    }
+    if TS
+        .get_or_init(|| Regex::new(r"^\d{4}-\d{2}-\d{2}([T ].*)?$").expect("ts regex"))
+        .is_match(s)
+    {
+        return false;
+    }
+    !s.starts_with([
+        '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%', '@',
+        '`',
+    ])
+}
+
+// --- bundle (okf/bundle.py port) ----------------------------------------------
+
+/// Manages the `.knowledge/` directory tree of OKF concepts.
+pub struct Bundle {
+    pub root: PathBuf,
+}
+
+/// Resolve a path as Python's non-strict `Path.resolve()`: canonicalize the
+/// deepest existing ancestor and re-apply the remaining components.
+fn resolve_lenient(p: &Path) -> PathBuf {
+    if let Ok(c) = p.canonicalize() {
+        return c;
+    }
+    let mut ancestor = p.parent();
+    while let Some(a) = ancestor {
+        if let Ok(base) = a.canonicalize() {
+            let mut resolved = base;
+            if let Ok(tail) = p.strip_prefix(a) {
+                for comp in tail.components() {
+                    match comp {
+                        std::path::Component::Normal(seg) => resolved.push(seg),
+                        std::path::Component::ParentDir => {
+                            resolved.pop();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            return resolved;
+        }
+        ancestor = a.parent();
+    }
+    p.to_path_buf()
+}
+
+impl Bundle {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    fn validate_concept_path(&self, concept_id: &str) -> Result<PathBuf, ToolError> {
+        let root_abs = resolve_lenient(&self.root);
+        let path = self.root.join(format!("{concept_id}.md"));
+        let resolved = resolve_lenient(&path);
+        if !resolved.starts_with(&root_abs) {
+            return err(format!("concept_id escapes bundle root: {concept_id:?}"));
+        }
+        Ok(resolved)
+    }
+
+    /// Read a concept by its ID (path without .md, relative to root).
+    pub fn read_concept(&self, concept_id: &str) -> Result<Concept, ToolError> {
+        let path = self.validate_concept_path(concept_id)?;
+        Concept::from_file(&path).map_err(|e| ToolError(e.to_string()))
+    }
+
+    /// Write a concept at `<concept_id>.md`, invalidating the search index.
+    pub fn write_concept(&self, concept: &mut Concept) -> Result<(), ToolError> {
+        if concept.concept_id.is_empty() {
+            return err("concept_id is required to write");
+        }
+        let path = self.validate_concept_path(&concept.concept_id)?;
+        concept
+            .to_file(&path)
+            .map_err(|e| ToolError(format!("concept write failed: {e}")))?;
+        self.update_log("write", &concept.concept_id);
+        Ok(())
+    }
+
+    /// List concept IDs (relative, no .md), sorted; `index.md`/`log.md` skipped.
+    pub fn list_concepts(&self, prefix: Option<&str>) -> Vec<String> {
+        let mut ids = Vec::new();
+        let Ok(root) = self.root.canonicalize() else {
+            return ids;
+        };
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|e| e == "md") {
+                    let name = p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    if name == "index.md" || name == "log.md" {
+                        continue;
+                    }
+                    let rel = p
+                        .strip_prefix(&root)
+                        .expect("under root")
+                        .with_extension("")
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    if prefix.is_none_or(|pre| rel.starts_with(pre)) {
+                        ids.push(rel);
+                    }
+                }
+            }
+        }
+        ids.sort();
+        ids
+    }
+
+    /// Concept id relative to the bundle root; already-relative ids pass through.
+    pub fn relativize_id(&self, concept_id: &str) -> String {
+        let p = Path::new(concept_id);
+        if !p.is_absolute() {
+            return concept_id.to_string();
+        }
+        match resolve_lenient(p).strip_prefix(resolve_lenient(&self.root)) {
+            Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+            Err(_) => concept_id.to_string(),
+        }
+    }
+
+    /// Scored substring search over title/description/tags/body (lowercased counts).
+    pub fn search(&self, query: &str, limit: Option<usize>) -> Result<Vec<Concept>, ToolError> {
+        let query_lower = query.to_lowercase();
+        let mut results: Vec<(usize, Concept)> = Vec::new();
+        for cid in self.list_concepts(None) {
+            let concept = match self.read_concept(&cid) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let tags_str = concept.tags.join(" ").to_lowercase();
+            let score = count_sub(
+                &concept.title.as_deref().unwrap_or_default().to_lowercase(),
+                &query_lower,
+            ) + count_sub(
+                &concept
+                    .description
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_lowercase(),
+                &query_lower,
+            ) + count_sub(&concept.body.to_lowercase(), &query_lower)
+                + count_sub(&tags_str, &query_lower);
+            if score > 0 {
+                results.push((score, concept));
+            }
+        }
+        results.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+        Ok(results
+            .into_iter()
+            .take(limit.unwrap_or(usize::MAX))
+            .map(|(_, c)| c)
+            .collect())
+    }
+
+    fn update_log(&self, action: &str, concept_id: &str) {
+        let log_path = self.root.join("log.md");
+        let entry = format!("- {} | {action} | {concept_id}\n", iso_utc_now());
+        use std::io::Write;
+        match std::fs::OpenOptions::new().append(true).open(&log_path) {
+            Ok(mut f) => {
+                let _ = f.write_all(entry.as_bytes());
+            }
+            Err(_) => {
+                let _ = std::fs::create_dir_all(&self.root);
+                let _ = std::fs::write(&log_path, format!("# OKF Bundle Log\n\n{entry}"));
+            }
+        }
+    }
+
+    /// Advisory cross-process lock guard. Single-process in 1b; the daemon
+    /// (1c) owns real cross-process locking.
+    pub fn lock(&self) -> BundleLockGuard<'_> {
+        BundleLockGuard(self)
+    }
+}
+
+/// RAII marker for the bundle mutation lock (1b: same-process serialization only).
+pub struct BundleLockGuard<'a>(&'a Bundle);
+
+impl Drop for BundleLockGuard<'_> {
+    fn drop(&mut self) {
+        let _ = &self.0;
+    }
+}
+
+fn count_sub(haystack: &str, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    haystack.matches(needle).count()
+}
+
+// --- memory store (memory/store.py port) --------------------------------------
+
+pub const TIERS: &[&str] = &["raw", "drafts", "tribal", "archived"];
+pub const STANCES: &[&str] = &["preferred", "tentative", "contested"];
+pub const TIER_ORDER: &[&str] = &["tribal", "drafts", "raw", "archived"];
+
+fn tier_dir(tier: &str) -> &'static str {
+    match tier {
+        "raw" => "memory/raw",
+        "drafts" => "memory/drafts",
+        "tribal" => "memory/tribal",
+        _ => "memory/archived",
+    }
+}
+
+fn tier_type_prefix(tier: &str) -> &'static str {
+    match tier {
+        "raw" => "Raw",
+        "drafts" => "Draft",
+        _ => "Tribal",
+    }
+}
+
+/// Map a memory score to a tier.
+pub fn tier_for_score(score: f64) -> &'static str {
+    if score < 0.3 {
+        "raw"
+    } else if score < 0.5 {
+        "drafts"
+    } else {
+        "tribal"
+    }
+}
+
+fn py_round3(x: f64) -> f64 {
+    (x * 1000.0).round() / 1000.0
+}
+
+/// Validate a bounded agent id or return the error.
+pub fn validate_agent_id(agent_id: &str) -> Result<String, ToolError> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    if agent_id.is_empty() {
+        return err("agent id must be a non-empty string");
+    }
+    if agent_id.len() > 64 {
+        return err("agent id exceeds 64 characters");
+    }
+    let re = RE.get_or_init(|| Regex::new(r"^[A-Za-z0-9._-]+$").expect("agent id regex"));
+    if !re.is_match(agent_id) {
+        return err("agent id allows only [A-Za-z0-9._-]");
+    }
+    Ok(agent_id.to_string())
+}
+
+/// Relative-to-root form of a concept id (`_rel_id`/`_norm_cid`).
+pub fn rel_cid(bundle: &Bundle, concept_id: &str) -> String {
+    let p = Path::new(concept_id);
+    if !p.is_absolute() {
+        return concept_id.to_string();
+    }
+    bundle.relativize_id(concept_id)
+}
+
+fn in_memory_namespace(bundle: &Bundle, concept: &Concept) -> bool {
+    let resolved = rel_cid(bundle, &concept.concept_id);
+    resolved == "memory/" || resolved.starts_with("memory/")
+}
+
+/// Parse a memory timestamp; naive or malformed input is rejected.
+pub fn parse_memory_timestamp(ts: &str) -> Option<i64> {
+    parse_iso_ts(ts, false)
+}
+
+/// Build a memory concept with lifecycle, stance, and supersession metadata.
+#[allow(clippy::too_many_arguments)]
+pub fn create_memory(
+    type_: &str,
+    title: &str,
+    body: &str,
+    resource: Option<&str>,
+    confidence: f64,
+    session_origin: Option<&str>,
+    tags: Option<Vec<String>>,
+    score: Option<f64>,
+    supersedes: Option<Vec<String>>,
+    stance: Option<&str>,
+) -> Result<Concept, ToolError> {
+    if let Some(s) = stance.filter(|s| !STANCES.contains(s)) {
+        return err(format!(
+            "stance must be one of preferred|tentative|contested, got {s:?}"
+        ));
+    }
+    let confidence = confidence.clamp(0.0, 1.0);
+    let tier = tier_for_score(score.unwrap_or(confidence));
+    let ts = iso_utc_now();
+    let mut extensions: Vec<(String, Yaml)> = vec![
+        (
+            "memory_status".into(),
+            ys(if tier == "drafts" { "draft" } else { tier }),
+        ),
+        (
+            "memory_score".into(),
+            Yaml::Real(fmt_score(score.unwrap_or(confidence))),
+        ),
+        (
+            "memory_signals".into(),
+            Yaml::Hash({
+                let mut h = Hash::new();
+                h.insert(ys("agent_confidence"), Yaml::Real(fmt_score(confidence)));
+                h.insert(ys("freshness"), Yaml::Real("1.0".into()));
+                h.insert(ys("staleness_days"), Yaml::Integer(0));
+                h
+            }),
+        ),
+        ("memory_tier".into(), ys(tier)),
+        ("tier".into(), ys("asserted")),
+        ("memory_type".into(), ys(type_)),
+        ("session_origin".into(), ys(session_origin.unwrap_or(""))),
+        (
+            "promotion_history".into(),
+            Yaml::Array(vec![Yaml::Hash({
+                let mut h = Hash::new();
+                h.insert(ys("date"), ys(&ts));
+                h.insert(ys("action"), ys("captured"));
+                h.insert(ys("score"), Yaml::Real(fmt_score(confidence)));
+                h.insert(ys("tier"), ys(tier));
+                h
+            })]),
+        ),
+        ("memory_is_latest".into(), Yaml::Boolean(true)),
+        (
+            "memory_supersedes".into(),
+            Yaml::Array(supersedes.unwrap_or_default().into_iter().map(ys).collect()),
+        ),
+        ("memory_superseded_by".into(), Yaml::Null),
+    ];
+    if let Some(s) = stance {
+        extensions.push(("memory_stance".into(), ys(s)));
+    }
+    Ok(Concept {
+        type_: format!("{}-{type_}", tier_type_prefix(tier)),
+        title: Some(title.to_string()),
+        description: Some(title.to_string()),
+        resource: resource.map(str::to_string),
+        tags: tags.unwrap_or_else(|| vec![type_.to_string()]),
+        timestamp: Some(ts),
+        body: body.to_string(),
+        extensions,
+        ..Default::default()
+    })
+}
+
+/// Python-str-style float text ("0.578", "1.0").
+fn fmt_score(x: f64) -> String {
+    let r = py_round3(x);
+    let s = format!("{r}");
+    if s.contains('.') { s } else { format!("{s}.0") }
+}
+
+/// Write validity extensions + the indexed projection row.
+pub fn write_validity(
+    concept: &mut Concept,
+    valid_from: &str,
+    valid_until: Option<&str>,
+    successor_symbol: Option<&str>,
+    bundle: Option<&Bundle>,
+    conn: Option<&Connection>,
+) -> Result<(), ToolError> {
+    if valid_from.is_empty() {
+        return err("valid_from is required");
+    }
+    if concept.concept_id.is_empty() {
+        return err("concept_id is required");
+    }
+    set_ext(&mut concept.extensions, "valid_from", ys(valid_from));
+    set_or_remove(&mut concept.extensions, "valid_until", valid_until);
+    set_or_remove(
+        &mut concept.extensions,
+        "successor_symbol",
+        successor_symbol,
+    );
+    if let Some(bundle) = bundle {
+        concept.concept_id = rel_cid(bundle, &concept.concept_id);
+        bundle.write_concept(concept)?;
+    }
+    if let Some(conn) = conn {
+        conn.execute(
+            "INSERT INTO memory_validity (concept_id, valid_from, valid_until, successor_symbol) \
+             VALUES (?, ?, ?, ?) ON CONFLICT(concept_id) DO UPDATE SET \
+             valid_from = excluded.valid_from, valid_until = excluded.valid_until, \
+             successor_symbol = excluded.successor_symbol",
+            rusqlite::params![
+                concept.concept_id,
+                valid_from,
+                valid_until,
+                successor_symbol
+            ],
+        )
+        .map_err(|e| ToolError(e.to_string()))?;
+    }
+    Ok(())
+}
+
+fn set_ext(ext: &mut Vec<(String, Yaml)>, key: &str, value: Yaml) {
+    match ext.iter_mut().find(|(k, _)| k == key) {
+        Some(slot) => slot.1 = value,
+        None => ext.push((key.to_string(), value)),
+    }
+}
+
+fn set_or_remove(ext: &mut Vec<(String, Yaml)>, key: &str, value: Option<&str>) {
+    match value {
+        Some(v) => set_ext(ext, key, ys(v)),
+        None => ext.retain(|(k, _)| k != key),
+    }
+}
+
+/// Write a memory to its tier and move validity and old-file cleanup with it.
+pub fn store_memory(
+    concept: &mut Concept,
+    bundle: &Bundle,
+    tier: &str,
+    old_id: Option<&str>,
+    conn: Option<&Connection>,
+) -> Result<String, ToolError> {
+    let old_rel = old_id.map(|o| rel_cid(bundle, o));
+    let keep_id = old_rel
+        .as_ref()
+        .is_some_and(|o| o.starts_with(&format!("{}/", tier_dir(tier))));
+    if keep_id {
+        // Same-tier re-store keeps the id so refs stay attached.
+        concept.concept_id = old_rel.as_ref().expect("keep implies old").clone();
+    } else {
+        let slug = slugify(concept.title.as_deref().unwrap_or(""));
+        let slug = if slug.is_empty() {
+            "memory".to_string()
+        } else {
+            slug
+        };
+        concept.concept_id = if tier == "raw" {
+            format!(
+                "memory/raw/{}-{slug}-{}",
+                iso_utc_date_now(),
+                unique_suffix()
+            )
+        } else {
+            format!("{}/{slug}-{}", tier_dir(tier), unique_suffix())
+        };
+    }
+    set_ext(&mut concept.extensions, "memory_tier", ys(tier));
+    let valid_from = concept
+        .ext_str("valid_from")
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| concept.timestamp.clone())
+        .unwrap_or_else(iso_utc_now);
+    let valid_until = concept
+        .ext_str("valid_until")
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let successor = concept
+        .ext_str("successor_symbol")
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let moved = old_rel.as_deref().is_some_and(|o| o != concept.concept_id);
+    if let Err(e) = write_validity(
+        concept,
+        &valid_from,
+        valid_until.as_deref(),
+        successor.as_deref(),
+        Some(bundle),
+        conn,
+    ) {
+        // A failed move must not leave the new-tier file beside the old one.
+        if moved {
+            let new_file = bundle.root.join(format!("{}.md", concept.concept_id));
+            if new_file.exists() {
+                let _ = std::fs::remove_file(&new_file);
+            }
+        }
+        return Err(e);
+    }
+    if moved {
+        let old_id = old_rel.expect("moved implies old");
+        let old_file = bundle.root.join(format!("{old_id}.md"));
+        if old_file.exists() {
+            let _ = std::fs::remove_file(&old_file);
+        }
+        if let Some(conn) = conn {
+            conn.execute(
+                "DELETE FROM memory_validity WHERE concept_id = ?",
+                rusqlite::params![old_id],
+            )
+            .map_err(|e| ToolError(e.to_string()))?;
+        }
+    }
+    Ok(concept.concept_id.clone())
+}
+
+/// Read a memory-namespaced concept by full concept id or path.
+pub fn get_memory(bundle: &Bundle, path: &str) -> Result<Option<Concept>, ToolError> {
+    let bare = path.strip_suffix(".md").unwrap_or(path);
+    let mut cid = bare.to_string();
+    if !cid.starts_with("memory/") && !cid.contains("/memory/") {
+        cid = format!("memory/{cid}");
+    }
+    let concept = match bundle.read_concept(&cid) {
+        Ok(c) => Some(c),
+        Err(_) => bundle.read_concept(bare).ok(),
+    };
+    Ok(concept.filter(|c| in_memory_namespace(bundle, c)))
+}
+
+/// List memory concepts, optionally filtered by tier or tag.
+pub fn list_memories(bundle: &Bundle, tier: Option<&str>, tag: Option<&str>) -> Vec<Concept> {
+    let prefix = tier.map_or_else(|| "memory/".to_string(), |t| format!("{}/", tier_dir(t)));
+    let mut out = Vec::new();
+    for cid in bundle.list_concepts(Some(&prefix)) {
+        let Ok(c) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        if tag.is_some_and(|tag| !c.tags.iter().any(|t| t == tag)) {
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Delete only a memory-namespaced concept and its exact reference rows.
+pub fn delete_memory(
+    bundle: &Bundle,
+    memory_path: &str,
+    conn: Option<&Connection>,
+) -> Result<bool, ToolError> {
+    let bare = memory_path.strip_suffix(".md").unwrap_or(memory_path);
+    let mut cid = bare.to_string();
+    if !cid.starts_with("memory/") {
+        cid = format!("memory/{cid}");
+    }
+    let concept = get_memory(bundle, memory_path)?;
+    let (abs_cid, rel) = match concept {
+        Some(c) => {
+            if !in_memory_namespace(bundle, &c) {
+                return Ok(false);
+            }
+            (c.concept_id.clone(), rel_cid(bundle, &c.concept_id))
+        }
+        None => (cid.clone(), cid.clone()),
+    };
+    let file_path = match bundle.validate_concept_path(&rel) {
+        Ok(p) => p,
+        Err(_) => return Ok(false),
+    };
+    if !file_path.exists() {
+        return Ok(false);
+    }
+    std::fs::remove_file(&file_path).map_err(|e| ToolError(e.to_string()))?;
+    if let Some(conn) = conn {
+        delete_memory_rows(bundle, &abs_cid, conn)?;
+    }
+    Ok(true)
+}
+
+fn delete_memory_rows(
+    bundle: &Bundle,
+    concept_id: &str,
+    conn: &Connection,
+) -> Result<(), ToolError> {
+    let rel = rel_cid(bundle, concept_id);
+    let mut ids = vec![rel];
+    if ids[0] != concept_id {
+        ids.push(concept_id.to_string());
+    }
+    let placeholders = vec!["?"; ids.len()].join(", ");
+    let params: Vec<&str> = ids.iter().map(String::as_str).collect();
+    for table in [
+        "memory_refs(meadow_path)",
+        "memory_validity(concept_id)",
+        "memory_embeddings(doc_id)",
+    ] {
+        let (table, column) = table.split_once('(').expect("table spec");
+        let column = column.trim_end_matches(')');
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE {column} IN ({placeholders})"),
+            rusqlite::params_from_iter(params.iter()),
+        )
+        .map_err(|e| ToolError(e.to_string()))?;
+    }
+    Ok(())
+}
+
+/// Move a memory to a strictly lower tier and return its new path.
+pub fn demote_memory(
+    bundle: &Bundle,
+    memory_path: &str,
+    target_tier: &str,
+    conn: Option<&Connection>,
+) -> Result<Option<String>, ToolError> {
+    let Some(mut concept) = get_memory(bundle, memory_path)? else {
+        return Ok(None);
+    };
+    let current = concept
+        .ext_str("memory_tier")
+        .unwrap_or("drafts")
+        .to_string();
+    let (Some(ti), Some(ci)) = (
+        TIER_ORDER.iter().position(|t| *t == target_tier),
+        TIER_ORDER.iter().position(|t| *t == current),
+    ) else {
+        return Ok(None);
+    };
+    if ti <= ci {
+        return Ok(None);
+    }
+    let old_id = rel_cid(bundle, &concept.concept_id);
+    set_ext(&mut concept.extensions, "memory_tier", ys(target_tier));
+    let new_id = store_memory(&mut concept, bundle, target_tier, Some(&old_id), conn)?;
+    Ok(Some(new_id))
+}
+
+/// Promote a memory to compass or wiki and return its new concept id.
+pub fn promote_memory(
+    bundle: &Bundle,
+    memory_path: &str,
+    conn: Option<&Connection>,
+) -> Result<Option<String>, ToolError> {
+    let mut concept = match get_memory(bundle, memory_path)? {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+    let mtype = concept
+        .ext_str("memory_type")
+        .unwrap_or("decision")
+        .to_string();
+    let compass_bound = matches!(
+        mtype.as_str(),
+        "decision" | "pattern" | "mistake" | "workaround"
+    );
+    let unique = unique_suffix();
+    let title_slug = slugify(concept.title.as_deref().unwrap_or(""));
+    let new_id = if compass_bound {
+        format!("compass/promoted-{title_slug}-{unique}")
+    } else {
+        format!("wiki/features/promoted-{title_slug}-{unique}")
+    };
+    concept.type_ = if compass_bound {
+        "Compass".to_string()
+    } else {
+        "Wiki-Feature".to_string()
+    };
+    set_ext(&mut concept.extensions, "memory_status", ys("canonical"));
+    concept.extensions.retain(|(k, _)| k != "memory_tier");
+    let old_id = rel_cid(bundle, &concept.concept_id);
+    concept.concept_id = new_id.clone();
+    let score = concept.ext_f64("memory_score").unwrap_or(0.0);
+    append_promotion(&mut concept, "force_promote", score);
+    bundle.write_concept(&mut concept)?;
+    if let Some(conn) = conn {
+        rename_memory_embedding(conn, &old_id, &new_id)?;
+    }
+    let old_file = bundle.root.join(format!("{old_id}.md"));
+    if old_file.exists() {
+        let _ = std::fs::remove_file(&old_file);
+    }
+    Ok(Some(new_id))
+}
+
+fn rename_memory_embedding(conn: &Connection, old_id: &str, new_id: &str) -> Result<(), ToolError> {
+    conn.execute(
+        "UPDATE memory_embeddings SET doc_id = ? WHERE doc_id = ?",
+        rusqlite::params![new_id, old_id],
+    )
+    .map_err(|e| ToolError(e.to_string()))?;
+    Ok(())
+}
+
+fn append_promotion(concept: &mut Concept, action: &str, score: f64) {
+    let entry = Yaml::Hash({
+        let mut h = Hash::new();
+        h.insert(ys("date"), ys(iso_utc_now()));
+        h.insert(ys("action"), ys(action));
+        h.insert(ys("score"), Yaml::Real(fmt_score(score)));
+        h
+    });
+    match concept
+        .extensions
+        .iter_mut()
+        .find(|(k, _)| k == "promotion_history")
+    {
+        Some((_, Yaml::Array(items))) => items.push(entry),
+        Some(slot) => slot.1 = Yaml::Array(vec![entry]),
+        None => concept
+            .extensions
+            .push(("promotion_history".into(), Yaml::Array(vec![entry]))),
+    }
+}
+
+fn age_days(ts: &str) -> f64 {
+    let Some(secs) = parse_memory_timestamp(ts) else {
+        return 0.0;
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    (now - secs) as f64 / 86_400.0
+}
+
+/// Expire raw and stale tribal memories into the archived tier
+/// (embedding reap rides the embeddings workstream).
+pub fn decay(
+    bundle: &Bundle,
+    raw_max_days: i64,
+    tribal_max_stale: i64,
+    conn: Option<&Connection>,
+) -> Result<(usize, usize), ToolError> {
+    let mut expired = 0;
+    let mut archived = 0;
+    for concept in list_memories(bundle, Some("raw"), None) {
+        let expire = concept
+            .timestamp
+            .as_deref()
+            .is_some_and(|ts| age_days(ts) > raw_max_days as f64);
+        if expire {
+            let mut c = concept;
+            let old_id = c.concept_id.clone();
+            store_memory(&mut c, bundle, "archived", Some(&old_id), conn)?;
+            expired += 1;
+        }
+    }
+    for concept in list_memories(bundle, Some("tribal"), None) {
+        let stale = concept
+            .timestamp
+            .as_deref()
+            .is_some_and(|ts| age_days(ts) > tribal_max_stale as f64);
+        if stale {
+            let mut c = concept;
+            let old_id = c.concept_id.clone();
+            store_memory(&mut c, bundle, "archived", Some(&old_id), conn)?;
+            archived += 1;
+        }
+    }
+    Ok((expired, archived))
+}
+
+// --- scoring (memory/scoring.py port) ------------------------------------------
+
+/// Fraction of backtick-quoted file/symbol refs that exist in the graph.
+pub fn graph_verification(concept: &Concept, conn: &Connection) -> Result<f64, rusqlite::Error> {
+    let body = &concept.body;
+    let file_refs = extract_file_refs(body);
+    let symbol_refs = extract_symbol_refs(body);
+    let total = file_refs.len() + symbol_refs.len();
+    if total == 0 {
+        return Ok(1.0);
+    }
+    let mut verified = 0;
+    for r in &file_refs {
+        if file_exists(conn, r)? {
+            verified += 1;
+        }
+    }
+    for r in &symbol_refs {
+        if symbol_exists(conn, r)? {
+            verified += 1;
+        }
+    }
+    Ok(verified as f64 / total as f64)
+}
+
+fn cross_session_refs(concept: &Concept, conn: &Connection) -> Result<i64, rusqlite::Error> {
+    if concept.concept_id.is_empty() {
+        return Ok(0);
+    }
+    conn.query_row(
+        "SELECT COUNT(DISTINCT session_id) FROM memory_refs WHERE memory_path = ?",
+        rusqlite::params![concept.concept_id],
+        |r| r.get(0),
+    )
+}
+
+fn freshness(concept: &Concept) -> f64 {
+    let Some(ts) = concept.timestamp.as_deref().or_else(|| {
+        concept.ext("timestamp").and_then(|v| match v {
+            Yaml::String(s) => Some(s.as_str()),
+            _ => None,
+        })
+    }) else {
+        return 0.5;
+    };
+    if concept.ext_str("doc_source") == Some("manual") {
+        return 1.0;
+    }
+    let Some(secs) = parse_memory_timestamp(ts) else {
+        return 0.5;
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = (now - secs) as f64 / 86_400.0;
+    let mtype = concept.ext_str("memory_type").unwrap_or("decision");
+    let half_life: f64 = match mtype {
+        "pattern" | "mistake" | "workaround" => 270.0,
+        _ => 90.0,
+    };
+    let lam = std::f64::consts::LN_2 / half_life;
+    (-lam * days).exp()
+}
+
+fn reinforcement(concept: &Concept, conn: &Connection) -> Result<f64, rusqlite::Error> {
+    if concept.concept_id.is_empty() {
+        return Ok(0.0);
+    }
+    let mut cids = vec![concept.concept_id.clone()];
+    let cid = &concept.concept_id;
+    if Path::new(cid).is_absolute() && cid.contains("memory/") {
+        let pos = cid.find("memory/").expect("checked");
+        if &cid[pos..] != cid {
+            cids.push(format!("memory/{}", &cid[pos + "memory/".len()..]));
+        }
+    }
+    let placeholders = vec!["?"; cids.len()].join(", ");
+    let params: Vec<&str> = cids.iter().map(String::as_str).collect();
+    let rows: Vec<String> = {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT referenced_at FROM memory_refs WHERE memory_path IN ({placeholders})"
+        ))?;
+        let mapped = stmt.query_map(rusqlite::params_from_iter(params.iter()), |r| {
+            r.get::<_, String>(0)
+        })?;
+        mapped.collect::<Result<Vec<_>, _>>()?
+    };
+    if rows.is_empty() {
+        return Ok(0.0);
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let sigma = 0.3;
+    let mut boost = 0.0;
+    for ts in rows {
+        if let Some(secs) = parse_iso_ts(&ts, true) {
+            let days_since = (now - secs) as f64 / 86_400.0;
+            if days_since > 0.0 {
+                boost += 1.0 / days_since;
+            }
+        }
+    }
+    Ok((boost * sigma).min(1.0))
+}
+
+fn authority(concept: &Concept) -> f64 {
+    if concept.ext_str("doc_source") == Some("manual") {
+        1.0
+    } else {
+        0.5
+    }
+}
+
+/// Scoring signals + weighted score (`score_memory`).
+pub fn score_memory(
+    concept: &Concept,
+    conn: &Connection,
+) -> Result<HashMap<String, f64>, ToolError> {
+    let signal_of = |key: &str| -> Option<f64> {
+        match concept.ext("memory_signals") {
+            Some(Yaml::Hash(h)) => h.get(&ys(key)).and_then(|x| match x {
+                Yaml::Real(s) => s.parse().ok(),
+                Yaml::Integer(i) => Some(*i as f64),
+                _ => None,
+            }),
+            _ => None,
+        }
+    };
+    let agent_confidence = signal_of("agent_confidence")
+        .unwrap_or_else(|| concept.ext_f64("memory_score").unwrap_or(0.5));
+    let graph_v = graph_verification(concept, conn).map_err(|e| ToolError(e.to_string()))?;
+    let refs = cross_session_refs(concept, conn).map_err(|e| ToolError(e.to_string()))?;
+    let refs_signal = (refs as f64 / 5.0).min(1.0);
+    let critic = signal_of("critic_score").unwrap_or(0.5);
+    let fresh = freshness(concept);
+    let reinforce = reinforcement(concept, conn).map_err(|e| ToolError(e.to_string()))?;
+    let mut signals = HashMap::new();
+    signals.insert("graph_verification".to_string(), py_round3(graph_v));
+    signals.insert("cross_session_refs".to_string(), refs as f64);
+    signals.insert(
+        "cross_session_refs_signal".to_string(),
+        py_round3(refs_signal),
+    );
+    signals.insert("agent_confidence".to_string(), py_round3(agent_confidence));
+    signals.insert("critic_score".to_string(), py_round3(critic));
+    signals.insert("freshness".to_string(), py_round3(fresh));
+    signals.insert("reinforcement".to_string(), py_round3(reinforce));
+    signals.insert("authority".to_string(), py_round3(authority(concept)));
+    signals.insert("score".to_string(), py_round3(compute_score(&signals)));
+    Ok(signals)
+}
+
+/// Apply the weighted formula to an already-computed signals dict.
+pub fn compute_score(signals: &HashMap<String, f64>) -> f64 {
+    0.357 * signals["graph_verification"]
+        + 0.286 * signals["cross_session_refs_signal"]
+        + 0.214 * signals["agent_confidence"]
+        + 0.0715 * signals["freshness"]
+        + 0.0715 * signals.get("reinforcement").copied().unwrap_or(0.0)
+}
+
+fn apply_score(concept: &mut Concept, signals: &HashMap<String, f64>) {
+    let mut sig = Hash::new();
+    for key in [
+        "graph_verification",
+        "cross_session_refs",
+        "agent_confidence",
+        "critic_score",
+        "freshness",
+        "reinforcement",
+        "authority",
+    ] {
+        sig.insert(ys(key), Yaml::Real(fmt_score(signals[key])));
+    }
+    set_ext(&mut concept.extensions, "memory_signals", Yaml::Hash(sig));
+    set_ext(
+        &mut concept.extensions,
+        "memory_score",
+        Yaml::Real(fmt_score(signals["score"])),
+    );
+}
+
+fn seed_refs_baseline(concept: &mut Concept, signals: &HashMap<String, f64>) {
+    let body_refs =
+        extract_file_refs(&concept.body).len() + extract_symbol_refs(&concept.body).len();
+    if body_refs > 0 {
+        set_ext(
+            &mut concept.extensions,
+            "memory_refs_baseline",
+            Yaml::Real(fmt_score(signals["graph_verification"])),
+        );
+    }
+}
+
+// --- search_memory (memory/promotion.py port) ----------------------------------
+
+fn parse_instant(value: &str) -> Option<i64> {
+    parse_iso_ts(value, true)
+}
+
+fn bound_key(value: &Yaml) -> Option<String> {
+    match value {
+        Yaml::String(_) | Yaml::Real(_) | Yaml::Integer(_) => {
+            parse_instant(&scalar_repr(value)).map(instant_key)
+        }
+        _ => None,
+    }
+}
+
+fn valid_at(concept: &Concept, query_key: &str) -> bool {
+    if concept
+        .ext("valid_from")
+        .and_then(bound_key)
+        .is_some_and(|vf| vf.as_str() > query_key)
+    {
+        return false;
+    }
+    if concept
+        .ext("valid_until")
+        .and_then(bound_key)
+        .is_some_and(|vu| vu.as_str() <= query_key)
+    {
+        return false;
+    }
+    true
+}
+
+fn visible(
+    concept: &Concept,
+    tier: Option<&str>,
+    include_superseded: bool,
+    query_key: &str,
+) -> bool {
+    if tier.is_some_and(|t| !concept.ext_str("memory_tier").unwrap_or("").starts_with(t)) {
+        return false;
+    }
+    if !include_superseded && !concept.ext_bool("memory_is_latest").unwrap_or(true) {
+        return false;
+    }
+    valid_at(concept, query_key)
+}
+
+/// Record sanitized memory references in one best-effort transaction.
+fn record_references_batch(conn: &Connection, refs: &[(String, String)], session_id: &str) {
+    if refs.is_empty() {
+        return;
+    }
+    let now = iso_utc_now();
+    for (memory_path, context) in refs {
+        let context = strip_private_data(context);
+        let context: String = context.chars().take(200).collect();
+        let _ = conn.execute(
+            "INSERT INTO memory_refs (id, memory_path, session_id, referenced_at, context) VALUES (?, ?, ?, ?, ?)",
+            rusqlite::params![unique_ref_id(), memory_path, session_id, now, context],
+        );
+    }
+}
+
+fn lexical_memory_match(concepts: Vec<Concept>, query: &str) -> Vec<Concept> {
+    let stop: HashSet<&str> = BASE_STOP_WORDS.iter().copied().collect();
+    let tokens: Vec<String> = simple_tokenize(query, None)
+        .into_iter()
+        .filter(|t| !stop.contains(t.as_str()))
+        .collect();
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+    let mut scored: Vec<(usize, Concept)> = Vec::new();
+    for c in concepts {
+        let hay = format!(
+            "{} {} {}",
+            c.title.as_deref().unwrap_or_default(),
+            c.description.as_deref().unwrap_or_default(),
+            c.body
+        )
+        .to_lowercase();
+        let hits = tokens.iter().filter(|t| hay.contains(t.as_str())).count();
+        if hits > 0 {
+            scored.push((hits, c));
+        }
+    }
+    scored.sort_by_key(|(hits, _concept)| std::cmp::Reverse(*hits));
+    scored.into_iter().map(|(_, c)| c).collect()
+}
+
+/// Search memories ranked by fused lexical + semantic matches (semantic gated
+/// on the memory embedding table; vectors land with the embeddings workstream).
+#[allow(clippy::too_many_arguments)]
+pub fn search_memory(
+    conn: &Connection,
+    bundle: &Bundle,
+    query: &str,
+    tier: Option<&str>,
+    session_id: Option<&str>,
+    include_superseded: bool,
+    as_of: Option<&str>,
+) -> Result<Vec<Concept>, ToolError> {
+    let instant = match as_of {
+        Some(a) => parse_instant(a)
+            .ok_or_else(|| ToolError(format!("as_of must be an ISO-8601 date, got {a:?}")))?,
+        None => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+    };
+    let query_key = instant_key(instant);
+
+    let mut lexical_hits: Vec<Concept> = bundle
+        .search(query, Some(20))?
+        .into_iter()
+        .filter(|c| c.concept_id.starts_with("memory/") || c.ext("memory_tier").is_some())
+        .filter(|c| visible(c, tier, include_superseded, &query_key))
+        .collect();
+
+    let mut resolved: HashMap<String, Concept> = HashMap::new();
+    for c in &lexical_hits {
+        resolved.insert(c.concept_id.clone(), c.clone());
+    }
+
+    // Lexical broaden when substring search alone came up thin.
+    if lexical_hits.len() <= 2 {
+        let mut all_mem = Vec::new();
+        for cid in bundle.list_concepts(Some("memory/")) {
+            let c = match bundle.read_concept(&cid) {
+                Ok(c) if visible(&c, tier, include_superseded, &query_key) => c,
+                _ => continue,
+            };
+            all_mem.push(c);
+        }
+        for c in &all_mem {
+            resolved
+                .entry(c.concept_id.clone())
+                .or_insert_with(|| c.clone());
+        }
+        for c in lexical_memory_match(all_mem, query) {
+            if !lexical_hits.iter().any(|h| h.concept_id == c.concept_id) {
+                resolved
+                    .entry(c.concept_id.clone())
+                    .or_insert_with(|| c.clone());
+                lexical_hits.push(c);
+            }
+        }
+    }
+
+    let semantic_hits = semantic_memory_search(conn, tier, include_superseded, &query_key)?;
+    for c in semantic_hits {
+        resolved.insert(c.concept_id.clone(), c);
+    }
+
+    // Without semantic hits the fused order is the lexical order.
+    let mut results = Vec::new();
+    for c in &lexical_hits {
+        if let Some(rc) = resolved.get(&c.concept_id) {
+            results.push(rc.clone());
+        }
+    }
+
+    if let Some(sid) = session_id {
+        let refs: Vec<(String, String)> = results
+            .iter()
+            .filter(|c| c.ext_str("memory_tier") == Some("tribal"))
+            .map(|c| (c.concept_id.clone(), query.to_string()))
+            .collect();
+        record_references_batch(conn, &refs, sid);
+    }
+    Ok(results)
+}
+
+fn semantic_memory_search(
+    conn: &Connection,
+    tier: Option<&str>,
+    include_superseded: bool,
+    query_key: &str,
+) -> Result<Vec<Concept>, ToolError> {
+    let count = embed_memory_count(conn).unwrap_or(0);
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    // Vector ranking is not available until the embeddings workstream lands;
+    // degrade to no semantic hits (the lexical path stays complete).
+    let _ = (tier, include_superseded, query_key);
+    Ok(Vec::new())
+}
+
+fn embed_memory_count(conn: &Connection) -> Result<i64, rusqlite::Error> {
+    let model = current_model("memory");
+    conn.query_row(
+        "SELECT COUNT(*) FROM memory_embeddings WHERE model = ? AND chunk_index = 0",
+        rusqlite::params![model],
+        |r| r.get(0),
+    )
+}
+
+fn current_model(corpus: &str) -> String {
+    match std::env::var("CAIRN_EMBED_BACKEND").as_deref() {
+        Ok("hash") => "hash-256-v1".to_string(),
+        Ok("openai") => std::env::var("CAIRN_EMBED_OPENAI_MODEL")
+            .unwrap_or_else(|_| "text-embedding-3-small".to_string()),
+        _ => {
+            let _ = corpus;
+            "BAAI/bge-m3".to_string()
+        }
+    }
+}
+
+fn unembedded_memory_hint(conn: &Connection, bundle: &Bundle) -> Result<String, ToolError> {
+    let total = bundle.list_concepts(Some("memory/")).len();
+    if total == 0 {
+        return Ok(String::new());
+    }
+    let embedded = embed_memory_count(conn).map_err(|e| ToolError(e.to_string()))?;
+    if embedded < total as i64 {
+        return Ok(format!(
+            "({} of {total} memories not yet embedded -- run `cairn memory embed` for semantic recall)",
+            total as i64 - embedded
+        ));
+    }
+    Ok(String::new())
+}
+
+// --- capture (memory/promotion.py port) -----------------------------------------
+
+fn is_session_bookkeeping(title: &str, body: &str) -> bool {
+    struct Bookkeeping {
+        task_id: Regex,
+        branch: Regex,
+        date: Regex,
+        count: Regex,
+        progress_count: Regex,
+    }
+    static RES: OnceLock<Bookkeeping> = OnceLock::new();
+    let b = RES.get_or_init(|| Bookkeeping {
+        task_id: Regex::new(r"\bT\d{3}\b").expect("task id regex"),
+        branch: Regex::new(
+            r"(?:^|[^\w/])(?:feature|feat|fix|bugfix|hotfix|chore|release|docs|refactor|spec)/[A-Za-z0-9._-]+",
+        )
+        .expect("branch regex"),
+        date: Regex::new(r"\b\d{4}-\d{2}-\d{2}\b").expect("date regex"),
+        count: Regex::new(
+            r"\b\d+\s+(?:commits?|files?|prs?|tasks?|modules?|specs?|tests?)\b",
+        )
+        .expect("count regex"),
+        progress_count: Regex::new(
+            r"\b\d+\s+(?:[\w'-]+\s+){0,3}(?:done|left|remaining|pending|complete|completed|to go)\b",
+        )
+        .expect("progress regex"),
+    });
+    let combined = format!("{title}\n{body}");
+    if b.task_id.is_match(&combined) || b.branch.is_match(&combined) {
+        return true;
+    }
+    // Python expressed "dated count" with same-line lookaheads: a line carrying
+    // both a date and a unit count.
+    if combined
+        .lines()
+        .any(|line| b.date.is_match(line) && b.count.is_match(line))
+    {
+        return true;
+    }
+    b.progress_count.is_match(title)
+}
+
+fn find_supersession_candidate(
+    conn: &Connection,
+    bundle: &Bundle,
+    type_: &str,
+    title: &str,
+) -> Result<Option<String>, ToolError> {
+    let mut candidates: Vec<Concept> = Vec::new();
+    for cid in bundle.list_concepts(Some("memory/")) {
+        let Ok(c) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        if c.ext_str("memory_type") != Some(type_) {
+            continue;
+        }
+        if !c.ext_bool("memory_is_latest").unwrap_or(true) {
+            continue;
+        }
+        candidates.push(c);
+    }
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    // Tier 1: exact title match (case-insensitive).
+    let title_lower = title.trim().to_lowercase();
+    if !title_lower.is_empty() {
+        for c in &candidates {
+            if c.title.as_deref().unwrap_or("").trim().to_lowercase() == title_lower {
+                return Ok(Some(c.concept_id.clone()));
+            }
+        }
+    }
+    // Tier 2 (cosine over embeddings) is gated on the embeddings workstream.
+    let _ = conn;
+    Ok(None)
+}
+
+fn mark_superseded(bundle: &Bundle, old_id: &str, new_id: &str) -> Result<(), ToolError> {
+    let Some(mut old) = get_memory(bundle, old_id)? else {
+        return Ok(());
+    };
+    set_ext(
+        &mut old.extensions,
+        "memory_is_latest",
+        Yaml::Boolean(false),
+    );
+    set_ext(&mut old.extensions, "memory_superseded_by", ys(new_id));
+    bundle.write_concept(&mut old)
+}
+
+/// Create, score, redact, and store a memory, superseding a close latest match.
+#[allow(clippy::too_many_arguments)]
+pub fn capture_memory(
+    conn: &Connection,
+    bundle: &Bundle,
+    type_: &str,
+    title: &str,
+    body: &str,
+    resource: Option<&str>,
+    confidence: f64,
+    stance: Option<&str>,
+) -> Result<CaptureResult, ToolError> {
+    let body = strip_private_data(body);
+    let title = strip_private_data(title);
+    let _lock = bundle.lock();
+    let superseded_id = find_supersession_candidate(conn, bundle, type_, &title)?;
+
+    let mut supersedes_chain: Vec<String> = Vec::new();
+    if let Some(old_id) = &superseded_id
+        && let Ok(Some(old)) = get_memory(bundle, old_id)
+    {
+        let norm_id = rel_cid(bundle, old_id);
+        let old_chain: Vec<String> = match old.ext("memory_supersedes") {
+            Some(Yaml::Array(items)) => items
+                .iter()
+                .map(|i| rel_cid(bundle, &str_of(Some(i)).unwrap_or_default()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        supersedes_chain = vec![norm_id];
+        supersedes_chain.extend(old_chain);
+    }
+
+    let mut concept = create_memory(
+        type_,
+        &title,
+        &body,
+        resource,
+        confidence,
+        None,
+        None,
+        None,
+        if supersedes_chain.is_empty() {
+            None
+        } else {
+            Some(supersedes_chain)
+        },
+        stance,
+    )?;
+    let signals = score_memory(&concept, conn)?;
+    apply_score(&mut concept, &signals);
+    seed_refs_baseline(&mut concept, &signals);
+    let mut tier = tier_for_score(signals["score"]).to_string();
+    if is_session_bookkeeping(&title, &body) {
+        tier = "raw".to_string();
+        set_ext(
+            &mut concept.extensions,
+            "memory_triage",
+            ys("session-bookkeeping"),
+        );
+    }
+    let path = store_memory(&mut concept, bundle, &tier, None, Some(conn))?;
+
+    if let Some(old_id) = &superseded_id {
+        mark_superseded(bundle, old_id, &path)?;
+        append_promotion(&mut concept, "supersede", signals["score"]);
+    }
+
+    Ok(CaptureResult {
+        path,
+        tier,
+        score: signals["score"],
+        superseded: superseded_id,
+    })
+}
+
+/// Capture outcome: stored path, tier, score, and the superseded id if any.
+pub struct CaptureResult {
+    pub path: String,
+    pub tier: String,
+    pub score: f64,
+    pub superseded: Option<String>,
+}
+
+// --- knowledge store (knowledge/store.py port) ----------------------------------
+
+/// The path-safe doc_type for knowledge ids: slugified, "general" fallback.
+pub fn doc_type_slug(doc_type: &str) -> String {
+    let s = slugify(doc_type);
+    if s.is_empty() {
+        "general".to_string()
+    } else {
+        s
+    }
+}
+
+/// The concept id add_document assigns a title/doc_type (or explicit slug).
+pub fn doc_concept_id(title: &str, doc_type: &str, slug: Option<&str>) -> String {
+    format!(
+        "knowledge/{}/{}",
+        doc_type_slug(doc_type),
+        slug.map_or_else(|| slugify(&strip_private_data(title)), str::to_string)
+    )
+}
+
+/// Normalize a doc id to its bare bundle-relative concept id.
+pub fn normalize_doc_id(bundle: &Bundle, concept_id: &str) -> String {
+    let cid = concept_id.strip_suffix(".md").unwrap_or(concept_id);
+    let resolved = resolve_lenient(&bundle.root.join(format!("{cid}.md")));
+    match resolved.strip_prefix(resolve_lenient(&bundle.root)) {
+        Ok(rel) => {
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            rel.strip_suffix(".md").unwrap_or(&rel).to_string()
+        }
+        Err(_) => cid.to_string(),
+    }
+}
+
+fn refuse_out_of_namespace(
+    bundle: &Bundle,
+    doc_id: &str,
+    concept: Option<&Concept>,
+) -> Result<(), ToolError> {
+    let resolved = match concept {
+        Some(c) => normalize_doc_id(bundle, &c.concept_id),
+        None => {
+            let resolved = normalize_doc_id(bundle, doc_id);
+            match bundle.validate_concept_path(&resolved) {
+                Err(_) => return Ok(()),
+                Ok(p) if !p.exists() => return Ok(()),
+                Ok(_) => resolved,
+            }
+        }
+    };
+    if resolved == "knowledge" || resolved.starts_with("knowledge/") {
+        return Ok(());
+    }
+    err(format!(
+        "Refused: '{doc_id}' resolves to '{resolved}', outside the knowledge/ namespace. \
+         The knowledge store only manages knowledge/ concepts (compass/wiki/memory documents \
+         cannot be modified or deleted through it)."
+    ))
+}
+
+/// One structured workflow step.
+#[derive(Debug, Clone, Default)]
+pub struct WorkflowStep {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub symbol: Option<String>,
+    pub file: Option<String>,
+}
+
+fn steps_yaml(steps: &[WorkflowStep]) -> Yaml {
+    Yaml::Array(
+        steps
+            .iter()
+            .map(|s| {
+                let mut h = Hash::new();
+                if let Some(n) = &s.name {
+                    h.insert(ys("name"), ys(n));
+                }
+                if let Some(d) = &s.description {
+                    h.insert(ys("description"), ys(d));
+                }
+                if let Some(sym) = &s.symbol {
+                    h.insert(ys("symbol"), ys(sym));
+                }
+                if let Some(f) = &s.file {
+                    h.insert(ys("file"), ys(f));
+                }
+                Yaml::Hash(h)
+            })
+            .collect(),
+    )
+}
+
+fn steps_of(concept: &Concept) -> Vec<WorkflowStep> {
+    match concept.ext("steps") {
+        Some(Yaml::Array(items)) => items
+            .iter()
+            .map(|item| match item {
+                Yaml::Hash(h) => WorkflowStep {
+                    name: str_of(h.get(&ys("name"))),
+                    description: str_of(h.get(&ys("description"))),
+                    symbol: str_of(h.get(&ys("symbol"))),
+                    file: str_of(h.get(&ys("file"))),
+                },
+                _ => WorkflowStep::default(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Redact, normalize, and store one document; return its concept id.
+#[allow(clippy::too_many_arguments)]
+pub fn add_document(
+    bundle: &Bundle,
+    title: &str,
+    body: &str,
+    doc_type: &str,
+    tags: Vec<String>,
+    affects_modules: Vec<String>,
+    affects_repos: Vec<String>,
+    resource: Option<&str>,
+    owner: Option<&str>,
+    epic_link: Option<&str>,
+    steps: Option<Vec<WorkflowStep>>,
+    description: Option<&str>,
+    doc_source: &str,
+) -> Result<String, ToolError> {
+    let title = strip_private_data(title);
+    let body = strip_private_data(body);
+    let description = description.map(strip_private_data);
+    let concept_id = doc_concept_id(&title, doc_type, None);
+
+    let mut extensions: Vec<(String, Yaml)> = vec![
+        ("tier".into(), ys("asserted")),
+        ("doc_status".into(), ys("active")),
+        ("doc_owner".into(), ys(owner.unwrap_or(""))),
+        ("doc_source".into(), ys(doc_source)),
+        ("epic_link".into(), ys(epic_link.unwrap_or(""))),
+        ("affects_modules".into(), str_list_yaml(&affects_modules)),
+        ("affects_repos".into(), str_list_yaml(&affects_repos)),
+    ];
+    if let Some(steps) = &steps {
+        extensions.push(("steps".into(), steps_yaml(steps)));
+    }
+
+    let mut concept = Concept {
+        type_: format!("Knowledge-{doc_type}"),
+        title: Some(title.clone()),
+        description: Some(description.unwrap_or_else(|| title.clone())),
+        resource: resource.map(str::to_string),
+        tags,
+        concept_id: concept_id.clone(),
+        body,
+        extensions,
+        ..Default::default()
+    };
+    let _lock = bundle.lock();
+    if get_document(bundle, &concept_id)?.is_some() {
+        // Same title+type replaces the prior document in place.
+    }
+    bundle.write_concept(&mut concept)?;
+    Ok(concept_id)
+}
+
+/// List knowledge documents, optionally filtered by type/status/tag.
+pub fn list_documents(
+    bundle: &Bundle,
+    doc_type: Option<&str>,
+    status: Option<&str>,
+    tag: Option<&str>,
+) -> Vec<Concept> {
+    let prefix = doc_type.map_or_else(|| "knowledge/".to_string(), |t| format!("knowledge/{t}/"));
+    let mut out = Vec::new();
+    for cid in bundle.list_concepts(Some(&prefix)) {
+        let Ok(concept) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        if status.is_some_and(|status| concept.ext_str("doc_status").unwrap_or("active") != status)
+        {
+            continue;
+        }
+        if tag.is_some_and(|tag| !concept.tags.iter().any(|t| t == tag)) {
+            continue;
+        }
+        out.push(concept);
+    }
+    out
+}
+
+/// Read a knowledge document by concept_id.
+pub fn get_document(bundle: &Bundle, doc_id: &str) -> Result<Option<Concept>, ToolError> {
+    Ok(bundle.read_concept(doc_id).ok())
+}
+
+pub const DOC_STATUSES: &[&str] = &["active", "superseded", "archived"];
+
+/// Apply a forward-only status transition and return success.
+pub fn update_status(bundle: &Bundle, doc_id: &str, new_status: &str) -> Result<bool, ToolError> {
+    if !DOC_STATUSES.contains(&new_status) {
+        return Ok(false);
+    }
+    if !bundle.root.exists() {
+        return Ok(false);
+    }
+    let _lock = bundle.lock();
+    let concept = get_document(bundle, doc_id)?;
+    refuse_out_of_namespace(bundle, doc_id, concept.as_ref())?;
+    let Some(mut concept) = concept else {
+        return Ok(false);
+    };
+    let current = concept
+        .ext_str("doc_status")
+        .unwrap_or("active")
+        .to_string();
+    let (Some(ni), Some(ci)) = (
+        DOC_STATUSES.iter().position(|s| *s == new_status),
+        DOC_STATUSES.iter().position(|s| *s == current),
+    ) else {
+        return Ok(false);
+    };
+    if ni < ci {
+        return Ok(false);
+    }
+    set_ext(&mut concept.extensions, "doc_status", ys(new_status));
+    bundle.write_concept(&mut concept)?;
+    Ok(true)
+}
+
+/// Delete a document file and/or embeddings without committing.
+pub fn delete_document(
+    bundle: &Bundle,
+    doc_id: &str,
+    conn: Option<&Connection>,
+    unlink: bool,
+) -> Result<bool, ToolError> {
+    let _lock = bundle.lock();
+    let concept = get_document(bundle, doc_id)?;
+    refuse_out_of_namespace(bundle, doc_id, concept.as_ref())?;
+    let effective = concept
+        .map(|c| c.concept_id)
+        .unwrap_or_else(|| doc_id.to_string());
+    let file_path = match bundle.validate_concept_path(&effective) {
+        Ok(p) => p,
+        Err(_) => return Ok(false),
+    };
+    if !file_path.exists() {
+        return Ok(false);
+    }
+    if unlink {
+        std::fs::remove_file(&file_path).map_err(|e| ToolError(e.to_string()))?;
+    }
+    if let Some(conn) = conn {
+        let rel_id = normalize_doc_id(bundle, &effective);
+        conn.execute(
+            "DELETE FROM knowledge_embeddings WHERE doc_id = ?",
+            rusqlite::params![rel_id],
+        )
+        .map_err(|e| ToolError(e.to_string()))?;
+    }
+    Ok(true)
+}
+
+// --- knowledge search (knowledge/search.py port) ---------------------------------
+
+const WEIGHT_TITLE: usize = 10;
+const WEIGHT_DESCRIPTION: usize = 5;
+const WEIGHT_TAGS: usize = 5;
+const WEIGHT_BODY: usize = 1;
+
+fn doc_visible(concept: &Concept, include_archived: bool) -> bool {
+    if include_archived {
+        return true;
+    }
+    concept.ext_str("doc_status").unwrap_or("active") != "archived"
+}
+
+/// One scored knowledge-search hit.
+#[derive(Debug, Clone)]
+pub struct KnowledgeHit {
+    pub concept_id: String,
+    pub title: String,
+    pub doc_type: String,
+    pub score: f64,
+    pub provenance: String,
+    pub affects_modules: Vec<String>,
+    pub affects_repos: Vec<String>,
+    pub chunk: String,
+    pub graph_deps: Vec<(String, Yaml)>,
+}
+
+/// Scored lexical (or semantic-fallback) knowledge search with graph bridging.
+pub fn search_knowledge_docs(
+    conn: &Connection,
+    bundle: &Bundle,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<KnowledgeHit>, ToolError> {
+    let mut results = lexical_search(conn, bundle, query, limit, false)?;
+    if results.is_empty() {
+        results = semantic_knowledge_search(conn, query, limit)?;
+    }
+    for r in &mut results {
+        if !r.affects_repos.is_empty() {
+            r.graph_deps = graph_bridge(conn, &r.affects_repos);
+        }
+    }
+    Ok(results)
+}
+
+fn ext_str_list(concept: &Concept, key: &str) -> Vec<String> {
+    match concept.ext(key) {
+        Some(v) => str_vec(v).into_iter().filter(|s| !s.is_empty()).collect(),
+        None => Vec::new(),
+    }
+}
+
+fn chunk_of(concept: &Concept) -> String {
+    format!(
+        "{}\n{}",
+        concept.description.as_deref().unwrap_or_default(),
+        concept.body.chars().take(200).collect::<String>()
+    )
+}
+
+fn lexical_search(
+    conn: &Connection,
+    bundle: &Bundle,
+    query: &str,
+    limit: usize,
+    include_archived: bool,
+) -> Result<Vec<KnowledgeHit>, ToolError> {
+    let tokens = simple_tokenize(query, None);
+    if tokens.is_empty() {
+        return lexical_search_substring(bundle, query, limit, include_archived);
+    }
+    if tokens.len() == 1 {
+        return lexical_search_substring(bundle, &tokens[0], limit, include_archived);
+    }
+    let knowledge_cids = bundle.list_concepts(Some("knowledge/"));
+    let mut ranked: Vec<(usize, String, Concept)> = Vec::new();
+    for cid in &knowledge_cids {
+        let Ok(concept) = bundle.read_concept(cid) else {
+            continue;
+        };
+        if !doc_visible(&concept, include_archived) {
+            continue;
+        }
+        let title_lower = concept.title.as_deref().unwrap_or_default().to_lowercase();
+        let desc_lower = concept
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .to_lowercase();
+        let body_lower = concept.body.to_lowercase();
+        let tags_joined = concept.tags.join(" ").to_lowercase();
+        let mut score = 0;
+        for tok in &tokens {
+            if title_lower.contains(tok.as_str()) {
+                score += WEIGHT_TITLE;
+            }
+            if desc_lower.contains(tok.as_str()) {
+                score += WEIGHT_DESCRIPTION;
+            }
+            if tags_joined.contains(tok.as_str()) {
+                score += WEIGHT_TAGS;
+            }
+            if body_lower.contains(tok.as_str()) {
+                score += WEIGHT_BODY;
+            }
+        }
+        if score > 0 {
+            ranked.push((score, cid.clone(), concept));
+        }
+    }
+    ranked.sort_by_key(|(score, _cid, _concept)| std::cmp::Reverse(*score));
+
+    let mut out: Vec<KnowledgeHit> = Vec::new();
+    let mut expansion_budget = limit / 2;
+    let mut expanded_ids: HashSet<String> = HashSet::new();
+    for (score, cid, concept) in ranked.iter().take(limit) {
+        out.push(KnowledgeHit {
+            concept_id: cid.clone(),
+            title: concept.title.clone().unwrap_or_default(),
+            doc_type: cid.split('/').nth(1).unwrap_or("unknown").to_string(),
+            score: *score as f64,
+            provenance: "lexical_knowledge".into(),
+            affects_modules: ext_str_list(concept, "affects_modules"),
+            affects_repos: ext_str_list(concept, "affects_repos"),
+            chunk: chunk_of(concept),
+            graph_deps: Vec::new(),
+        });
+        if expansion_budget > 0 {
+            let related = find_related(
+                conn,
+                bundle,
+                cid,
+                *score as f64,
+                &ranked,
+                &expanded_ids,
+                include_archived,
+            )?;
+            for (rel_cid, rel_score, rel_concept) in related.into_iter().take(expansion_budget) {
+                out.push(KnowledgeHit {
+                    doc_type: rel_cid.split('/').nth(1).unwrap_or("unknown").to_string(),
+                    concept_id: rel_cid.clone(),
+                    title: rel_concept.title.clone().unwrap_or_default(),
+                    score: rel_score,
+                    provenance: "lexical_knowledge_expanded".into(),
+                    affects_modules: ext_str_list(&rel_concept, "affects_modules"),
+                    affects_repos: ext_str_list(&rel_concept, "affects_repos"),
+                    chunk: chunk_of(&rel_concept),
+                    graph_deps: Vec::new(),
+                });
+                expanded_ids.insert(rel_cid);
+                expansion_budget -= 1;
+            }
+        }
+    }
+    out.truncate(limit);
+    Ok(out)
+}
+
+fn lexical_search_substring(
+    bundle: &Bundle,
+    query: &str,
+    limit: usize,
+    include_archived: bool,
+) -> Result<Vec<KnowledgeHit>, ToolError> {
+    let knowledge_cids = bundle.list_concepts(Some("knowledge/"));
+    let hits = bundle.search(query, Some(limit * 2))?;
+    let mut out = Vec::new();
+    for c in hits {
+        let mut rel_id = c.concept_id.clone();
+        let mut matched = false;
+        for kcid in &knowledge_cids {
+            if rel_id.ends_with(kcid) || rel_id == *kcid {
+                rel_id = kcid.clone();
+                matched = true;
+                break;
+            }
+        }
+        if !matched || !doc_visible(&c, include_archived) {
+            continue;
+        }
+        out.push(KnowledgeHit {
+            doc_type: rel_id.split('/').nth(1).unwrap_or("unknown").to_string(),
+            concept_id: rel_id,
+            title: c.title.clone().unwrap_or_default(),
+            score: 1.0,
+            provenance: "lexical_knowledge".into(),
+            affects_modules: ext_str_list(&c, "affects_modules"),
+            affects_repos: ext_str_list(&c, "affects_repos"),
+            chunk: chunk_of(&c),
+            graph_deps: Vec::new(),
+        });
+    }
+    out.truncate(limit);
+    Ok(out)
+}
+
+fn find_related(
+    conn: &Connection,
+    bundle: &Bundle,
+    parent_id: &str,
+    parent_score: f64,
+    scored: &[(usize, String, Concept)],
+    already_in_results: &HashSet<String>,
+    include_archived: bool,
+) -> Result<Vec<(String, f64, Concept)>, ToolError> {
+    let mut related = Vec::new();
+    let mut seen = HashSet::new();
+    for (cid, kind) in neighbors_or_empty(conn, bundle, parent_id) {
+        if kind != "extracted" && kind != "derived" {
+            continue;
+        }
+        if seen.contains(&cid)
+            || already_in_results.contains(&cid)
+            || scored.iter().any(|(_, c, _)| *c == cid)
+        {
+            continue;
+        }
+        seen.insert(cid.clone());
+        let Ok(concept) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        if !doc_visible(&concept, include_archived) {
+            continue;
+        }
+        related.push((cid, (parent_score * 0.5).max(0.5), concept));
+    }
+    // f64 scores have no Ord; scores are finite so partial_cmp is total here.
+    #[allow(clippy::unnecessary_sort_by)]
+    related.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.0.cmp(&b.0))
+    });
+    Ok(related)
+}
+
+fn neighbors_or_empty(
+    conn: &Connection,
+    bundle: &Bundle,
+    parent_id: &str,
+) -> Vec<(String, String)> {
+    let normalized = normalize_doc_id(bundle, parent_id);
+    let mut out = Vec::new();
+    for (column, other) in [("doc_id", "related_id"), ("related_id", "doc_id")] {
+        let sql = format!(
+            "SELECT {other}, kind FROM knowledge_edges WHERE {column} = ? ORDER BY {other}"
+        );
+        let rows: Vec<(String, String)> = match conn.prepare(&sql).and_then(|mut stmt| {
+            stmt.query_map(rusqlite::params![normalized], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect()
+        }) {
+            Ok(rows) => rows,
+            Err(_) => return out,
+        };
+        for (cid, kind) in rows {
+            if bundle.read_concept(&cid).is_err() {
+                continue; // deleted between rebuilds: never a phantom neighbor
+            }
+            out.push((cid, kind));
+        }
+    }
+    out
+}
+
+fn semantic_knowledge_search(
+    conn: &Connection,
+    _query: &str,
+    _limit: usize,
+) -> Result<Vec<KnowledgeHit>, ToolError> {
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM knowledge_embeddings", [], |r| {
+            r.get(0)
+        })
+        .unwrap_or(0);
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    // Vector ranking lands with the embeddings workstream; degrade to no hits.
+    Ok(Vec::new())
+}
+
+fn graph_bridge(conn: &Connection, repos: &[String]) -> Vec<(String, Yaml)> {
+    let mut out = Vec::new();
+    for repo in repos {
+        match cross_repo_deps(conn, repo) {
+            Ok(deps) => out.push((repo.clone(), deps)),
+            Err(_) => out.push((
+                repo.clone(),
+                Yaml::Hash({
+                    let mut h = Hash::new();
+                    h.insert(ys("error"), ys("repo not found in graph"));
+                    h
+                }),
+            )),
+        }
+    }
+    out
+}
+
+fn cross_repo_deps(conn: &Connection, repo: &str) -> Result<Yaml, ToolError> {
+    let namespaces = load_namespaces();
+    // Dependencies: imports in `repo` resolving into another repo's namespace.
+    let mut deps: HashMap<String, (String, i64)> = HashMap::new();
+    let rows: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT imported_path FROM imports WHERE file_id IN \
+                 (SELECT id FROM files WHERE repo_id = ?)",
+            )
+            .map_err(|e| ToolError(e.to_string()))?;
+        stmt.query_map(rusqlite::params![repo], |r| r.get::<_, String>(0))
+            .map_err(|e| ToolError(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| ToolError(e.to_string()))?
+    };
+    for path in rows {
+        for (ns, owner) in &namespaces {
+            if (path == *ns || path.starts_with(&format!("{ns}."))) && owner != repo {
+                let entry = deps.entry(owner.clone()).or_insert_with(|| (ns.clone(), 0));
+                entry.1 += 1;
+            }
+        }
+    }
+    let mut dependencies: Vec<(i64, Yaml)> = deps
+        .into_iter()
+        .map(|(owner, (evidence, count))| {
+            let yaml = Yaml::Hash({
+                let mut h = Hash::new();
+                h.insert(ys("repo"), ys(&owner));
+                h.insert(ys("type"), ys("import"));
+                h.insert(ys("evidence"), ys(&evidence));
+                h.insert(ys("count"), Yaml::Integer(count));
+                h
+            });
+            (count, yaml)
+        })
+        .collect();
+    dependencies.sort_by_key(|(count, _)| std::cmp::Reverse(*count));
+
+    // Dependents: other repos importing this repo's namespaces.
+    let my_namespaces: Vec<&String> = namespaces
+        .iter()
+        .filter(|(_, owner)| owner == repo)
+        .map(|(ns, _)| ns)
+        .collect();
+    let mut dependents: Vec<(i64, Yaml)> = Vec::new();
+    if !my_namespaces.is_empty() {
+        let where_clause: Vec<String> = my_namespaces
+            .iter()
+            .map(|_| "(imported_path = ? OR substr(imported_path, 1, ?) = ?)".to_string())
+            .collect();
+        let mut params: Vec<String> = vec![repo.to_string()];
+        for ns in &my_namespaces {
+            params.push((*ns).clone());
+            params.push((ns.len() + 1).to_string());
+            params.push(format!("{ns}."));
+        }
+        let sql = format!(
+            "SELECT imported_path, repo_id FROM imports JOIN files ON imports.file_id = files.id \
+             WHERE files.repo_id != ? AND ({})",
+            where_clause.join(" OR ")
+        );
+        if let Ok(mut stmt) = conn.prepare(&sql) {
+            let mapped = stmt.query_map(rusqlite::params_from_iter(params.iter()), |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            });
+            if let Ok(mapped) = mapped {
+                let rows: Vec<(String, String)> =
+                    mapped.collect::<Result<Vec<_>, _>>().unwrap_or_default();
+                let mut dep_map: HashMap<String, i64> = HashMap::new();
+                for (_path, other_repo) in rows {
+                    *dep_map.entry(other_repo).or_insert(0) += 1;
+                }
+                dependents = dep_map
+                    .into_iter()
+                    .map(|(r, count)| {
+                        let yaml = Yaml::Hash({
+                            let mut h = Hash::new();
+                            h.insert(ys("repo"), ys(&r));
+                            h.insert(ys("type"), ys("import"));
+                            h.insert(ys("count"), Yaml::Integer(count));
+                            h
+                        });
+                        (count, yaml)
+                    })
+                    .collect();
+                dependents.sort_by_key(|(count, _)| std::cmp::Reverse(*count));
+            }
+        }
+    }
+    Ok(Yaml::Hash({
+        let mut h = Hash::new();
+        h.insert(
+            ys("dependencies"),
+            Yaml::Array(dependencies.into_iter().map(|(_, y)| y).collect()),
+        );
+        h.insert(
+            ys("dependents"),
+            Yaml::Array(dependents.into_iter().map(|(_, y)| y).collect()),
+        );
+        h
+    }))
+}
+
+fn load_namespaces() -> Vec<(String, String)> {
+    let parsed = std::env::var("CAIRN_REPO_NAMESPACES")
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+    if let Some(serde_json::Value::Object(map)) = parsed {
+        let clean: Vec<(String, String)> = map
+            .into_iter()
+            .filter(|(k, _)| !k.trim().is_empty())
+            .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+            .filter(|(_, v)| !v.trim().is_empty())
+            .collect();
+        if !clean.is_empty() {
+            return clean;
+        }
+    }
+    [
+        ("xyz.be.utils", "be-sdk"),
+        ("xyz.be.customer.networking", "be-sdk"),
+        ("xyz.be.customer.common", "be-sdk"),
+        ("xyz.be.partner.common", "be-sdk"),
+        ("xyz.be.common", "be-sdk"),
+        ("xyz.be.networking", "be-sdk"),
+        ("xyz.be.coreui", "be-core-ui"),
+        ("xyz.be.newcoreui", "be-core-ui"),
+        ("xyz.be.core_ui_v4", "be-core-ui"),
+        ("xyz.be.core.ui", "be-core-ui"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
+}
+
+// --- workflow (knowledge/workflow.py port) ---------------------------------------
+
+fn resolve_workflow(bundle: &Bundle, ref_: &str) -> Result<Option<Concept>, ToolError> {
+    if ref_.starts_with("knowledge/workflow/") {
+        return get_document(bundle, ref_);
+    }
+    let by_slug_id = format!("knowledge/workflow/{}", slugify(ref_));
+    if let Some(c) = get_document(bundle, &by_slug_id)? {
+        return Ok(Some(c));
+    }
+    for c in list_documents(bundle, Some("workflow"), None, None) {
+        if c.title.as_deref().unwrap_or("").trim().to_lowercase() == ref_.trim().to_lowercase() {
+            return Ok(Some(c));
+        }
+    }
+    Ok(None)
+}
+
+/// Resolved workflow projection.
+pub struct WorkflowTrace {
+    pub title: String,
+    pub concept_id: String,
+    pub doc_status: String,
+    pub steps: Vec<WorkflowStep>,
+}
+
+/// Resolve a workflow by title/slug/concept id into its ordered projection.
+pub fn trace_workflow(bundle: &Bundle, ref_: &str) -> Result<Option<WorkflowTrace>, ToolError> {
+    let Some(concept) = resolve_workflow(bundle, ref_)? else {
+        return Ok(None);
+    };
+    Ok(Some(WorkflowTrace {
+        title: concept.title.clone().unwrap_or_default(),
+        concept_id: normalize_doc_id(bundle, &concept.concept_id),
+        doc_status: concept
+            .ext_str("doc_status")
+            .unwrap_or("active")
+            .to_string(),
+        steps: steps_of(&concept),
+    }))
+}
+
+// --- compass tools (tools_compass.py + compass/router.py port) --------------------
+
+/// First compass concept matching `module` by resource or concept id.
+pub fn find_compass_concept(bundle: &Bundle, module: &str) -> Result<Option<Concept>, ToolError> {
+    for cid in bundle.list_concepts(Some("compass/")) {
+        let Ok(concept) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        if concept
+            .resource
+            .as_deref()
+            .is_some_and(|r| r.contains(module))
+            || cid.contains(module)
+        {
+            return Ok(Some(concept));
+        }
+    }
+    Ok(None)
+}
+
+fn search_knowledge_data(
+    bundle: &Bundle,
+    query: &str,
+    type_filter: &str,
+    limit: usize,
+) -> Result<Vec<Concept>, ToolError> {
+    let mut results = bundle.search(query, None)?;
+    if !type_filter.is_empty() {
+        results.retain(|c| c.type_.starts_with(type_filter));
+    }
+    results.truncate(limit);
+    Ok(results)
+}
+
+// --- compass router ---------------------------------------------------------------
+
+struct IntentPattern {
+    re: Regex,
+    intent: &'static str,
+    layer: &'static str,
+}
+
+fn intent_patterns() -> &'static Vec<IntentPattern> {
+    static PATTERNS: OnceLock<Vec<IntentPattern>> = OnceLock::new();
+    PATTERNS.get_or_init(|| {
+        [
+            (
+                r"\b(business rule|business policy)\b",
+                "knowledge_lookup",
+                "L5",
+            ),
+            (
+                r"\b(impact of changing|affects which|what repos)\b",
+                "knowledge_impact",
+                "L5",
+            ),
+            (r"\b(requirement|epic)\b", "knowledge_lookup", "L5"),
+            (r"\bpolicy\b", "knowledge_lookup", "L5"),
+            (
+                r"\b(where is|defined|find definition|definition of)\b",
+                "definition_lookup",
+                "L1",
+            ),
+            (
+                r"\b(calls|callers|callees|who calls|invokes)\b",
+                "call_graph",
+                "L1",
+            ),
+            (
+                r"\b(impact|breaks|what if i change|blast radius)\b",
+                "impact_analysis",
+                "L1",
+            ),
+            (
+                r"\b(how does|how do|flow|process|works?)\b",
+                "feature_understanding",
+                "L2",
+            ),
+            (r"\b(pattern|architecture|design)\b", "architecture", "L2"),
+            (
+                r"\b(navigate|where do i start|guide|onboard)\b",
+                "module_navigation",
+                "L3",
+            ),
+            (
+                r"\b(gotcha|trap|non-obvious|watch out|pitfall)\b",
+                "non_obvious_gotchas",
+                "L3",
+            ),
+            (
+                r"\b(why did|decision|chose|rationale)\b",
+                "past_decisions",
+                "L4",
+            ),
+            (
+                r"\b(mistake|error|wrong|forgot|bug we hit)\b",
+                "common_mistakes",
+                "L4",
+            ),
+        ]
+        .into_iter()
+        .map(|(p, intent, layer)| IntentPattern {
+            re: Regex::new(p).expect("intent regex"),
+            intent,
+            layer,
+        })
+        .collect()
+    })
+}
+
+/// Classify a natural-language query into `(intent, layer)`.
+pub fn classify_intent(query: &str) -> (&'static str, &'static str) {
+    let q_lower = query.to_lowercase();
+    for p in intent_patterns() {
+        if p.re.is_match(&q_lower) {
+            return (p.intent, p.layer);
+        }
+    }
+    ("complex", "ALL")
+}
+
+const CAMELCASE_STOP: &[&str] = &[
+    "The", "How", "Why", "What", "When", "Where", "Layer", "Does", "Did", "Are", "Is",
+];
+
+fn router_stop_words() -> HashSet<String> {
+    let mut set: HashSet<String> = BASE_STOP_WORDS.iter().map(|s| s.to_string()).collect();
+    for w in ["handle", "handles", "handled", "handling"] {
+        set.insert(w.to_string());
+    }
+    set
+}
+
+fn extract_symbol_token(query: &str) -> String {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"\b([A-Z][a-zA-Z0-9]{2,})\b").expect("camelcase regex"));
+    for m in re.captures_iter(query) {
+        let m = m[1].to_string();
+        if !CAMELCASE_STOP.contains(&m.as_str()) {
+            return m;
+        }
+    }
+    String::new()
+}
+
+fn extract_query_tokens(query: &str) -> Vec<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"\b([A-Z][a-zA-Z0-9]{2,})\b").expect("camelcase regex"));
+    let stop = router_stop_words();
+    let mut tokens = Vec::new();
+    let mut seen = HashSet::new();
+    let mut seen_lower = HashSet::new();
+    let q = query.trim();
+    for m in re.captures_iter(q) {
+        let m = m[1].to_string();
+        if !CAMELCASE_STOP.contains(&m.as_str()) && !seen.contains(&m) {
+            seen_lower.insert(m.to_lowercase());
+            seen.insert(m.clone());
+            tokens.push(m);
+        }
+    }
+    for tok in simple_tokenize(q, Some(&stop)) {
+        if !seen.contains(&tok) && !seen_lower.contains(&tok) {
+            seen_lower.insert(tok.clone());
+            seen.insert(tok.clone());
+            tokens.push(tok);
+        }
+    }
+    tokens
+}
+
+fn stem_token(token: &str) -> String {
+    const TRANSFORMS: &[(&str, &str)] = &[
+        ("ies", "y"),
+        ("ied", "y"),
+        ("ing", ""),
+        ("tion", ""),
+        ("ment", ""),
+        ("ness", ""),
+        ("able", ""),
+        ("ible", ""),
+        ("ful", ""),
+        ("ous", ""),
+    ];
+    for (suffix, replacement) in TRANSFORMS {
+        if let Some(stem) = token.strip_suffix(suffix) {
+            let stem = format!("{stem}{replacement}");
+            if stem.len() >= 3 {
+                return stem;
+            }
+        }
+    }
+    if token.ends_with("es") && token.len() > 5 {
+        return token[..token.len() - 2].to_string();
+    }
+    if token.ends_with('s') && token.len() > 4 {
+        return token[..token.len() - 1].to_string();
+    }
+    if token.ends_with("ed") && token.len() > 5 {
+        return token[..token.len() - 2].to_string();
+    }
+    String::new()
+}
+
+// --- router graph read (lexical + traversal subset the router needs) ---------------
+
+struct SymbolRow {
+    id: String,
+    kind: String,
+    name: String,
+    file_path: String,
+    line_start: Option<i64>,
+    repo: String,
+}
+
+fn is_fts_prefix_pattern(pattern: &str) -> bool {
+    let p = pattern.trim();
+    let Some(stripped) = p.strip_suffix('*') else {
+        return false;
+    };
+    if stripped.contains('*') || p.contains('_') {
+        return false;
+    }
+    let token = stripped.trim();
+    !token.is_empty() && !token.contains([' ', '"', ':', '(', ')'])
+}
+
+fn pattern_to_fts(pattern: &str) -> Option<String> {
+    static STAR_RE: OnceLock<Regex> = OnceLock::new();
+    static SPLIT_RE: OnceLock<Regex> = OnceLock::new();
+    let p = pattern.trim();
+    if p.is_empty() {
+        return None;
+    }
+    if is_fts_prefix_pattern(p) {
+        return Some(format!("{}*", p[..p.len() - 1].trim()));
+    }
+    let star_re = STAR_RE.get_or_init(|| Regex::new(r"[*%]").expect("star regex"));
+    let split_re = SPLIT_RE.get_or_init(|| Regex::new(r"[^A-Za-z0-9]+").expect("split regex"));
+    let cleaned = star_re.replace_all(p, " ").to_string();
+    let tokens: Vec<&str> = split_re.split(&cleaned).filter(|t| !t.is_empty()).collect();
+    if tokens.is_empty() {
+        return None;
+    }
+    Some(format!("\"{}\"*", tokens.join(" ")))
+}
+
+fn like_symbol_rows(
+    conn: &Connection,
+    pattern: &str,
+    limit: i64,
+) -> Result<Vec<SymbolRow>, rusqlite::Error> {
+    let mut sql_pattern: String = pattern
+        .split('*')
+        .map(|s| {
+            s.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        })
+        .collect::<Vec<_>>()
+        .join("%");
+    if !pattern.contains('*') {
+        sql_pattern = format!("%{sql_pattern}%");
+    }
+    let mut stmt = conn.prepare(
+        "SELECT s.*, f.path AS file_path, f.repo_id AS repo FROM symbols s \
+         JOIN files f ON s.file_id = f.id WHERE s.name LIKE ? ESCAPE '\\' \
+         ORDER BY s.name LIMIT ?",
+    )?;
+    let mapped = stmt.query_map(rusqlite::params![sql_pattern, limit], |row| {
+        Ok(SymbolRow {
+            id: row.get("id")?,
+            kind: row.get("kind")?,
+            name: row.get("name")?,
+            file_path: row.get("file_path")?,
+            line_start: row.get("line_start")?,
+            repo: row.get("repo")?,
+        })
+    })?;
+    mapped.collect()
+}
+
+fn fts_symbol_rows(
+    conn: &Connection,
+    fts_query: &str,
+    limit: i64,
+) -> Result<Vec<SymbolRow>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT s.*, f.path AS file_path, f.repo_id AS repo, bm25(symbols_fts) AS rank \
+         FROM symbols_fts JOIN symbols s ON s.rowid = symbols_fts.rowid \
+         JOIN files f ON s.file_id = f.id WHERE symbols_fts MATCH ? \
+         ORDER BY rank LIMIT ?",
+    )?;
+    let mapped = stmt.query_map(rusqlite::params![fts_query, limit], |row| {
+        Ok(SymbolRow {
+            id: row.get("id")?,
+            kind: row.get("kind")?,
+            name: row.get("name")?,
+            file_path: row.get("file_path")?,
+            line_start: row.get("line_start")?,
+            repo: row.get("repo")?,
+        })
+    })?;
+    mapped.collect()
+}
+
+/// Router-local `search_symbols` (BM25 FTS with the LIKE fallback + merge).
+fn router_search_symbols(conn: &Connection, pattern: &str, limit: i64) -> Vec<SymbolRow> {
+    let Some(fts_query) = pattern_to_fts(pattern) else {
+        return like_symbol_rows(conn, pattern, limit).unwrap_or_default();
+    };
+    let mut rows = match fts_symbol_rows(conn, &fts_query, limit) {
+        Ok(rows) => rows,
+        Err(_) => return like_symbol_rows(conn, pattern, limit).unwrap_or_default(),
+    };
+    if !is_fts_prefix_pattern(pattern) && (rows.len() as i64) < limit {
+        let mut seen: HashSet<String> = rows.iter().map(|r| r.id.clone()).collect();
+        if let Ok(extra) = like_symbol_rows(conn, pattern, limit) {
+            for r in extra {
+                let id = r.id.clone();
+                if seen.insert(id) {
+                    rows.push(r);
+                    if rows.len() as i64 >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    rows
+}
+
+struct EdgeRef {
+    name: String,
+    file_path: String,
+    edge_line: Option<i64>,
+}
+
+fn router_callers(conn: &Connection, name: &str, limit: i64) -> Vec<EdgeRef> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT s.name AS caller_name, f.path AS file_path, e.line AS edge_line \
+         FROM edges e JOIN symbols s ON e.source_id = s.id \
+         JOIN files f ON s.file_id = f.id \
+         WHERE e.target_id IN (SELECT id FROM symbols WHERE name = ?) \
+         ORDER BY f.repo_id, f.path, e.line, s.name LIMIT ?",
+    ) else {
+        return Vec::new();
+    };
+    let mapped = stmt.query_map(rusqlite::params![name, limit], |row| {
+        Ok(EdgeRef {
+            name: row.get(0)?,
+            file_path: row.get(1)?,
+            edge_line: row.get(2)?,
+        })
+    });
+    mapped.map_or_else(
+        |_| Vec::new(),
+        |rows| rows.collect::<Result<Vec<_>, _>>().unwrap_or_default(),
+    )
+}
+
+fn router_callees(conn: &Connection, name: &str, limit: i64) -> Vec<EdgeRef> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT COALESCE(t.name, e.target_name) AS callee_name, f.path AS file_path, e.line AS edge_line \
+         FROM edges e JOIN symbols s ON e.source_id = s.id \
+         JOIN files f ON s.file_id = f.id \
+         LEFT JOIN symbols t ON e.target_id = t.id \
+         WHERE s.name = ? AND e.target_id IS NOT NULL \
+         ORDER BY f.repo_id, f.path, e.line, COALESCE(t.name, e.target_name) LIMIT ?",
+    ) else {
+        return Vec::new();
+    };
+    let mapped = stmt.query_map(rusqlite::params![name, limit], |row| {
+        Ok(EdgeRef {
+            name: row.get(0)?,
+            file_path: row.get(1)?,
+            edge_line: row.get(2)?,
+        })
+    });
+    mapped.map_or_else(
+        |_| Vec::new(),
+        |rows| rows.collect::<Result<Vec<_>, _>>().unwrap_or_default(),
+    )
+}
+
+fn py_opt(v: &Option<i64>) -> String {
+    match v {
+        Some(n) => n.to_string(),
+        None => "None".into(),
+    }
+}
+
+/// Hybrid graph query: multi-token BM25 + 1-hop graph expansion.
+fn query_graph(conn: &Connection, query: &str, token: &str) -> Yaml {
+    let tokens = extract_query_tokens(query);
+    if !tokens.is_empty() {
+        return query_graph_hybrid(conn, &tokens);
+    }
+    let mut out = Hash::new();
+    if !token.is_empty() {
+        let defs = find_definition_rows(conn, token, 5).unwrap_or_default();
+        let callers = router_callers(conn, token, 200);
+        out.insert(
+            ys("definition"),
+            Yaml::Array(
+                defs.iter()
+                    .map(|d| {
+                        Yaml::Hash({
+                            let mut h = Hash::new();
+                            h.insert(ys("name"), ys(&d.name));
+                            h.insert(
+                                ys("file"),
+                                ys(format!("{}:{}", d.file_path, py_opt(&d.line_start))),
+                            );
+                            h.insert(ys("kind"), ys(&d.kind));
+                            h
+                        })
+                    })
+                    .collect(),
+            ),
+        );
+        out.insert(ys("callers"), Yaml::Integer(callers.len() as i64));
+    }
+    Yaml::Hash(out)
+}
+
+fn find_definition_rows(
+    conn: &Connection,
+    name: &str,
+    limit: i64,
+) -> Result<Vec<SymbolRow>, rusqlite::Error> {
+    let sql = "SELECT s.*, f.path AS file_path, f.repo_id AS repo FROM symbols s \
+               JOIN files f ON s.file_id = f.id";
+    let map = |row: &rusqlite::Row<'_>| {
+        Ok(SymbolRow {
+            id: row.get("id")?,
+            kind: row.get("kind")?,
+            name: row.get("name")?,
+            file_path: row.get("file_path")?,
+            line_start: row.get("line_start")?,
+            repo: row.get("repo")?,
+        })
+    };
+    let exact = {
+        let mut stmt = conn.prepare(&format!("{sql} WHERE s.name = ? ORDER BY s.kind LIMIT ?"))?;
+        stmt.query_map(rusqlite::params![name, limit], map)?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if !exact.is_empty() {
+        return Ok(exact);
+    }
+    let qual = {
+        let mut stmt = conn.prepare(&format!("{sql} WHERE s.qualified_name = ? LIMIT ?"))?;
+        stmt.query_map(rusqlite::params![name, limit], map)?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if !qual.is_empty() {
+        return Ok(qual);
+    }
+    let mut stmt = conn.prepare(&format!(
+        "{sql} WHERE s.name LIKE ? ESCAPE '\\' ORDER BY s.kind LIMIT ?"
+    ))?;
+    stmt.query_map(
+        rusqlite::params![format!("%{}%", escape_like(name)), limit],
+        map,
+    )?
+    .collect()
+}
+
+fn query_graph_hybrid(conn: &Connection, tokens: &[String]) -> Yaml {
+    let mut search_terms: Vec<String> = Vec::new();
+    for tok in tokens {
+        search_terms.push(tok.clone());
+        let stemmed = stem_token(tok);
+        if !stemmed.is_empty() && stemmed != *tok {
+            search_terms.push(stemmed);
+        }
+    }
+    let per_token_limit = i64::max(3, 10 / search_terms.len().max(1) as i64);
+
+    // (kind, name, file, repo)
+    let mut seeds: Vec<(String, String, String, String)> = Vec::new();
+    let mut seen_ids = HashSet::new();
+    for term in &search_terms {
+        for r in router_search_symbols(conn, term, per_token_limit) {
+            if !r.id.is_empty() {
+                if seen_ids.contains(&r.id) {
+                    continue;
+                }
+                seen_ids.insert(r.id.clone());
+            }
+            seeds.push((
+                r.kind,
+                r.name,
+                format!("{}:{}", r.file_path, py_opt(&r.line_start)),
+                r.repo,
+            ));
+        }
+    }
+
+    let mut callers_out: Vec<String> = Vec::new();
+    let mut callees_out: Vec<String> = Vec::new();
+    let mut seen_caller_keys: HashSet<(String, String, String, String)> = HashSet::new();
+    let mut seen_callee_keys: HashSet<(String, String, String, String)> = HashSet::new();
+    for (_kind, name, _file, _repo) in seeds.iter().take(5) {
+        if name.is_empty() {
+            continue;
+        }
+        for c in router_callers(conn, name, 5) {
+            let key = (
+                c.name.clone(),
+                name.clone(),
+                c.file_path.clone(),
+                py_opt(&c.edge_line),
+            );
+            if seen_caller_keys.contains(&key) {
+                continue;
+            }
+            seen_caller_keys.insert(key);
+            callers_out.push(format!(
+                "{} ({}:{})",
+                c.name,
+                c.file_path,
+                py_opt(&c.edge_line)
+            ));
+        }
+        for c in router_callees(conn, name, 5) {
+            let key = (
+                name.clone(),
+                c.name.clone(),
+                c.file_path.clone(),
+                py_opt(&c.edge_line),
+            );
+            if seen_callee_keys.contains(&key) {
+                continue;
+            }
+            seen_callee_keys.insert(key);
+            callees_out.push(format!(
+                "{} ({}:{})",
+                c.name,
+                c.file_path,
+                py_opt(&c.edge_line)
+            ));
+        }
+    }
+
+    Yaml::Hash({
+        let mut h = Hash::new();
+        h.insert(
+            ys("seeds"),
+            Yaml::Array(
+                seeds
+                    .iter()
+                    .map(|(kind, name, file, repo)| ys(format!("{kind} {name}  {file}  [{repo}]")))
+                    .collect(),
+            ),
+        );
+        h.insert(ys("seed_count"), Yaml::Integer(seeds.len() as i64));
+        h.insert(
+            ys("callers"),
+            Yaml::Array(callers_out.iter().map(ys).collect()),
+        );
+        h.insert(
+            ys("callees"),
+            Yaml::Array(callees_out.iter().map(ys).collect()),
+        );
+        h.insert(
+            ys("neighbor_count"),
+            Yaml::Integer((callers_out.len() + callees_out.len()) as i64),
+        );
+        h
+    })
+}
+
+fn search_wiki(bundle: &Bundle, query: &str) -> Vec<String> {
+    bundle
+        .search(query, Some(3))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| c.type_ == "Wiki-Article" || c.type_ == "Wiki-Feature")
+        .map(|c| c.title.unwrap_or_default())
+        .collect()
+}
+
+fn get_compass_titles(token: &str, bundle: &Bundle) -> Vec<String> {
+    let mut out = Vec::new();
+    for cid in bundle.list_concepts(Some("compass/")) {
+        let Ok(c) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        if !token.is_empty()
+            && (c.resource.as_deref().is_some_and(|r| r.contains(token)) || cid.contains(token))
+        {
+            out.push(c.title.unwrap_or_default());
+        }
+    }
+    out
+}
+
+fn route_memory_titles(conn: &Connection, bundle: &Bundle, query: &str) -> Vec<String> {
+    let titles: Vec<String> = search_memory(conn, bundle, query, None, None, false, None)
+        .unwrap_or_default()
+        .into_iter()
+        .take(3)
+        .map(|c| c.title.unwrap_or_default())
+        .collect();
+    titles
+}
+
+fn route_knowledge_titles(bundle: &Bundle, query: &str) -> Vec<String> {
+    bundle
+        .search(query, Some(5))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| {
+            bundle
+                .relativize_id(&c.concept_id)
+                .starts_with("knowledge/")
+        })
+        .map(|c| c.title.unwrap_or_default())
+        .collect()
+}
+
+fn layer_nonempty(v: &Yaml) -> bool {
+    match v {
+        Yaml::Hash(h) => {
+            if let Some(Yaml::Integer(n)) = h.get(&ys("seed_count")) {
+                return *n > 0;
+            }
+            h.values().any(layer_nonempty)
+        }
+        Yaml::Array(a) => !a.is_empty(),
+        Yaml::String(s) => !s.is_empty(),
+        Yaml::Integer(n) => *n != 0,
+        Yaml::Real(x) => x.parse::<f64>().map(|v| v != 0.0).unwrap_or(true),
+        Yaml::Boolean(b) => *b,
+        Yaml::Null => false,
+        // Alias/BadValue never appear in router-built payloads.
+        _ => false,
+    }
+}
+
+// --- deterministic critic (compass/critic.py port) ---------------------------------
+
+/// Body with its `## Notes` section removed (bytes intact elsewhere).
+fn without_notes(body: &str) -> String {
+    let mut offset = 0usize;
+    let mut heading_start: Option<usize> = None;
+    for line in body.lines() {
+        if line.trim_end_matches([' ', '\t', '\r']) == "## Notes" {
+            heading_start = Some(offset);
+            break;
+        }
+        offset += line.len() + 1;
+    }
+    let Some(start) = heading_start else {
+        return body.to_string();
+    };
+    let after = &body[start..];
+    let mut end = after.len();
+    let mut consumed = 0usize;
+    for line in after.lines().skip(1) {
+        if line.starts_with("# ") || line.starts_with("## ") {
+            end = consumed;
+            break;
+        }
+        consumed += line.len() + 1;
+    }
+    format!("{}{}", &body[..start], &after[end..])
+}
+
+struct CriticResult {
+    passed: bool,
+    quality_score: f64,
+    errors: Vec<String>,
+    warnings: Vec<String>,
+}
+
+fn critic_concept(concept: &Concept, conn: &Connection) -> Result<CriticResult, ToolError> {
+    const SECTION_VOCAB: &[&str] = &[
+        "# What Does This Module Do?",
+        "# Subsystems",
+        "# Common Modification Patterns",
+        "# Build-Failure Patterns",
+        "# Cross-Module Dependencies",
+        "# What Does This Flow Do?",
+        "# Call Sequence",
+        "# Failure-Prone Steps",
+        "# Modules Spanned",
+        "# Tribal Knowledge",
+    ];
+    let body = without_notes(&concept.body);
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let file_refs = extract_file_refs(&body);
+    for r in &file_refs {
+        if !file_exists(conn, r).map_err(|e| ToolError(e.to_string()))? {
+            errors.push(format!("Hallucinated/unresolved file path: {r}"));
+        }
+    }
+    let symbol_refs = extract_symbol_refs(&body);
+    for s in &symbol_refs {
+        if !symbol_exists(conn, s).map_err(|e| ToolError(e.to_string()))? {
+            warnings.push(format!("Unknown symbol reference: {s}"));
+        }
+    }
+    if let Some(w) = prose_heavy_warning(&body, file_refs.len() + symbol_refs.len()) {
+        warnings.push(w);
+    }
+    let sections = SECTION_VOCAB.iter().filter(|h| body.contains(**h)).count();
+    let quality = (sections as f64 / 5.0).min(1.0);
+    let threshold = if warnings.is_empty() { 0.5 } else { 0.7 };
+    Ok(CriticResult {
+        passed: errors.is_empty() && quality >= threshold,
+        quality_score: quality,
+        errors,
+        warnings,
+    })
+}
+
+fn prose_heavy_warning(body: &str, verified_ref_count: usize) -> Option<String> {
+    let prose_only: String = body
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prose_chars: usize = prose_only
+        .split('`')
+        .enumerate()
+        .filter(|(i, _)| i % 2 == 0)
+        .map(|(_, s)| s.chars().count())
+        .sum();
+    if prose_chars > 400 && verified_ref_count < 2 {
+        return Some(format!(
+            "Prose-heavy draft with few verifiable references ({verified_ref_count} backtick ref(s), \
+             {prose_chars} chars of prose): deterministic critic cannot verify un-cited claims"
+        ));
+    }
+    None
+}
+
+fn critic_verdict_block(result: &CriticResult) -> String {
+    let json_str = |items: &[String]| -> String {
+        items
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "```cairn-critic\n{{\n  \"passed\": {},\n  \"quality_score\": {},\n  \"errors\": [{}],\n  \"warnings\": [{}]\n}}\n```",
+        result.passed,
+        fmt_score(result.quality_score),
+        json_str(&result.errors),
+        json_str(&result.warnings),
+    )
+}
+
+// --- tool functions (the MCP surface) ------------------------------------------------
+
+fn clamp(value: i64, lo: i64, hi: i64) -> i64 {
+    i64::max(lo, i64::min(value, hi))
+}
+
+/// `recall_memory`: search past decisions/patterns/mistakes/workarounds with
+/// live refs-verified fractions.
+#[allow(clippy::too_many_arguments)]
+pub fn recall_memory(
+    conn: &Connection,
+    bundle: &Bundle,
+    query: &str,
+    tier: &str,
+    include_superseded: bool,
+    as_of: Option<&str>,
+    agent: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<String, ToolError> {
+    if let Some(agent) = agent {
+        validate_agent_id(agent)?;
+    }
+    let tier = if tier.is_empty() { None } else { Some(tier) };
+    let mut results = search_memory(
+        conn,
+        bundle,
+        query,
+        tier,
+        session_id,
+        include_superseded,
+        as_of,
+    )?;
+
+    let mut shared_by_id: HashMap<String, String> = HashMap::new();
+    if let Some(agent) = agent {
+        let (extra, attribution) = shared_recall_entries(
+            conn,
+            bundle,
+            agent,
+            query,
+            tier,
+            include_superseded,
+            as_of,
+            &results.iter().map(|c| c.concept_id.clone()).collect(),
+        )?;
+        shared_by_id = attribution;
+        results.extend(extra);
+    }
+
+    if results.is_empty() {
+        return Ok(format!(
+            "No memories matching '{query}'. Nothing was recorded under those \
+             tokens. Try broader/fewer keywords, a symbol name instead of prose, \
+             or `cairn memory digest` (via the CLI, no query) to see top tribal \
+             memories for orientation. If you expected a memory here, it may not \
+             have been captured -- see the Memory Capture Workflow in the skill."
+        ));
+    }
+    let mut out = vec![format!("{} memories matching '{query}':", results.len())];
+    for c in &results {
+        let score = match c.ext("memory_score") {
+            Some(Yaml::Real(s)) => s.clone(),
+            Some(Yaml::Integer(i)) => i.to_string(),
+            _ => "?".to_string(),
+        };
+        let t = c.ext_str("memory_tier").unwrap_or("?");
+        let prov = c.ext_str("provenance").unwrap_or("");
+        let prov_tag = if prov.is_empty() {
+            String::new()
+        } else {
+            format!(", {prov}")
+        };
+        let superseded = !c.ext_bool("memory_is_latest").unwrap_or(true);
+        let n_refs = extract_file_refs(&c.body).len() + extract_symbol_refs(&c.body).len();
+        let refs_verified = graph_verification(c, conn)
+            .map(fmt_score)
+            .unwrap_or_else(|_| "?".to_string());
+        let refs_display = if n_refs == 0 {
+            "n/a (0 refs)".to_string()
+        } else {
+            refs_verified.clone()
+        };
+        let is_stale = n_refs > 0
+            && refs_verified
+                .parse::<f64>()
+                .map(|v| v < 1.0)
+                .unwrap_or(false);
+        let tag = if superseded { " [SUPERSEDED]" } else { "" };
+        let stale_tag = if is_stale { " [STALE]" } else { "" };
+        let stance = c.ext_str("memory_stance").unwrap_or("");
+        let stance_tag = if stance.is_empty() {
+            String::new()
+        } else {
+            format!(", stance={stance}")
+        };
+        out.push(format!(
+            "  [{t} {score}, refs-verified={refs_display}{prov_tag}{stance_tag}] {}{tag}{stale_tag}",
+            c.title.as_deref().unwrap_or("?")
+        ));
+        if is_stale {
+            out.push(
+                "    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory"
+                    .to_string(),
+            );
+        }
+        let peer = c.ext_str("memory_stance_peer").unwrap_or("");
+        if stance == "contested" && !peer.is_empty() {
+            out.push(format!(
+                "    ^ contradicted by {peer} -- verify before relying on this memory"
+            ));
+        }
+        if let Some(desc) = c.description.as_deref().filter(|d| !d.is_empty()) {
+            out.push(format!("    {desc}"));
+        }
+        if let Some(attribution) = shared_by_id.get(&c.concept_id) {
+            out.push(format!("    {attribution}"));
+        }
+    }
+    let hint = unembedded_memory_hint(conn, bundle)?;
+    if !hint.is_empty() {
+        out.push(hint);
+    }
+    Ok(out.join("\n"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shared_recall_entries(
+    conn: &Connection,
+    bundle: &Bundle,
+    agent_id: &str,
+    query: &str,
+    tier: Option<&str>,
+    include_superseded: bool,
+    as_of: Option<&str>,
+    result_ids: &HashSet<String>,
+) -> Result<(Vec<Concept>, HashMap<String, String>), ToolError> {
+    let tokens: HashSet<String> = query
+        .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_lowercase())
+        .collect();
+    if tokens.is_empty() {
+        return Ok((Vec::new(), HashMap::new()));
+    }
+    let instant = match as_of {
+        Some(a) => parse_instant(a)
+            .ok_or_else(|| ToolError(format!("as_of must be an ISO-8601 date, got {a:?}")))?,
+        None => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+    };
+    let query_key = instant_key(instant);
+    let rows: Vec<(String, String, Option<String>)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT agent_id, symbol, memory_id FROM agent_symbols \
+                 WHERE kind = 'share' AND agent_id <> ? ORDER BY ts",
+            )
+            .map_err(|e| ToolError(e.to_string()))?;
+        stmt.query_map(rusqlite::params![agent_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .map_err(|e| ToolError(e.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ToolError(e.to_string()))?
+    };
+    let found_ids: HashMap<String, String> = result_ids
+        .iter()
+        .map(|cid| {
+            (
+                cid.rsplit('/').next().unwrap_or(cid).to_string(),
+                cid.clone(),
+            )
+        })
+        .collect();
+    let mut attribution: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut pairs_by_memory: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    for (row_agent, symbol, memory_id) in rows {
+        let Some(memory_id) = memory_id else { continue };
+        if !tokens.contains(&symbol.to_lowercase()) {
+            continue;
+        }
+        let key = memory_id
+            .rsplit('/')
+            .next()
+            .unwrap_or(&memory_id)
+            .to_string();
+        let pair = (row_agent, symbol);
+        if let Some(in_results) = found_ids.get(&key) {
+            let pairs = attribution.entry(in_results.clone()).or_default();
+            if !pairs.contains(&pair) {
+                pairs.push(pair);
+            }
+            continue;
+        }
+        match pairs_by_memory.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, pairs)) => {
+                if !pairs.contains(&pair) {
+                    pairs.push(pair);
+                }
+            }
+            None => pairs_by_memory.push((memory_id.clone(), vec![pair])),
+        }
+    }
+    let mut out = Vec::new();
+    for (memory_id, pairs) in &pairs_by_memory {
+        let Ok(c) = bundle.read_concept(memory_id) else {
+            continue; // orphaned by a since-deleted memory
+        };
+        if tier.is_some_and(|t| !c.ext_str("memory_tier").unwrap_or("").starts_with(t)) {
+            continue;
+        }
+        if !include_superseded && !c.ext_bool("memory_is_latest").unwrap_or(true) {
+            continue;
+        }
+        if !valid_at(&c, &query_key) {
+            continue;
+        }
+        attribution.insert(c.concept_id.clone(), pairs.clone());
+        out.push(c);
+    }
+    let mut attribution_fmt: HashMap<String, String> = HashMap::new();
+    for (cid, pairs) in attribution {
+        let mut by_agent: HashMap<String, Vec<String>> = HashMap::new();
+        for (agent, symbol) in pairs {
+            by_agent.entry(agent).or_default().push(symbol);
+        }
+        let parts: Vec<String> = by_agent
+            .into_iter()
+            .map(|(a, syms)| format!("{a} on '{}'", syms.join(", ")))
+            .collect();
+        attribution_fmt.insert(cid, format!("shared by {}", parts.join("; ")));
+    }
+    Ok((out, attribution_fmt))
+}
+
+/// `record_memory`: capture a learning (type: decision|pattern|mistake|workaround).
+#[allow(clippy::too_many_arguments)]
+pub fn record_memory(
+    conn: &Connection,
+    bundle: &Bundle,
+    type_: &str,
+    title: &str,
+    body: &str,
+    resource: &str,
+    confidence: f64,
+    stance: Option<&str>,
+) -> Result<String, ToolError> {
+    let result = capture_memory(
+        conn,
+        bundle,
+        type_,
+        title,
+        body,
+        if resource.is_empty() {
+            None
+        } else {
+            Some(resource)
+        },
+        confidence,
+        stance,
+    )?;
+    let mut msg = format!(
+        "Recorded {type_} '{title}' -> {} (score={}, tier={})",
+        result.path,
+        fmt_score(result.score),
+        result.tier
+    );
+    if let Some(superseded) = &result.superseded {
+        msg.push_str(&format!(" [superseded {superseded}]"));
+    }
+    Ok(msg)
+}
+
+/// `knowledge_add`: ingest a business document as knowledge.
+#[allow(clippy::too_many_arguments)]
+pub fn knowledge_add(
+    bundle: &Bundle,
+    title: &str,
+    body: &str,
+    doc_type: &str,
+    tags: &str,
+    affects_modules: &str,
+    affects_repos: &str,
+    resource: &str,
+    epic_link: &str,
+    read_only: bool,
+) -> Result<String, ToolError> {
+    if read_only {
+        return Ok(
+            "read-only server: knowledge_add writes the knowledge store; run it on the writable side"
+                .to_string(),
+        );
+    }
+    let _ = std::fs::create_dir_all(&bundle.root);
+    let replaced = get_document(bundle, &doc_concept_id(title, doc_type, None))?.is_some();
+    let cid = add_document(
+        bundle,
+        title,
+        body,
+        doc_type,
+        split_csv(tags),
+        split_csv(affects_modules),
+        split_csv(affects_repos),
+        if resource.is_empty() {
+            None
+        } else {
+            Some(resource)
+        },
+        None,
+        if epic_link.is_empty() {
+            None
+        } else {
+            Some(epic_link)
+        },
+        None,
+        None,
+        "manual",
+    )?;
+    let note = if replaced {
+        " (replaced an existing document with the same title and doc_type)"
+    } else {
+        ""
+    };
+    Ok(format!("Stored knowledge document: {cid}{note}"))
+}
+
+fn split_csv(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect()
+}
+
+/// `knowledge_search`: search business knowledge docs by meaning.
+pub fn knowledge_search(
+    conn: &Connection,
+    bundle: &Bundle,
+    query: &str,
+    limit: i64,
+) -> Result<String, ToolError> {
+    let limit = clamp(limit, 1, 1000) as usize;
+    let results = search_knowledge_docs(conn, bundle, query, limit)?;
+    if results.is_empty() {
+        return Ok(format!(
+            "No knowledge documents matching '{query}'. The PO ingestion path \
+             (knowledge_add) may not have indexed docs for this topic, or the \
+             corpus isn't embedded yet (run `cairn knowledge embed`). Try broader \
+             terms, or search_knowledge(query, ...) for the knowledge layer vs \
+             this business-docs layer."
+        ));
+    }
+    let mut out = vec![format!(
+        "=== knowledge_search: \"{query}\" ({} doc(s)) ===",
+        results.len()
+    )];
+    for r in &results {
+        let score = if r.score < 1.0 {
+            format!(" {:.2}", r.score)
+        } else {
+            String::new()
+        };
+        out.push(format!(
+            "  [{}{}] {}  ({})",
+            r.provenance, score, r.title, r.doc_type
+        ));
+        if !r.affects_repos.is_empty() {
+            out.push(format!("    affects_repos: {}", r.affects_repos.join(", ")));
+        }
+        for (repo, deps) in &r.graph_deps {
+            let Some(Yaml::Array(dependencies)) = (match deps {
+                Yaml::Hash(h) => h.get(&ys("dependencies")),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let dep_repos: Vec<String> = dependencies
+                .iter()
+                .filter_map(|d| match d {
+                    Yaml::Hash(dh) => str_of(dh.get(&ys("repo"))).filter(|s| !s.is_empty()),
+                    _ => None,
+                })
+                .collect();
+            if !dep_repos.is_empty() {
+                out.push(format!("    {repo} → depends on: {}", dep_repos.join(", ")));
+            }
+        }
+    }
+    Ok(out.join("\n"))
+}
+
+/// `knowledge_delete`: delete a knowledge document and its embedding rows.
+pub fn knowledge_delete(
+    conn: &Connection,
+    bundle: &Bundle,
+    doc_id: &str,
+    read_only: bool,
+) -> Result<String, ToolError> {
+    if read_only {
+        return Ok(
+            "read-only server: knowledge_delete writes the knowledge store; run it on the writable side"
+                .to_string(),
+        );
+    }
+    let concept = get_document(bundle, doc_id)?;
+    if let Err(e) = refuse_out_of_namespace(bundle, doc_id, concept.as_ref()) {
+        return Ok(e.0);
+    }
+    let ok = delete_document(bundle, doc_id, Some(conn), false)?;
+    if !ok {
+        return Ok(format!("Knowledge document not found: '{doc_id}'."));
+    }
+    if !delete_document(bundle, doc_id, None, true)? {
+        // Embedding rows committed but the file was already gone.
+    }
+    Ok(format!("Deleted knowledge document: '{doc_id}'."))
+}
+
+/// `knowledge_status`: update doc_status (active → superseded → archived).
+pub fn knowledge_status(
+    bundle: &Bundle,
+    doc_id: &str,
+    new_status: &str,
+    read_only: bool,
+) -> Result<String, ToolError> {
+    if read_only {
+        return Ok(
+            "read-only server: knowledge_status writes the knowledge store; run it on the writable side"
+                .to_string(),
+        );
+    }
+    let concept = get_document(bundle, doc_id)?;
+    if let Err(e) = refuse_out_of_namespace(bundle, doc_id, concept.as_ref()) {
+        return Ok(e.0);
+    }
+    let ok = update_status(bundle, doc_id, new_status)?;
+    if !ok {
+        return Ok(format!(
+            "Not found, unknown status, or backward transition rejected: '{doc_id}' -> '{new_status}'."
+        ));
+    }
+    Ok(format!("Updated '{doc_id}' status -> {new_status}."))
+}
+
+/// `trace_workflow`: trace a workflow's ordered steps by title/slug/concept_id.
+pub fn trace_workflow_tool(bundle: &Bundle, ref_: &str) -> Result<String, ToolError> {
+    let Some(trace) = trace_workflow(bundle, ref_)? else {
+        return Ok(format!(
+            "No workflow found matching '{ref_}'. Try knowledge_search('{ref_}') \
+             or list workflows via `cairn knowledge list --type workflow`."
+        ));
+    };
+    let status_note = if trace.doc_status != "active" {
+        format!(" [{}]", trace.doc_status)
+    } else {
+        String::new()
+    };
+    let mut out = vec![format!(
+        "{}{status_note} ({})",
+        trace.title, trace.concept_id
+    )];
+    for (i, step) in trace.steps.iter().enumerate() {
+        let n = i + 1;
+        let name = step.name.clone().unwrap_or_else(|| format!("Step {n}"));
+        out.push(format!("  {n}. {name}"));
+        if let Some(desc) = &step.description {
+            out.push(format!("     {desc}"));
+        }
+        if let Some(sym) = &step.symbol {
+            out.push(format!("     symbol: {sym}"));
+        }
+        if let Some(file) = &step.file {
+            out.push(format!("     file: {file}"));
+        }
+    }
+    Ok(out.join("\n"))
+}
+
+/// `get_compass`: get the compass navigation guide for a module.
+pub fn get_compass(bundle: &Bundle, module: &str) -> Result<String, ToolError> {
+    match find_compass_concept(bundle, module)? {
+        Some(concept) => Ok(format!(
+            "# {}\n\n{}",
+            concept.title.as_deref().unwrap_or(""),
+            concept.body
+        )),
+        None => Ok(format!(
+            "No compass file found for '{module}'. Generate with: cairn compass generate {module}"
+        )),
+    }
+}
+
+/// `search_knowledge`: search the knowledge base (wiki, compass, patterns, memory).
+pub fn search_knowledge(
+    bundle: &Bundle,
+    query: &str,
+    type_filter: &str,
+    limit: i64,
+    full_body: bool,
+) -> Result<String, ToolError> {
+    let limit = if limit < 0 { 0 } else { limit as usize };
+    let results = search_knowledge_data(bundle, query, type_filter, limit)?;
+    if results.is_empty() {
+        let label = if type_filter.is_empty() {
+            String::new()
+        } else {
+            format!(" {type_filter}")
+        };
+        return Ok(format!("No{label} results matching '{query}'."));
+    }
+    if full_body {
+        let blocks: Vec<String> = results
+            .iter()
+            .map(|c| format!("# {}\n{}", c.title.as_deref().unwrap_or(""), c.body))
+            .collect();
+        return Ok(blocks.join("\n\n---\n\n"));
+    }
+    let mut out = vec![format!("{} results matching '{query}':", results.len())];
+    for c in &results {
+        out.push(format!(
+            "  {} ({})",
+            c.title.as_deref().unwrap_or(""),
+            c.concept_id
+        ));
+        if let Some(desc) = c.description.as_deref().filter(|d| !d.is_empty()) {
+            out.push(format!("    {desc}"));
+        }
+    }
+    Ok(out.join("\n"))
+}
+
+/// `ask_compass`: route a natural-language query across graph/wiki/compass/memory.
+pub fn ask_compass(
+    conn: &Connection,
+    bundle: &Bundle,
+    query: &str,
+    file_path: &str,
+) -> Result<String, ToolError> {
+    if !file_path.is_empty() && query.is_empty() {
+        return ask_compass_file_context(conn, bundle, file_path);
+    }
+    let (intent, layer) = classify_intent(query);
+    let token = extract_symbol_token(query);
+    let mut results: Vec<(String, Yaml)> = Vec::new();
+    if layer == "L1" || layer == "ALL" {
+        results.push(("graph".into(), query_graph(conn, query, &token)));
+    }
+    if layer == "L2" || layer == "ALL" {
+        results.push((
+            "wiki".into(),
+            Yaml::Array(search_wiki(bundle, query).into_iter().map(ys).collect()),
+        ));
+    }
+    if layer == "L3" || layer == "ALL" {
+        results.push((
+            "compass".into(),
+            Yaml::Array(
+                get_compass_titles(&token, bundle)
+                    .into_iter()
+                    .map(ys)
+                    .collect(),
+            ),
+        ));
+    }
+    if layer == "L4" || layer == "ALL" {
+        results.push((
+            "memory".into(),
+            Yaml::Array(
+                route_memory_titles(conn, bundle, query)
+                    .into_iter()
+                    .map(ys)
+                    .collect(),
+            ),
+        ));
+    }
+    if layer == "L5" || layer == "ALL" {
+        results.push((
+            "knowledge".into(),
+            Yaml::Array(
+                route_knowledge_titles(bundle, query)
+                    .into_iter()
+                    .map(ys)
+                    .collect(),
+            ),
+        ));
+    }
+
+    let mut layers_queried: Vec<String> = results.iter().map(|(k, _)| k.clone()).collect();
+    let mut degraded = false;
+    if !results.iter().any(|(_, v)| layer_nonempty(v)) {
+        let mut fb: Vec<(String, Yaml)> = Vec::new();
+        let graph = query_graph(conn, query, &token);
+        if layer_nonempty(&graph) {
+            fb.push(("graph".into(), graph));
+        }
+        let memory = Yaml::Array(
+            route_memory_titles(conn, bundle, query)
+                .into_iter()
+                .map(ys)
+                .collect(),
+        );
+        if layer_nonempty(&memory) {
+            fb.push(("memory".into(), memory));
+        }
+        let knowledge = Yaml::Array(
+            route_knowledge_titles(bundle, query)
+                .into_iter()
+                .map(ys)
+                .collect(),
+        );
+        if layer_nonempty(&knowledge) {
+            fb.push(("knowledge".into(), knowledge));
+        }
+        layers_queried = fb.iter().map(|(k, _)| k.clone()).collect();
+        results = fb;
+        degraded = true;
+    }
+    let empty = !results.iter().any(|(_, v)| layer_nonempty(v));
+
+    let queried = if layers_queried.is_empty() {
+        String::new()
+    } else {
+        format!("; queried: {}", layers_queried.join(", "))
+    };
+    let mut out = vec![format!("Intent: {intent} (routed to {layer}{queried})")];
+    if !file_path.is_empty() {
+        out.push(format!(
+            "(file_path '{file_path}' is ignored in routing mode; pass it with an empty query \
+             to load file-aware context.)"
+        ));
+    }
+    if degraded {
+        out.push("(Showing fallback results — targeted layer had no coverage.)".to_string());
+    }
+    if empty {
+        out.push(
+            "(No results from any layer — coverage for this query is thin. Don't conclude 'no info \
+             exists'; drill down with the specific layer tool: explore() for structure, \
+             search_knowledge() for docs, or recall_memory() for past decisions.)"
+                .to_string(),
+        );
+    }
+    for (layer_name, data) in &results {
+        out.push(String::new());
+        out.push(format!("[{layer_name}]"));
+        match data {
+            Yaml::Hash(h) => {
+                for (k, v) in h {
+                    out.push(format!("  {}: {}", scalar_repr(k), scalar_repr(v)));
+                }
+            }
+            Yaml::Array(items) => {
+                for item in items {
+                    out.push(format!("  {}", scalar_repr(item)));
+                }
+            }
+            other => out.push(format!("  {}", scalar_repr(other))),
+        }
+    }
+    Ok(out.join("\n"))
+}
+
+fn ask_compass_file_context(
+    conn: &Connection,
+    bundle: &Bundle,
+    file_path: &str,
+) -> Result<String, ToolError> {
+    let parts: Vec<&str> = file_path.split('/').filter(|p| !p.is_empty()).collect();
+    let module_guess = if parts.len() >= 4 {
+        parts[..4].join("/")
+    } else {
+        file_path.to_string()
+    };
+    let mut out = vec![
+        format!("Context for {file_path}:"),
+        format!("  inferred module: {module_guess}"),
+    ];
+    let mut loaded = None;
+    for cid in bundle.list_concepts(Some("compass/")) {
+        let Ok(c) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        if c.resource
+            .as_deref()
+            .is_some_and(|r| file_path.contains(r) || r.contains(file_path))
+        {
+            out.push(String::new());
+            out.push(format!("# Compass: {}", c.title.as_deref().unwrap_or("")));
+            out.push(c.body.clone());
+            loaded = Some(c);
+            break;
+        }
+    }
+    if let Some(verdict) = loaded.as_ref().and_then(|c| critic_concept(c, conn).ok()) {
+        out.push(critic_verdict_block(&verdict));
+    }
+    let seg = parts
+        .last()
+        .map(|p| p.replace(".kt", "").replace(".java", ""))
+        .unwrap_or_default();
+    if !seg.is_empty() {
+        for c in bundle.search(&seg, Some(3))? {
+            if c.type_ == "Wiki-Article" || c.type_ == "Wiki-Feature" {
+                out.push(String::new());
+                out.push(format!("# Wiki: {}", c.title.as_deref().unwrap_or("")));
+                out.push(format!(
+                    "{}...",
+                    c.body.chars().take(500).collect::<String>()
+                ));
+                break;
+            }
+        }
+        for c in bundle.search(&seg, Some(3))? {
+            if bundle.relativize_id(&c.concept_id).starts_with("memory/") {
+                out.push(String::new());
+                out.push(format!("# Memory: {}", c.title.as_deref().unwrap_or("")));
+                if let Some(desc) = c.description.as_deref().filter(|d| !d.is_empty()) {
+                    out.push(format!("  {desc}"));
+                }
+                break;
+            }
+        }
+    }
+    Ok(out.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slugify_matches_python() {
+        assert_eq!(
+            slugify("golden mcp capture add probe"),
+            "golden-mcp-capture-add-probe"
+        );
+        assert_eq!(slugify("  --Weird__Title!!--  "), "weird-title");
+        assert_eq!(slugify("!!!"), "");
+        assert_eq!(slugify("x").len(), 1);
+    }
+
+    #[test]
+    fn frontmatter_split_and_roundtrip() {
+        let text = "---\ntype: Tribal-pattern\ntitle: '2026-01-01 probe'\nmemory_score: 0.578\ntags:\n- pattern\n---\n\nBody line.\n";
+        let c = Concept::from_text(text, "memory/tribal/x".into());
+        assert_eq!(c.type_, "Tribal-pattern");
+        assert_eq!(c.title.as_deref(), Some("2026-01-01 probe"));
+        assert_eq!(c.ext_f64("memory_score"), Some(0.578));
+        assert_eq!(c.tags, vec!["pattern"]);
+        assert_eq!(c.body, "Body line.\n");
+        let md = c.to_markdown();
+        let reparsed = Concept::from_text(&md, c.concept_id.clone());
+        assert_eq!(reparsed.title, c.title);
+        assert_eq!(reparsed.ext_f64("memory_score"), Some(0.578));
+        assert_eq!(reparsed.tags, c.tags);
+    }
+
+    #[test]
+    fn iso_ts_roundtrip() {
+        assert_eq!(format_iso_utc(0), "1970-01-01T00:00:00Z");
+        let secs = parse_iso_ts("2026-09-16T19:53:21Z", false).expect("zulu");
+        assert_eq!(format_iso_utc(secs), "2026-09-16T19:53:21Z");
+        assert!(parse_iso_ts("2026-09-16T19:53:21", false).is_none());
+        assert!(parse_iso_ts("2026-09-16T19:53:21", true).is_some());
+        let off = parse_iso_ts("2026-09-16T21:53:21+02:00", false).expect("offset");
+        assert_eq!(off, secs);
+    }
+
+    #[test]
+    fn refs_extraction() {
+        let body =
+            "see `src/main.py` and `helper()` plus `pkg.Mod.fn` not `./gradlew` or `cairn embed`";
+        assert_eq!(extract_file_refs(body), vec!["src/main.py"]);
+        assert_eq!(extract_symbol_refs(body), vec!["helper()", "pkg.Mod.fn"]);
+    }
+
+    #[test]
+    fn strip_private_data_redacts_secrets() {
+        let out = strip_private_data("<private>hidden</private> api_key=abcdefghijklmnopqrst uvw");
+        assert!(out.contains("[REDACTED]"));
+        assert!(!out.contains("abcdefghijklmnopqrst"));
+    }
+}
