@@ -99,6 +99,24 @@ def snapshot_db(live_db: Path, target: Path) -> None:
         src.close()
 
 
+def settle_snapshot(db: Path, workspace: Path) -> None:
+    """Catch the snapshot up to the working tree (the same boot catch-up the
+    record daemon would otherwise run mid-capture): without it the python
+    record sees a post-graft store while the rust replay reads the pristine
+    snapshot, and every store-derived tool diverges."""
+    from cairn.graph.schema import get_db
+    from cairn.graph.watcher import ensure_fresh_force
+
+    conn = get_db(str(db))
+    try:
+        n = ensure_fresh_force(conn, str(workspace))
+        conn.commit()
+        if n:
+            _note(f"settled snapshot: grafted {n} pending file(s)")
+    finally:
+        conn.close()
+
+
 @contextmanager
 def build_env(scratch: Path, workspace: Path):
     """Pin the build/embed env to the scratch store, then restore."""
@@ -132,6 +150,7 @@ def prepare_store(store: str, scratch: Path, cfg: dict) -> dict:
         workspace = Path(cfg["workspace"])
         _note(f"snapshotting live self-store {cfg['db']} ...")
         snapshot_db(Path(cfg["db"]), db)
+        settle_snapshot(db, workspace)
         seeded = gr.seed_bundle(Path(cfg["knowledge"]), knowledge)
     else:
         workspace = baseline.stage_corpus(CORPORA[store], scratch)
