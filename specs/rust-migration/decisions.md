@@ -216,6 +216,44 @@ gating it.
   template needing a minijinja-incompatible construct is a spec amendment,
   not a template rewrite.
 
+## D-010 (provisional): yaml-rust2 =0.13.0 — `.knowledge` bundle frontmatter (1b-km)
+
+- **What**: `yaml-rust2` pinned `=0.13.0`, `default-features = false` (drops
+  the `encoding` feature / `encoding_rs`; concepts are UTF-8 markdown).
+- **Why**: the `.knowledge` bundle (contract C-3) stores every concept as
+  markdown with YAML frontmatter written by Python's `yaml.safe_dump`
+  (nested signal dicts, promotion-history lists, workflow steps). The 1b-km
+  tool port reads and writes those files, so a real YAML 1.2 parser is
+  required; hand-rolling one is not credible against PyYAML emitter output
+  (flow folding at width 80, quoting of timestamp/number-like scalars).
+  Emission stays cairn-owned: a conservative block-style writer that
+  single-quotes anything ambiguous, so PyYAML re-parses Rust-written
+  frontmatter to identical values.
+- **Cost**: license MIT OR Apache-2.0 (inside the P0-1 allowlist). Pure Rust →
+  unrestricted platforms. New crate in the lockfile (~3 crates with
+  `saphyr`/`reserved-hashmap` internals) — cargo-deny gates it once wired.
+- **Companion pin**: `regex = "1"` promoted from transitive (D-004
+  tree-sitter dep, already in Cargo.lock at 1.13.1) to a direct cairn-query
+  dependency — the ported privacy redaction, session-bookkeeping, and
+  router intent patterns are regex-defined in the Python source. No new
+  lockfile entry. `serde_json = "1"` same story (D-001 amendment stack).
+
+## D-011: sha2 =0.10.9 — hash-embedding backend (1b-search)
+
+- **What**: RustCrypto `sha2` pinned `=0.10.9`, default features, for the
+  SHA-256 token hashing inside the deterministic `hash-256-v1` embedder
+  (`_hash_vec` in src/cairn/graph/embeddings.py). The 0.11 line exists
+  (0.11.1) and is not taken; 0.10.9 is the newest 0.10.x patch.
+- **Why**: semantic_search's dense leg must embed queries identically to the
+  Python `hash` backend or every hash-pinned golden diverges. SHA-256 is the
+  one primitive the hash backend needs; the resolved tree has no SHA-256
+  (Cargo.lock checked) and hand-rolling one is not credible.
+- **Cost**: license MIT OR Apache-2.0 (inside the P0-1 allowlist). Pure Rust →
+  unrestricted platforms incl. musl. Transitive: `digest`, `block-buffer`,
+  `crypto-common`, `generic-array`, `typenum`, `cpufeatures` — all
+  MIT OR Apache-2.0; binary delta single-digit KB.
+
+
 ---
 
 ## Roll-up

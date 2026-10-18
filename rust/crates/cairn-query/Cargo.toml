@@ -8,6 +8,14 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+regex = "1"
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "=0.10.9"
+yaml-rust2 = { version = "=0.13.0", default-features = false }
+
+[dev-dependencies]
+cairn-store = { path = "../cairn-store" }
 
 [lints]
 workspace = true

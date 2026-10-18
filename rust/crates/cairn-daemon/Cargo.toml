@@ -8,6 +8,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+cairn-query = { path = "../cairn-query" }
 cairn-store = { path = "../cairn-store" }
 rmcp = { version = "=3.5.1", features = ["transport-streamable-http-server"] }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }

@@ -58,5 +58,55 @@
     "structuredContent": {
       "result": "=== semantic_search: \"how does the build resolve call edges\" (1 match(es)) ===\n  [semantic 0.02] method TestPhpQualifiedNames.test_namespaced_function_call_target_is_last_segment  (test_parser_audit_fixes.py)  [cairn]\n    File: tests/test_parser_audit_fixes.py\n\nNote: these are similarity-scored fuzzy matches, not structural edges. Use get_callers/impact_analysis to verify precise relationships."
     }
-  }
+  },
+  "spike_queries": [
+    {
+      "query": "how does the build resolve call edges",
+      "limit": 10,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "=== semantic_search: \"how does the build resolve call edges\" (1 match(es)) ===\n  [semantic 0.02] method TestPhpQualifiedNames.test_namespaced_function_call_target_is_last_segment  (test_parser_audit_fixes.py)  [cairn]\n    File: tests/test_parser_audit_fixes.py\n\nNote: these are similarity-scored fuzzy matches, not structural edges. Use get_callers/impact_analysis to verify precise relationships."
+          }
+        ],
+        "structuredContent": {
+          "result": "=== semantic_search: \"how does the build resolve call edges\" (1 match(es)) ===\n  [semantic 0.02] method TestPhpQualifiedNames.test_namespaced_function_call_target_is_last_segment  (test_parser_audit_fixes.py)  [cairn]\n    File: tests/test_parser_audit_fixes.py\n\nNote: these are similarity-scored fuzzy matches, not structural edges. Use get_callers/impact_analysis to verify precise relationships."
+        }
+      }
+    },
+    {
+      "query": "search_symbols",
+      "limit": 10,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "=== semantic_search: \"search_symbols\" (10 match(es)) ===\n  [fused(bm25+semantic) 0.03] function search_symbols  (store.rs)  [cairn]\n    File: rust/crates/cairn-daemon/src/store.rs\n  [fused(bm25+semantic) 0.03] function spike_serves_search_symbols_golden_equal  (spike_golden.rs)  [cairn]\n    File: rust/crates/cairn-daemon/tests/spike_golden.rs\n  [fused(bm25+semantic) 0.03] function render_search_symbols  (search.rs)  [cairn]\n    File: rust/crates/cairn-daemon/src/search.rs\n  [semantic 0.02] function test_ladder_evaluated_at_most_once_per_search._boom  (test_semantic_events.py)  [cairn]\n    File: tests/test_semantic_events.py\n  [semantic 0.02] function test_ladder_evaluated_at_most_once_per_search  (test_semantic_events.py)  [cairn]\n    File: tests/test_semantic_events.py\n  [bm25 0.02] function search_symbols_data  (tools_graph.py)  [cairn]\n  [bm25 0.02] module tests.test_search_symbols  (test_search_symbols.py)  [cairn]\n  [semantic 0.02] function TestEnrichDenseLeg.test_enrich_computed_exactly_once_per_search.spy  (test_retrieval_params.py)  [cairn]\n    File: tests/test_retrieval_params.py\n  [bm25 0.02] function search_symbols  (lexical.py)  [cairn]\n  [bm25 0.02] function search_symbols_terms  (lexical.py)  [cairn]\n\nNote: these are similarity-scored fuzzy matches, not structural edges. Use get_callers/impact_analysis to verify precise relationships."
+          }
+        ],
+        "structuredContent": {
+          "result": "=== semantic_search: \"search_symbols\" (10 match(es)) ===\n  [fused(bm25+semantic) 0.03] function search_symbols  (store.rs)  [cairn]\n    File: rust/crates/cairn-daemon/src/store.rs\n  [fused(bm25+semantic) 0.03] function spike_serves_search_symbols_golden_equal  (spike_golden.rs)  [cairn]\n    File: rust/crates/cairn-daemon/tests/spike_golden.rs\n  [fused(bm25+semantic) 0.03] function render_search_symbols  (search.rs)  [cairn]\n    File: rust/crates/cairn-daemon/src/search.rs\n  [semantic 0.02] function test_ladder_evaluated_at_most_once_per_search._boom  (test_semantic_events.py)  [cairn]\n    File: tests/test_semantic_events.py\n  [semantic 0.02] function test_ladder_evaluated_at_most_once_per_search  (test_semantic_events.py)  [cairn]\n    File: tests/test_semantic_events.py\n  [bm25 0.02] function search_symbols_data  (tools_graph.py)  [cairn]\n  [bm25 0.02] module tests.test_search_symbols  (test_search_symbols.py)  [cairn]\n  [semantic 0.02] function TestEnrichDenseLeg.test_enrich_computed_exactly_once_per_search.spy  (test_retrieval_params.py)  [cairn]\n    File: tests/test_retrieval_params.py\n  [bm25 0.02] function search_symbols  (lexical.py)  [cairn]\n  [bm25 0.02] function search_symbols_terms  (lexical.py)  [cairn]\n\nNote: these are similarity-scored fuzzy matches, not structural edges. Use get_callers/impact_analysis to verify precise relationships."
+        }
+      }
+    },
+    {
+      "query": "zzz_no_match_probe_queried",
+      "limit": 10,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "No matches for 'zzz_no_match_probe_queried' -- neither the vector scan nor the BM25 fallback found anything. The corpus may not be embedded yet (run `cairn embed` to index), or the wording may not match any token. Try search_symbols(\"...\") for a lexical match, or rephrase with more specific terms."
+          }
+        ],
+        "structuredContent": {
+          "result": "No matches for 'zzz_no_match_probe_queried' -- neither the vector scan nor the BM25 fallback found anything. The corpus may not be embedded yet (run `cairn embed` to index), or the wording may not match any token. Try search_symbols(\"...\") for a lexical match, or rephrase with more specific terms."
+        }
+      }
+    }
+  ]
 }
