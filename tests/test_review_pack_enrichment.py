@@ -118,10 +118,11 @@ def test_render_pack_without_enrichment_matches_render_blast():
 def test_reader_failure_degrades_the_section(monkeypatch):
     import cairn.memory.promotion as promotion
     import cairn.mcp_server.tools_compass as tools_compass
+    from cairn.okf.bundle import OKFBundle
 
     monkeypatch.setattr(promotion, "search_memory", _raise_reader)
-    monkeypatch.setattr(tools_compass, "get_compass", _raise_reader)
-    monkeypatch.setattr(tools_compass, "search_knowledge_data", _raise_reader)
+    monkeypatch.setattr(tools_compass, "find_compass_concept", _raise_reader)
+    monkeypatch.setattr(OKFBundle, "search", _raise_reader)
 
     pack = enrich_pack(None, "unused-ws", _pack())
     assert pack["memories"]["error"] == "reader down"
@@ -136,20 +137,18 @@ def test_reader_failure_degrades_the_section(monkeypatch):
 def test_empty_reader_results_render_as_absence(monkeypatch):
     import cairn.memory.promotion as promotion
     import cairn.mcp_server.tools_compass as tools_compass
+    from cairn.okf.bundle import OKFBundle
 
     monkeypatch.setattr(promotion, "search_memory", lambda conn, bundle, query: [])
     monkeypatch.setattr(
         tools_compass,
-        "get_compass",
-        lambda module: (
-            f"No compass file found for '{module}'. "
-            f"Generate with: cairn compass generate {module}"
-        ),
+        "find_compass_concept",
+        lambda bundle, module: None,
     )
     monkeypatch.setattr(
-        tools_compass,
-        "search_knowledge_data",
-        lambda query, type_filter="", limit=10: [],
+        OKFBundle,
+        "search",
+        lambda self, query, tags=None, limit=20: [],
     )
 
     pack = enrich_pack(None, "unused-ws", _pack())
@@ -166,30 +165,72 @@ def test_empty_reader_results_render_as_absence(monkeypatch):
         assert "no wiki pages" in rendered
 
 
-def test_wiki_page_containing_miss_marker_still_renders(monkeypatch):
-    """A wiki page whose body contains the no-results marker must not drop the section."""
+def test_compass_hit_renders_the_concept_body(monkeypatch):
+    """A compass concept renders as title + body; detection is the concept itself."""
     import cairn.mcp_server.tools_compass as tools_compass
     from types import SimpleNamespace
 
-    page = SimpleNamespace(
-        title="Ledger architecture",
-        body="10 results matching 'ledger' were found during generation.",
-    )
+    concept = SimpleNamespace(title="Ledger", body="Owns date parsing.")
     monkeypatch.setattr(
         tools_compass,
-        "search_knowledge_data",
-        lambda query, type_filter="", limit=10: [page],
+        "find_compass_concept",
+        lambda bundle, module: concept if module == "ledger" else None,
+    )
+
+    pack = enrich_pack(None, "unused-ws", _pack())
+    entry = pack["compass"]["entries"][0]
+    assert entry["found"] is True
+    assert entry["guide"] == "# Ledger\n\nOwns date parsing."
+
+    for output_format in PACK_FORMATS:
+        rendered = render_pack(pack, output_format)
+        assert "Owns date parsing." in rendered
+
+
+def test_wiki_page_containing_miss_marker_still_renders(monkeypatch):
+    """A wiki page whose body contains miss-like markers must not drop the section."""
+    from types import SimpleNamespace
+
+    from cairn.okf.bundle import OKFBundle
+
+    page = SimpleNamespace(
+        title="Ledger architecture",
+        type="Wiki-Article",
+        body="No wiki pages found during generation.",
+    )
+    monkeypatch.setattr(
+        OKFBundle,
+        "search",
+        lambda self, query, tags=None, limit=20: [page],
     )
 
     pack = enrich_pack(None, "unused-ws", _pack())
     assert pack["wiki"]["error"] is None
     entry = pack["wiki"]["entries"][0]
     assert entry["found"] is True
-    assert "results matching 'ledger' were found during generation" in entry["pages"]
+    assert "No wiki pages found during generation." in entry["pages"]
 
     for output_format in PACK_FORMATS:
         rendered = render_pack(pack, output_format)
-        assert "10 results matching" in rendered
+        assert "No wiki pages found during generation." in rendered
+
+
+def test_enrichment_scopes_readers_to_the_pack_workspace(monkeypatch):
+    """Compass and wiki readers resolve their bundle from the pack's workspace."""
+    import cairn.review.engine as engine
+
+    real_bundle = engine._workspace_bundle
+    seen: list[str] = []
+
+    def recording(workspace: str):
+        seen.append(workspace)
+        return real_bundle(workspace)
+
+    monkeypatch.setattr(engine, "_workspace_bundle", recording)
+
+    enrich_pack(None, "unused-ws", _pack())
+
+    assert seen and set(seen) == {"unused-ws"}
 
 
 def test_pack_without_seeds_renders_idle_sections():

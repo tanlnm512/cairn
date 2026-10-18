@@ -70,3 +70,22 @@ def test_deferred_unlink_keeps_file_until_rows_committed(tmp_path, conn):
     assert delete_document(bundle, cid) is True
     assert not (bundle.root / f"{cid}.md").exists()
     assert _embedding_count(conn) == 0
+
+
+def test_add_document_takes_the_bundle_advisory_lock(tmp_path, monkeypatch):
+    """add_document's exists-check + write is a read-modify-write mutation, so
+    it must run under the same advisory lock update_status/delete_document take."""
+    from cairn.okf import bundle as bundle_mod
+
+    entered = []
+    original = bundle_mod.OKFBundle.lock
+
+    def spy(self, timeout=5.0):
+        entered.append(self.root)
+        return original(self, timeout=timeout)
+
+    monkeypatch.setattr(bundle_mod.OKFBundle, "lock", spy)
+    bundle = OKFBundle(str(tmp_path / "knowledge"))
+    add_document(bundle, "Refund policy", "Refunds within 30 days.", "spec")
+    assert entered, "add_document must hold the bundle advisory lock"
+    assert (bundle.root / "knowledge" / "spec" / "refund-policy.md").exists()

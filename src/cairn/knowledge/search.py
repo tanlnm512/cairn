@@ -280,6 +280,9 @@ def _semantic_search(conn, bundle, query, limit, threshold, include_archived=Fal
         return out
     except Exception:
         _note_semantic_off("error")
+        # Log the failure distinctly: an empty corpus and a backend error both
+        # return [], but only the latter means retrieval itself broke.
+        logger.warning("knowledge semantic search failed", exc_info=True)
         return []  # never crash — retrieval errors degrade to no results
 
 

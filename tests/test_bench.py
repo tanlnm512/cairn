@@ -69,6 +69,11 @@ class TestTimeCall:
         assert len(result.samples) == 2
         assert all(s >= 0 for s in result.samples)
 
+    def test_nonpositive_repeats_rejected(self):
+        """repeats < 1 is a ValueError, never a silent single-run clamp."""
+        with pytest.raises(ValueError, match="repeats"):
+            time_call(lambda: None, warmup=1, repeats=0)
+
 
 class TestPeakMemory:
     def test_captures_peak(self):
@@ -128,6 +133,11 @@ class TestCorpus:
         stats = build_graph(workspace=str(repo), db_path=db)
         assert stats["symbols"] > 0
         assert stats["edges"] >= 0  # low complexity may have few edges
+
+    def test_unknown_complexity_rejected(self, tmp_path):
+        """An unknown complexity is an error, never a silent medium fallback."""
+        with pytest.raises(ValueError, match="complexity"):
+            generate_corpus(tmp_path, 5, complexity="bogus")
 
 
 # --- suite smoke tests (tiny corpus, assert shape not timings) -----------
@@ -212,6 +222,26 @@ class TestPerfSuite:
             >= by_name["build.persist"].timing.median
         )
 
+    def test_scan_walk_recorded_as_phase(self, tmp_path, monkeypatch):
+        """The workspace walk before the builder's first event is recorded as
+        the scan_walk phase, not silently dropped from the phase sum."""
+        import time as _t
+
+        import cairn.graph.builder as builder_mod
+        from cairn.bench.perf_suite import _phase_timings
+
+        def _fake_build(*args, progress=None, **kwargs):
+            _t.sleep(0.05)  # stand-in for the pre-event workspace walk
+            if progress:
+                progress("scan", files=1, skips=0)
+            return {"symbols": 1, "edges": 0}
+
+        monkeypatch.setattr(builder_mod, "build_graph", _fake_build)
+        _, phase_seconds = _phase_timings(str(tmp_path), str(tmp_path / "x.db"))
+        assert phase_seconds["scan_walk"] >= 0.04
+        assert phase_seconds["scan"] >= 0
+        assert sum(phase_seconds.values()) >= 0.04
+
 
 class TestScalingSuite:
     def test_runs_over_tiny_sizes(self, tmp_path, monkeypatch):
@@ -285,11 +315,44 @@ class TestCompareReports:
         deltas = compare_reports(baseline, current, threshold=0.15)
         assert deltas["embed"]["regressed"] is False  # +10% < 15%
 
-    def test_missing_op_skipped(self):
+    def test_missing_op_surfaced_unbaselined(self):
+        """An op the baseline lacks is surfaced unbaselined, never silently skipped."""
         baseline = {"ops": [{"name": "build", "median_ms": 100.0}]}
         current = {"ops": [{"name": "embed", "median_ms": 200.0}]}  # different op
         deltas = compare_reports(baseline, current, threshold=0.15)
-        assert "embed" not in deltas  # baseline had no embed to compare
+        assert deltas["embed"]["unbaselined"] is True
+        assert deltas["embed"]["regressed"] is False
+        assert deltas["embed"]["baseline_ms"] is None
+        assert deltas["embed"]["delta_pct"] is None
+
+
+# --- budget file validation ------------------------------------------------
+
+
+class TestBudgetValidation:
+    def test_huge_int_budget_rejected_as_value_error(self):
+        """A huge integer budget is a ValueError, never an OverflowError."""
+        from cairn.bench.budgets import _validate_budgets
+
+        with pytest.raises(ValueError, match="must be a number of milliseconds"):
+            _validate_budgets({"find_definition": 10**400})
+
+    def test_huge_int_factor_rejected_as_value_error(self, tmp_path):
+        """A huge integer factor is a ValueError, never an OverflowError."""
+        from cairn.bench.budgets import load_budgets
+
+        path = tmp_path / "huge-factor.json"
+        path.write_text(json.dumps({
+            "schema": "cairn-perf-budgets/1",
+            "timestamp": "2026-10-16T00:00:00+00:00",
+            "dataset": {"version": "DS-test"},
+            "cairn_version": "test",
+            "machine_profile": {},
+            "factor": 10**400,
+            "budgets": {"find_definition": 5.0},
+        }), encoding="utf-8")
+        with pytest.raises(ValueError, match="factor"):
+            load_budgets(path)
 
 
 # --- CLI registration ----------------------------------------------------
@@ -1071,3 +1134,70 @@ class TestSweBenchWorkspaceValidation:
         monkeypatch.setattr("cairn.cli.bench.subprocess.run", lambda *a, **k: None)
         with pytest.raises(RuntimeError, match="not a valid checkout"):
             _swe_bench_workspaces([task], cache_root=cache_root, quiet=True)
+
+    def test_failed_clone_leaves_no_staging_dir(self, tmp_path, monkeypatch):
+        """A failed clone/checkout removes its .tmp staging tree from the
+        persistent shared cache."""
+        import subprocess as sp
+
+        from cairn.cli.bench import _swe_bench_workspaces
+
+        cache_root = tmp_path / "cache"
+        task = {"instance_id": "t", "repo": "ok/repo", "base_commit": "c" * 40}
+        from pathlib import Path
+
+        def _fake_run(cmd, *args, **kwargs):
+            if "clone" in cmd:
+                Path(cmd[-1]).mkdir(parents=True)  # git's partial staging tree
+                return None
+            raise sp.CalledProcessError(
+                128, "git", stderr="fatal: unknown revision"
+            )
+
+        monkeypatch.setattr("cairn.cli.bench.subprocess.run", _fake_run)
+        with pytest.raises(RuntimeError, match="checkout of ok/repo"):
+            _swe_bench_workspaces([task], cache_root=cache_root, quiet=True)
+        assert not list(cache_root.glob(".tmp-*"))
+
+
+# --- CLI option validation (--runs / --repeats bounds) ----------------------
+
+
+class TestBenchCliRunValidation:
+    def test_runs_below_one_rejected_at_parse_time(self, tmp_path, monkeypatch):
+        """--runs 0 is a usage error (exit 2), never an empty-median crash."""
+        def _boom(*args, **kwargs):
+            raise AssertionError("suite must not run for an invalid --runs")
+
+        monkeypatch.setattr("cairn.bench.agent_suite.run_agent_suite", _boom)
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "runs.db"))
+        from click.testing import CliRunner
+        from cairn.cli import main
+
+        result = CliRunner().invoke(main, [
+            "bench", "--suite", "agent", "--runs", "0",
+            "--n-files", "3", "--complexity", "low",
+            "--embed-backend", "hash",
+        ])
+        assert result.exit_code == 2
+        assert not isinstance(result.exception, AssertionError)
+        assert "runs" in result.output
+
+    def test_repeats_below_one_rejected_at_parse_time(self, tmp_path, monkeypatch):
+        """--repeats 0 is a usage error (exit 2), never a silent single run."""
+        def _boom(*args, **kwargs):
+            raise AssertionError("suite must not run for an invalid --repeats")
+
+        monkeypatch.setattr("cairn.bench.run_perf_suite", _boom)
+        monkeypatch.setenv("CAIRN_DB", str(tmp_path / "repeats.db"))
+        from click.testing import CliRunner
+        from cairn.cli import main
+
+        result = CliRunner().invoke(main, [
+            "bench", "--suite", "perf", "--repeats", "0",
+            "--n-files", "3", "--complexity", "low",
+            "--embed-backend", "hash",
+        ])
+        assert result.exit_code == 2
+        assert not isinstance(result.exception, AssertionError)
+        assert "repeats" in result.output

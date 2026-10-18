@@ -521,6 +521,28 @@ def test_enrich_all_then_repo_scopes_the_queue(cli_env, fresh_db):
 # --- guard: an in-flight enrich keeps duplicate generate blocked --------------
 
 
+def test_enrich_stands_down_while_a_generation_is_in_flight(cli_env):
+    """A promoted page with a live (pending) generation task queues no
+    enrich: generation promotion replaces the whole body, so an enrich
+    racing the regeneration would lose its appended sections."""
+    from cairn.wiki.pipeline import queue_enrich_tasks
+
+    knowledge = cli_env
+    bundle = _bundle(knowledge)
+    _promote_article(bundle, "overview", body=PRIOR_BODY)
+    _write_manifest(knowledge, {
+        _key("overview"): _row("overview", state="promoted",
+                               task_id="spent-chain", attempts=1),
+    })
+    create_task(
+        bundle, "wiki-page", _key("overview"),
+        facts={"repo": REPO, "input_hash": "next-plan-hash"},
+    )
+
+    assert queue_enrich_tasks(bundle, repo=REPO, page_id="overview") == []
+    assert _pending_enrich_tasks(bundle) == []
+
+
 def test_inflight_enrich_never_blocks_generate_queueing(cli_env, fresh_db):
     """Anti-collapse pin: enrichment is content maintenance, not
     generation. An in-flight enrich must not satisfy the plan's skip

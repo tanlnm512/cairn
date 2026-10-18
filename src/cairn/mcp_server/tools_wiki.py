@@ -31,7 +31,8 @@ def wiki_generate(
             )
         except WikiPlannerError as exc:
             return f"wiki_generate: {exc} Nothing was queued."
-        except WikiManifestWriteError as exc:
+        except (WikiManifestWriteError, ValueError) as exc:
+            # ValueError: load_manifest rejects a corrupt/malformed manifest.
             return (
                 f"wiki_generate: {exc} Nothing was recorded; "
                 "re-running adopts the already-live tasks."

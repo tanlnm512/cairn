@@ -13,8 +13,8 @@ def kilo_mcp_config_json() -> dict:
 
 
 def _kilo_config_path(workspace: str, scope: str = "workspace") -> Path:
-    """Return the kilo.json path for workspace or global scope."""
-    if scope == "global":
+    """Return the kilo.json path for workspace or global scope ('all' follows global)."""
+    if scope in ("global", "all"):
         return Path.home() / ".config" / "kilo" / "kilo.json"
     return Path(workspace) / "kilo.json"
 

@@ -66,6 +66,10 @@ def load_config(root: Union[str, Path]) -> CairnConfig:
         import sys
         print(f"warning: {path}: invalid JSON ({e}); ignoring config", file=sys.stderr)
         return CairnConfig()
+    except UnicodeDecodeError as e:
+        import sys
+        print(f"warning: {path}: not valid UTF-8 ({e}); ignoring config", file=sys.stderr)
+        return CairnConfig()
     except OSError as e:
         import sys
         print(f"warning: {path}: could not read ({e}); ignoring config", file=sys.stderr)

@@ -114,7 +114,13 @@ def _compute_dataflow_row(
     errors: list[str] = []
     try:
         impact = impact_analysis(conn, name, max_depth=5)
-        within = list({item["symbol"] for item in impact.get("impacted", []) if item.get("symbol") != name})
+        # Rows are keyed (name, repo): only callers inside this repo belong in
+        # within_repo; cross-repo callers surface via cross_repo_deps.
+        within = list({
+            item["symbol"]
+            for item in impact.get("impacted", [])
+            if item.get("symbol") != name and item.get("repo") == repo
+        })
     except Exception as e:
         within = []
         errors.append(f"impact_analysis: {e}")
@@ -131,6 +137,18 @@ def _compute_dataflow_row(
         if cross_cache is not None:
             cross_cache[repo] = cross
     return within, cross, errors
+
+
+def _dedupe_name_repo(symbols: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Keep one entry per (name, repo); the payload is name-keyed per repo."""
+    seen: set[tuple[str, str]] = set()
+    distinct: List[Dict[str, str]] = []
+    for sym in symbols:
+        key = (sym["name"], sym["repo"])
+        if key not in seen:
+            seen.add(key)
+            distinct.append(sym)
+    return distinct
 
 
 def _purge_non_public_rows(conn: sqlite3.Connection, live_names: set[str]) -> None:
@@ -155,7 +173,7 @@ def build_dataflow_index(
 ) -> int:
     """Build bounded dataflow rows for public symbols and return the count."""
     max_symbols = resolve_max_symbols(max_symbols)
-    symbols = _public_symbols(conn)
+    symbols = _dedupe_name_repo(_public_symbols(conn))
     truncated = len(symbols) > max_symbols
     if truncated:
         print(

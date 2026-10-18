@@ -8,6 +8,7 @@ from dataclasses import asdict
 
 from .main import DEFAULT_DB_PATH, get_db, main, queries
 from ._helpers import _mods, _shorten
+from ..graph.traversal import MAX_TRAVERSAL_DEPTH
 
 
 def _refresh_conn(conn, refresh: bool | None = None):
@@ -23,6 +24,16 @@ def _refresh_conn(conn, refresh: bool | None = None):
     return report
 
 
+def _fresh_conn(db: str, refresh: bool | None):
+    """Open the query store honoring CAIRN_READ_ONLY; refresh only when writable."""
+    from ..graph.watcher import _read_only_env
+
+    read_only = _read_only_env()
+    conn = get_db(db, read_only=read_only)
+    _refresh_conn(conn, False if read_only else refresh)
+    return conn
+
+
 @main.command(name="def")
 @click.argument("symbol")
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
@@ -34,9 +45,8 @@ def _refresh_conn(conn, refresh: bool | None = None):
 )
 def find_def(symbol, db, as_json, refresh):
     """Find where a SYMBOL is defined."""
-    conn = get_db(db)
+    conn = _fresh_conn(db, refresh)
     try:
-        _refresh_conn(conn, refresh)
         rows = queries.find_definition(conn, symbol)
     finally:
         conn.close()
@@ -73,9 +83,8 @@ def find_def(symbol, db, as_json, refresh):
 )
 def callers(symbol, db, as_json, fuzzy, refresh):
     """Find callers of SYMBOL; precise by default, --fuzzy adds noisier name-matched sites."""
-    conn = get_db(db)
+    conn = _fresh_conn(db, refresh)
     try:
-        _refresh_conn(conn, refresh)
         rows = queries.get_callers(conn, symbol, fuzzy=fuzzy)
     finally:
         conn.close()
@@ -105,9 +114,8 @@ def callers(symbol, db, as_json, fuzzy, refresh):
 )
 def search(pattern, kind, db, as_json, refresh):
     """Search symbols by PATTERN (supports * wildcards)."""
-    conn = get_db(db)
+    conn = _fresh_conn(db, refresh)
     try:
-        _refresh_conn(conn, refresh)
         rows = queries.search_symbols(conn, pattern, kind=kind)
     finally:
         conn.close()
@@ -191,9 +199,8 @@ def federated_search(query, limit, as_json, shared_embed):
 )
 def callees(symbol, db, as_json, fuzzy, refresh):
     """Find what a SYMBOL calls."""
-    conn = get_db(db)
+    conn = _fresh_conn(db, refresh)
     try:
-        _refresh_conn(conn, refresh)
         rows = queries.get_callees(conn, symbol, fuzzy=fuzzy)
     finally:
         conn.close()
@@ -214,7 +221,7 @@ def callees(symbol, db, as_json, fuzzy, refresh):
 # --------------------------------------------------------------------------
 @main.command()
 @click.argument("symbol")
-@click.option("--depth", default=10, help="Max traversal depth.")
+@click.option("--depth", default=10, help="Max traversal depth (1-%d)." % MAX_TRAVERSAL_DEPTH)
 @click.option("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB path.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 @click.option(
@@ -230,14 +237,19 @@ def callees(symbol, db, as_json, fuzzy, refresh):
 )
 def impact(symbol, depth, db, as_json, refresh, fuzzy):
     """Recursive impact analysis: what breaks if SYMBOL changes."""
-    conn = get_db(db)
+    if depth < 1 or depth > MAX_TRAVERSAL_DEPTH:
+        raise click.UsageError(
+            "--depth must be between 1 and %d." % MAX_TRAVERSAL_DEPTH
+        )
+    conn = _fresh_conn(db, refresh)
     try:
-        _refresh_conn(conn, refresh)
         result = queries.impact_analysis(conn, symbol, max_depth=depth, fuzzy=fuzzy)
     finally:
         conn.close()
     if as_json:
         click.echo(json.dumps(result, indent=2, default=str))
+        if result["total"] == 0 and not result["impacted"]:
+            sys.exit(1)
         return
     if result["cycles"]:
         cycle_names = [c["symbol"] for c in result["cycles"]]
@@ -281,14 +293,15 @@ def impact(symbol, depth, db, as_json, refresh, fuzzy):
 )
 def deps(repo, db, as_json, refresh):
     """Cross-repo dependencies for REPO."""
-    conn = get_db(db)
+    conn = _fresh_conn(db, refresh)
     try:
-        _refresh_conn(conn, refresh)
         result = queries.cross_repo_deps(conn, repo)
     finally:
         conn.close()
     if as_json:
         click.echo(json.dumps(result, indent=2, default=str))
+        if not result["dependencies"] and not result["dependents"]:
+            sys.exit(1)
         return
     click.echo(f"=== {repo} depends on ===")
     if result["dependencies"]:

@@ -312,7 +312,7 @@ def test_prs_json_defaults_to_null_sections(tmp_path, monkeypatch):
     result = _invoke_prs(db_path, "--json")
     assert result.exit_code == 0, result.output
     data = json.loads(result.stdout)
-    assert set(data) == {"store", "prs", "impact", "conflicts"}
+    assert set(data) == {"store", "prs", "impact", "conflicts", "pr_diff_failures"}
     assert data["store"] == {"index": "local", "built": None}
     assert [pr["number"] for pr in data["prs"]] == [42, 43]
     assert data["impact"] is None

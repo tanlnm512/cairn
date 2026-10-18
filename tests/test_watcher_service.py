@@ -428,6 +428,105 @@ class TestLockContention:
 
 
 # ---------------------------------------------------------------------------
+# Auto-refresh workspace attribution
+# ---------------------------------------------------------------------------
+
+
+class TestAutoRefreshWorkspace:
+    def test_auto_refresh_serves_the_connected_store_workspace(
+        self, tmp_path, monkeypatch, hash_backend
+    ):
+        """Auto-refresh derives its workspace from the conn's store: querying a
+        --db from workspace B while cwd sits in workspace A (same repo id)
+        must parse and store B's file, never A's."""
+        from cairn import paths as paths_mod
+        from cairn.graph.schema import init_db
+        from cairn.graph.watcher import refresh_for_query
+
+        ws_b = tmp_path / "ws_b"
+        repo_b = ws_b / "repo"
+        (repo_b / "src").mkdir(parents=True)
+        (repo_b / ".git").mkdir()
+        src_b = repo_b / "src" / "a.py"
+        src_b.write_text("def from_b():\n    return 42\n")
+
+        store_b = paths_mod.register_workspace(ws_b)
+        conn = init_db(str(store_b.db))
+        try:
+            conn.execute(
+                "INSERT INTO repos (id, name, path) VALUES ('repo', 'repo', ?)",
+                (str(repo_b),),
+            )
+            # Stale row: size predates the on-disk content above.
+            conn.execute(
+                "INSERT INTO files (id, repo_id, path, language, hash, size, mtime) "
+                "VALUES ('f-b', 'repo', 'src/a.py', 'python', 'h', 1, 0.0)"
+            )
+            conn.commit()
+
+            # Workspace A (cwd): same repo id, different content — the pre-fix
+            # repair parsed THIS file into B's store.
+            ws_a = tmp_path / "ws_a"
+            repo_a = ws_a / "repo"
+            (repo_a / "src").mkdir(parents=True)
+            (repo_a / ".git").mkdir()
+            (repo_a / "src" / "a.py").write_text("def from_a():\n    pass\n")
+
+            monkeypatch.chdir(ws_a)
+            report = refresh_for_query(conn)
+
+            assert report.repaired is True
+            row = conn.execute(
+                "SELECT size FROM files WHERE repo_id = 'repo' AND path = 'src/a.py'"
+            ).fetchone()
+            assert row is not None
+            assert row["size"] == src_b.stat().st_size
+            names = {
+                r["name"]
+                for r in conn.execute("SELECT name FROM symbols").fetchall()
+            }
+            assert "from_b" in names
+            assert "from_a" not in names
+        finally:
+            conn.close()
+
+    def test_unregistered_store_falls_back_to_cwd_workspace(
+        self, tmp_path, monkeypatch, hash_backend
+    ):
+        """A store the registry cannot attribute keeps the cwd workspace behavior."""
+        from cairn.graph.schema import init_db
+        from cairn.graph.watcher import refresh_for_query
+
+        ws = tmp_path / "ws"
+        repo = ws / "repo"
+        (repo / "src").mkdir(parents=True)
+        (repo / ".git").mkdir()
+        src = repo / "src" / "a.py"
+        src.write_text("def hello():\n    return 1\n")
+
+        db = str(tmp_path / "unregistered.db")
+        conn = init_db(db)
+        try:
+            conn.execute(
+                "INSERT INTO repos (id, name, path) VALUES ('repo', 'repo', ?)",
+                (str(repo),),
+            )
+            conn.execute(
+                "INSERT INTO files (id, repo_id, path, language, hash, size, mtime) "
+                "VALUES ('f', 'repo', 'src/a.py', 'python', 'h', 1, 0.0)"
+            )
+            conn.commit()
+
+            monkeypatch.chdir(ws)
+            report = refresh_for_query(conn)
+
+            assert report.repaired is True
+            assert report.drifted_paths == (str(src),)
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
 

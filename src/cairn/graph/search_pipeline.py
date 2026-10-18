@@ -73,7 +73,6 @@ class SearchContext:
     reranker_available: bool = False
     ann_enabled: bool = False
     dense_lost: bool = False
-    dense_pass_failed: bool = False
     ann_used: bool = False
     fusion_used: bool = False
     fusion_degraded: bool = False
@@ -191,7 +190,14 @@ def query_stage(context: SearchContext) -> None:
     if params is not None and getattr(params, "rerank", None) is not None:
         rerank_override = params.rerank
         context.rerank_override = rerank_override
-    rerank_on = rrk.rerank_enabled() if rerank_override is not False else False
+    # Tri-state: True forces reranking on (model import permitting), False
+    # forces it off, None defers to the env/marker gate.
+    if rerank_override is False:
+        rerank_on = False
+    elif rerank_override is True:
+        rerank_on = rrk.reranker_available()
+    else:
+        rerank_on = rrk.rerank_enabled()
     if params is not None and bool(getattr(params, "prf", False)):
         rerank_on = False
     context.rerank_on = rerank_on
@@ -225,13 +231,12 @@ def retrieval_stage(context: SearchContext) -> None:
             pass
         context.dense_candidates = []
         context.dense_lost = True
-        context.dense_pass_failed = True
     context.candidates = context.dense_candidates
 
 
 def fusion_stage(context: SearchContext) -> None:
     """Fuse sparse and dense rankings with the existing RRF implementation."""
-    if context.candidates is None or context.dense_pass_failed:
+    if context.candidates is None:
         return
     _fuse_candidates(context, ())
     if getattr(context.params, "prf", False) and context.candidates:
@@ -328,7 +333,12 @@ def rerank_stage(context: SearchContext) -> None:
         logger.debug("rerank skipped: fused ranking decisive (margin gate)")
 
     if context.rerank_on:
-        final, reranked = rrk.rerank(context.dense_query, context.candidates, context.limit)
+        final, reranked = rrk.rerank(
+            context.dense_query,
+            context.candidates,
+            context.limit,
+            force=context.rerank_override is True,
+        )
         context.rerank_used = reranked
         context.rerank_degraded = not reranked
         for item in final:

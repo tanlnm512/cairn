@@ -162,6 +162,12 @@ def _remove_store(ws: str, full: bool, dry_run: bool) -> None:
         return
 
     shutil.rmtree(target, ignore_errors=True)
+    if target.exists():
+        click.echo(
+            f"  warning: {target} could not be fully removed (check "
+            f"permissions); leaving it and its registry entry in place"
+        )
+        return
 
     # Prune the registry: whole-home removal takes workspaces.json with it;
     # single-store removal drops just that workspace's entry.

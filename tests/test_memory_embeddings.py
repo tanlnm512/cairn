@@ -198,6 +198,31 @@ class TestReapOrphanedMemoryEmbeddings:
         }
         assert remaining == {kept.concept_id}
 
+    def test_unreadable_concept_rows_survive_reap(self, db, bundle, monkeypatch):
+        """A present-but-unreadable concept is not an orphan: its vectors must
+        survive the reap (skip-and-warn), or memory embed would delete them and
+        then report the concept 'already up to date'."""
+        kept = _write_memory(bundle, "memory/tribal/kept", "Kept", "Body")
+        unreadable = _write_memory(bundle, "memory/tribal/broken", "Broken", "Body")
+        embed_memory_concepts(db, bundle, [kept.concept_id, unreadable.concept_id])
+        db.commit()
+
+        real_read = bundle.read_concept
+
+        def _unreadable(cid):
+            if cid == unreadable.concept_id:
+                raise PermissionError(f"locked: {cid}")
+            return real_read(cid)
+
+        monkeypatch.setattr(bundle, "read_concept", _unreadable)
+
+        reaped = reap_orphaned_memory_embeddings(db, bundle)
+        assert reaped == 0
+        remaining = {
+            r["doc_id"] for r in db.execute("SELECT DISTINCT doc_id FROM memory_embeddings").fetchall()
+        }
+        assert remaining == {kept.concept_id, unreadable.concept_id}
+
 
 # ---------------------------------------------------------------------------
 # 3. search_memory fusion

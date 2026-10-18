@@ -297,13 +297,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:013ef0f1f82336541b9bc507e3ac45c9a4c840235ef4ae32f272c9cfa4033c0f",
-      "paths": [
-        "src/cairn/compass/flow_gaps.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:02c966f22fc256de103d915d834666ef628afc3840f6833f1b8a2d68895d3eff",
       "paths": [
         "src/cairn/wiki/catalog.py"
@@ -549,13 +542,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:3893d57da699c1dc8c900f9dbfd657ec56159e3754919820a480a470e228f987",
-      "paths": [
-        "src/cairn/wiki/catalog.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:38bb2bd5e79f041480b6afb1eaba6f9f0614758f2282d37e8dda142d2e47c979",
       "paths": [
         "src/cairn/pack_enrich.py"
@@ -787,13 +773,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:6d0c7230c94619a90f28c2696bdd783cbb3b1726ef8da0d2298bba3dde1caba8",
-      "paths": [
-        "src/cairn/bench/report.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:6d48c0cbc44e4d45c9014542ceb04c13e04ea8a6c7716f2272ae73591e660b37",
       "paths": [
         "src/cairn/wiki/refine.py"
@@ -811,13 +790,6 @@
       "fingerprint": "docstring:729455d74015195094074f4a94e470e7b62817b98d5d0ae6bae948f3e17a7d41",
       "paths": [
         "src/cairn/pack.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:72de0a91a38f6ba81f2488a1cbf70cf955ad7f661c36c740aa3ee343ffe365a1",
-      "paths": [
-        "src/cairn/llm/tasks.py"
       ]
     },
     {
@@ -874,13 +846,6 @@
       "fingerprint": "docstring:80dddc29b6f7d86191960bdbbf8e29ddb21aef05432dc9bf9a1ca2bd13b822b1",
       "paths": [
         "src/cairn/compass/generator.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:82b267e549e0b861d1c798151043bc13214c027013e2db7acf2800f81aa6b2aa",
-      "paths": [
-        "src/cairn/wiki/manifest.py"
       ]
     },
     {
@@ -1280,13 +1245,6 @@
       "fingerprint": "docstring:e58909d7d47005a852cfb832e590a7063c232f50cb7a3df05a38561d32c92bfc",
       "paths": [
         "src/cairn/eval.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:e65bfb098bf7f9fd7c332424ea07cbceb9e575c60b4a9bebf0ec4f9b354065c8",
-      "paths": [
-        "src/cairn/bench/perf_suite.py"
       ]
     },
     {

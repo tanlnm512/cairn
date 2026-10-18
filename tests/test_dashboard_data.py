@@ -718,6 +718,35 @@ def test_get_module_graph_flags_edge_cap_truncation(fresh_db):
     assert graph["metadata"]["edge_count"] == _SCOPE_EDGE_CAP
 
 
+def test_get_module_graph_escapes_like_metacharacters(fresh_db):
+    """A module filter's % and _ match literally: `foo_bar` must not widen
+    into every `foo?bar` path via LIKE's wildcards."""
+    from cairn.viz.query import get_module_graph
+
+    fresh_db.execute(
+        "INSERT INTO repos (id, name, path, language) VALUES ('esc', 'esc', 'esc', 'python')"
+    )
+    fresh_db.executemany(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (?, ?, ?, ?)",
+        [
+            ("f_esc1", "esc", "src/foo_bar/one.py", "python"),
+            ("f_esc2", "esc", "src/fooXbar/two.py", "python"),
+        ],
+    )
+    fresh_db.executemany(
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("s_esc1", "f_esc1", "literal_hit", "foo_bar.one.literal_hit", "function"),
+            ("s_esc2", "f_esc2", "widened_hit", "fooXbar.two.widened_hit", "function"),
+        ],
+    )
+    fresh_db.commit()
+
+    graph = get_module_graph(fresh_db, "foo_bar")
+
+    assert {n["file"] for n in graph["nodes"]} == {"src/foo_bar/one.py"}
+
+
 def test_projects_data_flows_through_the_read_only_factory(tmp_path):
     """The dashboard's own connection factory serves the view data, and that
     connection can never write ."""

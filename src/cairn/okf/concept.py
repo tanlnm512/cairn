@@ -25,6 +25,20 @@ def _default_generated_by() -> str:
         return "cairn"
 
 
+def _frontmatter_close(text: str) -> Optional[int]:
+    """Start offset of the first line that is exactly '---' (past the opening delimiter), or None when unclosed."""
+    offset = 3
+    while offset < len(text):
+        end = text.find("\n", offset)
+        line_end = len(text) if end == -1 else end
+        if text[offset:line_end].rstrip(" \t\r") == "---":
+            return offset
+        if end == -1:
+            return None
+        offset = end + 1
+    return None
+
+
 def _coerce_timestamp(value: Any) -> Optional[str]:
     """Normalize a parsed timestamp to the ISO-8601 string readers expect.
 
@@ -204,10 +218,12 @@ class OKFConcept:
         """Split markdown into (frontmatter_dict, body). Returns (None, text) if none."""
         if not text.startswith("---"):
             return None, text
-        parts = text[3:].split("---", 1)
-        if len(parts) != 2:
+        close = _frontmatter_close(text)
+        if close is None:
             return None, text
-        yaml_text, body = parts
+        line_end = text.find("\n", close)
+        body_start = len(text) if line_end == -1 else line_end + 1
+        yaml_text, body = text[3:close], text[body_start:]
         try:
             fm = yaml.safe_load(yaml_text) or {}
         except yaml.YAMLError:

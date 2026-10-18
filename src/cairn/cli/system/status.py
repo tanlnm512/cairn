@@ -97,7 +97,6 @@ def status(db, knowledge):
     )
     display.kv("compass", f"{compass_n} files")
     display.kv("wiki", f"{wiki_n} articles")
-    display.kv("memory", "")
     _display_memory(mem)
     _display_pending(pending_rows)
     _display_parse_errors(parse_err_total, parse_err_rows)

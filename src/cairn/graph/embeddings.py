@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import os
 import re
@@ -19,6 +20,8 @@ from .embed_backends import (
     resolve_embedding_backend,
 )
 from .schema import note_contention, rebuild_term_df
+
+logger = logging.getLogger(__name__)
 
 # Model identity is stored per row so producer swaps invalidate stale embeddings.
 
@@ -1632,11 +1635,21 @@ def rename_memory_embedding(conn: sqlite3.Connection, old_id: str, new_id: str) 
 
 
 def reap_orphaned_memory_embeddings(conn: sqlite3.Connection, bundle) -> int:
-    """Delete memory embeddings whose concepts no longer resolve."""
+    """Delete memory embeddings whose concepts are gone, skipping unreadable ones."""
     doc_ids = {
         r[0] for r in conn.execute("SELECT DISTINCT doc_id FROM memory_embeddings").fetchall()
     }
-    orphaned = [cid for cid in doc_ids if not _concept_exists(bundle, cid)]
+    orphaned: List[str] = []
+    for cid in sorted(doc_ids):
+        try:
+            if _concept_exists(bundle, cid):
+                continue
+        except Exception:
+            logger.warning(
+                "memory reap: concept %s unreadable, not reaping", cid, exc_info=True
+            )
+            continue
+        orphaned.append(cid)
     if not orphaned:
         return 0
     placeholders = ",".join("?" for _ in orphaned)
@@ -1648,8 +1661,9 @@ def reap_orphaned_memory_embeddings(conn: sqlite3.Connection, bundle) -> int:
 
 
 def _concept_exists(bundle, concept_id: str) -> bool:
+    """True iff the concept file resolves; only a missing file reads as absent."""
     try:
         bundle.read_concept(concept_id)
         return True
-    except Exception:
+    except FileNotFoundError:
         return False

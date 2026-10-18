@@ -82,10 +82,11 @@ class CSharpParser(BaseParser, TreeSitterParserBase):
             return
 
         if t == "enum_declaration":
-            sym = self._parse_enum(node, source, pf)
+            sym = self._parse_enum(node, source)
             if sym:
                 pf.symbols.append(sym)
                 self._scope.append(sym.name)
+                self._parse_enum_members(node, source, pf)
                 self._walk(node, source, pf)
                 self._scope.pop()
             return
@@ -198,11 +199,23 @@ class CSharpParser(BaseParser, TreeSitterParserBase):
                 break
         return sym
 
-    def _parse_enum(self, node: Node, source: bytes, pf: ParsedFile) -> Optional[Symbol]:
+    def _parse_enum(self, node: Node, source: bytes) -> Optional[Symbol]:
         name = self._decl_name(node, source)
         if not name:
             return None
-        # Capture enum members as enum_case symbols.
+        return Symbol(
+            name=name,
+            kind="enum",
+            qualified_name=self._qualified_name(name),
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            column_start=node.start_point[1],
+            column_end=node.end_point[1],
+            modifiers=self._collect_modifiers(node, source),
+        )
+
+    def _parse_enum_members(self, node: Node, source: bytes, pf: ParsedFile) -> None:
+        """Capture enum members as enum_case symbols."""
         for child in node.children:
             if child.type == "enum_member_declaration_list":
                 for member in child.children:
@@ -220,16 +233,6 @@ class CSharpParser(BaseParser, TreeSitterParserBase):
                                     column_end=member.end_point[1],
                                 )
                             )
-        return Symbol(
-            name=name,
-            kind="enum",
-            qualified_name=self._qualified_name(name),
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            column_start=node.start_point[1],
-            column_end=node.end_point[1],
-            modifiers=self._collect_modifiers(node, source),
-        )
 
     def _parse_method(self, node: Node, source: bytes) -> Optional[Symbol]:
         name = self._decl_name(node, source)

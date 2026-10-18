@@ -85,12 +85,12 @@ def _compass(knowledge, resource, *, repo=None):
 
 def test_compass_resource_repo_relative_covers_repo_qualified_module(conn, tmp_path):
     # The reported bug: resource `app/services/jobs.py` vs module
-    # `agent_runtime/app/services/jobs.py` never matched, so every module
+    # `agent_runtime/app/services` never matched, so every module
     # stayed a gap forever.
     _compass(tmp_path / "k", "app/services/jobs.py", repo="agent_runtime")
     assert detect_gaps(conn, OKFBundle(str(tmp_path / "k"))) == [
-        "agent_runtime/app/services_extra/impl.py",
-        "other_repo/app/services/jobs.py",
+        "agent_runtime/app/services_extra",
+        "other_repo/app/services",
     ]
 
 
@@ -102,8 +102,8 @@ def test_compass_covers_by_segment_prefix_and_respects_boundary(conn, tmp_path):
     # segment boundary keeps `services` from matching `services_extra`.
     _compass(knowledge, "app/services", repo="agent_runtime")
     assert detect_gaps(conn, OKFBundle(str(knowledge))) == [
-        "agent_runtime/app/services_extra/impl.py",
-        "other_repo/app/services/jobs.py",
+        "agent_runtime/app/services_extra",
+        "other_repo/app/services",
     ]
 
 
@@ -112,8 +112,8 @@ def test_compass_from_other_repo_does_not_cover_same_named_module(conn, tmp_path
     # other_repo covers only other_repo's module.
     _compass(tmp_path / "k", "app/services/jobs.py", repo="other_repo")
     assert detect_gaps(conn, OKFBundle(str(tmp_path / "k"))) == [
-        "agent_runtime/app/services/jobs.py",
-        "agent_runtime/app/services_extra/impl.py",
+        "agent_runtime/app/services",
+        "agent_runtime/app/services_extra",
     ]
 
 
@@ -121,7 +121,7 @@ def test_untagged_compass_covers_any_repo(conn, tmp_path):
     # Compasses without a resolvable repo tag keep repo-agnostic matching.
     _compass(tmp_path / "k", "app/services/jobs.py")
     assert detect_gaps(conn, OKFBundle(str(tmp_path / "k"))) == [
-        "agent_runtime/app/services_extra/impl.py"
+        "agent_runtime/app/services_extra"
     ]
 
 
@@ -165,8 +165,8 @@ def test_module_symbol_count_is_escaped_and_repo_scoped(conn):
     modules = _get_all_modules(conn)
     # 3 own symbols < 5: a cross-name/cross-repo LIKE count must not
     # qualify the module.
-    assert "agent_runtime/app%svc/mid/one.py" not in modules
-    assert "agent_runtime/app/services/jobs.py" in modules
+    assert "agent_runtime/app%svc/mid" not in modules
+    assert "agent_runtime/app/services" in modules
 
 
 def test_unreadable_compass_concept_warns_and_leaves_phantom_gap(conn, tmp_path, caplog):
@@ -184,4 +184,14 @@ def test_unreadable_compass_concept_warns_and_leaves_phantom_gap(conn, tmp_path,
     assert any(
         "compass/app-services-jobs-py" in r.message for r in caplog.records
     ), caplog.text
-    assert "agent_runtime/app/services/jobs.py" in gaps
+    assert "agent_runtime/app/services" in gaps
+
+
+def test_exactly_three_segment_path_never_yields_a_file_named_module(conn):
+    """A 3-segment rel path's last segment is a filename; the module is its
+    2 directories (same convention as graph/stats.py's bucketing)."""
+    from cairn.compass.gaps import _get_all_modules
+
+    modules = _get_all_modules(conn)
+    assert "agent_runtime/app/services" in modules
+    assert "agent_runtime/app/services/jobs.py" not in modules

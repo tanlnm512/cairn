@@ -44,15 +44,31 @@ def dataflow_lookup(symbol, db, as_json):
     conn = get_db(db)
     try:
         df = get_dataflow(conn, symbol)
+        indexed = df is None and conn.execute(
+            "SELECT 1 FROM symbols WHERE name = ? LIMIT 1", (symbol,)
+        ).fetchone() is not None
     finally:
         conn.close()
     if df is None:
-        click.echo(f"No dataflow entry for '{symbol}'. Run `cairn dataflow build` first.", err=True)
+        if indexed:
+            click.echo(
+                f"No dataflow entry for '{symbol}': the index covers public symbols only.",
+                err=True,
+            )
+        else:
+            click.echo(f"No dataflow entry for '{symbol}'. Run `cairn dataflow build` first.", err=True)
         sys.exit(1)
     if as_json:
         click.echo(json.dumps(df, indent=2, default=str))
         return
     click.echo(f"Symbol: {df['symbol']}  (repo: {df['repo']})")
+    if df.get("ambiguous"):
+        click.echo(
+            f"Note: '{df['symbol']}' is public in multiple repos; "
+            f"showing the {df['repo']} row."
+        )
+    if df.get("analysis_errors"):
+        click.echo(f"Analysis errors: {'; '.join(df['analysis_errors'])}", err=True)
     if df["within_repo"]:
         click.echo(f"Within-repo impact ({len(df['within_repo'])} symbols):")
         for s in df["within_repo"][:20]:

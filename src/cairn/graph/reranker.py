@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import threading
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,9 @@ _CHUNK_SECTION_LABELS = (
 # Concurrent reranker loads share one cache lock.
 _RERANKER_CACHE: dict = {}
 _RERANKER_CACHE_LOCK = threading.Lock()
+
+# Weight layouts CrossEncoder can load: single-file safetensors/bin or shards.
+_WEIGHT_GLOBS = ("model*.safetensors*", "pytorch_model*.bin*")
 
 
 def _rerank_marker_path():
@@ -91,7 +95,7 @@ def install_hint() -> str:
 
 
 def reranker_model_is_cached(model_name: Optional[str] = None) -> bool:
-    """Whether the reranker's weights are present in the local HuggingFace cache."""
+    """Whether the reranker's config and weights are present in the local HuggingFace cache."""
     try:
         from huggingface_hub import _CACHED_NO_EXIST, try_to_load_from_cache
     except ImportError:
@@ -99,7 +103,14 @@ def reranker_model_is_cached(model_name: Optional[str] = None) -> bool:
     m_name = model_name or current_rerank_model()
     # CrossEncoder models store config.json at the repo root like embedders.
     result = try_to_load_from_cache(m_name, "config.json")
-    return result is not None and result is not _CACHED_NO_EXIST
+    if result is None or result is _CACHED_NO_EXIST:
+        return False
+    # A config-only snapshot cannot load: probe the same directory for weights.
+    try:
+        snapshot = Path(result).parent
+        return any(any(snapshot.glob(pattern)) for pattern in _WEIGHT_GLOBS)
+    except OSError:
+        return False
 
 
 def download_reranker_model(model_name: Optional[str] = None) -> bool:
@@ -272,11 +283,12 @@ def rerank(
     candidates: List[dict],
     limit: int,
     structured: bool = False,
+    force: bool = False,
 ) -> Tuple[List[dict], bool]:
-    """Rerank a candidate shortlist; returns (results, reranked)."""
+    """Rerank a candidate shortlist; force bypasses the enable gate; returns (results, reranked)."""
     if not candidates:
         return candidates[:limit], False
-    if not rerank_enabled() or not reranker_available():
+    if not (rerank_enabled() or force) or not reranker_available():
         return candidates[:limit], False
     # An uncached model falls back without downloading.
     m_name = current_rerank_model()

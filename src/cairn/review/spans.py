@@ -43,6 +43,7 @@ def resolve_comment_symbols(
     conn: sqlite3.Connection,
     file_path: str,
     line: int | None,
+    repo: str | None = None,
 ) -> CommentSymbols:
     """Resolve a comment location to the symbols whose spans enclose ``line``.
 
@@ -61,14 +62,16 @@ def resolve_comment_symbols(
     if line is None:
         return CommentSymbols(file_path=path, symbols=())
 
+    repo_clause = "AND f.repo_id = ? " if repo else ""
+    repo_params: tuple[str, ...] = (repo,) if repo else ()
     rows = conn.execute(
         "SELECT s.name, s.qualified_name, s.kind, s.line_start, s.line_end "
         "FROM symbols s JOIN files f ON f.id = s.file_id "
-        "WHERE f.path = ? "
+        f"WHERE f.path = ? {repo_clause}"
         "AND s.line_start IS NOT NULL AND s.line_end IS NOT NULL "
         "AND s.line_start <= ? AND s.line_end >= ? "
         "ORDER BY (s.line_end - s.line_start), s.name",
-        (path, line, line),
+        (path, *repo_params, line, line),
     ).fetchall()
     symbols = tuple(
         SymbolSpan(

@@ -44,6 +44,7 @@ class ReviewEvent:
     line: int | None
     body: str
     thread_url: str
+    repo: str | None = None
 
 
 def parse_event(payload: object) -> ReviewEvent:
@@ -80,7 +81,11 @@ def parse_event(payload: object) -> ReviewEvent:
     if not isinstance(thread_url, str):
         raise ValueError("event payload field 'thread_url' must be a string")
 
-    return ReviewEvent(resolved, file_path, line, body, thread_url)
+    repo = payload.get("repo")
+    if repo is not None and (not isinstance(repo, str) or not repo.strip()):
+        raise ValueError("event payload field 'repo' must be a non-empty string or null")
+
+    return ReviewEvent(resolved, file_path, line, body, thread_url, repo)
 
 
 def classify_event(event: ReviewEvent) -> str:
@@ -103,7 +108,7 @@ def capture_review_event(
     if not event.resolved:
         return _result(False)
 
-    spans = resolve_comment_symbols(conn, event.file_path, event.line)
+    spans = resolve_comment_symbols(conn, event.file_path, event.line, repo=event.repo)
     memory_type = classify_event(event)
     title = _build_title(spans, event)
     stored = capture_memory(

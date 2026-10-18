@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -15,6 +16,14 @@ from ..review.engine import (
     render_pre_submit,
 )
 from .main import DEFAULT_DB_PATH, get_db, main
+
+
+def _open_store(db: str):
+    """Open the store; SQLite failures surface as a clean CLI error."""
+    try:
+        return get_db(db)
+    except sqlite3.Error as error:
+        raise click.ClickException(f"cannot read store {db}: {error}") from error
 
 
 @main.command("review")
@@ -86,7 +95,7 @@ def review(db, base, pre_submit, capture_event, gate, output_format, fuzzy, refr
         from ..paths import resolve_workspace
 
         try:
-            conn = get_db(db)
+            conn = _open_store(db)
             try:
                 pack = build_pack(
                     conn,
@@ -105,7 +114,7 @@ def review(db, base, pre_submit, capture_event, gate, output_format, fuzzy, refr
         from ..paths import resolve_workspace
 
         try:
-            conn = get_db(db)
+            conn = _open_store(db)
             try:
                 result = build_pre_submit(
                     conn,
@@ -144,7 +153,7 @@ def review(db, base, pre_submit, capture_event, gate, output_format, fuzzy, refr
             ) from error
 
         bundle = OKFBundle(str(resolve_store().knowledge))
-        conn = get_db(db)
+        conn = _open_store(db)
         try:
             result = capture_review_event(conn, bundle, payload)
             if result["recorded"]:

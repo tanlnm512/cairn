@@ -147,34 +147,40 @@ def _swe_bench_workspaces(
         staging = cache_root / f".tmp-{sha[:12]}-{os.getpid()}"
         shutil.rmtree(staging, ignore_errors=True)
         try:
-            subprocess.run(
-                ["git", "clone", "--quiet", "--filter=blob:none",
-                 f"https://github.com/{repo}.git", str(staging)],
-                env=git_env, check=True, capture_output=True, text=True,
-            )
-            subprocess.run(
-                ["git", "-C", str(staging), "checkout", "--quiet", sha],
-                env=git_env, check=True, capture_output=True, text=True,
-            )
-        except FileNotFoundError as exc:
-            raise RuntimeError("checking out SWE-bench workspaces needs git on PATH") from exc
-        except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or "").strip().splitlines()
-            raise RuntimeError(
-                f"checkout of {repo} @ {sha[:12]} failed: "
-                f"{detail[-1] if detail else exc}"
-            ) from exc
-        try:
-            os.replace(staging, target)
-        except OSError:
-            # Target already populated (e.g. by a concurrent run): use it --
-            # but only if it is a valid checkout, never an incomplete tree.
-            shutil.rmtree(staging, ignore_errors=True)
-            if not (target / ".git").is_dir():
+            try:
+                subprocess.run(
+                    ["git", "clone", "--quiet", "--filter=blob:none",
+                     f"https://github.com/{repo}.git", str(staging)],
+                    env=git_env, check=True, capture_output=True, text=True,
+                )
+                subprocess.run(
+                    ["git", "-C", str(staging), "checkout", "--quiet", sha],
+                    env=git_env, check=True, capture_output=True, text=True,
+                )
+            except FileNotFoundError as exc:
                 raise RuntimeError(
-                    f"swe-bench workspace {target} already exists but is not "
-                    "a valid checkout (no .git); delete it and retry"
-                ) from None
+                    "checking out SWE-bench workspaces needs git on PATH"
+                ) from exc
+            except subprocess.CalledProcessError as exc:
+                detail = (exc.stderr or "").strip().splitlines()
+                raise RuntimeError(
+                    f"checkout of {repo} @ {sha[:12]} failed: "
+                    f"{detail[-1] if detail else exc}"
+                ) from exc
+            try:
+                os.replace(staging, target)
+            except OSError:
+                # Target already populated (e.g. by a concurrent run): use it --
+                # but only if it is a valid checkout, never an incomplete tree.
+                shutil.rmtree(staging, ignore_errors=True)
+                if not (target / ".git").is_dir():
+                    raise RuntimeError(
+                        f"swe-bench workspace {target} already exists but is not "
+                        "a valid checkout (no .git); delete it and retry"
+                    ) from None
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
     return workspaces
 
 
@@ -462,11 +468,14 @@ def _warn_machine_profile_mismatch(current: dict, stamped: object) -> None:
     default="advise",
     help="Budget evaluation: advise prints trends; enforce exits 3 on breach.",
 )
-@click.option("--repeats", default=3, type=int, help="Timed repeats per operation (perf).")
+@click.option(
+    "--repeats", default=3, type=click.IntRange(min=1),
+    help="Timed repeats per operation (perf).",
+)
 @click.option(
     "--runs",
     default=3,
-    type=int,
+    type=click.IntRange(min=1),
     help="Measured runs per task (agent/swe-bench suites; medians reported).",
 )
 @click.option(

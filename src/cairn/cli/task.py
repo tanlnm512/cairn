@@ -103,7 +103,11 @@ def task_complete(task_id, result, result_file, claimer, db, knowledge):
 
     bundle = OKFBundle(knowledge or str(resolve_store().knowledge))
     if result_file:
-        result = Path(result_file).read_text(encoding="utf-8")
+        try:
+            result = Path(result_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            click.echo(f"Cannot read result file: {exc}", err=True)
+            sys.exit(1)
     if not result:
         click.echo("No result provided. Use --result or --result-file.", err=True)
         sys.exit(1)

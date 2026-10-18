@@ -18,6 +18,12 @@ _METRIC_FLUSHER_STARTED = False
 # a truncation notice instead of the MCP client's token-limit failure.
 MAX_RESULT_CHARS = int(os.environ.get("CAIRN_MAX_RESULT_CHARS", "60000"))
 
+
+def reset_result_cap() -> None:
+    """Re-read CAIRN_MAX_RESULT_CHARS so env pins reach an imported module."""
+    global MAX_RESULT_CHARS
+    MAX_RESULT_CHARS = int(os.environ.get("CAIRN_MAX_RESULT_CHARS", "60000"))
+
 # Cap on the redacted kwargs summary stored per tool_metrics row: the summary
 # identifies the call shape, it is not a payload replay, so anything past
 # ~200 chars is noise in an analytics table.

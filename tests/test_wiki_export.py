@@ -347,3 +347,27 @@ def test_export_skips_keys_that_escape_the_target_directory(cli_env, tmp_path):
     assert (out / REPO / f"{PROMOTED_PLAIN}.md").is_file()
     assert not (tmp_path / "escape").exists()
     assert "Exported 1 page(s)" in result.stdout
+
+
+# --- a file-shaped --dir target refuses cleanly ------------------------
+
+
+def test_export_dir_pointing_at_a_file_refuses_clean(cli_env, tmp_path):
+    """--dir naming an existing FILE is a clean exit-1 refusal before any
+    page write — never an unhandled NotADirectoryError."""
+    knowledge = cli_env
+    bundle = _bundle(knowledge)
+    _promote(bundle, PROMOTED_SOURCED)
+    _write_manifest(knowledge, {
+        _key(PROMOTED_SOURCED): _row(PROMOTED_SOURCED, state="promoted",
+                                     task_id="spent-chain", attempts=1),
+    })
+    target = tmp_path / "a-file"
+    target.write_text("not a directory", encoding="utf-8")
+
+    result = _export(knowledge, target)
+
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert result.stderr.strip()
+    assert target.read_text(encoding="utf-8") == "not a directory"

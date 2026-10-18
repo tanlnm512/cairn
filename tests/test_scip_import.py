@@ -1008,6 +1008,39 @@ def test_above_threshold_document_writes_no_anomaly_row(tmp_path):
     assert anomalies == 0
 
 
+@needs_scip
+def test_repeated_anomaly_import_replaces_skip_row(tmp_path):
+    """Re-importing an anomalous index replaces the prior skip row for the
+    file instead of stacking duplicates."""
+    ws, db = _build_tree_sitter_only("drifted", tmp_path)
+    conn = sqlite3.connect(db)
+    try:
+        import_scip_file(conn, str(ws / "index.scip"), str(ws))
+        import_scip_file(conn, str(ws / "index.scip"), str(ws))
+        anomalies = conn.execute(
+            "select count(*) from skipped_files where reason = 'scip_join_anomaly'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    assert anomalies == 1
+
+
+@needs_scip
+def test_repeated_corrupt_index_replaces_parse_error_row(fresh_db, tmp_path):
+    """Re-importing a corrupt index replaces its scip_parse_error row."""
+    idx = tmp_path / "corrupt.scip"
+    idx.write_bytes(b"not-a-scip-protobuf")
+    for _ in range(2):
+        with pytest.raises(ValueError):
+            import_scip_file(fresh_db, str(idx), str(tmp_path))
+    errors = fresh_db.execute(
+        "select count(*) from skipped_files where reason = 'scip_parse_error'"
+    ).fetchone()[0]
+
+    assert errors == 1
+
+
 def _seed_ts_edge(conn, edge_id, target_id, resolution):
     """A tree-sitter calls edge from s_f at line 7 (the scip test's join site)."""
     conn.execute(

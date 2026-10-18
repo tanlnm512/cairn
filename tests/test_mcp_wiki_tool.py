@@ -142,3 +142,18 @@ def test_wiki_generate_unknown_repo_hints_at_build(wiki_env):
     assert "no indexed files" in out
     assert "cairn build" in out
     assert list_tasks(wiki_env, kind="wiki-page") == []
+
+
+def test_wiki_generate_corrupt_manifest_degrades_instead_of_raising(wiki_env):
+    """A malformed _wiki/manifest.json surfaces the tool's degradation, not a raw ValueError."""
+    from cairn.mcp_server.tools_wiki import wiki_generate
+
+    manifest = wiki_env.root / "_wiki" / "manifest.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text("{not json", encoding="utf-8")
+
+    out = wiki_generate(repo="r1")
+
+    assert "wiki_generate:" in out
+    assert "Nothing was recorded" in out
+    assert list_tasks(wiki_env, kind="wiki-page") == []

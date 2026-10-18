@@ -44,7 +44,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
         focus = request.query_params.get("focus", "").strip() or None
         repo = request.query_params.get("repo", "").strip() or None
         depth_raw = request.query_params.get("depth", "").strip()
-        depth = int(depth_raw) or None if depth_raw.isdigit() else None
+        depth = int(depth_raw) or None if depth_raw.isdecimal() else None
         # Tests toggle: only an explicit opt-in includes test symbols in the
         # module scope; anything else falls back to the curated default,
         # matching the scope/layout fallback conventions.
@@ -161,7 +161,7 @@ def register(routes: list[Any], context: DashboardContext) -> None:
         # the graph handler); a valid one is clamped to >= 1.
         depth_raw = request.query_params.get("depth", "").strip()
         depth_kwargs = (
-            {"depth": max(1, int(depth_raw))} if depth_raw.isdigit() else {}
+            {"depth": max(1, int(depth_raw))} if depth_raw.isdecimal() else {}
         )
         selected_db, _, _ = resolve_selection(request, db_path, knowledge_dir)
         conn = get_read_only_db(selected_db)

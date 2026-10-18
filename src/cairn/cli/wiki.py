@@ -8,7 +8,10 @@ import sys
 from typing import NoReturn
 
 from .main import DEFAULT_DB_PATH, get_db, main
+from ..paths import resolve_store
 from ..utils.git import get_repo_head
+
+_KNOWLEDGE_HELP = "Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge)."
 
 
 @main.group()
@@ -19,7 +22,7 @@ def wiki():
 @wiki.command("generate")
 @click.option("--repo", default=None, help="Repo name (all repos if omitted).")
 @click.option("--db", default=str(DEFAULT_DB_PATH))
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 @click.option("--dry-run", is_flag=True,
               help="Run generation + the critic and print each verdict; write nothing.")
 @click.option("--show-rejections", is_flag=True,
@@ -42,6 +45,7 @@ def wiki_generate(repo, db, knowledge, dry_run, show_rejections, llm, pages,
     from ..okf.bundle import OKFBundle
     from ..wiki.generator import generate_wiki_with_critic
 
+    knowledge = knowledge or str(resolve_store().knowledge)
     conn = get_db(db)
     try:
         bundle = OKFBundle(knowledge)
@@ -190,11 +194,11 @@ def wiki_generate(repo, db, knowledge, dry_run, show_rejections, llm, pages,
 
 @wiki.command("search")
 @click.argument("query")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def wiki_search(query, knowledge):
     from ..okf.bundle import OKFBundle
 
-    bundle = OKFBundle(knowledge)
+    bundle = OKFBundle(knowledge or str(resolve_store().knowledge))
     # Score bundle-wide, then keep promoted wiki pages only: the search
     # index spans every concept, the command's contract is pages alone.
     results = [
@@ -231,7 +235,7 @@ def _load_manifest_or_exit(knowledge):
 
 @wiki.command("status")
 @click.option("--repo", default=None, help="Only pages of this repo.")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def wiki_status(repo, knowledge):
     """Show per-page wiki state with aggregate counts; state derives at read time, never from a stored verdict."""
     from ..wiki.lifecycle import (
@@ -243,7 +247,9 @@ def wiki_status(repo, knowledge):
     )
     from ..wiki.manifest import split_page_key
 
-    bundle, manifest = _load_manifest_or_exit(knowledge)
+    bundle, manifest = _load_manifest_or_exit(
+        knowledge or str(resolve_store().knowledge)
+    )
     pages = manifest.get("pages", {})
     if not pages:
         click.echo("No wiki pages planned; run 'cairn wiki generate --llm' first.")
@@ -278,44 +284,57 @@ def wiki_status(repo, knowledge):
 
 @wiki.command("retry")
 @click.option("--repo", default=None, help="Only pages of this repo.")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def wiki_retry(repo, knowledge):
     """Re-queue derived-failed pages as fresh task chains; promoted pages untouched."""
     from ..llm.tasks import create_task
+    from ..okf.bundle import OKFBundle
     from ..wiki.lifecycle import derived_state, page_chains, plan_facts
-    from ..wiki.manifest import save_manifest, split_page_key
+    from ..wiki.manifest import load_manifest, save_manifest, split_page_key
 
-    bundle, manifest = _load_manifest_or_exit(knowledge)
-    pages = manifest.get("pages", {})
-    if not pages:
-        click.echo("No wiki pages planned; run 'cairn wiki generate --llm' first.")
-        return
-    chains = page_chains(bundle)
-    failed = []
-    for key in sorted(pages):
-        page_repo, page_id = split_page_key(key)
-        if repo and page_repo != repo:
-            continue
-        if derived_state(bundle, page_repo, page_id, chains.get(key, [])) == "failed":
-            failed.append((key, page_repo, page_id))
-    if not failed:
-        click.echo("Nothing to retry: no failed wiki pages.")
-        return
-    for key, page_repo, page_id in failed:
-        row = pages[key]
-        task = create_task(
-            bundle,
-            "wiki-page",
-            key,
-            facts=plan_facts(row, page_repo, diagrams=bool(row.get("diagrams"))),
-        )
-        row["task_id"] = task.id
-        row["queue_attempts"] = int(row.get("queue_attempts", 0)) + 1
-        click.echo(f"Re-queued wiki-page task {task.id}: {key} "
-                   f"(attempt {row['queue_attempts']})")
-    if not save_manifest(bundle.root, manifest):
-        click.echo("Failed to write the wiki manifest.", err=True)
-        sys.exit(1)
+    bundle = OKFBundle(knowledge or str(resolve_store().knowledge))
+    # One lock over the load -> mutate -> save sequence: a concurrent retry
+    # or generate must not lose the task_id updates written here.
+    with bundle.lock():
+        try:
+            manifest = load_manifest(bundle)
+        except ValueError as exc:
+            _manifest_error_exit(exc)
+        pages = manifest.get("pages", {})
+        if not pages:
+            click.echo("No wiki pages planned; run 'cairn wiki generate --llm' first.")
+            return
+        chains = page_chains(bundle)
+        failed = []
+        for key in sorted(pages):
+            page_repo, page_id = split_page_key(key)
+            if repo and page_repo != repo:
+                continue
+            if derived_state(bundle, page_repo, page_id, chains.get(key, [])) == "failed":
+                failed.append((key, page_repo, page_id))
+        if not failed:
+            click.echo("Nothing to retry: no failed wiki pages.")
+            return
+        for key, page_repo, page_id in failed:
+            row = pages[key]
+            task = create_task(
+                bundle,
+                "wiki-page",
+                key,
+                facts=plan_facts(row, page_repo, diagrams=bool(row.get("diagrams"))),
+            )
+            row["task_id"] = task.id
+            row["queue_attempts"] = int(row.get("queue_attempts", 0)) + 1
+            click.echo(f"Re-queued wiki-page task {task.id}: {key} "
+                       f"(attempt {row['queue_attempts']})")
+        if not save_manifest(bundle.root, manifest):
+            click.echo(
+                f"Failed to write the wiki manifest; the {len(failed)} re-queued "
+                "task(s) above are already live in the task queue — inspect them "
+                "with 'cairn task list --kind wiki-page --status pending'.",
+                err=True,
+            )
+            sys.exit(1)
     click.echo(f"Re-queued {len(failed)} failed wiki page(s). "
                "Any agent with the cairn skill can process them:")
     click.echo("  cairn task list --kind wiki-page --status pending")
@@ -327,17 +346,22 @@ def wiki_retry(repo, knowledge):
               help="Directory to write the exported pages into.")
 @click.option("--force", is_flag=True,
               help="Overwrite files in an existing non-empty target directory.")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def export(out_dir: Path, force, knowledge):
     """Write every promoted page as DIR/{repo}/{page_id}.md."""
     from ..wiki.lifecycle import read_page_concept
     from ..wiki.manifest import split_page_key
 
+    if out_dir.exists() and not out_dir.is_dir():
+        click.echo(f"Export target {out_dir} is not a directory.", err=True)
+        sys.exit(1)
     if out_dir.is_dir() and any(out_dir.iterdir()) and not force:
         click.echo(f"Refusing to export into non-empty directory {out_dir}; "
                    "pass --force to overwrite.", err=True)
         sys.exit(1)
-    bundle, manifest = _load_manifest_or_exit(knowledge)
+    bundle, manifest = _load_manifest_or_exit(
+        knowledge or str(resolve_store().knowledge)
+    )
     out_root = out_dir.resolve()
     exported = 0
     for key in sorted(manifest.get("pages", {})):
@@ -360,7 +384,7 @@ def export(out_dir: Path, force, knowledge):
 @click.option("--repo", default=None, help="Scope the enrichment to one repo.")
 @click.option("--all", "enrich_all", is_flag=True,
               help="Queue one enrichment per promoted page across repos.")
-@click.option("--knowledge", default=str(DEFAULT_DB_PATH.parent / ".knowledge"))
+@click.option("--knowledge", default=None, help=_KNOWLEDGE_HELP)
 def enrich(page_id, repo, enrich_all, knowledge):
     """Queue wiki-page-enrich tasks appending new sections to promoted pages."""
     from ..wiki.pipeline import queue_enrich_tasks
@@ -371,7 +395,9 @@ def enrich(page_id, repo, enrich_all, knowledge):
     if page_id is None and not enrich_all:
         click.echo("Enrich one PAGE_ID or --all.", err=True)
         sys.exit(1)
-    bundle, _ = _load_manifest_or_exit(knowledge)
+    bundle, _ = _load_manifest_or_exit(
+        knowledge or str(resolve_store().knowledge)
+    )
     queued = queue_enrich_tasks(bundle, repo=repo, page_id=page_id)
     if not queued and not enrich_all:
         scope = f" in repo '{repo}'" if repo else ""

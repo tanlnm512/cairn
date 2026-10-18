@@ -199,6 +199,59 @@ class TestSweBenchSuite:
         with pytest.raises(ValueError):
             run_swe_bench_suite(tasks, workspaces, str(tmp_path / "unmapped.db"), runs=1)
 
+    def test_unprovable_task_rejected_before_any_build(self, tmp_path, monkeypatch):
+        """A task with no code-like probe target fails in validation, before
+        earlier tasks have been built and measured."""
+        import cairn.graph.builder as builder_mod
+
+        repo, targets = _fixture_corpus(tmp_path / "noprobe")
+        tasks = _fixture_tasks(targets)
+        tasks[1]["problem_statement"] = "please investigate this soon"
+        workspaces = {t["instance_id"]: str(repo) for t in tasks}
+        calls: list = []
+        real = builder_mod.build_graph
+
+        def _spy(*args, **kwargs):
+            calls.append(1)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(builder_mod, "build_graph", _spy)
+        with pytest.raises(ValueError, match="code-like"):
+            run_swe_bench_suite(tasks, workspaces, str(tmp_path / "np.db"), runs=1)
+        assert calls == []
+
+    def test_per_task_builds_pin_lsp_off(self, tmp_path, monkeypatch):
+        """Per-task builds disable the LSP pass so graph content (and the
+        chars it drives) cannot drift with machine-speed-dependent budgets."""
+        import cairn.graph.builder as builder_mod
+
+        repo, targets = _fixture_corpus(tmp_path / "lsppin")
+        tasks = _fixture_tasks(targets)
+        workspaces = {t["instance_id"]: str(repo) for t in tasks}
+        seen: dict = {}
+        real = builder_mod.build_graph
+
+        def _spy(*args, **kwargs):
+            seen["lsp"] = kwargs.get("lsp")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(builder_mod, "build_graph", _spy)
+        run_swe_bench_suite(tasks, workspaces, str(tmp_path / "lsp.db"), runs=1)
+        assert seen["lsp"] is False
+
+    def test_result_cap_pin_overrides_frozen_import(self, tmp_path, monkeypatch):
+        """A cap frozen at import to a foreign value is re-read from the env
+        pin, so measured chars use the deployment cap."""
+        from cairn.mcp_server import metric_buffering as mb
+
+        monkeypatch.setattr(mb, "MAX_RESULT_CHARS", 12345)
+        tasks, workspaces, db = _fixture(tmp_path, "cappin")
+        try:
+            run_swe_bench_suite(tasks, workspaces, db, runs=1)
+        finally:
+            mb.reset_result_cap()
+        assert mb.MAX_RESULT_CHARS == 60000
+
 
 class TestSuitePayload:
     def test_payload_level_and_floor_keys(self, tmp_path):

@@ -72,6 +72,8 @@ def time_call(
     not just that it ran. Warmup is essential: the first build embeds/writes,
     the first query may pay import/JIT costs — those contaminate a single shot.
     """
+    if repeats < 1:
+        raise ValueError(f"repeats: expected >= 1, got {repeats}")
     last: Optional[T] = None
     for _ in range(max(0, warmup)):
         last = fn()

@@ -35,56 +35,59 @@ def _queue_pages(
     diagrams: bool,
 ) -> List[str]:
     """Queue a ``wiki-page`` task per unskipped page; persist the manifest."""
-    manifest = load_manifest(bundle)
-    pages: Dict[str, Any] = manifest.setdefault("pages", {})
-    live = live_generation_tasks(bundle)
+    # The load -> mutate -> save sequence is one critical section: a
+    # concurrent generate must not lose the rows written here.
+    with bundle.lock():
+        manifest = load_manifest(bundle)
+        pages: Dict[str, Any] = manifest.setdefault("pages", {})
+        live = live_generation_tasks(bundle)
 
-    queued_task_ids: List[str] = []
-    for entry in plan:
-        page_id = entry["page_id"]
-        key = f"{repo}/{page_id}"
-        row = pages.get(key)
-        if (
-            not force
-            and row is not None
-            and row.get("input_hash") == entry["input_hash"]
-            and (should_skip(row, entry, bundle, repo) or key in live)
-        ):
-            continue
-        facts = plan_facts(entry, repo, diagrams=diagrams)
-        # Adopt a live task whose work order already matches this plan:
-        # heals the crash window between task creation and manifest save,
-        # and converges concurrent generates instead of duplicating work.
-        # Under --force the work is wanted fresh — always queue anew.
-        match = (
-            next(
-                (
-                    t
-                    for t in live.get(key, [])
-                    if t.facts.get("input_hash") == entry["input_hash"]
-                ),
-                None,
+        queued_task_ids: List[str] = []
+        for entry in plan:
+            page_id = entry["page_id"]
+            key = f"{repo}/{page_id}"
+            row = pages.get(key)
+            if (
+                not force
+                and row is not None
+                and row.get("input_hash") == entry["input_hash"]
+                and (should_skip(row, entry, bundle, repo) or key in live)
+            ):
+                continue
+            facts = plan_facts(entry, repo, diagrams=diagrams)
+            # Adopt a live task whose work order already matches this plan:
+            # heals the crash window between task creation and manifest save,
+            # and converges concurrent generates instead of duplicating work.
+            # Under --force the work is wanted fresh — always queue anew.
+            match = (
+                next(
+                    (
+                        t
+                        for t in live.get(key, [])
+                        if t.facts.get("input_hash") == entry["input_hash"]
+                    ),
+                    None,
+                )
+                if not force
+                else None
             )
-            if not force
-            else None
-        )
-        queue_attempts = (row or {}).get("queue_attempts", 0)
-        if match is not None:
-            task_id = match.id
-        else:
-            task = create_task(bundle, "wiki-page", key, facts=facts)
-            queued_task_ids.append(task.id)
-            task_id = task.id
-            queue_attempts += 1
-        row_out = {**entry, "task_id": task_id, "queue_attempts": queue_attempts}
-        if diagrams:
-            row_out["diagrams"] = True
-        pages[key] = row_out
+            queue_attempts = (row or {}).get("queue_attempts", 0)
+            if match is not None:
+                task_id = match.id
+            else:
+                task = create_task(bundle, "wiki-page", key, facts=facts)
+                queued_task_ids.append(task.id)
+                task_id = task.id
+                queue_attempts += 1
+            row_out = {**entry, "task_id": task_id, "queue_attempts": queue_attempts}
+            if diagrams:
+                row_out["diagrams"] = True
+            pages[key] = row_out
 
-    if not save_manifest(bundle.root, manifest):
-        raise WikiManifestWriteError(
-            "failed to write the wiki manifest; queued tasks are not recorded"
-        )
+        if not save_manifest(bundle.root, manifest):
+            raise WikiManifestWriteError(
+                "failed to write the wiki manifest; queued tasks are not recorded"
+            )
     return queued_task_ids
 
 
@@ -102,6 +105,9 @@ def queue_enrich_tasks(
         for t in list_tasks(bundle, kind_prefix="wiki-page-enrich")
         if t.status in ("pending", "in-progress")
     }
+    # Generation promotion replaces the whole body, so an enrich racing an
+    # in-flight write chain would lose its appended sections — stand down.
+    live_writes = live_generation_tasks(bundle)
     queued: List[Task] = []
     for key in sorted(manifest.get("pages", {})):
         row_repo, _, row_page = str(key).partition("/")
@@ -109,7 +115,7 @@ def queue_enrich_tasks(
             continue
         if page_id and row_page != page_id:
             continue
-        if key in live_enrich:
+        if key in live_enrich or key in live_writes:
             continue
         row = manifest["pages"][key]
         from .lifecycle import read_page_concept

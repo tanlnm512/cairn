@@ -155,3 +155,99 @@ def test_init_preserves_existing_api_key(tmp_path):
     )
     assert second.exit_code == 0
     assert auth.persisted_api_key() == original
+
+
+def test_mcp_config_snippet_prefers_the_key_the_daemon_enforces(tmp_path, monkeypatch):
+    """The daemon enforces resolve_api_key (explicit > env), so the snippet
+    must carry the env key when set; the persisted file is only the fallback."""
+    import json
+
+    from cairn import paths
+
+    monkeypatch.setenv("CAIRN_MCP_API_KEY", "env-key-123")
+    key_file = paths.CAIRN_HOME / "mcp-api-key"
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    key_file.write_text("file-key-456", encoding="utf-8")
+
+    with_env = CliRunner().invoke(
+        main, ["config", "--mcp-config"], catch_exceptions=False,
+    )
+    assert with_env.exit_code == 0
+    snippet = json.loads(with_env.stdout)
+    header = snippet["mcpServers"]["cairn"]["headers"]["Authorization"]
+    assert header == "Bearer env-key-123"
+
+    monkeypatch.delenv("CAIRN_MCP_API_KEY")
+    without_env = CliRunner().invoke(
+        main, ["config", "--mcp-config"], catch_exceptions=False,
+    )
+    assert without_env.exit_code == 0
+    snippet = json.loads(without_env.stdout)
+    header = snippet["mcpServers"]["cairn"]["headers"]["Authorization"]
+    assert header == "Bearer file-key-456"
+
+
+def test_mcp_config_snippet_carries_env_key_without_persisted_file(tmp_path, monkeypatch):
+    """A daemon keyed via CAIRN_MCP_API_KEY alone must not yield a keyless
+    snippet that 401s on every call."""
+    import json
+
+    from cairn import paths
+
+    assert not (paths.CAIRN_HOME / "mcp-api-key").exists()
+    monkeypatch.setenv("CAIRN_MCP_API_KEY", "env-only-key")
+
+    result = CliRunner().invoke(
+        main, ["config", "--mcp-config"], catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    snippet = json.loads(result.stdout)
+    header = snippet["mcpServers"]["cairn"]["headers"]["Authorization"]
+    assert header == "Bearer env-only-key"
+
+
+def test_failed_legacy_move_leaves_no_partial_store(tmp_path, monkeypatch):
+    """A failed cross-filesystem .kg migration must leave no partial store db
+    (or temp copy) behind, so the next init can retry the migration."""
+    import shutil as _shutil
+
+    from cairn import paths
+    from cairn.paths import store_key
+
+    ws = tmp_path / "ws"
+    legacy = ws / "cairn"
+    legacy.mkdir(parents=True)
+    (legacy / ".kg").write_text("legacy-db-bytes", encoding="utf-8")
+    store_db = paths.CAIRN_HOME / store_key(ws.resolve()) / ".kg"
+
+    real_copyfile = _shutil.copyfile
+    failing = {"on": True}
+
+    def _copyfile(src, dst, **kwargs):
+        if failing["on"] and str(dst).endswith(".migrate-tmp"):
+            raise OSError("simulated cross-device copy failure")
+        return real_copyfile(src, dst, **kwargs)
+
+    monkeypatch.setattr(_shutil, "copyfile", _copyfile)
+
+    first = CliRunner().invoke(
+        main,
+        ["init", "--workspace", str(ws), "--no-build"],
+        catch_exceptions=False,
+    )
+    assert first.exit_code == 0
+    assert "legacy .kg migration failed" in first.output
+    assert not store_db.exists(), "a failed move must not leave a partial store db"
+    assert not list(paths.CAIRN_HOME.rglob("*.migrate-tmp")), (
+        "the failed temp copy must be cleaned up"
+    )
+
+    failing["on"] = False
+    second = CliRunner().invoke(
+        main,
+        ["init", "--workspace", str(ws), "--no-build"],
+        catch_exceptions=False,
+    )
+    assert second.exit_code == 0
+    assert "Migrated" in second.output
+    assert store_db.exists(), "the migration retry must succeed"

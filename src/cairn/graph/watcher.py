@@ -51,6 +51,24 @@ class FreshnessReport:
         return f"Stale graph: {len(paths)} file(s) not refreshed: {shown}"
 
 
+def _conn_store_workspace(conn: sqlite3.Connection) -> str | None:
+    """Registered workspace whose canonical store backs conn, else None."""
+    try:
+        rows = conn.execute("PRAGMA database_list").fetchall()
+    except (sqlite3.Error, AttributeError):
+        return None
+    db_file = next((row[2] for row in rows if row[1] == "main" and row[2]), None)
+    if not db_file:
+        return None
+    from .. import paths
+
+    main_db = Path(db_file).resolve()
+    for workspace, key in paths._load_registry().items():
+        if (paths.CAIRN_HOME / key / ".kg").resolve() == main_db:
+            return workspace
+    return None
+
+
 def refresh_for_query(
     conn: sqlite3.Connection,
     workspace: str | None = None,
@@ -68,7 +86,8 @@ def refresh_for_query(
     if workspace is None:
         from ..paths import resolve_workspace
 
-        workspace = str(resolve_workspace())
+        # Auto-refresh serves the connected store's workspace, never blind cwd files.
+        workspace = _conn_store_workspace(conn) or str(resolve_workspace())
 
     drifted = tuple(sorted(set(_detect_changed(conn, workspace))))
     if not drifted or not repair:

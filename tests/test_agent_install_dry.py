@@ -27,10 +27,13 @@ def test_rm_tree_if_cairn_refuses_non_cairn_dir(tmp_path):
     assert (victim / "settings.json").exists()
     assert any("not cairn-scoped" in n for n in res.notes)
 
-    # A cairn-named directory -- removed as before.
+    # A cairn-named tree seeded from the real template -- removed.
+    from cairn.agent_install._common import _TEMPLATE_DIR
+    from cairn.agent_install.merge import _write_tree
+
     skill = tmp_path / ".claude" / "skills" / "cairn"
     skill.mkdir(parents=True)
-    (skill / "SKILL.md").write_text("x")
+    _write_tree(skill, _TEMPLATE_DIR / "skill", True, InstallResult("t"))
     res2 = InstallResult(client="test")
     _rm_tree_if_cairn(skill, res2)
     assert not skill.exists()

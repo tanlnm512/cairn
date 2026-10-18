@@ -441,4 +441,38 @@ def test_truncated_scan_stops_reading_files(
     assert sum(len(group["hits"]) for group in payload["groups"]) == 5
     assert [group["path"] for group in payload["groups"]] == ["a_needles.py"]
     assert payload["searched_files"] == 1  # b_needles.py never scanned
+    assert payload["dropped_hits"] == 7
+    assert payload["dropped_groups"] == 0
+    assert payload["truncated"] is True
+
+
+def test_truncation_reports_seen_excess_as_lower_bounds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _fixture(
+        tmp_path,
+        monkeypatch,
+        "capped-excess",
+        {
+            "drop.py": (
+                "needle top\n"
+                "def a():\n"
+                "    needle a\n"
+                "    needle a2\n"
+                "def b():\n"
+                "    needle b\n"
+            )
+        },
+        (
+            _SymbolSpec("a", "a", "drop.py", "function", 2, 4),
+            _SymbolSpec("b", "b", "drop.py", "function", 5, 6),
+        ),
+    )
+
+    payload = _payload(fixture, "needle", "--max-hits", "2")
+
+    assert [group["qualified_name"] for group in payload["groups"]] == [None, "a"]
+    assert payload["dropped_hits"] == 2
+    assert payload["dropped_groups"] == 1
+    assert payload["searched_files"] == 1
     assert payload["truncated"] is True

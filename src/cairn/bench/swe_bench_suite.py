@@ -19,6 +19,7 @@ from .agent_suite import (
     _ControlAgent,
     _RESULT_CAP_CHARS,
     _payload_chars,
+    _reset_result_cap,
     _result_cap,
 )
 
@@ -131,6 +132,14 @@ def run_swe_bench_suite(
             "workspaces: no workspace mapped for instance id(s): "
             + ", ".join(repr(i) for i in missing)
         )
+    no_probe = [
+        t["instance_id"] for t in task_list if not _probe_target(t)
+    ]
+    if no_probe:
+        raise ValueError(
+            "tasks: problem_statement has no code-like identifier to probe "
+            "for instance id(s): " + ", ".join(repr(i) for i in no_probe)
+        )
 
     # Pins (DB/backend/reranker/result-cap) set inside the try so no failure leaks them.
     saved_env = snapshot_env(
@@ -141,6 +150,7 @@ def run_swe_bench_suite(
         os.environ["CAIRN_EMBED_BACKEND"] = "hash"
         os.environ["CAIRN_RERANK"] = "0"
         os.environ["CAIRN_MAX_RESULT_CHARS"] = str(_RESULT_CAP_CHARS)
+        _reset_result_cap()
 
         from cairn.graph import embeddings as emb
         from cairn.graph.builder import build_graph
@@ -153,13 +163,9 @@ def run_swe_bench_suite(
             instance_id = task["instance_id"]
             workspace = workspaces[instance_id]
             target = _probe_target(task)
-            if not target:
-                raise ValueError(
-                    f"task {instance_id!r}: problem_statement has no code-like "
-                    "identifier to probe"
-                )
 
-            build_graph(workspace=workspace, db_path=db_path)
+            # lsp pinned off: the time-budgeted edge-upgrade pass is machine-dependent.
+            build_graph(workspace=workspace, db_path=db_path, lsp=False)
             conn = get_db(db_path)
             try:
                 build_transitive_closure(conn)
@@ -208,3 +214,4 @@ def run_swe_bench_suite(
         }
     finally:
         restore_env(saved_env)
+        _reset_result_cap()

@@ -360,6 +360,63 @@ class TestValidateRefinedOutline:
         _seed_graph(fresh_db)
         return build_page_plan(fresh_db, "r")
 
+    def _det_with_slug_collision(self, fresh_db):
+        """The standard plan plus two modules whose slugs collapse to
+        ``m-a`` (the planner de-collides them to ``m-a`` / ``m-a-2``)."""
+        self._det(fresh_db)
+        for fid, path in [("f6", "m.a/core.py"), ("f7", "m-a/core.py")]:
+            fresh_db.execute(
+                "INSERT INTO files (id, repo_id, path, language) "
+                "VALUES (?, 'r', ?, 'python')",
+                (fid, path),
+            )
+        for sid, fid, name in [("s_m1", "f6", "m1"), ("s_m2", "f7", "m2")]:
+            fresh_db.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, qualified_name, "
+                "line_start, line_end) VALUES (?, ?, ?, 'function', ?, 1, 10)",
+                (sid, fid, name, name),
+            )
+        fresh_db.commit()
+        return build_page_plan(fresh_db, "r")
+
+    def test_refined_modules_whose_slugs_collide_get_distinct_page_ids(
+        self, fresh_db
+    ):
+        """_slug is not injective: refined entries for two distinct modules
+        never share one page id (one manifest key, one queued task each)."""
+        from cairn.wiki.refine import validate_refined_outline
+
+        det = self._det_with_slug_collision(fresh_db)
+        refined = [
+            {"title": "Repository overview", "description": "d", "module": ""},
+            {"title": "Dot module", "description": "d", "module": "m.a"},
+            {"title": "Dash module", "description": "d", "module": "m-a"},
+        ]
+        eff = validate_refined_outline(refined, det, fresh_db, "r")
+        by_module = {page["module"]: page["page_id"] for page in eff}
+        assert by_module["m.a"] == "m-a"
+        assert by_module["m-a"] == "m-a-2"
+        assert len({page["page_id"] for page in eff}) == len(eff)
+
+    def test_deterministic_page_id_colliding_with_a_refined_record_is_suffixed(
+        self, fresh_db
+    ):
+        """A deterministic page the refinement never covered keeps its
+        module but is re-keyed when a refined record already owns its page
+        id — the effective plan never carries a duplicate id."""
+        from cairn.wiki.refine import validate_refined_outline
+
+        det = self._det_with_slug_collision(fresh_db)
+        refined = [
+            {"title": "Repository overview", "description": "d", "module": ""},
+            {"title": "Dot module", "description": "d", "module": "m.a"},
+        ]
+        eff = validate_refined_outline(refined, det, fresh_db, "r")
+        by_module = {page["module"]: page["page_id"] for page in eff}
+        assert by_module["m.a"] == "m-a"
+        assert by_module["m-a"] != "m-a"
+        assert len({page["page_id"] for page in eff}) == len(eff)
+
     def test_valid_entries_are_kept_in_refined_order(self, fresh_db):
         from cairn.wiki.refine import validate_refined_outline
 

@@ -359,3 +359,25 @@ def test_group_by_top_level_buckets_three_segment_paths_under_directory(tmp_path
     assert buckets["src/cairn"] == 2
     assert buckets["src/cairn/cli"] == 1
     assert "src/cairn/pack.py" not in buckets
+
+
+def test_planner_buckets_three_segment_paths_under_directory(fresh_db):
+    """The planner's module bucketing matches the stats contract at exactly
+    three segments: one directory page, never a per-file page."""
+    fresh_db.execute("INSERT INTO repos (id, name, path) VALUES ('r', 'r', '/tmp/r')")
+    fresh_db.executemany(
+        "INSERT INTO files (id, repo_id, path, language) VALUES (?, 'r', ?, 'python')",
+        [
+            ("f1", "src/cairn/pack.py"),
+            ("f2", "src/cairn/refs.py"),
+            ("f3", "src/cairn/cli/core.py"),
+        ],
+    )
+    fresh_db.commit()
+
+    plan = build_page_plan(fresh_db, "r")
+
+    assert _modules(plan) == ["src/cairn", "src/cairn/cli"]
+    assert [page["page_id"] for page in plan] == [
+        "overview", "src-cairn", "src-cairn-cli",
+    ]

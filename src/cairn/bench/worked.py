@@ -125,8 +125,12 @@ def build_manifest(
 
 def _atomic_write_text(path: Path, text: str) -> None:
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _bundle_readme(run_name: str, raw_name: str, manifest: dict) -> str:

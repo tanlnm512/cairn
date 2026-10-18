@@ -92,46 +92,48 @@ def _refresh_derived_indexes(conn, workspace, changed, pre):
 def _run_sync(conn, workspace, changed, db):
     """Reindex changed files, refresh derived indexes, and record the sync run."""
     from ...graph.incremental import _capture_derived_prestate, reindex_paths
+    from ...graph.schema import build_lock
     from .. import display
     import time
 
     sync_started = time.time()
-    # Capture before reindex: the affected sets are the pre-update graph.
-    pre = _capture_derived_prestate(conn, workspace, changed)
-    with display.progress_bar(
-        description=f"Syncing {len(changed)} files",
-        total=len(changed),
-        unit="files",
-    ) as bar:
-        # reindex_paths doesn't expose per-file progress; show an
-        # indeterminate bar that completes when it returns.
-        result = reindex_paths(conn, workspace, changed)
-        bar.update(bar._cg_task_id, completed=len(changed))
+    with build_lock(db):
+        # Capture before reindex: the affected sets are the pre-update graph.
+        pre = _capture_derived_prestate(conn, workspace, changed)
+        with display.progress_bar(
+            description=f"Syncing {len(changed)} files",
+            total=len(changed),
+            unit="files",
+        ) as bar:
+            # reindex_paths doesn't expose per-file progress; show an
+            # indeterminate bar that completes when it returns.
+            result = reindex_paths(conn, workspace, changed)
+            bar.update(bar._cg_task_id, completed=len(changed))
 
-    errors = list(result["errors"])
-    if result["reindexed"] or result["deleted"]:
-        errors.extend(_refresh_derived_indexes(conn, workspace, changed, pre))
+        errors = list(result["errors"])
+        if result["reindexed"] or result["deleted"]:
+            errors.extend(_refresh_derived_indexes(conn, workspace, changed, pre))
 
-    display.success(
-        f"Synced: {result['reindexed']} reindexed, {result['deleted']} deleted"
-    )
-    if errors:
-        display.warning(f"{len(errors)} errors")
-        for error in errors[:5]:
-            display.dim(f"  {error}")
+        display.success(
+            f"Synced: {result['reindexed']} reindexed, {result['deleted']} deleted"
+        )
+        if errors:
+            display.warning(f"{len(errors)} errors")
+            for error in errors[:5]:
+                display.dim(f"  {error}")
 
-    # Best-effort 'sync' build_runs row: only reindexed/deleted counts are
-    # meaningful; scan/parse/resolve columns stay NULL.
-    from ...graph.builder import record_build_run
+        # Best-effort 'sync' build_runs row: only reindexed/deleted counts are
+        # meaningful; scan/parse/resolve columns stay NULL.
+        from ...graph.builder import record_build_run
 
-    record_build_run(
-        db,
-        "sync",
-        started_at=sync_started,
-        duration_s=time.time() - sync_started,
-        files=result["reindexed"],
-        skipped=result["deleted"],
-    )
+        record_build_run(
+            db,
+            "sync",
+            started_at=sync_started,
+            duration_s=time.time() - sync_started,
+            files=result["reindexed"],
+            skipped=result["deleted"],
+        )
 
 
 # --------------------------------------------------------------------------
@@ -150,7 +152,10 @@ def sync(workspace, db):
         if not changed:
             display.success("No changes detected. Graph is up to date.")
             return
-        _run_sync(conn, workspace, changed, db)
+        try:
+            _run_sync(conn, workspace, changed, db)
+        except RuntimeError as e:
+            raise click.ClickException(str(e)) from e
     finally:
         conn.close()
 

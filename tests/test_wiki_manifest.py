@@ -222,6 +222,15 @@ class TestLoadManifest:
         with pytest.raises(ValueError, match="mapping keyed by"):
             load_manifest(bundle.root)
 
+    def test_non_object_page_row_raises_value_error(self, bundle):
+        """A page row that is not a JSON object fails the load with the
+        clean manifest ``ValueError`` consumers already map — never a
+        downstream ``AttributeError`` on ``row.get``."""
+        doc = {"schema": MANIFEST_SCHEMA, "pages": {f"{REPO}/overview": "queued"}}
+        assert save_manifest(bundle.root, doc) is True
+        with pytest.raises(ValueError, match="must be a JSON object"):
+            load_manifest(bundle.root)
+
 
 class TestSaveManifest:
     """save_manifest copies the atomic set_config_values pattern."""

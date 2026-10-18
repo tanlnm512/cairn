@@ -61,6 +61,11 @@ _INSERT_ANOMALY_SKIP = (
     " VALUES (?, ?, ?, ?, ?)"
 )
 
+# Re-imports replace the earlier skip row for the same (repo, path, reason).
+_DELETE_PRIOR_SKIP = (
+    "DELETE FROM skipped_files WHERE repo_id = ? AND path = ? AND reason = ?"
+)
+
 # Tree-sitter call/reference sites of one file, for (kind, line) disagreement
 # matching before the authority DELETE; scip rows never count as the incumbent.
 _TS_SITES_SQL = (
@@ -163,6 +168,7 @@ def _parse_index(conn: sqlite3.Connection, scip_path: str):
         index.ParseFromString(Path(scip_path).read_bytes())
         return index
     except _ProtoDecodeError as e:
+        conn.execute(_DELETE_PRIOR_SKIP, ("", str(scip_path), _SKIP_PARSE_ERROR))
         conn.execute(_INSERT_SKIP, (_new_id(), str(scip_path), _SKIP_PARSE_ERROR, _now()))
         conn.commit()
         raise ValueError(f"corrupt SCIP index: {scip_path} ({e})") from e
@@ -287,6 +293,7 @@ def _write_overlay(
     try:
         cur = conn.cursor()
         for params in anomaly_rows:
+            cur.execute(_DELETE_PRIOR_SKIP, (params[1], params[2], _SKIP_JOIN_ANOMALY))
             cur.execute(_INSERT_ANOMALY_SKIP, params)
         for file_id in delete_file_ids:
             cur.execute(_DELETE_FILE_CALLREF_EDGES, (file_id,))

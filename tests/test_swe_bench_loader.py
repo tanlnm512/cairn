@@ -285,6 +285,14 @@ class TestLoadTasks:
         with pytest.raises(ValueError, match="astropy__astropy-404"):
             load_tasks(manifest, fetch=fetch)
 
+    def test_duplicate_fetched_rows_rejected(self):
+        """Duplicate instance_ids among fetched rows are an error, never
+        silent last-wins in the by-id index."""
+        rows = _dataset_rows()
+        fetch, _ = _stub_fetch(rows + [rows[1]])
+        with pytest.raises(ValueError, match="duplicate instance id"):
+            load_tasks(_valid_manifest(), fetch=fetch)
+
     def test_invalid_manifest_fails_before_any_fetch(self):
         manifest = _valid_manifest()
         manifest["dataset_revision_sha"] = "not-hex"

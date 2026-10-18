@@ -49,18 +49,27 @@ def _copy_store_read_only(main_db: Path, worktree_db: Path) -> None:
 
 
 def _retarget_repo_ids(conn: sqlite3.Connection, main: Path, worktree: Path) -> None:
-    replacements = {
-        row[0]: f"{worktree.name}/{row[0][len(main.name) + 1:]}"
-        if row[0].startswith(f"{main.name}/")
-        else worktree.name
-        for row in conn.execute("SELECT id FROM repos").fetchall()
-    }
+    """Retarget the main repo's ids to the worktree; drop repos not under it."""
+    replacements: dict[str, str] = {}
+    drop_ids: list[str] = []
+    for row in conn.execute("SELECT id FROM repos").fetchall():
+        repo_id = row[0]
+        if repo_id.startswith(f"{main.name}/"):
+            replacements[repo_id] = f"{worktree.name}/{repo_id[len(main.name) + 1:]}"
+        elif repo_id == main.name:
+            replacements[repo_id] = worktree.name
+        else:
+            drop_ids.append(repo_id)
     for old_id, new_id in replacements.items():
         conn.execute("UPDATE repos SET id = ? WHERE id = ?", (new_id, old_id))
         for table in ("files", "parse_errors", "skipped_files", "pending_sync"):
             conn.execute(
                 f"UPDATE {table} SET repo_id = ? WHERE repo_id = ?", (new_id, old_id)
             )
+    for old_id in drop_ids:
+        conn.execute("DELETE FROM repos WHERE id = ?", (old_id,))
+        for table in ("files", "parse_errors", "skipped_files", "pending_sync"):
+            conn.execute(f"DELETE FROM {table} WHERE repo_id = ?", (old_id,))
     conn.commit()
 
 
@@ -87,6 +96,10 @@ def prepare_worktree_graph(worktree: str | Path) -> bool:
         from .watcher import refresh_for_query
 
         report = refresh_for_query(conn, str(worktree), repair=True)
+    except Exception:
+        # A half-retargeted copy would short-circuit every retry.
+        worktree_store.db.unlink(missing_ok=True)
+        raise
     finally:
         conn.close()
 

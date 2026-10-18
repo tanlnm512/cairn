@@ -73,3 +73,15 @@ def test_default_config_has_empty_scip():
     cfg = CairnConfig()
     assert cfg.scip == {}
     assert cfg.is_default
+
+
+def test_non_utf8_config_degrades_to_defaults(tmp_path, capsys):
+    """A non-UTF-8 cairn.json warns and loads defaults instead of raising."""
+    from cairn.graph.config import load_config
+
+    (tmp_path / "cairn.json").write_bytes(b'{"exclude": ["caf\xe9/"]}')
+
+    cfg = load_config(tmp_path)
+
+    assert cfg.exclude == []
+    assert "not valid UTF-8" in capsys.readouterr().err

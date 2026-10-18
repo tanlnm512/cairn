@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import re
 import stat
+import subprocess
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from ..graph.scanner import discover_repos, repository_id, resolve_repo_path
 from ..paths import cairn_home_env
@@ -125,6 +126,30 @@ def discover_hook_repos(workspace: str) -> List[str]:
     return [repository_id(r) for r in discover_repos(workspace)]
 
 
+def _hooks_dir(repo_root: Path) -> Optional[Path]:
+    """Hooks dir for `repo_root` (.git-file worktrees/submodules resolved via git rev-parse); None when unresolvable."""
+    git = repo_root / ".git"
+    if git.is_dir():
+        return git / "hooks"
+    if not git.is_file():
+        return None
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--git-path", "hooks"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    resolved = Path(out.stdout.strip())
+    if not resolved.is_absolute():
+        resolved = repo_root / resolved
+    return resolved
+
+
 def install_hooks(repos: List[str], workspace: str) -> List[str]:
     """Install post-commit/post-checkout hooks; ValueError on unsafe repo names or CAIRN_HOME."""
     # Validate ALL repos up front (before any hook is written) so a single bad
@@ -137,7 +162,9 @@ def install_hooks(repos: List[str], workspace: str) -> List[str]:
 
     installed = []
     for repo in repos:
-        hooks_dir = resolve_repo_path(workspace, repo) / ".git" / "hooks"
+        hooks_dir = _hooks_dir(resolve_repo_path(workspace, repo))
+        if hooks_dir is None:
+            continue
         hooks_dir.mkdir(parents=True, exist_ok=True)
         touched = False
         for hook_name, render in _HOOK_RENDERERS.items():
@@ -158,7 +185,9 @@ def uninstall_hooks(repos: List[str], workspace: str) -> List[str]:
     uninstalled repo names."""
     removed = []
     for repo in repos:
-        hooks_dir = resolve_repo_path(workspace, repo) / ".git" / "hooks"
+        hooks_dir = _hooks_dir(resolve_repo_path(workspace, repo))
+        if hooks_dir is None:
+            continue
         touched = False
         for hook_name in _HOOK_RENDERERS:
             hook_path = hooks_dir / hook_name

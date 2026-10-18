@@ -445,6 +445,26 @@ class TestLegacyLoaderValidation:
         with pytest.raises(ValueError, match="expected a mapping"):
             self._run(tmp_path, "- just a bare string\n")
 
+    def test_malformed_yaml_syntax_raises_value_error(self, tmp_path):
+        # A ParserError-shaped file surfaces as ValueError at the loader,
+        # never as a raw yaml exception.
+        with pytest.raises(ValueError, match="not valid YAML"):
+            self._run(tmp_path, "queries: [unclosed\n")
+
+    def test_bare_string_expect_raises_value_error(self, tmp_path):
+        # A bare string expect would previously score via per-character
+        # substring matching.
+        with pytest.raises(ValueError, match="must be a list of strings"):
+            self._run(
+                tmp_path, "- query: 'find the url builder'\n  expect: 'an'\n"
+            )
+
+    def test_non_string_expect_entries_raise_value_error(self, tmp_path):
+        with pytest.raises(ValueError, match="must be a list of strings"):
+            self._run(
+                tmp_path, "- query: 'find the url builder'\n  expect: [5]\n"
+            )
+
 
 class TestSemanticFallbackSurfacing:
     def _raise_semantic(self, monkeypatch):
@@ -608,6 +628,31 @@ class TestEvalCli:
 
         bad_yaml = tmp_path / "queries.yaml"
         bad_yaml.write_text("corpus: L1\n", encoding="utf-8")
+
+        result = runner.invoke(
+            main,
+            [
+                "eval",
+                "--db", db_path,
+                "--knowledge", knowledge_dir,
+                "--queries", str(bad_yaml),
+                "--json",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "invalid eval dataset" in result.output
+
+    def test_malformed_yaml_syntax_is_a_clean_cli_error(self, tmp_path):
+        # A yaml ParserError must render as "invalid eval dataset", not a
+        # raw traceback.
+        runner = CliRunner()
+        db_path = str(tmp_path / "cli.db")
+        knowledge_dir = str(tmp_path / ".knowledge")
+        Path(knowledge_dir).mkdir(parents=True, exist_ok=True)
+        get_db(db_path).close()
+
+        bad_yaml = tmp_path / "queries.yaml"
+        bad_yaml.write_text("queries: [unclosed\n", encoding="utf-8")
 
         result = runner.invoke(
             main,
