@@ -362,6 +362,15 @@ def verify_store(out_dir: Path, captures: dict, entries: list[dict],
             failures.append((tool, f"missing fixture {path}"))
             continue
         golden = json.loads(path.read_text(encoding="utf-8"))
+        # Re-apply the fixture's own sort flag to the stored response: sibling
+        # harnesses (spike_golden) rewrite responses raw, so line-order
+        # normalization must live at verify time. Only the sort is re-applied —
+        # it is idempotent; the list-line mask is not.
+        flags = golden.get("normalization") or {}
+        golden = {**golden, "response": gr.normalize_response(
+            golden.get("response") or {}, [],
+            bool(flags.get("sort_lines")), False,
+        )}
         actual = captures[tool]["fixture"]
         diff = gr._diff_path(gr.compare_scope(golden), gr.compare_scope(actual))
         if diff:

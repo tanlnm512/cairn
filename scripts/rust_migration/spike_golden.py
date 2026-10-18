@@ -251,8 +251,9 @@ def main(argv: list[str] | None = None) -> int:
         _note("slim store is response-equal for every query")
 
         # Keep the fixture response and spike_queries[0] byte-equal (the Rust
-        # spike test asserts it): both carry this build's capture. Rank-order
-        # drift across builds is masked by the parity runner's sort_lines.
+        # spike test asserts it): both carry this build's raw capture. The
+        # parity runner re-applies its own sort_lines flag at verify time, so
+        # the stored order is not a parity contract.
         fixture["response"] = captures[0]
         fixture["spike_queries"] = [
             {"pattern": q, "response": r} for q, r in zip(queries, captures)

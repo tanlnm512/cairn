@@ -12,14 +12,14 @@
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "174ba4d9c157343a12e803a2268725eaad778a59",
-      "git_dirty_entries": 152
+      "git_commit": "5bd65ddd52de2dd64d1b2dafe8d8ed029776c86f",
+      "git_dirty_entries": 154
     },
     "store": {
       "repos": 1,
       "files": 694,
       "symbols": 11934,
-      "edges": 82737
+      "edges": 82742
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
@@ -27,7 +27,7 @@
       "CAIRN_WATCH": "0"
     },
     "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:32:52.781988+00:00"
+    "captured_at": "2026-10-18T22:48:22.228569+00:00"
   },
   "normalization": {
     "rules": [
