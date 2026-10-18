@@ -7,33 +7,33 @@
   },
   "capture": {
     "impl": "python",
-    "harness": "scripts/rust_migration/golden_record.py",
+    "harness": "scripts/rust_migration/parity.py",
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "156f7511960e7d063f49bf8d6e1b510c24a5bfd5",
-      "git_dirty_entries": 74
+      "git_commit": "8c5a6d18b11e89967d644588d36d5f969e106703",
+      "git_dirty_entries": 110
     },
     "store": {
       "repos": 1,
-      "files": 657,
-      "symbols": 10864,
-      "edges": 72466
+      "files": 686,
+      "symbols": 11617,
+      "edges": 78988
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 490,
-    "captured_at": "2026-10-18T16:38:40.931012+00:00"
+    "knowledge_bundle_seeded_files": 504,
+    "captured_at": "2026-10-18T20:23:56.031427+00:00"
   },
   "normalization": {
     "rules": [
-      "store_home_resolved",
       "home_resolved",
-      "store_home",
+      "store_home_resolved",
       "home",
+      "store_home",
       "workspace",
       "iso_ts",
       "epoch",
@@ -42,7 +42,8 @@
       "age",
       "id12",
       "id6",
-      "float"
+      "float",
+      "dispatch_candidates"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -52,11 +53,11 @@
     "content": [
       {
         "type": "text",
-        "text": "=== federated_search: \"how does the build resolve call edges\" (1 hit(s) from 1/1 store(s)) ===\n  [semantic 0.0164] method TestPhpQualifiedNames.test_namespaced_function_call_target_is_last_segment  (test_parser_audit_fixes.py)  [cairn]  @ <WORKSPACE>"
+        "text": "=== federated_search: \"how does the build resolve call edges\" (0 hit(s) from 0/0 store(s)) ===\n\nNo workspace stores are registered. Run `cairn init` once inside each workspace to register its store, then retry."
       }
     ],
     "structuredContent": {
-      "result": "=== federated_search: \"how does the build resolve call edges\" (1 hit(s) from 1/1 store(s)) ===\n  [semantic 0.0164] method TestPhpQualifiedNames.test_namespaced_function_call_target_is_last_segment  (test_parser_audit_fixes.py)  [cairn]  @ <WORKSPACE>"
+      "result": "=== federated_search: \"how does the build resolve call edges\" (0 hit(s) from 0/0 store(s)) ===\n\nNo workspace stores are registered. Run `cairn init` once inside each workspace to register its store, then retry."
     }
   }
 }

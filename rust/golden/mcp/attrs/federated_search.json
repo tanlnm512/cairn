@@ -1,0 +1,64 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "federated_search",
+  "arguments": {
+    "query": "how does the build resolve call edges",
+    "limit": 20
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 50,
+      "symbols": 1722,
+      "edges": 6482
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "knowledge_bundle_seeded_files": 504,
+    "captured_at": "2026-10-18T20:24:27.054146+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float",
+      "dispatch_candidates"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "=== federated_search: \"how does the build resolve call edges\" (0 hit(s) from 0/0 store(s)) ===\n\nNo workspace stores are registered. Run `cairn init` once inside each workspace to register its store, then retry."
+      }
+    ],
+    "structuredContent": {
+      "result": "=== federated_search: \"how does the build resolve call edges\" (0 hit(s) from 0/0 store(s)) ===\n\nNo workspace stores are registered. Run `cairn init` once inside each workspace to register its store, then retry."
+    }
+  }
+}

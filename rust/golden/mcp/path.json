@@ -8,33 +8,33 @@
   },
   "capture": {
     "impl": "python",
-    "harness": "scripts/rust_migration/golden_record.py",
+    "harness": "scripts/rust_migration/parity.py",
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "156f7511960e7d063f49bf8d6e1b510c24a5bfd5",
-      "git_dirty_entries": 74
+      "git_commit": "8c5a6d18b11e89967d644588d36d5f969e106703",
+      "git_dirty_entries": 110
     },
     "store": {
       "repos": 1,
-      "files": 657,
-      "symbols": 10864,
-      "edges": 72466
+      "files": 686,
+      "symbols": 11617,
+      "edges": 78988
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 490,
-    "captured_at": "2026-10-18T16:38:40.919648+00:00"
+    "knowledge_bundle_seeded_files": 504,
+    "captured_at": "2026-10-18T20:23:56.014060+00:00"
   },
   "normalization": {
     "rules": [
-      "store_home_resolved",
       "home_resolved",
-      "store_home",
+      "store_home_resolved",
       "home",
+      "store_home",
       "workspace",
       "iso_ts",
       "epoch",
@@ -43,9 +43,10 @@
       "age",
       "id12",
       "id6",
-      "float"
+      "float",
+      "dispatch_candidates"
     ],
-    "sort_lines": false,
+    "sort_lines": true,
     "mask_list_lines": false
   },
   "response": {
@@ -53,11 +54,11 @@
     "content": [
       {
         "type": "text",
-        "text": "path 1 (AgentReport -> _totals, 1 hops):\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\npath 2 (AgentReport -> _totals, 2 hops):\n  src/cairn/bench/agent_suite.py:529 to_table [exact]\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\npath 3 (AgentReport -> _totals, 1 hops):\n  tests/test_agent_suite.py:216 test_totals_sum_task_medians [exact]"
+        "text": "  src/cairn/bench/agent_suite.py:500 _totals [exact]\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\n  src/cairn/bench/agent_suite.py:529 to_table [exact]\n  tests/test_agent_suite.py:216 test_totals_sum_task_medians [exact]\npath 1 (AgentReport -> _totals, 1 hops):\npath 2 (AgentReport -> _totals, 2 hops):\npath 3 (AgentReport -> _totals, 1 hops):"
       }
     ],
     "structuredContent": {
-      "result": "path 1 (AgentReport -> _totals, 1 hops):\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\npath 2 (AgentReport -> _totals, 2 hops):\n  src/cairn/bench/agent_suite.py:529 to_table [exact]\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\npath 3 (AgentReport -> _totals, 1 hops):\n  tests/test_agent_suite.py:216 test_totals_sum_task_medians [exact]"
+      "result": "  src/cairn/bench/agent_suite.py:500 _totals [exact]\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\n  src/cairn/bench/agent_suite.py:529 to_table [exact]\n  tests/test_agent_suite.py:216 test_totals_sum_task_medians [exact]\npath 1 (AgentReport -> _totals, 1 hops):\npath 2 (AgentReport -> _totals, 2 hops):\npath 3 (AgentReport -> _totals, 1 hops):"
     }
   }
 }

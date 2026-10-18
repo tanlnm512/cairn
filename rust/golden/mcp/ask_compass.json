@@ -6,33 +6,33 @@
   },
   "capture": {
     "impl": "python",
-    "harness": "scripts/rust_migration/golden_record.py",
+    "harness": "scripts/rust_migration/parity.py",
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "156f7511960e7d063f49bf8d6e1b510c24a5bfd5",
-      "git_dirty_entries": 74
+      "git_commit": "8c5a6d18b11e89967d644588d36d5f969e106703",
+      "git_dirty_entries": 110
     },
     "store": {
       "repos": 1,
-      "files": 657,
-      "symbols": 10864,
-      "edges": 72466
+      "files": 686,
+      "symbols": 11617,
+      "edges": 78988
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 490,
-    "captured_at": "2026-10-18T16:38:40.929627+00:00"
+    "knowledge_bundle_seeded_files": 504,
+    "captured_at": "2026-10-18T20:23:56.029575+00:00"
   },
   "normalization": {
     "rules": [
-      "store_home_resolved",
       "home_resolved",
-      "store_home",
+      "store_home_resolved",
       "home",
+      "store_home",
       "workspace",
       "iso_ts",
       "epoch",
@@ -41,7 +41,8 @@
       "age",
       "id12",
       "id6",
-      "float"
+      "float",
+      "dispatch_candidates"
     ],
     "sort_lines": true,
     "mask_list_lines": true
@@ -51,11 +52,11 @@
     "content": [
       {
         "type": "text",
-        "text": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [8 members]\n  callers: [10 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 18\n  seed_count: 14\n  seeds: [14 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
+        "text": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [8 members]\n  callers: [10 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 18\n  seed_count: 13\n  seeds: [13 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
       }
     ],
     "structuredContent": {
-      "result": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [8 members]\n  callers: [10 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 18\n  seed_count: 14\n  seeds: [14 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
+      "result": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [8 members]\n  callers: [10 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 18\n  seed_count: 13\n  seeds: [13 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
     }
   }
 }

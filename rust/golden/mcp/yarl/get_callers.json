@@ -1,0 +1,64 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "get_callers",
+  "arguments": {
+    "name": "build",
+    "limit": 20
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 24,
+      "symbols": 1090,
+      "edges": 4183
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "knowledge_bundle_seeded_files": 504,
+    "captured_at": "2026-10-18T20:24:11.371534+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float",
+      "dispatch_candidates"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "20 callers of 'build':\n  function test_build_authority_with_text_after_bracket_is_invalid  tests/test_url.py:427  (corpus)\n  function test_malformed_bracketed_host_in_authority  tests/test_url.py:463  (corpus)\n  function test_join_preserves_leading_slash  tests/test_url.py:2438  (corpus)\n  function test_human_repr_delimiters  tests/test_url.py:2501  (corpus)\n  function test_human_repr_non_printable  tests/test_url.py:2527  (corpus)\n  function _run  tests/test_url_benchmarks.py:54  (corpus)\n  function _run  tests/test_url_benchmarks.py:63  (corpus)\n  function _run  tests/test_url_benchmarks.py:70  (corpus)\n  function _run  tests/test_url_benchmarks.py:79  (corpus)\n  function _run  tests/test_url_benchmarks.py:88  (corpus)\n  function _run  tests/test_url_benchmarks.py:95  (corpus)\n  function _run  tests/test_url_benchmarks.py:104  (corpus)\n  function _run  tests/test_url_benchmarks.py:115  (corpus)\n  function _run  tests/test_url_benchmarks.py:125  (corpus)\n  function _run  tests/test_url_benchmarks.py:135  (corpus)\n  function _run  tests/test_url_benchmarks.py:145  (corpus)\n  function _run  tests/test_url_benchmarks.py:154  (corpus)\n  function test_build_without_arguments  tests/test_url_build.py:9  (corpus)\n  function test_build_simple  tests/test_url_build.py:14  (corpus)\n  function test_url_build_ipv6  tests/test_url_build.py:19  (corpus)\n  ... hit the limit cap; pass a higher limit for more."
+      }
+    ],
+    "structuredContent": {
+      "result": "20 callers of 'build':\n  function test_build_authority_with_text_after_bracket_is_invalid  tests/test_url.py:427  (corpus)\n  function test_malformed_bracketed_host_in_authority  tests/test_url.py:463  (corpus)\n  function test_join_preserves_leading_slash  tests/test_url.py:2438  (corpus)\n  function test_human_repr_delimiters  tests/test_url.py:2501  (corpus)\n  function test_human_repr_non_printable  tests/test_url.py:2527  (corpus)\n  function _run  tests/test_url_benchmarks.py:54  (corpus)\n  function _run  tests/test_url_benchmarks.py:63  (corpus)\n  function _run  tests/test_url_benchmarks.py:70  (corpus)\n  function _run  tests/test_url_benchmarks.py:79  (corpus)\n  function _run  tests/test_url_benchmarks.py:88  (corpus)\n  function _run  tests/test_url_benchmarks.py:95  (corpus)\n  function _run  tests/test_url_benchmarks.py:104  (corpus)\n  function _run  tests/test_url_benchmarks.py:115  (corpus)\n  function _run  tests/test_url_benchmarks.py:125  (corpus)\n  function _run  tests/test_url_benchmarks.py:135  (corpus)\n  function _run  tests/test_url_benchmarks.py:145  (corpus)\n  function _run  tests/test_url_benchmarks.py:154  (corpus)\n  function test_build_without_arguments  tests/test_url_build.py:9  (corpus)\n  function test_build_simple  tests/test_url_build.py:14  (corpus)\n  function test_url_build_ipv6  tests/test_url_build.py:19  (corpus)\n  ... hit the limit cap; pass a higher limit for more."
+    }
+  }
+}
