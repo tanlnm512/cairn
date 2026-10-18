@@ -24,6 +24,21 @@ for _p in (str(REPO_ROOT / "src"), str(Path(__file__).resolve().parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+
+def _reexec_repo_venv() -> None:
+    """Re-exec under the repo venv python when this interpreter lacks the project deps."""
+    try:
+        from cairn.mcp_server import lifecycle  # noqa: F401
+    except ModuleNotFoundError:
+        venv_python = REPO_ROOT / ".venv" / "bin" / "python"
+        if (venv_python.exists()
+                and os.path.realpath(sys.executable) != os.path.realpath(venv_python)):
+            os.execv(str(venv_python),
+                     [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+
+_reexec_repo_venv()
+
 import baseline  # reuse: env pins, corpus staging, build/embed, free port
 import golden_record as gr  # reuse: golden client, query script, normalizer, fixture IO
 from cairn.mcp_server import lifecycle  # reuse: healthz probe
