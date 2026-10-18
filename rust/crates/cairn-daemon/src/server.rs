@@ -1,76 +1,72 @@
-//! rmcp streamable-HTTP skeleton serving `search_symbols` only (P0-5 spike, inert).
+//! Streamable-HTTP MCP server: the cairn tool surface, bearer gate, healthz.
 
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::extract::{Request, State};
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::middleware::Next;
+use axum::response::Response;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
+    PaginatedRequestParams, ServerCapabilities, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use rmcp::{ErrorData, RoleServer, ServerHandler};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-const SEARCH_LIMIT: i64 = 100;
+use crate::{auth, healthz, tools};
 
-/// The single-tool MCP server backed by a read-only `.kg` store.
+pub const HEALTHZ_PATH: &str = "/healthz";
+pub const MCP_PATH: &str = "/mcp";
+
+/// Store wiring + policy for one daemon instance.
 #[derive(Clone)]
-pub struct SearchServer {
-    store_path: PathBuf,
+pub struct DaemonConfig {
+    pub db_path: PathBuf,
+    pub workspace: PathBuf,
+    pub knowledge_path: PathBuf,
+    pub read_only: bool,
+    /// Pre-resolved bearer key (explicit > env); None serves keyless loopback.
+    pub api_key: Option<String>,
 }
 
-impl SearchServer {
-    pub fn new(store_path: PathBuf) -> Self {
-        Self { store_path }
+impl DaemonConfig {
+    /// Default wiring for a store path: workspace is cwd, knowledge beside the db.
+    pub fn for_store(db_path: PathBuf) -> Self {
+        let knowledge = db_path
+            .parent()
+            .map(|p| p.join(".knowledge"))
+            .unwrap_or_else(|| PathBuf::from(".knowledge"));
+        let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        Self {
+            db_path,
+            workspace,
+            knowledge_path: knowledge,
+            read_only: false,
+            api_key: auth::resolve_api_key(None),
+        }
     }
-
-    async fn search_text(&self, pattern: &str) -> Result<String, ErrorData> {
-        let store = self.store_path.clone();
-        let pattern = pattern.to_string();
-        tokio::task::spawn_blocking(move || {
-            let conn = crate::store::open_read_only(&store)
-                .map_err(|e| ErrorData::internal_error(format!("store open failed: {e}"), None))?;
-            let rows = crate::store::search_symbols(&conn, &pattern, None, SEARCH_LIMIT)
-                .map_err(|e| ErrorData::internal_error(format!("search failed: {e}"), None))?;
-            Ok(crate::search::render_search_symbols(&pattern, &rows))
-        })
-        .await
-        .map_err(|e| ErrorData::internal_error(format!("search task failed: {e}"), None))?
-    }
 }
 
-fn tool_catalog() -> Vec<Tool> {
-    let schema = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "pattern": {
-                "type": "string",
-                "description": "Symbol name pattern with optional trailing * wildcard.",
-            }
-        },
-        "required": ["pattern"]
-    });
-    let mut tool = Tool::new(
-        "search_symbols",
-        "Lexical symbol search (FTS5/BM25, wildcards, optional kind filter).",
-        schema.as_object().expect("object literal").clone(),
-    );
-    let mut annotations = ToolAnnotations::default();
-    annotations.read_only_hint = Some(true);
-    annotations.destructive_hint = Some(false);
-    annotations.idempotent_hint = Some(true);
-    tool.annotations = Some(annotations);
-    vec![tool]
+/// The MCP server: every registered cairn-query tool over one store.
+#[derive(Clone)]
+pub struct CairnServer {
+    ctx: tools::ToolCtx,
 }
 
-impl ServerHandler for SearchServer {
+impl ServerHandler for CairnServer {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+        let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
+        info.server_info.name = "cairn".to_string();
+        info.server_info.version = env!("CARGO_PKG_VERSION").to_string();
+        info
     }
 
     // non_exhaustive result: Default + field mutation is the only construction path.
@@ -81,7 +77,7 @@ impl ServerHandler for SearchServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         let mut result = ListToolsResult::default();
-        result.tools = tool_catalog();
+        result.tools = tools::catalog();
         Ok(result)
     }
 
@@ -90,28 +86,59 @@ impl ServerHandler for SearchServer {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        if request.name.as_ref() != "search_symbols" {
-            return Err(ErrorData::invalid_params(
-                format!("Unknown tool: {}", request.name),
-                None,
-            ));
-        }
-        let pattern = request
+        let name = request.name.to_string();
+        let args = request
             .arguments
-            .as_ref()
-            .and_then(|args| args.get("pattern"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                ErrorData::invalid_params("search_symbols requires a string pattern argument", None)
-            })?;
-        let text = self.search_text(pattern).await?;
+            .map(Value::Object)
+            .unwrap_or_else(|| json!({}));
+        let ctx = self.ctx.clone();
+        let outcome = tokio::task::spawn_blocking(move || tools::dispatch(&ctx, &name, &args))
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("tool task failed: {e}"), None))?;
+        let text = match outcome {
+            Ok(text) => text,
+            Err(failure) => {
+                let mut result = CallToolResult::error(vec![ContentBlock::text(failure.0.clone())]);
+                result.structured_content = Some(json!({ "result": failure.0 }));
+                return Ok(result.into());
+            }
+        };
         let mut result = CallToolResult::success(vec![ContentBlock::text(text.clone())]);
-        result.structured_content = Some(serde_json::json!({ "result": text }));
+        result.structured_content = Some(json!({ "result": text }));
         Ok(result.into())
     }
 }
 
-/// Handle stopping a running spike server.
+fn unauthorized() -> Response {
+    let mut response = Response::new(axum::body::Body::from("{\"error\":\"unauthorized\"}"));
+    *response.status_mut() = StatusCode::UNAUTHORIZED;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    headers.insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+    response
+}
+
+/// Bearer gate: 401 on bad credentials; /healthz passes through (the Python middleware contract).
+async fn bearer_gate(State(expected): State<String>, req: Request, next: Next) -> Response {
+    if req.uri().path() == HEALTHZ_PATH {
+        return next.run(req).await;
+    }
+    let provided = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if auth::bearer_key_ok(provided, &expected) {
+        next.run(req).await
+    } else {
+        unauthorized()
+    }
+}
+
+/// Handle stopping a running server.
+#[derive(Debug)]
 pub struct ServeHandle {
     cancellation_token: CancellationToken,
 }
@@ -122,23 +149,55 @@ impl ServeHandle {
     }
 }
 
-/// Serve the spike on 127.0.0.1 at an OS-assigned port; returns the bound address.
-// non_exhaustive config: Default + field mutation is the only construction path.
-#[allow(clippy::field_reassign_with_default)]
-pub async fn serve(store_path: PathBuf) -> io::Result<(SocketAddr, ServeHandle)> {
-    let mut config = StreamableHttpServerConfig::default();
-    config.json_response = true;
+/// Serve on `bind`; loopback binds may run keyless, non-loopback binds require a key.
+pub async fn serve_config(
+    config: DaemonConfig,
+    bind: SocketAddr,
+) -> io::Result<(SocketAddr, ServeHandle)> {
+    if config.api_key.is_none() && !bind.ip().is_loopback() {
+        return Err(io::Error::other(format!(
+            "cairn: refusing to serve HTTP on non-loopback host '{bind}' without an \
+             API key. Set CAIRN_MCP_API_KEY or pass --api-key."
+        )));
+    }
+    let mut http_config = StreamableHttpServerConfig::default();
+    http_config.json_response = true;
     let handle = ServeHandle {
-        cancellation_token: config.cancellation_token.clone(),
+        cancellation_token: http_config.cancellation_token.clone(),
     };
-    let service: StreamableHttpService<SearchServer, LocalSessionManager> =
+    let ctx = tools::ToolCtx::new(
+        &config.db_path,
+        &config.workspace,
+        &config.knowledge_path,
+        config.read_only,
+    );
+    let healthz_state = Arc::new(healthz::HealthzState::new(
+        config.db_path.to_string_lossy(),
+        config.read_only,
+    ));
+    let service: StreamableHttpService<CairnServer, LocalSessionManager> =
         StreamableHttpService::new(
-            move || Ok(SearchServer::new(store_path.clone())),
+            move || Ok(CairnServer { ctx: ctx.clone() }),
             Arc::new(LocalSessionManager::default()),
-            config,
+            http_config,
         );
-    let router = axum::Router::new().nest_service("/mcp", service);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let router = axum::Router::new()
+        .route(HEALTHZ_PATH, axum::routing::get(healthz::respond))
+        .with_state(healthz_state)
+        .nest_service(MCP_PATH, service);
+    let router = match config.api_key.clone() {
+        Some(key) => router.layer(axum::middleware::from_fn_with_state(key, bearer_gate)),
+        None => router,
+    };
+    serve_on(bind, router, handle).await
+}
+
+async fn serve_on(
+    bind: SocketAddr,
+    router: axum::Router,
+    handle: ServeHandle,
+) -> io::Result<(SocketAddr, ServeHandle)> {
+    let listener = tokio::net::TcpListener::bind(bind).await?;
     let addr = listener.local_addr()?;
     let shutdown = handle.cancellation_token.clone();
     tokio::spawn(async move {
@@ -147,4 +206,13 @@ pub async fn serve(store_path: PathBuf) -> io::Result<(SocketAddr, ServeHandle)>
             .await;
     });
     Ok((addr, handle))
+}
+
+/// Serve the spike on 127.0.0.1 at an OS-assigned port; returns the bound address.
+pub async fn serve(store_path: PathBuf) -> io::Result<(SocketAddr, ServeHandle)> {
+    serve_config(
+        DaemonConfig::for_store(store_path),
+        "127.0.0.1:0".parse().expect("bind addr"),
+    )
+    .await
 }
