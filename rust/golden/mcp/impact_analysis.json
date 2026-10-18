@@ -1,0 +1,63 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "impact_analysis",
+  "arguments": {
+    "name": "invoke",
+    "depth": 3,
+    "limit": 100
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/golden_record.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": "156f7511960e7d063f49bf8d6e1b510c24a5bfd5",
+      "git_dirty_entries": 74
+    },
+    "store": {
+      "repos": 1,
+      "files": 657,
+      "symbols": 10864,
+      "edges": 72466
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "knowledge_bundle_seeded_files": 490,
+    "captured_at": "2026-10-18T16:38:40.919284+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "store_home_resolved",
+      "home_resolved",
+      "store_home",
+      "home",
+      "workspace",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "Impact of 'invoke': 100 total impacted symbols.\n  (traversal stopped early at limit=100; pass a higher limit for the full count.)\nCycles: ['invoke']\n  Depth 0: 24 callers\n  Depth 1: 68 callers\n  Depth 2: 7 callers\n  Depth 3: 1 callers\nAffected tests (95 \u2014 run these to verify the change):\n  _invoke  tests/test_agent_suite.py  (cairn, path)\n  test_json_payload_has_timestamp_and_tasks  tests/test_agent_suite.py  (cairn, path)\n  test_default_output_stays_human  tests/test_agent_suite.py  (cairn, path)\n  test_scaling_baseline_compares_points_and_exits_2_on_regression  tests/test_bench.py  (cairn, path)\n  test_scaling_point_missing_from_baseline_is_flagged_not_silent  tests/test_bench.py  (cairn, path)\n  test_perf_payload_carries_stamp  tests/test_bench_stamping.py  (cairn, path)\n  test_scaling_payload_carries_stamp  tests/test_bench_stamping.py  (cairn, path)\n  test_agent_payload_carries_stamp  tests/test_bench_stamping.py  (cairn, path)\n  test_explicit_model_embeds_under_stored_stamp  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_bare_flag_evaluates_and_adopts  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_bare_flag_reuses_active_rung1_adoption  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_bare_flag_rung3_refuses_naming_the_verdict  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_explicit_model_that_fails_parity_refuses  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_explicit_model_names_the_adopter_when_mismatched  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_refuses_non_server_backend  tests/test_embed_cli_adopt.py  (cairn, path)\n  ... and 80 more"
+      }
+    ],
+    "structuredContent": {
+      "result": "Impact of 'invoke': 100 total impacted symbols.\n  (traversal stopped early at limit=100; pass a higher limit for the full count.)\nCycles: ['invoke']\n  Depth 0: 24 callers\n  Depth 1: 68 callers\n  Depth 2: 7 callers\n  Depth 3: 1 callers\nAffected tests (95 \u2014 run these to verify the change):\n  _invoke  tests/test_agent_suite.py  (cairn, path)\n  test_json_payload_has_timestamp_and_tasks  tests/test_agent_suite.py  (cairn, path)\n  test_default_output_stays_human  tests/test_agent_suite.py  (cairn, path)\n  test_scaling_baseline_compares_points_and_exits_2_on_regression  tests/test_bench.py  (cairn, path)\n  test_scaling_point_missing_from_baseline_is_flagged_not_silent  tests/test_bench.py  (cairn, path)\n  test_perf_payload_carries_stamp  tests/test_bench_stamping.py  (cairn, path)\n  test_scaling_payload_carries_stamp  tests/test_bench_stamping.py  (cairn, path)\n  test_agent_payload_carries_stamp  tests/test_bench_stamping.py  (cairn, path)\n  test_explicit_model_embeds_under_stored_stamp  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_bare_flag_evaluates_and_adopts  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_bare_flag_reuses_active_rung1_adoption  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_bare_flag_rung3_refuses_naming_the_verdict  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_explicit_model_that_fails_parity_refuses  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_explicit_model_names_the_adopter_when_mismatched  tests/test_embed_cli_adopt.py  (cairn, path)\n  test_refuses_non_server_backend  tests/test_embed_cli_adopt.py  (cairn, path)\n  ... and 80 more"
+    }
+  }
+}

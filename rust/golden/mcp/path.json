@@ -1,0 +1,63 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "path",
+  "arguments": {
+    "from_pattern": "AgentReport",
+    "to_pattern": "_totals",
+    "max_depth": 4
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/golden_record.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": "156f7511960e7d063f49bf8d6e1b510c24a5bfd5",
+      "git_dirty_entries": 74
+    },
+    "store": {
+      "repos": 1,
+      "files": 657,
+      "symbols": 10864,
+      "edges": 72466
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "knowledge_bundle_seeded_files": 490,
+    "captured_at": "2026-10-18T16:38:40.919648+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "store_home_resolved",
+      "home_resolved",
+      "store_home",
+      "home",
+      "workspace",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "path 1 (AgentReport -> _totals, 1 hops):\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\npath 2 (AgentReport -> _totals, 2 hops):\n  src/cairn/bench/agent_suite.py:529 to_table [exact]\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\npath 3 (AgentReport -> _totals, 1 hops):\n  tests/test_agent_suite.py:216 test_totals_sum_task_medians [exact]"
+      }
+    ],
+    "structuredContent": {
+      "result": "path 1 (AgentReport -> _totals, 1 hops):\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\npath 2 (AgentReport -> _totals, 2 hops):\n  src/cairn/bench/agent_suite.py:529 to_table [exact]\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\npath 3 (AgentReport -> _totals, 1 hops):\n  tests/test_agent_suite.py:216 test_totals_sum_task_medians [exact]"
+    }
+  }
+}

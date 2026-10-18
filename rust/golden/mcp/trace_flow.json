@@ -1,0 +1,61 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "trace_flow",
+  "arguments": {
+    "entry": "invoke"
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/golden_record.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": "156f7511960e7d063f49bf8d6e1b510c24a5bfd5",
+      "git_dirty_entries": 74
+    },
+    "store": {
+      "repos": 1,
+      "files": 657,
+      "symbols": 10864,
+      "edges": 72466
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "knowledge_bundle_seeded_files": 490,
+    "captured_at": "2026-10-18T16:38:40.930184+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "store_home_resolved",
+      "home_resolved",
+      "store_home",
+      "home",
+      "workspace",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "Traced 119 step(s) from 'invoke' (49 branches, 32 terminals):\n- `invoke` (method)\n  - `_record_invocation` (function)\n  - `_wire_flusher_conn` (function)\n  - `sub_path` (function)\n    - `get_db` (function)\n    - `record_cli_invocation` (function)\n      - `_apply_schema` (function)\n      - `_maybe_backfill_fts` (function)\n      - `_maybe_backfill_memory_validity` (function)\n      - `_start_cli_flusher` (function)\n      - `build_row` (function)\n      - `connect` (function)\n      - `is_read_only` (function)\n      - `is_telemetry_off` (function)\n      - `render_env_resolution_chain` (function)\n      - `resolve_store` (function)\n        - `OKFBundle` (class)\n        - `StorePaths` (class)\n        - `_acquire_start_lock` (function)\n        - `_entry` (function)\n        - `_extract_migration_name` (function)\n        - `_migrate_dataflow_pk` (function)\n        - `_report` (function)\n        - `_try_reuse` (function)\n        - `derive_session_id` (function)\n        - `ensure_daemon_running` (function)\n        - `join` (method)\n        - `list_concepts` (method)\n        - `lock` (method)\n        - `note_contention` (function)\n        - `read_concept` (method)\n        - `register_flusher` (function)\n        - `resolve_workspace` (function)\n        - `start_flusher` (function)\n        - `stat` (method)\n        - `store_key` (function)\n        - `strip_private_data` (function)\n        - `sweep_strays` (function)\n        - `write_validity` (function)\n          - `_ensure_running_daemonize` (function)\n          - `_ensure_running_launchd` (function)\n          - `_is_lock_contention` (function)\n          - `_load_registry` (function)\n          - `_lockfile_path` (function)\n          - `_okf_bundle_lock` (function)\n          - `_rel_id` (function)\n          - `_settle_active` (method)\n          - `_spacer_if_needed` (method)\n          - `_start_lock` (function)\n          - `_validate_concept_path` (method)\n          - `find_strays` (function)\n          - `from_file` (method)\n          - `healthz_json` (function)\n          - `index` (method)\n          - `mcp_url` (function)\n          - `open` (function)\n          - `resolve` (method)\n          - `terminate_pid` (function)\n          - `write_concept` (method)\n            - `_children_of` (function)\n            - `_cycle_wedged_daemon` (function)\n            - `_daemonize_exec` (function)\n            - `_db_holder_pids` (function)\n            - `_from_text` (method)\n            - `_is_cairn_serve_cmdline` (function)\n            - `_lockfile_path` (function)\n            - `_pgrep_candidates` (function)\n            - `_pid_cmdline` (function)\n            - `_still_ours` (function)\n            - `_stop_live` (method)\n            - `_value` (function)\n            - `_wait_for_healthz` (function)\n            - `_write_pidfile` (function)\n            - `daemon_home` (function)\n            - `entry` (function)\n            - `healthz_responds` (function)\n            - `highlight` (function)\n            - `is_loaded` (function)\n            - `kill` (method)\n            - `load` (function)\n            - `pidfile_pid` (function)\n            - `render_plist` (function)\n            - `running_pid` (function)\n            - `to_file` (method)\n            - `unload` (function)\n            - `update_log` (method)\n            - `warning` (function)\n            - `write_plist` (function)\n              - `_coerce_timestamp` (function)\n              - `_exit` (function)\n              - `_run_launchctl` (function)\n              - `_split_frontmatter` (method)\n              - `_unload_legacy_label_once` (function)\n              - `cairn_home_env` (function)\n              - `cg_bin` (function)\n              - `daemon_log_path` (function)\n              - `decode` (method)\n              - `is_macos` (function)\n              - `log_path` (function)\n              - `pick` (function)\n              - `pidfile_path` (function)\n              - `plist_path` (function)\n              - `pop` (method)\n              - `push` (method)\n              - `stop` (method)\n              - `to_markdown` (method)\n                - `_current_cairn_home` (function)\n                - `_default_generated_by` (function)\n                - `_frontmatter_close` (function)\n                - `_maybe_draw` (method)\n                - `_running_bin` (function)\n                - `agents_dir` (function)\n                - `cairn_home_is_default` (function)\n                - `close` (function)\n                - `find` (method)\n                - `focusUrl` (function)\n                - `replace` (function)\n                - `shutil_which` (function)\n                - `write` (method)\n\nBranch points:\n  `resolve_workspace` -> `resolve`, `_load_registry`\n  `resolve_store` -> `resolve_workspace`, `store_key`, `StorePaths`\n  `render_env_resolution_chain` -> `join`, `_entry`, `resolve_store`\n  `_try_reuse` -> `healthz_json`, `resolve_store`, `mcp_url`\n  `pick` -> `close`, `focusUrl`\n  `entry` -> `push`, `join`, `pick`\n  `open` -> `entry`, `highlight`\n  `_acquire_start_lock` -> `_lockfile_path`, `open`\n\nTerminal calls: `_children_of`, `_db_holder_pids`, `_entry`, `_exit`, `_is_cairn_serve_cmdline`, `_is_lock_contention`, `_migrate_dataflow_pk`, `_pgrep_candidates`\n\nCyclic calls: `invoke`"
+      }
+    ],
+    "structuredContent": {
+      "result": "Traced 119 step(s) from 'invoke' (49 branches, 32 terminals):\n- `invoke` (method)\n  - `_record_invocation` (function)\n  - `_wire_flusher_conn` (function)\n  - `sub_path` (function)\n    - `get_db` (function)\n    - `record_cli_invocation` (function)\n      - `_apply_schema` (function)\n      - `_maybe_backfill_fts` (function)\n      - `_maybe_backfill_memory_validity` (function)\n      - `_start_cli_flusher` (function)\n      - `build_row` (function)\n      - `connect` (function)\n      - `is_read_only` (function)\n      - `is_telemetry_off` (function)\n      - `render_env_resolution_chain` (function)\n      - `resolve_store` (function)\n        - `OKFBundle` (class)\n        - `StorePaths` (class)\n        - `_acquire_start_lock` (function)\n        - `_entry` (function)\n        - `_extract_migration_name` (function)\n        - `_migrate_dataflow_pk` (function)\n        - `_report` (function)\n        - `_try_reuse` (function)\n        - `derive_session_id` (function)\n        - `ensure_daemon_running` (function)\n        - `join` (method)\n        - `list_concepts` (method)\n        - `lock` (method)\n        - `note_contention` (function)\n        - `read_concept` (method)\n        - `register_flusher` (function)\n        - `resolve_workspace` (function)\n        - `start_flusher` (function)\n        - `stat` (method)\n        - `store_key` (function)\n        - `strip_private_data` (function)\n        - `sweep_strays` (function)\n        - `write_validity` (function)\n          - `_ensure_running_daemonize` (function)\n          - `_ensure_running_launchd` (function)\n          - `_is_lock_contention` (function)\n          - `_load_registry` (function)\n          - `_lockfile_path` (function)\n          - `_okf_bundle_lock` (function)\n          - `_rel_id` (function)\n          - `_settle_active` (method)\n          - `_spacer_if_needed` (method)\n          - `_start_lock` (function)\n          - `_validate_concept_path` (method)\n          - `find_strays` (function)\n          - `from_file` (method)\n          - `healthz_json` (function)\n          - `index` (method)\n          - `mcp_url` (function)\n          - `open` (function)\n          - `resolve` (method)\n          - `terminate_pid` (function)\n          - `write_concept` (method)\n            - `_children_of` (function)\n            - `_cycle_wedged_daemon` (function)\n            - `_daemonize_exec` (function)\n            - `_db_holder_pids` (function)\n            - `_from_text` (method)\n            - `_is_cairn_serve_cmdline` (function)\n            - `_lockfile_path` (function)\n            - `_pgrep_candidates` (function)\n            - `_pid_cmdline` (function)\n            - `_still_ours` (function)\n            - `_stop_live` (method)\n            - `_value` (function)\n            - `_wait_for_healthz` (function)\n            - `_write_pidfile` (function)\n            - `daemon_home` (function)\n            - `entry` (function)\n            - `healthz_responds` (function)\n            - `highlight` (function)\n            - `is_loaded` (function)\n            - `kill` (method)\n            - `load` (function)\n            - `pidfile_pid` (function)\n            - `render_plist` (function)\n            - `running_pid` (function)\n            - `to_file` (method)\n            - `unload` (function)\n            - `update_log` (method)\n            - `warning` (function)\n            - `write_plist` (function)\n              - `_coerce_timestamp` (function)\n              - `_exit` (function)\n              - `_run_launchctl` (function)\n              - `_split_frontmatter` (method)\n              - `_unload_legacy_label_once` (function)\n              - `cairn_home_env` (function)\n              - `cg_bin` (function)\n              - `daemon_log_path` (function)\n              - `decode` (method)\n              - `is_macos` (function)\n              - `log_path` (function)\n              - `pick` (function)\n              - `pidfile_path` (function)\n              - `plist_path` (function)\n              - `pop` (method)\n              - `push` (method)\n              - `stop` (method)\n              - `to_markdown` (method)\n                - `_current_cairn_home` (function)\n                - `_default_generated_by` (function)\n                - `_frontmatter_close` (function)\n                - `_maybe_draw` (method)\n                - `_running_bin` (function)\n                - `agents_dir` (function)\n                - `cairn_home_is_default` (function)\n                - `close` (function)\n                - `find` (method)\n                - `focusUrl` (function)\n                - `replace` (function)\n                - `shutil_which` (function)\n                - `write` (method)\n\nBranch points:\n  `resolve_workspace` -> `resolve`, `_load_registry`\n  `resolve_store` -> `resolve_workspace`, `store_key`, `StorePaths`\n  `render_env_resolution_chain` -> `join`, `_entry`, `resolve_store`\n  `_try_reuse` -> `healthz_json`, `resolve_store`, `mcp_url`\n  `pick` -> `close`, `focusUrl`\n  `entry` -> `push`, `join`, `pick`\n  `open` -> `entry`, `highlight`\n  `_acquire_start_lock` -> `_lockfile_path`, `open`\n\nTerminal calls: `_children_of`, `_db_holder_pids`, `_entry`, `_exit`, `_is_cairn_serve_cmdline`, `_is_lock_contention`, `_migrate_dataflow_pk`, `_pgrep_candidates`\n\nCyclic calls: `invoke`"
+    }
+  }
+}

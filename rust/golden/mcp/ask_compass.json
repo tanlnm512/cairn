@@ -1,0 +1,61 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "ask_compass",
+  "arguments": {
+    "query": "how does the build resolve call edges"
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/golden_record.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": "156f7511960e7d063f49bf8d6e1b510c24a5bfd5",
+      "git_dirty_entries": 74
+    },
+    "store": {
+      "repos": 1,
+      "files": 657,
+      "symbols": 10864,
+      "edges": 72466
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "knowledge_bundle_seeded_files": 490,
+    "captured_at": "2026-10-18T16:38:40.929627+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "store_home_resolved",
+      "home_resolved",
+      "store_home",
+      "home",
+      "workspace",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": true,
+    "mask_list_lines": true
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [8 members]\n  callers: [10 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 18\n  seed_count: 14\n  seeds: [14 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
+      }
+    ],
+    "structuredContent": {
+      "result": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [8 members]\n  callers: [10 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 18\n  seed_count: 14\n  seeds: [14 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
+    }
+  }
+}

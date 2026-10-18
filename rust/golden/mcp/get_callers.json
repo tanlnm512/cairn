@@ -1,0 +1,62 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "get_callers",
+  "arguments": {
+    "name": "invoke",
+    "limit": 20
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/golden_record.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": "156f7511960e7d063f49bf8d6e1b510c24a5bfd5",
+      "git_dirty_entries": 74
+    },
+    "store": {
+      "repos": 1,
+      "files": 657,
+      "symbols": 10864,
+      "edges": 72466
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "knowledge_bundle_seeded_files": 490,
+    "captured_at": "2026-10-18T16:38:40.918887+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "store_home_resolved",
+      "home_resolved",
+      "store_home",
+      "home",
+      "workspace",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "20 callers of 'invoke':\n  class _RecordingGroup  src/cairn/cli/main.py:74  (cairn)\n  method invoke  src/cairn/cli/main.py:90  (cairn)\n  function serve_restart  src/cairn/cli/serve.py:290  (cairn)\n  function serve_restart  src/cairn/cli/serve.py:291  (cairn)\n  method _invoke  tests/test_agent_suite.py:301  (cairn)\n  method test_help_lists_agent_and_runs  tests/test_agent_suite.py:331  (cairn)\n  method test_agent_baseline_headers_and_compares  tests/test_agent_suite.py:378  (cairn)\n  method test_agent_baseline_regression_exits_2  tests/test_agent_suite.py:417  (cairn)\n  method test_task_missing_from_baseline_renders_no_baseline_marker  tests/test_agent_suite.py:461  (cairn)\n  function test_cli_multivector_rebuilds_both_indexes  tests/test_ann_vecmv.py:298  (cairn)\n  function test_cli_multivector_rebuilds_both_indexes  tests/test_ann_vecmv.py:325  (cairn)\n  function test_cli_build_index_flag_forces_rebuild_when_backend_off  tests/test_ann_vecmv.py:365  (cairn)\n  function test_query_commands_never_write_under_read_only  tests/test_audit_r2_a3.py:87  (cairn)\n  function test_impact_and_deps_json_empty_exit_nonzero  tests/test_audit_r2_a3.py:100  (cairn)\n  function test_impact_and_deps_json_empty_exit_nonzero  tests/test_audit_r2_a3.py:104  (cairn)\n  function test_impact_depth_is_bounded  tests/test_audit_r2_a3.py:116  (cairn)\n  function test_tree_reports_truncation  tests/test_audit_r2_a3.py:145  (cairn)\n  function test_path_rejects_empty_patterns  tests/test_audit_r2_a3.py:156  (cairn)\n  function test_dataflow_lookup_names_non_public_symbols  tests/test_audit_r2_a3.py:329  (cairn)\n  function test_dataflow_lookup_names_non_public_symbols  tests/test_audit_r2_a3.py:333  (cairn)\n  ... hit the limit cap; pass a higher limit for more."
+      }
+    ],
+    "structuredContent": {
+      "result": "20 callers of 'invoke':\n  class _RecordingGroup  src/cairn/cli/main.py:74  (cairn)\n  method invoke  src/cairn/cli/main.py:90  (cairn)\n  function serve_restart  src/cairn/cli/serve.py:290  (cairn)\n  function serve_restart  src/cairn/cli/serve.py:291  (cairn)\n  method _invoke  tests/test_agent_suite.py:301  (cairn)\n  method test_help_lists_agent_and_runs  tests/test_agent_suite.py:331  (cairn)\n  method test_agent_baseline_headers_and_compares  tests/test_agent_suite.py:378  (cairn)\n  method test_agent_baseline_regression_exits_2  tests/test_agent_suite.py:417  (cairn)\n  method test_task_missing_from_baseline_renders_no_baseline_marker  tests/test_agent_suite.py:461  (cairn)\n  function test_cli_multivector_rebuilds_both_indexes  tests/test_ann_vecmv.py:298  (cairn)\n  function test_cli_multivector_rebuilds_both_indexes  tests/test_ann_vecmv.py:325  (cairn)\n  function test_cli_build_index_flag_forces_rebuild_when_backend_off  tests/test_ann_vecmv.py:365  (cairn)\n  function test_query_commands_never_write_under_read_only  tests/test_audit_r2_a3.py:87  (cairn)\n  function test_impact_and_deps_json_empty_exit_nonzero  tests/test_audit_r2_a3.py:100  (cairn)\n  function test_impact_and_deps_json_empty_exit_nonzero  tests/test_audit_r2_a3.py:104  (cairn)\n  function test_impact_depth_is_bounded  tests/test_audit_r2_a3.py:116  (cairn)\n  function test_tree_reports_truncation  tests/test_audit_r2_a3.py:145  (cairn)\n  function test_path_rejects_empty_patterns  tests/test_audit_r2_a3.py:156  (cairn)\n  function test_dataflow_lookup_names_non_public_symbols  tests/test_audit_r2_a3.py:329  (cairn)\n  function test_dataflow_lookup_names_non_public_symbols  tests/test_audit_r2_a3.py:333  (cairn)\n  ... hit the limit cap; pass a higher limit for more."
+    }
+  }
+}
