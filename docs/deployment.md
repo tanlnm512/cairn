@@ -12,6 +12,15 @@ transports are gone — stdio/SSE-specific options (including any
 replacement. `cairn connect` ensures the daemon is running and prints its
 URL.
 
+During the transition window the daemon implementation is selectable; both
+serve the same store, port, and contracts:
+
+- `CAIRN_DAEMON_IMPL=rust` (or `cairn connect --impl rust`) starts the
+  Rust daemon — `cairn serve run` in the binary is itself the Rust daemon.
+- The default resolves to the Python daemon (the PyPI CLI's entry point,
+  overridable with `CAIRN_BIN`).
+- `cairn doctor` reports which implementation is serving.
+
 ## Serve surface
 
 All flags below work on both `cairn serve` and `cairn serve run`:
@@ -25,9 +34,10 @@ All flags below work on both `cairn serve` and `cairn serve run`:
 | `--read-only` | the daemon is read-write by default (live watcher, memory writes); `--read-only` disables both |
 
 `cairn serve start\|stop\|status\|restart` manage the daemon — the macOS
-launchd LaunchAgent, or a daemonized background process elsewhere. `cairn
-connect` is the lighter entrypoint: it starts the daemon on first dial and
-reuses a healthy one.
+launchd LaunchAgent (the plist execs the binary the impl selection picked),
+or a daemonized background process elsewhere. `cairn connect` is the
+lighter entrypoint: it starts the daemon on first dial and reuses a healthy
+one (its reuse-guard reads `/healthz`).
 
 ## Key policy
 
@@ -91,7 +101,27 @@ session state, so replicas behind a load balancer need no affinity.
 
 ## Container serving
 
-Build from the repo root and run with a volume-mounted store:
+Two image shapes serve the same store contract.
+
+**Static binary image** — the Linux release tarballs are musl-static, so a
+minimal base image suffices:
+
+```
+FROM alpine:3.20
+ARG CAIRN_VERSION
+ADD "https://github.com/tanlnm512/cairn/releases/download/v${CAIRN_VERSION}/cairn-cli-${CAIRN_VERSION}-x86_64-unknown-linux-musl.tar.gz" /tmp/
+RUN tar -xzf /tmp/cairn-cli-*.tar.gz -C /usr/local/bin && rm -rf /tmp/cairn-cli-*
+ENV CAIRN_HOME=/data
+RUN adduser -D -u 1000 cairn && mkdir -p /data && chown cairn /data
+VOLUME /data
+USER cairn
+EXPOSE 9876
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["wget", "-qO-", "http://127.0.0.1:9876/healthz"]
+ENTRYPOINT ["cairn", "serve", "--host", "0.0.0.0"]
+```
+
+**The checked-in Dockerfile** builds the PyPI package:
 
 ```
 docker build -t cairn .
@@ -101,8 +131,8 @@ docker run -d --name cairn -p 9876:9876 \
   cairn
 ```
 
-The image is `python:3.12-slim`, runs as a dedicated non-root user, and its
-entrypoint is `cairn serve --host 0.0.0.0` with
+The checked-in image is `python:3.12-slim`, runs as a dedicated non-root
+user, and its entrypoint is `cairn serve --host 0.0.0.0` with
 `CAIRN_HOME=/data` and `EXPOSE 9876`. The key comes from the environment:
 a keyless container on the wildcard entrypoint exits nonzero at boot
 instead of serving unprotected.
