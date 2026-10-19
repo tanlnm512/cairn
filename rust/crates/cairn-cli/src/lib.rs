@@ -2,7 +2,12 @@
 
 pub mod build_graph;
 pub mod canonical_dump;
+pub mod cli;
 pub mod closure;
+pub mod cmds_core;
+pub mod cmds_knowledge;
+pub mod cmds_system;
+pub mod display;
 
 /// Returns the crate name; skeleton smoke contract.
 pub fn crate_name() -> &'static str {
