@@ -2,6 +2,10 @@
   "schema": "cairn-rust-golden-mcp/1",
   "tool": "repo_map",
   "arguments": {},
+  "replay": {
+    "args": {},
+    "seq": 8
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -22,8 +26,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:30.481066+00:00"
+    "captured_at": "2026-10-19T15:28:38.411220+00:00"
   },
   "normalization": {
     "rules": [
@@ -40,8 +43,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -57,5 +59,7 @@
     "structuredContent": {
       "result": "Repository corpus\n  tests: 16 files, 960 symbols, 3364 edges\n    hexescape (tests/test_quoting.py, in-degree 7)\n    TstModel (tests/test_pydantic.py, in-degree 4)\n    A (tests/test_cached_property.py, in-degree 3)\n    dropped hubs: 941\n  yarl: 8 files, 130 symbols, 819 edges\n    URL (yarl/_url.py, in-degree 747)\n    URL.build (yarl/_url.py, in-degree 83)\n    _Quoter (yarl/_quoting_py.py, in-degree 75)\n    dropped hubs: 127\n  dropped clusters: 0\nWorkspace hotspots\n  corpus:yarl/_url.py URL (in-degree 747)\n  corpus:yarl/_url.py URL.build (in-degree 83)\n  corpus:yarl/_quoting_py.py _Quoter (in-degree 75)\n  corpus:yarl/_url.py URL.with_query (in-degree 46)\n  corpus:yarl/_quoting_py.py _Unquoter (in-degree 39)\n  corpus:yarl/_url.py URL.join (in-degree 27)\n  corpus:yarl/_url.py URL.update_query (in-degree 26)\n  corpus:yarl/_url.py URL.with_suffix (in-degree 21)\n  corpus:yarl/_url.py URL.human_repr (in-degree 20)\n  corpus:yarl/_url.py URL.extend_query (in-degree 19)\n  corpus:yarl/_url.py URL.with_name (in-degree 18)\n  corpus:yarl/_url.py URL.with_port (in-degree 18)\n  dropped hotspots: 1062"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/yarl/store.kg",
+  "replay_workspace": "rust/golden/stores/yarl/corpus"
 }

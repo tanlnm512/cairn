@@ -2,7 +2,13 @@
   "schema": "cairn-rust-golden-mcp/1",
   "tool": "search_symbols",
   "arguments": {
-    "pattern": "A*"
+    "pattern": "C*"
+  },
+  "replay": {
+    "args": {
+      "pattern": "C*"
+    },
+    "seq": 7
   },
   "capture": {
     "impl": "python",
@@ -24,8 +30,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:30.479961+00:00"
+    "captured_at": "2026-10-19T15:28:38.410560+00:00"
   },
   "normalization": {
     "rules": [
@@ -42,8 +47,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": true,
     "mask_list_lines": false
@@ -53,11 +57,105 @@
     "content": [
       {
         "type": "text",
-        "text": "  ... and 50 more\n  class A  tests/test_cached_property.py:6  (corpus)\n  function test_abs_cmp  tests/test_url.py:116  (corpus)\n  function test_abs_hash  tests/test_url.py:123  (corpus)\n  function test_authority_full  tests/test_url.py:288  (corpus)\n  function test_authority_short  tests/test_url.py:294  (corpus)\n  function test_build_already_encoded  tests/test_url_build.py:402  (corpus)\n  function test_build_authority_with_text_after_bracket_is_invalid  tests/test_url.py:424  (corpus)\n  function test_build_with_all  tests/test_url_build.py:219  (corpus)\n  function test_build_with_authority  tests/test_url_build.py:286  (corpus)\n  function test_build_with_authority_and_host  tests/test_url_build.py:233  (corpus)\n  function test_build_with_authority_and_only_user  tests/test_url_build.py:311  (corpus)\n  function test_build_with_authority_percent_encoded_already_encoded  tests/test_url_build.py:483  (corpus)\n  function test_build_with_authority_with_ipv6_and_port  tests/test_url_build.py:326  (corpus)\n  function test_build_without_arguments  tests/test_url_build.py:8  (corpus)\n  function test_div_with_colon_and_at  tests/test_url.py:1248  (corpus)\n  function test_empty_authority  tests/test_url.py:2444  (corpus)\n  function test_extend_query_with_args_and_kwargs  tests/test_update_query.py:410  (corpus)\n  function test_extend_query_with_args_and_kwargs_with_existing  tests/test_update_query.py:447  (corpus)\n  function test_extend_query_with_non_ascii_as_str  tests/test_update_query.py:460  (corpus)\n  function test_from_ascii_login_and_password  tests/test_url.py:2079  (corpus)\n  function test_from_non_ascii_login_and_password  tests/test_url.py:2094  (corpus)\n  function test_is_absolute_for_absolute_url  tests/test_url.py:1972  (corpus)\n  function test_join_absolute  tests/test_url.py:2285  (corpus)\n  function test_quote_non_ascii  tests/test_quoting.py:422  (corpus)\n  function test_quote_non_ascii2  tests/test_quoting.py:426  (corpus)\n  function test_quoter_ascii  tests/test_quoting_benchmarks.py:30  (corpus)\n  function test_raw_path_for_colon_and_at  tests/test_url.py:778  (corpus)\n  function test_reify_assignment  tests/test_cached_property.py:26  (corpus)\n  function test_relative_abs_parts_are_removed  tests/test_url.py:2564  (corpus)\n  function test_unquoter_long_ascii  tests/test_quoting_benchmarks.py:79  (corpus)\n  function test_update_query_with_args_and_kwargs  tests/test_update_query.py:29  (corpus)\n  function test_update_query_with_non_ascii_as_str  tests/test_update_query.py:379  (corpus)\n  function test_url_make_with_ipv4_address_and_path  tests/test_url_benchmarks.py:301  (corpus)\n  function test_url_make_with_ipv4_address_path_and_port  tests/test_url_benchmarks.py:292  (corpus)\n  function test_url_make_with_ipv6_address_and_path  tests/test_url_benchmarks.py:319  (corpus)\n  function test_url_make_with_ipv6_address_path_and_port  tests/test_url_benchmarks.py:310  (corpus)\n  function test_with_multidict_with_spaces_and_non_ascii  tests/test_update_query.py:283  (corpus)\n  function test_with_name_within_colon_and_at  tests/test_url.py:1775  (corpus)\n  function test_with_query_kwargs_and_args_are_mutually_exclusive  tests/test_update_query.py:71  (corpus)\n  function test_with_query_str_non_ascii_and_spaces  tests/test_update_query.py:108  (corpus)\n  method absolute  yarl/_url.py:736  (corpus)\n  method authority  yarl/_url.py:768  (corpus)\n  method is_absolute  yarl/_url.py:667  (corpus)\n  method test_absolute_base_builder_keeps_colon  tests/test_url_parsing.py:900  (corpus)\n  method test_all_empty  tests/test_url_parsing.py:453  (corpus)\n  method test_colon_after_slash_builder_not_affected  tests/test_url_parsing.py:906  (corpus)\n  method test_colon_in_later_segment_not_affected  tests/test_url_parsing.py:776  (corpus)\n  method test_ipvfuture_address  tests/test_url_parsing.py:179  (corpus)\n  method test_relative_keeps_colon_after_slash  tests/test_url_parsing.py:932  (corpus)\n  method with_query  yarl/_url.py:1277  (corpus)\n100 symbols matching 'A*':"
+        "text": "100 symbols matching 'C*':\n  function cache_clear  yarl/_url.py:1732  (corpus)\n  function cache_configure  yarl/_url.py:1752  (corpus)\n  function test_cache_clear  tests/test_cache.py:12  (corpus)\n  class _CStr  tests/test_update_query.py:170  (corpus)\n  class _CInt  tests/test_update_query.py:179  (corpus)\n  class _CFloat  tests/test_update_query.py:183  (corpus)\n  class CacheInfo  yarl/_url.py:160  (corpus)\n  function test_cache_configure_default  tests/test_cache.py:27  (corpus)\n  function test_cache_configure_None  tests/test_cache.py:31  (corpus)\n  function test_cache_configure_explicit  tests/test_cache.py:72  (corpus)\n  function test_cache_configure_waring  tests/test_cache.py:83  (corpus)\n  method __call__  yarl/_quoting_py.py:37  (corpus)\n  method __call__  yarl/_quoting_py.py:39  (corpus)\n  method __call__  yarl/_quoting_py.py:40  (corpus)\n  method __call__  yarl/_quoting_py.py:138  (corpus)\n  method __call__  yarl/_quoting_py.py:140  (corpus)\n  method __call__  yarl/_quoting_py.py:141  (corpus)\n  function test_control_chars_are_removed  tests/test_url.py:2732  (corpus)\n  function cache_info  yarl/_url.py:1740  (corpus)\n  function _check_netloc  yarl/_parse.py:108  (corpus)\n  function test_cache_configure_None_including_deprecated  tests/test_cache.py:39  (corpus)\n  function test_cache_configure_None_only_deprecated  tests/test_cache.py:58  (corpus)\n  module test_cache  tests/test_cache.py:1  (corpus)\n  method test_canonical  tests/test_url_parsing.py:99  (corpus)\n  method test_canonical  tests/test_url_parsing.py:189  (corpus)\n  method test_canonical  tests/test_url_parsing.py:234  (corpus)\n  function test_cache_info  tests/test_cache.py:16  (corpus)\n  function test_fake_cover  tests/test_pydantic.py:59  (corpus)\n  function test_reify_class  tests/test_cached_property.py:21  (corpus)\n  function test_abs_cmp  tests/test_url.py:116  (corpus)\n  function test_compressed_ipv6  tests/test_url.py:329  (corpus)\n  method _cache_netloc  yarl/_url.py:661  (corpus)\n  module test_cached_property  tests/test_cached_property.py:1  (corpus)\n  method test_complex_scheme  tests/test_url_parsing.py:25  (corpus)\n  method test_complex_userinfo  tests/test_url_parsing.py:253  (corpus)\n  method test_complex_frag  tests/test_url_parsing.py:437  (corpus)\n  function test_quoting_c_loaded  tests/test_quoting.py:41  (corpus)\n  function test_hash_double_call  tests/test_url_cmp_and_hash.py:20  (corpus)\n  method test_complex_query  tests/test_url_parsing.py:355  (corpus)\n  function test_join_cpython_urljoin  tests/test_url.py:2427  (corpus)\n  function _idna_collapses  tests/test_url.py:2795  (corpus)\n  function __get_pydantic_core_schema__  yarl/_url.py:1595  (corpus)\n  function test_parsing_populates_cache  tests/test_url.py:2630  (corpus)\n  function test_quote_percent_last_character  tests/test_quoting.py:378  (corpus)\n  function test_quote_qs_with_colon  tests/test_quoting.py:518  (corpus)\n  function test_with_query_complex_url  tests/test_update_query.py:361  (corpus)\n  function test_raw_host_empty_cache  tests/test_url_benchmarks.py:237  (corpus)\n  function test_with_custom_port_normalization  tests/test_url_update_netloc.py:280  (corpus)\n  module test_url_cmp_and_hash  tests/test_url_cmp_and_hash.py:1  (corpus)\n  function test_relative_url_populates_cache  tests/test_url.py:2667  (corpus)\n  ... and 50 more"
       }
     ],
     "structuredContent": {
-      "result": "  ... and 50 more\n  class A  tests/test_cached_property.py:6  (corpus)\n  function test_abs_cmp  tests/test_url.py:116  (corpus)\n  function test_abs_hash  tests/test_url.py:123  (corpus)\n  function test_authority_full  tests/test_url.py:288  (corpus)\n  function test_authority_short  tests/test_url.py:294  (corpus)\n  function test_build_already_encoded  tests/test_url_build.py:402  (corpus)\n  function test_build_authority_with_text_after_bracket_is_invalid  tests/test_url.py:424  (corpus)\n  function test_build_with_all  tests/test_url_build.py:219  (corpus)\n  function test_build_with_authority  tests/test_url_build.py:286  (corpus)\n  function test_build_with_authority_and_host  tests/test_url_build.py:233  (corpus)\n  function test_build_with_authority_and_only_user  tests/test_url_build.py:311  (corpus)\n  function test_build_with_authority_percent_encoded_already_encoded  tests/test_url_build.py:483  (corpus)\n  function test_build_with_authority_with_ipv6_and_port  tests/test_url_build.py:326  (corpus)\n  function test_build_without_arguments  tests/test_url_build.py:8  (corpus)\n  function test_div_with_colon_and_at  tests/test_url.py:1248  (corpus)\n  function test_empty_authority  tests/test_url.py:2444  (corpus)\n  function test_extend_query_with_args_and_kwargs  tests/test_update_query.py:410  (corpus)\n  function test_extend_query_with_args_and_kwargs_with_existing  tests/test_update_query.py:447  (corpus)\n  function test_extend_query_with_non_ascii_as_str  tests/test_update_query.py:460  (corpus)\n  function test_from_ascii_login_and_password  tests/test_url.py:2079  (corpus)\n  function test_from_non_ascii_login_and_password  tests/test_url.py:2094  (corpus)\n  function test_is_absolute_for_absolute_url  tests/test_url.py:1972  (corpus)\n  function test_join_absolute  tests/test_url.py:2285  (corpus)\n  function test_quote_non_ascii  tests/test_quoting.py:422  (corpus)\n  function test_quote_non_ascii2  tests/test_quoting.py:426  (corpus)\n  function test_quoter_ascii  tests/test_quoting_benchmarks.py:30  (corpus)\n  function test_raw_path_for_colon_and_at  tests/test_url.py:778  (corpus)\n  function test_reify_assignment  tests/test_cached_property.py:26  (corpus)\n  function test_relative_abs_parts_are_removed  tests/test_url.py:2564  (corpus)\n  function test_unquoter_long_ascii  tests/test_quoting_benchmarks.py:79  (corpus)\n  function test_update_query_with_args_and_kwargs  tests/test_update_query.py:29  (corpus)\n  function test_update_query_with_non_ascii_as_str  tests/test_update_query.py:379  (corpus)\n  function test_url_make_with_ipv4_address_and_path  tests/test_url_benchmarks.py:301  (corpus)\n  function test_url_make_with_ipv4_address_path_and_port  tests/test_url_benchmarks.py:292  (corpus)\n  function test_url_make_with_ipv6_address_and_path  tests/test_url_benchmarks.py:319  (corpus)\n  function test_url_make_with_ipv6_address_path_and_port  tests/test_url_benchmarks.py:310  (corpus)\n  function test_with_multidict_with_spaces_and_non_ascii  tests/test_update_query.py:283  (corpus)\n  function test_with_name_within_colon_and_at  tests/test_url.py:1775  (corpus)\n  function test_with_query_kwargs_and_args_are_mutually_exclusive  tests/test_update_query.py:71  (corpus)\n  function test_with_query_str_non_ascii_and_spaces  tests/test_update_query.py:108  (corpus)\n  method absolute  yarl/_url.py:736  (corpus)\n  method authority  yarl/_url.py:768  (corpus)\n  method is_absolute  yarl/_url.py:667  (corpus)\n  method test_absolute_base_builder_keeps_colon  tests/test_url_parsing.py:900  (corpus)\n  method test_all_empty  tests/test_url_parsing.py:453  (corpus)\n  method test_colon_after_slash_builder_not_affected  tests/test_url_parsing.py:906  (corpus)\n  method test_colon_in_later_segment_not_affected  tests/test_url_parsing.py:776  (corpus)\n  method test_ipvfuture_address  tests/test_url_parsing.py:179  (corpus)\n  method test_relative_keeps_colon_after_slash  tests/test_url_parsing.py:932  (corpus)\n  method with_query  yarl/_url.py:1277  (corpus)\n100 symbols matching 'A*':"
+      "result": "100 symbols matching 'C*':\n  function cache_clear  yarl/_url.py:1732  (corpus)\n  function cache_configure  yarl/_url.py:1752  (corpus)\n  function test_cache_clear  tests/test_cache.py:12  (corpus)\n  class _CStr  tests/test_update_query.py:170  (corpus)\n  class _CInt  tests/test_update_query.py:179  (corpus)\n  class _CFloat  tests/test_update_query.py:183  (corpus)\n  class CacheInfo  yarl/_url.py:160  (corpus)\n  function test_cache_configure_default  tests/test_cache.py:27  (corpus)\n  function test_cache_configure_None  tests/test_cache.py:31  (corpus)\n  function test_cache_configure_explicit  tests/test_cache.py:72  (corpus)\n  function test_cache_configure_waring  tests/test_cache.py:83  (corpus)\n  method __call__  yarl/_quoting_py.py:37  (corpus)\n  method __call__  yarl/_quoting_py.py:39  (corpus)\n  method __call__  yarl/_quoting_py.py:40  (corpus)\n  method __call__  yarl/_quoting_py.py:138  (corpus)\n  method __call__  yarl/_quoting_py.py:140  (corpus)\n  method __call__  yarl/_quoting_py.py:141  (corpus)\n  function test_control_chars_are_removed  tests/test_url.py:2732  (corpus)\n  function cache_info  yarl/_url.py:1740  (corpus)\n  function _check_netloc  yarl/_parse.py:108  (corpus)\n  function test_cache_configure_None_including_deprecated  tests/test_cache.py:39  (corpus)\n  function test_cache_configure_None_only_deprecated  tests/test_cache.py:58  (corpus)\n  module test_cache  tests/test_cache.py:1  (corpus)\n  method test_canonical  tests/test_url_parsing.py:99  (corpus)\n  method test_canonical  tests/test_url_parsing.py:189  (corpus)\n  method test_canonical  tests/test_url_parsing.py:234  (corpus)\n  function test_cache_info  tests/test_cache.py:16  (corpus)\n  function test_fake_cover  tests/test_pydantic.py:59  (corpus)\n  function test_reify_class  tests/test_cached_property.py:21  (corpus)\n  function test_abs_cmp  tests/test_url.py:116  (corpus)\n  function test_compressed_ipv6  tests/test_url.py:329  (corpus)\n  method _cache_netloc  yarl/_url.py:661  (corpus)\n  module test_cached_property  tests/test_cached_property.py:1  (corpus)\n  method test_complex_scheme  tests/test_url_parsing.py:25  (corpus)\n  method test_complex_userinfo  tests/test_url_parsing.py:253  (corpus)\n  method test_complex_frag  tests/test_url_parsing.py:437  (corpus)\n  function test_quoting_c_loaded  tests/test_quoting.py:41  (corpus)\n  function test_hash_double_call  tests/test_url_cmp_and_hash.py:20  (corpus)\n  method test_complex_query  tests/test_url_parsing.py:355  (corpus)\n  function test_join_cpython_urljoin  tests/test_url.py:2427  (corpus)\n  function _idna_collapses  tests/test_url.py:2795  (corpus)\n  function __get_pydantic_core_schema__  yarl/_url.py:1595  (corpus)\n  function test_parsing_populates_cache  tests/test_url.py:2630  (corpus)\n  function test_quote_percent_last_character  tests/test_quoting.py:378  (corpus)\n  function test_quote_qs_with_colon  tests/test_quoting.py:518  (corpus)\n  function test_with_query_complex_url  tests/test_update_query.py:361  (corpus)\n  function test_raw_host_empty_cache  tests/test_url_benchmarks.py:237  (corpus)\n  function test_with_custom_port_normalization  tests/test_url_update_netloc.py:280  (corpus)\n  module test_url_cmp_and_hash  tests/test_url_cmp_and_hash.py:1  (corpus)\n  function test_relative_url_populates_cache  tests/test_url.py:2667  (corpus)\n  ... and 50 more"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/yarl/store.kg",
+  "replay_workspace": "rust/golden/stores/yarl/corpus",
+  "spike_queries": [
+    {
+      "pattern": "C*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "100 symbols matching 'C*':\n  function cache_clear  yarl/_url.py:1732  (corpus)\n  function cache_configure  yarl/_url.py:1752  (corpus)\n  function test_cache_clear  tests/test_cache.py:12  (corpus)\n  class _CStr  tests/test_update_query.py:170  (corpus)\n  class _CInt  tests/test_update_query.py:179  (corpus)\n  class _CFloat  tests/test_update_query.py:183  (corpus)\n  class CacheInfo  yarl/_url.py:160  (corpus)\n  function test_cache_configure_default  tests/test_cache.py:27  (corpus)\n  function test_cache_configure_None  tests/test_cache.py:31  (corpus)\n  function test_cache_configure_explicit  tests/test_cache.py:72  (corpus)\n  function test_cache_configure_waring  tests/test_cache.py:83  (corpus)\n  method __call__  yarl/_quoting_py.py:37  (corpus)\n  method __call__  yarl/_quoting_py.py:39  (corpus)\n  method __call__  yarl/_quoting_py.py:40  (corpus)\n  method __call__  yarl/_quoting_py.py:138  (corpus)\n  method __call__  yarl/_quoting_py.py:140  (corpus)\n  method __call__  yarl/_quoting_py.py:141  (corpus)\n  function test_control_chars_are_removed  tests/test_url.py:2732  (corpus)\n  function cache_info  yarl/_url.py:1740  (corpus)\n  function _check_netloc  yarl/_parse.py:108  (corpus)\n  function test_cache_configure_None_including_deprecated  tests/test_cache.py:39  (corpus)\n  function test_cache_configure_None_only_deprecated  tests/test_cache.py:58  (corpus)\n  module test_cache  tests/test_cache.py:1  (corpus)\n  method test_canonical  tests/test_url_parsing.py:99  (corpus)\n  method test_canonical  tests/test_url_parsing.py:189  (corpus)\n  method test_canonical  tests/test_url_parsing.py:234  (corpus)\n  function test_cache_info  tests/test_cache.py:16  (corpus)\n  function test_fake_cover  tests/test_pydantic.py:59  (corpus)\n  function test_reify_class  tests/test_cached_property.py:21  (corpus)\n  function test_abs_cmp  tests/test_url.py:116  (corpus)\n  function test_compressed_ipv6  tests/test_url.py:329  (corpus)\n  method _cache_netloc  yarl/_url.py:661  (corpus)\n  module test_cached_property  tests/test_cached_property.py:1  (corpus)\n  method test_complex_scheme  tests/test_url_parsing.py:25  (corpus)\n  method test_complex_userinfo  tests/test_url_parsing.py:253  (corpus)\n  method test_complex_frag  tests/test_url_parsing.py:437  (corpus)\n  function test_quoting_c_loaded  tests/test_quoting.py:41  (corpus)\n  function test_hash_double_call  tests/test_url_cmp_and_hash.py:20  (corpus)\n  method test_complex_query  tests/test_url_parsing.py:355  (corpus)\n  function test_join_cpython_urljoin  tests/test_url.py:2427  (corpus)\n  function _idna_collapses  tests/test_url.py:2795  (corpus)\n  function __get_pydantic_core_schema__  yarl/_url.py:1595  (corpus)\n  function test_parsing_populates_cache  tests/test_url.py:2630  (corpus)\n  function test_quote_percent_last_character  tests/test_quoting.py:378  (corpus)\n  function test_quote_qs_with_colon  tests/test_quoting.py:518  (corpus)\n  function test_with_query_complex_url  tests/test_update_query.py:361  (corpus)\n  function test_raw_host_empty_cache  tests/test_url_benchmarks.py:237  (corpus)\n  function test_with_custom_port_normalization  tests/test_url_update_netloc.py:280  (corpus)\n  module test_url_cmp_and_hash  tests/test_url_cmp_and_hash.py:1  (corpus)\n  function test_relative_url_populates_cache  tests/test_url.py:2667  (corpus)\n  ... and 50 more"
+          }
+        ],
+        "structuredContent": {
+          "result": "100 symbols matching 'C*':\n  function cache_clear  yarl/_url.py:1732  (corpus)\n  function cache_configure  yarl/_url.py:1752  (corpus)\n  function test_cache_clear  tests/test_cache.py:12  (corpus)\n  class _CStr  tests/test_update_query.py:170  (corpus)\n  class _CInt  tests/test_update_query.py:179  (corpus)\n  class _CFloat  tests/test_update_query.py:183  (corpus)\n  class CacheInfo  yarl/_url.py:160  (corpus)\n  function test_cache_configure_default  tests/test_cache.py:27  (corpus)\n  function test_cache_configure_None  tests/test_cache.py:31  (corpus)\n  function test_cache_configure_explicit  tests/test_cache.py:72  (corpus)\n  function test_cache_configure_waring  tests/test_cache.py:83  (corpus)\n  method __call__  yarl/_quoting_py.py:37  (corpus)\n  method __call__  yarl/_quoting_py.py:39  (corpus)\n  method __call__  yarl/_quoting_py.py:40  (corpus)\n  method __call__  yarl/_quoting_py.py:138  (corpus)\n  method __call__  yarl/_quoting_py.py:140  (corpus)\n  method __call__  yarl/_quoting_py.py:141  (corpus)\n  function test_control_chars_are_removed  tests/test_url.py:2732  (corpus)\n  function cache_info  yarl/_url.py:1740  (corpus)\n  function _check_netloc  yarl/_parse.py:108  (corpus)\n  function test_cache_configure_None_including_deprecated  tests/test_cache.py:39  (corpus)\n  function test_cache_configure_None_only_deprecated  tests/test_cache.py:58  (corpus)\n  module test_cache  tests/test_cache.py:1  (corpus)\n  method test_canonical  tests/test_url_parsing.py:99  (corpus)\n  method test_canonical  tests/test_url_parsing.py:189  (corpus)\n  method test_canonical  tests/test_url_parsing.py:234  (corpus)\n  function test_cache_info  tests/test_cache.py:16  (corpus)\n  function test_fake_cover  tests/test_pydantic.py:59  (corpus)\n  function test_reify_class  tests/test_cached_property.py:21  (corpus)\n  function test_abs_cmp  tests/test_url.py:116  (corpus)\n  function test_compressed_ipv6  tests/test_url.py:329  (corpus)\n  method _cache_netloc  yarl/_url.py:661  (corpus)\n  module test_cached_property  tests/test_cached_property.py:1  (corpus)\n  method test_complex_scheme  tests/test_url_parsing.py:25  (corpus)\n  method test_complex_userinfo  tests/test_url_parsing.py:253  (corpus)\n  method test_complex_frag  tests/test_url_parsing.py:437  (corpus)\n  function test_quoting_c_loaded  tests/test_quoting.py:41  (corpus)\n  function test_hash_double_call  tests/test_url_cmp_and_hash.py:20  (corpus)\n  method test_complex_query  tests/test_url_parsing.py:355  (corpus)\n  function test_join_cpython_urljoin  tests/test_url.py:2427  (corpus)\n  function _idna_collapses  tests/test_url.py:2795  (corpus)\n  function __get_pydantic_core_schema__  yarl/_url.py:1595  (corpus)\n  function test_parsing_populates_cache  tests/test_url.py:2630  (corpus)\n  function test_quote_percent_last_character  tests/test_quoting.py:378  (corpus)\n  function test_quote_qs_with_colon  tests/test_quoting.py:518  (corpus)\n  function test_with_query_complex_url  tests/test_update_query.py:361  (corpus)\n  function test_raw_host_empty_cache  tests/test_url_benchmarks.py:237  (corpus)\n  function test_with_custom_port_normalization  tests/test_url_update_netloc.py:280  (corpus)\n  module test_url_cmp_and_hash  tests/test_url_cmp_and_hash.py:1  (corpus)\n  function test_relative_url_populates_cache  tests/test_url.py:2667  (corpus)\n  ... and 50 more"
+        }
+      }
+    },
+    {
+      "pattern": "cache_clear*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "2 symbols matching 'cache_clear*':\n  function test_cache_clear  tests/test_cache.py:12  (corpus)\n  function cache_clear  yarl/_url.py:1732  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "2 symbols matching 'cache_clear*':\n  function test_cache_clear  tests/test_cache.py:12  (corpus)\n  function cache_clear  yarl/_url.py:1732  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "cache_clear",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "2 symbols matching 'cache_clear':\n  function test_cache_clear  tests/test_cache.py:12  (corpus)\n  function cache_clear  yarl/_url.py:1732  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "2 symbols matching 'cache_clear':\n  function test_cache_clear  tests/test_cache.py:12  (corpus)\n  function cache_clear  yarl/_url.py:1732  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "CacheInfo*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "1 symbols matching 'CacheInfo*':\n  class CacheInfo  yarl/_url.py:160  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "1 symbols matching 'CacheInfo*':\n  class CacheInfo  yarl/_url.py:160  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "test_cache_configure_None_including_deprecated",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "1 symbols matching 'test_cache_configure_None_including_deprecated':\n  function test_cache_configure_None_including_deprecated  tests/test_cache.py:39  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "1 symbols matching 'test_cache_configure_None_including_deprecated':\n  function test_cache_configure_None_including_deprecated  tests/test_cache.py:39  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "zzz_no_match_spike*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "No symbols matching 'zzz_no_match_spike*'. The token may not be indexed or may use different casing/wording. Try a broader pattern (fewer characters, a leading wildcard), or semantic_search(\"zzz_no_match_spike*\") to match by meaning."
+          }
+        ],
+        "structuredContent": {
+          "result": "No symbols matching 'zzz_no_match_spike*'. The token may not be indexed or may use different casing/wording. Try a broader pattern (fewer characters, a leading wildcard), or semantic_search(\"zzz_no_match_spike*\") to match by meaning."
+        }
+      }
+    }
+  ]
 }

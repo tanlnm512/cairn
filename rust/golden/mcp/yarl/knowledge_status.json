@@ -5,6 +5,21 @@
     "new_status": "superseded",
     "doc_id": "knowledge/decision/golden-mcp-capture-status-probe"
   },
+  "replay": {
+    "args": {
+      "new_status": "superseded"
+    },
+    "setup": {
+      "tool": "knowledge_add",
+      "args": {
+        "title": "golden mcp capture status probe",
+        "body": "golden capture probe document",
+        "doc_type": "decision"
+      },
+      "id_regex": "Stored knowledge document: (\\S+)"
+    },
+    "seq": 25
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -25,8 +40,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:30.484160+00:00"
+    "captured_at": "2026-10-19T15:28:38.413735+00:00"
   },
   "normalization": {
     "rules": [
@@ -43,8 +57,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -60,5 +73,7 @@
     "structuredContent": {
       "result": "Updated 'knowledge/decision/golden-mcp-capture-status-probe' status -> superseded."
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/yarl/store.kg",
+  "replay_workspace": "rust/golden/stores/yarl/corpus"
 }

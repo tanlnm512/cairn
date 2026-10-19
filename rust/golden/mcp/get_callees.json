@@ -2,8 +2,15 @@
   "schema": "cairn-rust-golden-mcp/1",
   "tool": "get_callees",
   "arguments": {
-    "name": "AgentReport",
+    "name": "A",
     "limit": 20
+  },
+  "replay": {
+    "args": {
+      "name": "A",
+      "limit": 20
+    },
+    "seq": 2
   },
   "capture": {
     "impl": "python",
@@ -11,30 +18,30 @@
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "350643089ec5e88ce9f2376ba4156d1425924783",
-      "git_dirty_entries": 74
+      "git_commit": null,
+      "git_dirty_entries": 0
     },
     "store": {
       "repos": 1,
-      "files": 703,
-      "symbols": 11969,
-      "edges": 82818
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 505,
-    "captured_at": "2026-10-18T23:04:44.804343+00:00"
+    "captured_at": "2026-10-19T15:28:28.805765+00:00"
   },
   "normalization": {
     "rules": [
+      "workspace_resolved",
       "home_resolved",
       "store_home_resolved",
+      "workspace",
       "home",
       "store_home",
-      "workspace",
       "iso_ts",
       "epoch",
       "date",
@@ -42,14 +49,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates",
-      "memory_total",
-      "lang_totals",
-      "in_degree",
-      "dropped_hubs",
-      "dropped_hotspots",
-      "dropped_clusters"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -59,11 +59,13 @@
     "content": [
       {
         "type": "text",
-        "text": "4 callees of 'AgentReport':\n  _totals  src/cairn/bench/agent_suite.py:500\n  to_dict  src/cairn/bench/agent_suite.py:508\n  to_json  src/cairn/bench/agent_suite.py:526\n  to_table  src/cairn/bench/agent_suite.py:529"
+        "text": "4 callees of 'A':\n  I  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1\n  Z  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1\n  ee  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1\n  x  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1"
       }
     ],
     "structuredContent": {
-      "result": "4 callees of 'AgentReport':\n  _totals  src/cairn/bench/agent_suite.py:500\n  to_dict  src/cairn/bench/agent_suite.py:508\n  to_json  src/cairn/bench/agent_suite.py:526\n  to_table  src/cairn/bench/agent_suite.py:529"
+      "result": "4 callees of 'A':\n  I  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1\n  Z  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1\n  ee  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1\n  x  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus"
 }

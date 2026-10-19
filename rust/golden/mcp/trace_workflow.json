@@ -4,36 +4,42 @@
   "arguments": {
     "ref": "knowledge/workflow/golden-capture-workflow"
   },
+  "replay": {
+    "args": {
+      "ref": "knowledge/workflow/golden-capture-workflow"
+    },
+    "seq": 19
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "350643089ec5e88ce9f2376ba4156d1425924783",
-      "git_dirty_entries": 74
+      "git_commit": null,
+      "git_dirty_entries": 0
     },
     "store": {
       "repos": 1,
-      "files": 703,
-      "symbols": 11969,
-      "edges": 82818
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 505,
-    "captured_at": "2026-10-18T23:04:44.832092+00:00"
+    "captured_at": "2026-10-19T15:28:28.822802+00:00"
   },
   "normalization": {
     "rules": [
+      "workspace_resolved",
       "home_resolved",
       "store_home_resolved",
+      "workspace",
       "home",
       "store_home",
-      "workspace",
       "iso_ts",
       "epoch",
       "date",
@@ -41,14 +47,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates",
-      "memory_total",
-      "lang_totals",
-      "in_degree",
-      "dropped_hubs",
-      "dropped_hotspots",
-      "dropped_clusters"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -64,5 +63,7 @@
     "structuredContent": {
       "result": "golden capture workflow (knowledge/workflow/golden-capture-workflow)\n  1. Record\n     Run the golden recorder against the Python daemon.\n     symbol: main\n     file: scripts/rust_migration/golden_record.py\n  2. Compare\n     Diff each response against the fixtures.\n     symbol: verify\n     file: scripts/rust_migration/golden_record.py"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus"
 }

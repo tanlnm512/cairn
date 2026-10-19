@@ -5,6 +5,13 @@
     "path": "src/attr/__init__.py",
     "repo": "corpus"
   },
+  "replay": {
+    "args": {
+      "path": "src/attr/__init__.py",
+      "repo": "corpus"
+    },
+    "seq": 9
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -25,8 +32,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:38.255680+00:00"
+    "captured_at": "2026-10-19T15:28:48.123483+00:00"
   },
   "normalization": {
     "rules": [
@@ -43,8 +49,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -60,5 +65,7 @@
     "structuredContent": {
       "result": "4 symbols in 'src/attr/__init__.py':\n  module signature unavailable [1, 1]\n  class signature unavailable [37, 38]\n  function signature unavailable [81, 101]\n  function signature unavailable [87, 99]"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
 }

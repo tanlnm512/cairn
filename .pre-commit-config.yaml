@@ -28,7 +28,7 @@ repos:
         # root extend-exclude cannot reach them, so the hook itself must
         # never hand them to ruff. Linting pinned data has no fixable
         # finding, only a red gate over immutable bytes.
-        exclude: ^benchmarks/datasource/(t2/yarl|ds2/second-corpus)/
+        exclude: ^benchmarks/datasource/(t2/yarl|ds2/second-corpus)/|^rust/golden/stores/.*/corpus/
 
   # --- Secret scanning. Catches API keys / tokens / .env blobs before they
   # reach the remote. Cheap insurance for a repo that ships agent-integration
@@ -51,6 +51,9 @@ repos:
         # Generated diagram artifacts (archify HTML inlines its viewer, ~750KB
         # each) — docs-only bytes, no hygiene risk.
         exclude: ^docs/diagrams/
+        # Checked-in pinned parity stores (rust/golden/stores/*/store.kg) are
+        # byte fixtures by design, capped per store by their manifest.
+        exclude: ^rust/golden/(stores|nav|search|spike)/.*\.kg$
       - id: debug-statements    # catch pdb/breakpoint() left in
 
   # --- Comment-style ratchet: local mirror of the quality-ratchet CI job.

@@ -2,7 +2,13 @@
   "schema": "cairn-rust-golden-mcp/1",
   "tool": "generate_flow",
   "arguments": {
-    "entry": "invoke"
+    "entry": "h"
+  },
+  "replay": {
+    "args": {
+      "entry": "h"
+    },
+    "seq": 16
   },
   "capture": {
     "impl": "python",
@@ -10,30 +16,30 @@
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "350643089ec5e88ce9f2376ba4156d1425924783",
-      "git_dirty_entries": 74
+      "git_commit": null,
+      "git_dirty_entries": 0
     },
     "store": {
       "repos": 1,
-      "files": 703,
-      "symbols": 11969,
-      "edges": 82818
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 505,
-    "captured_at": "2026-10-18T23:04:44.831813+00:00"
+    "captured_at": "2026-10-19T15:28:28.822648+00:00"
   },
   "normalization": {
     "rules": [
+      "workspace_resolved",
       "home_resolved",
       "store_home_resolved",
+      "workspace",
       "home",
       "store_home",
-      "workspace",
       "iso_ts",
       "epoch",
       "date",
@@ -41,14 +47,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates",
-      "memory_total",
-      "lang_totals",
-      "in_degree",
-      "dropped_hubs",
-      "dropped_hotspots",
-      "dropped_clusters"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -58,11 +57,13 @@
     "content": [
       {
         "type": "text",
-        "text": "Compass: compass/flow-invoke (quality=1.00)\n```cairn-critic\n{\n  \"passed\": true,\n  \"quality_score\": 1.0,\n  \"errors\": [],\n  \"warnings\": []\n}\n```"
+        "text": "No outgoing calls traced from 'h' \u2014 nothing to document."
       }
     ],
     "structuredContent": {
-      "result": "Compass: compass/flow-invoke (quality=1.00)\n```cairn-critic\n{\n  \"passed\": true,\n  \"quality_score\": 1.0,\n  \"errors\": [],\n  \"warnings\": []\n}\n```"
+      "result": "No outgoing calls traced from 'h' \u2014 nothing to document."
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus"
 }

@@ -4,29 +4,42 @@
   "arguments": {
     "repo": "corpus"
   },
+  "replay": {
+    "args": {
+      "repo": "corpus"
+    },
+    "seq": 10
+  },
   "capture": {
     "impl": "python",
-    "harness": "scripts/rust_migration/flow_golden.py",
+    "harness": "scripts/rust_migration/parity.py",
     "corpus": {
-      "workspace": "rust/golden/flow/corpus",
-      "identity_method": "checked-in-corpus"
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
     },
-    "store": "rust/golden/flow/flow-store.kg",
+    "store": {
+      "repos": 1,
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
+    },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
-      "CAIRN_WATCH": "0",
-      "CAIRN_FUSION": "1"
+      "CAIRN_WATCH": "0"
     },
-    "captured_at": "2026-10-19T10:47:09.402647+00:00"
+    "captured_at": "2026-10-19T15:28:28.821637+00:00"
   },
   "normalization": {
     "rules": [
-      "store_home_resolved",
+      "workspace_resolved",
       "home_resolved",
-      "store_home",
-      "home",
+      "store_home_resolved",
       "workspace",
+      "home",
+      "store_home",
       "iso_ts",
       "epoch",
       "date",
@@ -44,13 +57,15 @@
     "content": [
       {
         "type": "text",
-        "text": "=== corpus depends on ===\n  demo-sdk (flow.demo) x1\n=== Dependents of corpus ===\n  (none)"
+        "text": "=== corpus depends on ===\n  (none)\n=== Dependents of corpus ===\n  (none)"
       }
     ],
     "structuredContent": {
-      "result": "=== corpus depends on ===\n  demo-sdk (flow.demo) x1\n=== Dependents of corpus ===\n  (none)"
+      "result": "=== corpus depends on ===\n  (none)\n=== Dependents of corpus ===\n  (none)"
     }
   },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus",
   "cases": [
     {
       "arguments": {

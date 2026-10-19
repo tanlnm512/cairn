@@ -4,6 +4,12 @@
   "arguments": {
     "entry": "build"
   },
+  "replay": {
+    "args": {
+      "entry": "build"
+    },
+    "seq": 15
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -24,8 +30,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:30.482355+00:00"
+    "captured_at": "2026-10-19T15:28:38.412218+00:00"
   },
   "normalization": {
     "rules": [
@@ -42,8 +47,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -59,5 +63,7 @@
     "structuredContent": {
       "result": "Traced 19 step(s) from 'build' (10 branches, 7 terminals):\n- `build` (method)\n  - `build_pre_encoded_url` (function)\n  - `get_str_query` (function)\n    - `__new__` (method)\n    - `get_str_query_from_iterable` (function)\n    - `get_str_query_from_sequence_iterable` (function)\n      - `encode_url` (function)\n      - `join` (method)\n      - `pre_encoded_url` (function)\n      - `query_var` (function)\n        - `_encode_host` (function)\n        - `_encode_relative_scheme_colon` (function)\n        - `make_netloc` (function)\n        - `normalize_path` (function)\n        - `split_netloc` (function)\n        - `split_url` (function)\n          - `_check_netloc` (function)\n          - `_idna_encode` (function)\n          - `normalize_path_segments` (function)\n\nBranch points:\n  `normalize_path` -> `join`, `normalize_path_segments`\n  `join` -> `join`, `normalize_path`\n  `get_str_query_from_sequence_iterable` -> `query_var`, `join`\n  `get_str_query_from_iterable` -> `query_var`, `join`\n  `get_str_query` -> `get_str_query_from_sequence_iterable`, `get_str_query_from_iterable`\n  `encode_url` -> `split_url`, `split_netloc`, `_encode_host`, `make_netloc`\n  `pre_encoded_url` -> `__new__`, `split_url`\n  `__new__` -> `encode_url`, `pre_encoded_url`, `__new__`\n\nTerminal calls: `_check_netloc`, `_encode_relative_scheme_colon`, `_idna_encode`, `make_netloc`, `normalize_path_segments`, `query_var`, `split_netloc`\n\nCyclic calls: `join`, `__new__`"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/yarl/store.kg",
+  "replay_workspace": "rust/golden/stores/yarl/corpus"
 }

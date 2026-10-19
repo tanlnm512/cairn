@@ -6,6 +6,14 @@
     "body": "golden capture probe document",
     "doc_type": "decision"
   },
+  "replay": {
+    "args": {
+      "title": "golden mcp capture add probe",
+      "body": "golden capture probe document",
+      "doc_type": "decision"
+    },
+    "seq": 23
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -26,8 +34,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:38.258220+00:00"
+    "captured_at": "2026-10-19T15:28:48.125351+00:00"
   },
   "normalization": {
     "rules": [
@@ -44,8 +51,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -61,5 +67,7 @@
     "structuredContent": {
       "result": "Stored knowledge document: knowledge/decision/golden-mcp-capture-add-probe"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
 }

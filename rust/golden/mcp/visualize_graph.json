@@ -3,32 +3,47 @@
   "tool": "visualize_graph",
   "arguments": {
     "scope": "symbol",
-    "symbol": "fetch_user",
+    "symbol": "He",
     "depth": 2
+  },
+  "replay": {
+    "args": {
+      "scope": "symbol",
+      "symbol": "He",
+      "depth": 2
+    },
+    "seq": 11
   },
   "capture": {
     "impl": "python",
-    "harness": "scripts/rust_migration/flow_golden.py",
+    "harness": "scripts/rust_migration/parity.py",
     "corpus": {
-      "workspace": "rust/golden/flow/corpus",
-      "identity_method": "checked-in-corpus"
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
     },
-    "store": "rust/golden/flow/flow-store.kg",
+    "store": {
+      "repos": 1,
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
+    },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
-      "CAIRN_WATCH": "0",
-      "CAIRN_FUSION": "1"
+      "CAIRN_WATCH": "0"
     },
-    "captured_at": "2026-10-19T10:47:09.403162+00:00"
+    "captured_at": "2026-10-19T15:28:28.821670+00:00"
   },
   "normalization": {
     "rules": [
-      "store_home_resolved",
+      "workspace_resolved",
       "home_resolved",
-      "store_home",
-      "home",
+      "store_home_resolved",
       "workspace",
+      "home",
+      "store_home",
       "iso_ts",
       "epoch",
       "date",
@@ -46,13 +61,15 @@
     "content": [
       {
         "type": "text",
-        "text": "\n    fetch_user -->load_payload\n    fetch_user -->loads\n    fetch_user(fetch_user)\n    load_payload(load_payload)\n    loads[loads]\n    main -->fetch_user\n    main(main)\n    service -->fetch_user\n    service[service/]\n    test_fetch_user -->fetch_user\n    test_fetch_user(test_fetch_user)\ngraph LR"
+        "text": "\n    Bt -->He\n    Bt(Bt)\n    He -->He\n    He -->He\n    He -->join\n    He -->join\n    He -->join\n    He -->join\n    He -->push\n    He -->r\n    He -->shift\n    He(He)\n    chunk_DZP67EKU -->He\n    chunk_DZP67EKU[chunk-DZP67EKU/]\n    join[join]\n    push[push]\n    r[r]\n    shift[shift]\ngraph LR"
       }
     ],
     "structuredContent": {
-      "result": "\n    fetch_user -->load_payload\n    fetch_user -->loads\n    fetch_user(fetch_user)\n    load_payload(load_payload)\n    loads[loads]\n    main -->fetch_user\n    main(main)\n    service -->fetch_user\n    service[service/]\n    test_fetch_user -->fetch_user\n    test_fetch_user(test_fetch_user)\ngraph LR"
+      "result": "\n    Bt -->He\n    Bt(Bt)\n    He -->He\n    He -->He\n    He -->join\n    He -->join\n    He -->join\n    He -->join\n    He -->push\n    He -->r\n    He -->shift\n    He(He)\n    chunk_DZP67EKU -->He\n    chunk_DZP67EKU[chunk-DZP67EKU/]\n    join[join]\n    push[push]\n    r[r]\n    shift[shift]\ngraph LR"
     }
   },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus",
   "cases": [
     {
       "arguments": {

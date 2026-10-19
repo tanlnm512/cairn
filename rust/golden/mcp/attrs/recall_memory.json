@@ -4,6 +4,12 @@
   "arguments": {
     "query": "fields"
   },
+  "replay": {
+    "args": {
+      "query": "fields"
+    },
+    "seq": 20
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -24,8 +30,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:38.257489+00:00"
+    "captured_at": "2026-10-19T15:28:48.124747+00:00"
   },
   "normalization": {
     "rules": [
@@ -42,8 +47,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -53,11 +57,13 @@
     "content": [
       {
         "type": "text",
-        "text": "10 memories matching 'fields':\n  [tribal 0.61, refs-verified=n/a (0 refs)] Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n    Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n  [tribal 0.502, refs-verified=0.0] gh subprocess boundary: one allowlisted wrapper in graph/prs.py [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    gh subprocess boundary: one allowlisted wrapper in graph/prs.py\n  [tribal 0.617, refs-verified=n/a (0 refs)] Rerank extraction cannot lose chunk data\n    Rerank extraction cannot lose chunk data\n  [tribal 0.636, refs-verified=n/a (0 refs)] AGY remote MCP entries use serverUrl only\n    AGY remote MCP entries use serverUrl only\n  [tribal 0.625, refs-verified=n/a (0 refs)] ANN health probes report unknown when embeddings are moot\n    ANN health probes report unknown when embeddings are moot\n  [tribal 0.632, refs-verified=n/a (0 refs)] Embedding chunk variants preserve an identity floor\n    Embedding chunk variants preserve an identity floor\n  [tribal 0.632, refs-verified=n/a (0 refs)] Multi-vector embeddings use per-kind staleness\n    Multi-vector embeddings use per-kind staleness\n  [tribal 0.621, refs-verified=n/a (0 refs)] Persisted bench reports drop wall-clock figures\n    Persisted bench reports drop wall-clock figures\n  [tribal 0.621, refs-verified=n/a (0 refs)] Steal campaign executes on the specs branch in PR #148\n    Steal campaign executes on the specs branch in PR #148\n  [tribal 0.625, refs-verified=n/a (0 refs)] Token views distinguish unknown truncation from zero truncation\n    Token views distinguish unknown truncation from zero truncation\n(502 of 502 memories not yet embedded -- run `cairn memory embed` for semantic recall)"
+        "text": "12 memories matching 'fields':\n  [tribal 0.61, refs-verified=n/a (0 refs)] Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n    Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n  [tribal 0.502, refs-verified=0.0] gh subprocess boundary: one allowlisted wrapper in graph/prs.py [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    gh subprocess boundary: one allowlisted wrapper in graph/prs.py\n  [tribal 0.617, refs-verified=n/a (0 refs)] Rerank extraction cannot lose chunk data\n    Rerank extraction cannot lose chunk data\n  [tribal 0.578, refs-verified=n/a (0 refs)] 2a parser ports validate against Python expected.json goldens\n    2a parser ports validate against Python expected.json goldens\n  [tribal 0.636, refs-verified=n/a (0 refs)] AGY remote MCP entries use serverUrl only\n    AGY remote MCP entries use serverUrl only\n  [tribal 0.625, refs-verified=n/a (0 refs)] ANN health probes report unknown when embeddings are moot\n    ANN health probes report unknown when embeddings are moot\n  [tribal 0.632, refs-verified=n/a (0 refs)] Embedding chunk variants preserve an identity floor\n    Embedding chunk variants preserve an identity floor\n  [tribal 0.632, refs-verified=n/a (0 refs)] Multi-vector embeddings use per-kind staleness\n    Multi-vector embeddings use per-kind staleness\n  [tribal 0.621, refs-verified=n/a (0 refs)] Persisted bench reports drop wall-clock figures\n    Persisted bench reports drop wall-clock figures\n  [tribal 0.61, refs-verified=n/a (0 refs)] rust dashboard sanctioned divergences from python\n    rust dashboard sanctioned divergences from python\n  [tribal 0.621, refs-verified=n/a (0 refs)] Steal campaign executes on the specs branch in PR #148\n    Steal campaign executes on the specs branch in PR #148\n  [tribal 0.625, refs-verified=n/a (0 refs)] Token views distinguish unknown truncation from zero truncation\n    Token views distinguish unknown truncation from zero truncation\n(535 of 535 memories not yet embedded -- run `cairn memory embed` for semantic recall)"
       }
     ],
     "structuredContent": {
-      "result": "10 memories matching 'fields':\n  [tribal 0.61, refs-verified=n/a (0 refs)] Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n    Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n  [tribal 0.502, refs-verified=0.0] gh subprocess boundary: one allowlisted wrapper in graph/prs.py [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    gh subprocess boundary: one allowlisted wrapper in graph/prs.py\n  [tribal 0.617, refs-verified=n/a (0 refs)] Rerank extraction cannot lose chunk data\n    Rerank extraction cannot lose chunk data\n  [tribal 0.636, refs-verified=n/a (0 refs)] AGY remote MCP entries use serverUrl only\n    AGY remote MCP entries use serverUrl only\n  [tribal 0.625, refs-verified=n/a (0 refs)] ANN health probes report unknown when embeddings are moot\n    ANN health probes report unknown when embeddings are moot\n  [tribal 0.632, refs-verified=n/a (0 refs)] Embedding chunk variants preserve an identity floor\n    Embedding chunk variants preserve an identity floor\n  [tribal 0.632, refs-verified=n/a (0 refs)] Multi-vector embeddings use per-kind staleness\n    Multi-vector embeddings use per-kind staleness\n  [tribal 0.621, refs-verified=n/a (0 refs)] Persisted bench reports drop wall-clock figures\n    Persisted bench reports drop wall-clock figures\n  [tribal 0.621, refs-verified=n/a (0 refs)] Steal campaign executes on the specs branch in PR #148\n    Steal campaign executes on the specs branch in PR #148\n  [tribal 0.625, refs-verified=n/a (0 refs)] Token views distinguish unknown truncation from zero truncation\n    Token views distinguish unknown truncation from zero truncation\n(502 of 502 memories not yet embedded -- run `cairn memory embed` for semantic recall)"
+      "result": "12 memories matching 'fields':\n  [tribal 0.61, refs-verified=n/a (0 refs)] Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n    Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n  [tribal 0.502, refs-verified=0.0] gh subprocess boundary: one allowlisted wrapper in graph/prs.py [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    gh subprocess boundary: one allowlisted wrapper in graph/prs.py\n  [tribal 0.617, refs-verified=n/a (0 refs)] Rerank extraction cannot lose chunk data\n    Rerank extraction cannot lose chunk data\n  [tribal 0.578, refs-verified=n/a (0 refs)] 2a parser ports validate against Python expected.json goldens\n    2a parser ports validate against Python expected.json goldens\n  [tribal 0.636, refs-verified=n/a (0 refs)] AGY remote MCP entries use serverUrl only\n    AGY remote MCP entries use serverUrl only\n  [tribal 0.625, refs-verified=n/a (0 refs)] ANN health probes report unknown when embeddings are moot\n    ANN health probes report unknown when embeddings are moot\n  [tribal 0.632, refs-verified=n/a (0 refs)] Embedding chunk variants preserve an identity floor\n    Embedding chunk variants preserve an identity floor\n  [tribal 0.632, refs-verified=n/a (0 refs)] Multi-vector embeddings use per-kind staleness\n    Multi-vector embeddings use per-kind staleness\n  [tribal 0.621, refs-verified=n/a (0 refs)] Persisted bench reports drop wall-clock figures\n    Persisted bench reports drop wall-clock figures\n  [tribal 0.61, refs-verified=n/a (0 refs)] rust dashboard sanctioned divergences from python\n    rust dashboard sanctioned divergences from python\n  [tribal 0.621, refs-verified=n/a (0 refs)] Steal campaign executes on the specs branch in PR #148\n    Steal campaign executes on the specs branch in PR #148\n  [tribal 0.625, refs-verified=n/a (0 refs)] Token views distinguish unknown truncation from zero truncation\n    Token views distinguish unknown truncation from zero truncation\n(535 of 535 memories not yet embedded -- run `cairn memory embed` for semantic recall)"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
 }

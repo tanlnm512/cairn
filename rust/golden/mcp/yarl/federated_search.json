@@ -5,6 +5,13 @@
     "query": "how does the build resolve call edges",
     "limit": 20
   },
+  "replay": {
+    "args": {
+      "query": "how does the build resolve call edges",
+      "limit": 20
+    },
+    "seq": 17
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -25,8 +32,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:30.482755+00:00"
+    "captured_at": "2026-10-19T15:28:38.412604+00:00"
   },
   "normalization": {
     "rules": [
@@ -43,8 +49,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -60,5 +65,7 @@
     "structuredContent": {
       "result": "=== federated_search: \"how does the build resolve call edges\" (0 hit(s) from 0/0 store(s)) ===\n\nNo workspace stores are registered. Run `cairn init` once inside each workspace to register its store, then retry."
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/yarl/store.kg",
+  "replay_workspace": "rust/golden/stores/yarl/corpus"
 }

@@ -4,6 +4,12 @@
   "arguments": {
     "query": "how does the build resolve call edges"
   },
+  "replay": {
+    "args": {
+      "query": "how does the build resolve call edges"
+    },
+    "seq": 14
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -24,8 +30,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:38.256009+00:00"
+    "captured_at": "2026-10-19T15:28:48.123690+00:00"
   },
   "normalization": {
     "rules": [
@@ -42,8 +47,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": true,
     "mask_list_lines": true
@@ -53,11 +57,13 @@
     "content": [
       {
         "type": "text",
-        "text": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [21 members]\n  callers: [15 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 36\n  seed_count: 11\n  seeds: [11 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
+        "text": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  Resolver parity oracle replays captured signals over a resolution-pinned python build\n  callees: [21 members]\n  callers: [15 members]\n  neighbor_count: 36\n  seed_count: 11\n  seeds: [11 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
       }
     ],
     "structuredContent": {
-      "result": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  callees: [21 members]\n  callers: [15 members]\n  find_symbol_paths fork tie-break flips across rebuilds\n  neighbor_count: 36\n  seed_count: 11\n  seeds: [11 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
+      "result": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  Resolver parity oracle replays captured signals over a resolution-pinned python build\n  callees: [21 members]\n  callers: [15 members]\n  neighbor_count: 36\n  seed_count: 11\n  seeds: [11 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
 }

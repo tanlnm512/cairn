@@ -19,6 +19,12 @@ fn flow_dir() -> PathBuf {
     repo_root().join("rust/golden/flow")
 }
 
+/// A fixture-declared replay artifact (store or workspace) relative to the repo
+/// root, falling back to the legacy flow-corpus default when the key is absent.
+fn fixture_artifact(root: &std::path::Path, fixture: &Value, key: &str, default: &str) -> PathBuf {
+    root.join(fixture[key].as_str().unwrap_or(default))
+}
+
 /// Copy-on-create scratch store; removes the directory on drop.
 struct TempStore(PathBuf);
 
@@ -34,7 +40,7 @@ impl TempStore {
             nanos
         ));
         fs::create_dir_all(&dir).expect("temp dir");
-        fs::copy(src, dir.join("flow-store.kg")).expect("copy fixture store");
+        fs::copy(src, dir.join(src.file_name().expect("store name"))).expect("copy fixture store");
         Self(dir)
     }
 }
@@ -43,16 +49,6 @@ impl Drop for TempStore {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
-}
-
-fn open_store() -> (TempStore, rusqlite::Connection) {
-    let temp = TempStore::from_fixture(&flow_dir().join("flow-store.kg"));
-    let conn = conn::open_read_only(&temp.0.join("flow-store.kg")).expect("open store");
-    (temp, conn)
-}
-
-fn corpus() -> PathBuf {
-    flow_dir().join("corpus")
 }
 
 // --- fixture normalization (the recorder's scrub rules) ----------------------
@@ -135,15 +131,36 @@ fn sorted_lines(text: &str) -> String {
     lines.join("\n")
 }
 
+/// Port of the daemon's central result cap: cut at the last newline past
+/// 60_000 chars with the fixed notice (the `@instrument` contract).
+fn truncate_result(name: &str, result: String) -> String {
+    const CAP: usize = 60_000;
+    let char_count = result.chars().count();
+    if char_count <= CAP {
+        return result;
+    }
+    let mut head: String = result.chars().take(CAP).collect();
+    if let Some(cut) = head.rfind('\n')
+        && cut > 0
+    {
+        head.truncate(cut);
+    }
+    format!(
+        "{head}\n\n[TRUNCATED: '{name}' returned {char_count} chars, over the \
+         {CAP}-char cap. Narrow the query -- e.g. pass a smaller `limit`, use \
+         fuzzy=False, a more specific pattern, or a lower `depth` -- rather \
+         than relying on this truncated output.]"
+    )
+}
+
 // --- case runner --------------------------------------------------------------
 
-fn run_tool(conn: &rusqlite::Connection, tool: &str, args: &Value) -> String {
-    let ws = corpus();
+fn run_tool(conn: &rusqlite::Connection, tool: &str, args: &Value, ws: &Path) -> String {
     match tool {
         "explore" => cairn_query::tools_flow::explore_text(
             conn,
             None,
-            &ws,
+            ws,
             args["query"].as_str().expect("query"),
             true,
             None,
@@ -155,13 +172,13 @@ fn run_tool(conn: &rusqlite::Connection, tool: &str, args: &Value) -> String {
         ),
         "cross_repo_deps" => cairn_query::tools_flow::cross_repo_deps_text(
             conn,
-            &ws,
+            ws,
             args["repo"].as_str().expect("repo"),
             args.get("limit").and_then(Value::as_i64).unwrap_or(50),
         ),
         "visualize_graph" => cairn_query::tools_flow::visualize_graph_text(
             conn,
-            &ws,
+            ws,
             cairn_query::tools_flow::VizQuery {
                 scope: args
                     .get("scope")
@@ -188,7 +205,7 @@ fn run_tool(conn: &rusqlite::Connection, tool: &str, args: &Value) -> String {
 }
 
 /// Compare one fixture entry (canonical response or a case) against the port.
-fn assert_case(fixture: &Value, case: Option<&Value>, label: &str) {
+fn assert_case(fixture: &Value, case: Option<&Value>, label: &str, store: &Path, ws: &Path) {
     let rules = normalization_rules(fixture);
     let entry = case.unwrap_or(fixture);
     let args = &entry["arguments"];
@@ -202,8 +219,10 @@ fn assert_case(fixture: &Value, case: Option<&Value>, label: &str) {
                 .and_then(Value::as_bool)
         })
         .unwrap_or(false);
-    let (_guard, conn) = open_store();
-    let produced = run_tool(&conn, tool, args);
+    let temp = TempStore::from_fixture(store);
+    let conn = conn::open_read_only(&temp.0.join(store.file_name().expect("store name")))
+        .expect("open store");
+    let produced = truncate_result(tool, run_tool(&conn, tool, args, ws));
     let actual = json!({
         "isError": false,
         "content": [{"type": "text", "text": produced}],
@@ -233,64 +252,128 @@ fn fixture(name: &str) -> Value {
     .expect("fixture json")
 }
 
+/// The (store, workspace) pair for a fixture's canonical block: the fixture's
+/// `replay_store`/`replay_workspace` pointers when present, else the legacy
+/// flow-corpus defaults. Cases always replay over the flow corpus.
+fn main_artifacts(fixture: &Value) -> (PathBuf, PathBuf) {
+    let root = repo_root();
+    (
+        fixture_artifact(
+            &root,
+            fixture,
+            "replay_store",
+            "rust/golden/flow/flow-store.kg",
+        ),
+        fixture_artifact(
+            &root,
+            fixture,
+            "replay_workspace",
+            "rust/golden/flow/corpus",
+        ),
+    )
+}
+
+fn case_artifacts() -> (PathBuf, PathBuf) {
+    (flow_dir().join("flow-store.kg"), flow_dir().join("corpus"))
+}
+
 #[test]
 fn explore_matches_the_golden_fixture() {
     let fixture = fixture("explore");
-    assert_case(&fixture, None, "explore(fetch_user)");
+    let (store, ws) = main_artifacts(&fixture);
+    assert_case(&fixture, None, "explore(fetch_user)", &store, &ws);
+    let (store, ws) = case_artifacts();
     for (i, case) in fixture["cases"]
         .as_array()
         .expect("cases")
         .iter()
         .enumerate()
     {
-        assert_case(&fixture, Some(case), &format!("explore case {i}"));
+        assert_case(
+            &fixture,
+            Some(case),
+            &format!("explore case {i}"),
+            &store,
+            &ws,
+        );
     }
 }
 
 #[test]
 fn trace_flow_matches_the_golden_fixture() {
     let fixture = fixture("trace_flow");
-    assert_case(&fixture, None, "trace_flow(kickoff)");
+    let (store, ws) = main_artifacts(&fixture);
+    assert_case(&fixture, None, "trace_flow(kickoff)", &store, &ws);
+    let (store, ws) = case_artifacts();
     for (i, case) in fixture["cases"]
         .as_array()
         .expect("cases")
         .iter()
         .enumerate()
     {
-        assert_case(&fixture, Some(case), &format!("trace_flow case {i}"));
+        assert_case(
+            &fixture,
+            Some(case),
+            &format!("trace_flow case {i}"),
+            &store,
+            &ws,
+        );
     }
 }
 
 #[test]
 fn cross_repo_deps_matches_the_golden_fixture() {
     let fixture = fixture("cross_repo_deps");
-    assert_case(&fixture, None, "cross_repo_deps(corpus)");
+    let (store, ws) = main_artifacts(&fixture);
+    assert_case(&fixture, None, "cross_repo_deps(corpus)", &store, &ws);
+    let (store, ws) = case_artifacts();
     for (i, case) in fixture["cases"]
         .as_array()
         .expect("cases")
         .iter()
         .enumerate()
     {
-        assert_case(&fixture, Some(case), &format!("cross_repo_deps case {i}"));
+        assert_case(
+            &fixture,
+            Some(case),
+            &format!("cross_repo_deps case {i}"),
+            &store,
+            &ws,
+        );
     }
 }
 
 #[test]
 fn visualize_graph_matches_the_golden_fixture() {
     let fixture = fixture("visualize_graph");
-    assert_case(&fixture, None, "visualize_graph(symbol/mermaid)");
+    let (store, ws) = main_artifacts(&fixture);
+    assert_case(
+        &fixture,
+        None,
+        "visualize_graph(symbol/mermaid)",
+        &store,
+        &ws,
+    );
+    let (store, ws) = case_artifacts();
     for (i, case) in fixture["cases"]
         .as_array()
         .expect("cases")
         .iter()
         .enumerate()
     {
-        assert_case(&fixture, Some(case), &format!("visualize_graph case {i}"));
+        assert_case(
+            &fixture,
+            Some(case),
+            &format!("visualize_graph case {i}"),
+            &store,
+            &ws,
+        );
     }
 }
 
 #[test]
 fn taint_matches_the_golden_fixture() {
     let fixture = fixture("taint");
-    assert_case(&fixture, None, "taint(file-read -> sql)");
+    let (store, ws) = case_artifacts();
+    assert_case(&fixture, None, "taint(file-read -> sql)", &store, &ws);
 }

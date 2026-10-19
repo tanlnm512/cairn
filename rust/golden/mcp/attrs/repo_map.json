@@ -2,6 +2,10 @@
   "schema": "cairn-rust-golden-mcp/1",
   "tool": "repo_map",
   "arguments": {},
+  "replay": {
+    "args": {},
+    "seq": 8
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -22,8 +26,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:38.255277+00:00"
+    "captured_at": "2026-10-19T15:28:48.123231+00:00"
   },
   "normalization": {
     "rules": [
@@ -40,8 +43,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -57,5 +59,7 @@
     "structuredContent": {
       "result": "Repository corpus\n  tests: 31 files, 1458 symbols, 5284 edges\n    simple_attr (tests/utils.py, in-degree 51)\n    tests.strategies (tests/strategies.py, in-degree 18)\n    simple_class (tests/utils.py, in-degree 16)\n    dropped hubs: 1427\n  src: 19 files, 264 symbols, 1198 edges\n    fields (src/attr/_make.py, in-degree 114)\n    define (src/attr/_next_gen.py, in-degree 79)\n    make_class (src/attr/_make.py, in-degree 64)\n    dropped hubs: 261\n  dropped clusters: 0\nWorkspace hotspots\n  corpus:src/attr/_make.py fields (in-degree 114)\n  corpus:src/attr/_next_gen.py define (in-degree 79)\n  corpus:src/attr/_make.py make_class (in-degree 64)\n  corpus:src/attr/_next_gen.py field (in-degree 64)\n  corpus:src/attr/_make.py src.attr._make (in-degree 60)\n  corpus:src/attr/validators.py instance_of (in-degree 56)\n  corpus:src/attr/__init__.py src.attr (in-degree 53)\n  corpus:tests/utils.py simple_attr (in-degree 51)\n  corpus:src/attr/_make.py attrs (in-degree 47)\n  corpus:src/attr/_make.py attrib (in-degree 34)\n  corpus:src/attr/_make.py Converter (in-degree 29)\n  corpus:src/attr/_funcs.py resolve_types (in-degree 28)\n  dropped hotspots: 1682"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
 }

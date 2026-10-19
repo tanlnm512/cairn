@@ -5,6 +5,13 @@
     "name": "A",
     "limit": 20
   },
+  "replay": {
+    "args": {
+      "name": "A",
+      "limit": 20
+    },
+    "seq": 2
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -25,8 +32,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:38.233144+00:00"
+    "captured_at": "2026-10-19T15:28:48.112729+00:00"
   },
   "normalization": {
     "rules": [
@@ -43,8 +49,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -60,5 +65,7 @@
     "structuredContent": {
       "result": "20 callees of 'A':\n  foo  tests/test_abc.py:47\n  resolve_types  tests/test_annotations.py:182\n  resolve_types  tests/test_annotations.py:575\n  define  tests/test_annotations.py:654\n  define  tests/test_annotations.py:674\n  define  tests/test_forward_references.py:13\n  define  tests/test_funcs.py:554\n  xx  tests/test_make.py:443\n  define  tests/test_make.py:1245\n  field  tests/test_make.py:1247\n  field  tests/test_make.py:1248\n  field  tests/test_make.py:1249\n  define  tests/test_make.py:1295\n  field  tests/test_make.py:1297\n  field  tests/test_make.py:1298\n  field  tests/test_make.py:1299\n  define  tests/test_make.py:1615\n  define  tests/test_make.py:3134\n  field  tests/test_make.py:3136\n  field  tests/test_make.py:3137\n  ... hit the limit cap; pass a higher limit for more."
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
 }

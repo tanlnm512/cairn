@@ -5,6 +5,13 @@
     "name": "fields",
     "limit": 20
   },
+  "replay": {
+    "args": {
+      "name": "fields",
+      "limit": 20
+    },
+    "seq": 1
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -25,8 +32,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:38.232421+00:00"
+    "captured_at": "2026-10-19T15:28:48.112479+00:00"
   },
   "normalization": {
     "rules": [
@@ -43,8 +49,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -60,5 +65,7 @@
     "structuredContent": {
       "result": "20 callers of 'fields':\n  function asdict  src/attr/_funcs.py:80  (corpus)\n  function astuple  src/attr/_funcs.py:274  (corpus)\n  function assoc  src/attr/_funcs.py:415  (corpus)\n  function resolve_types  src/attr/_funcs.py:488  (corpus)\n  function evolve  src/attr/_make.py:633  (corpus)\n  module _make  src/attr/_make.py:1891  (corpus)\n  function fields  src/attr/_make.py:1923  (corpus)\n  function validate  src/attr/_make.py:1983  (corpus)\n  method test_basic_annotations  tests/test_annotations.py:48  (corpus)\n  method test_basic_annotations  tests/test_annotations.py:49  (corpus)\n  method test_basic_annotations  tests/test_annotations.py:50  (corpus)\n  method test_typing_annotations  tests/test_annotations.py:78  (corpus)\n  method test_typing_annotations  tests/test_annotations.py:79  (corpus)\n  method test_only_attrs_annotations_collected  tests/test_annotations.py:93  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:124  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:126  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:127  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:129  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:130  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:132  (corpus)\n  ... hit the limit cap; pass a higher limit for more."
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
 }

@@ -2,36 +2,40 @@
   "schema": "cairn-rust-golden-mcp/1",
   "tool": "repo_map",
   "arguments": {},
+  "replay": {
+    "args": {},
+    "seq": 8
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "350643089ec5e88ce9f2376ba4156d1425924783",
-      "git_dirty_entries": 74
+      "git_commit": null,
+      "git_dirty_entries": 0
     },
     "store": {
       "repos": 1,
-      "files": 703,
-      "symbols": 11969,
-      "edges": 82818
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 505,
-    "captured_at": "2026-10-18T23:04:44.827783+00:00"
+    "captured_at": "2026-10-19T15:28:28.820930+00:00"
   },
   "normalization": {
     "rules": [
+      "workspace_resolved",
       "home_resolved",
       "store_home_resolved",
+      "workspace",
       "home",
       "store_home",
-      "workspace",
       "iso_ts",
       "epoch",
       "date",
@@ -39,14 +43,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates",
-      "memory_total",
-      "lang_totals",
-      "in_degree",
-      "dropped_hubs",
-      "dropped_hotspots",
-      "dropped_clusters"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -56,11 +53,13 @@
     "content": [
       {
         "type": "text",
-        "text": "Repository cairn\n  tests: <N> files, <N> symbols, <N> edges\n    FakeObserver.join (tests/test_watcher_service.py, in-degree <N>)\n    Runner.sum (tests/fixtures/kotlin/modern/trailing_commas.kt, in-degree <N>)\n    Runner.index (tests/fixtures/kotlin/modern/trailing_commas.kt, in-degree <N>)\n    dropped hubs: <N>\n  src: <N> files, <N> symbols, <N> edges\n    OKFBundle (src/cairn/okf/bundle.py, in-degree <N>)\n    _RecordingGroup.invoke (src/cairn/cli/main.py, in-degree <N>)\n    get_db (src/cairn/graph/schema.py, in-degree <N>)\n    dropped hubs: <N>\n  rust: <N> files, <N> symbols, <N> edges\n    McpClient.post (rust/crates/cairn-daemon/tests/common/mod.rs, in-degree <N>)\n    escape (rust/crates/cairn-store/src/dump.rs, in-degree <N>)\n    taint.find_symbol_paths (rust/crates/cairn-query/src/graph.rs, in-degree <N>)\n    dropped hubs: <N>\n  scripts: <N> files, <N> symbols, <N> edges\n    UsageError (scripts/fetch_t3_corpus.py, in-degree <N>)\n    verify_ground_truth (scripts/verify_ground_truth.py, in-degree <N>)\n    spike_queries.add (scripts/rust_migration/spike_golden.py, in-degree <N>)\n    dropped hubs: <N>\n  extensions: <N> files, <N> symbols, <N> edges\n    server.ServerManager.remove (extensions/vscode/src/server.ts, in-degree <N>)\n    statusModel.test.state (extensions/vscode/test/statusModel.test.ts, in-degree <N>)\n    server.ServerManager.states (extensions/vscode/src/server.ts, in-degree <N>)\n    dropped hubs: <N>\n  .github: <N> files, <N> symbols, <N> edges\n    _load (.github/scripts/bench_compare.py, in-degree <N>)\n    _baseline_source (.github/scripts/bench_compare.py, in-degree <N>)\n    _render (.github/scripts/bench_compare.py, in-degree <N>)\n    dropped hubs: <N>\n  .: <N> files, <N> symbols, <N> edges\n    dropped hubs: <N>\n  dropped clusters: <N>\nWorkspace hotspots\n  cairn:tests/test_watcher_service.py FakeObserver.join (in-degree <N>)\n  cairn:src/cairn/okf/bundle.py OKFBundle (in-degree <N>)\n  cairn:src/cairn/cli/main.py _RecordingGroup.invoke (in-degree <N>)\n  cairn:src/cairn/graph/schema.py get_db (in-degree <N>)\n  cairn:src/cairn/graph/schema.py src.cairn.graph.schema (in-degree <N>)\n  cairn:src/cairn/graph/embeddings.py src.cairn.graph.embeddings (in-degree <N>)\n  cairn:src/cairn/okf/bundle.py src.cairn.okf.bundle (in-degree <N>)\n  cairn:src/cairn/parsers/base.py ScopeTypeTracker.resolve (in-degree <N>)\n  cairn:src/cairn/graph/semantic.py src.cairn.graph.semantic (in-degree <N>)\n  cairn:src/cairn/parsers/base.py TreeSitterParserBase._node_text (in-degree <N>)\n  cairn:src/cairn/dashboard/data.py src.cairn.dashboard.data (in-degree <N>)\n  cairn:src/cairn/okf/concept.py OKFConcept (in-degree <N>)\n  dropped hotspots: <N>"
+        "text": "Repository corpus\n  rust: 25 files, 920 symbols, 7230 edges\n    timeline-definition-GS45XAXW.h (rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/timeline-definition-GS45XAXW.mjs, in-degree 69)\n    chunk-DZP67EKU.k (rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs, in-degree 33)\n    import_scip_file (rust/crates/cairn-build/src/scip/importer.rs, in-degree 32)\n    dropped hubs: 895\n  tests: 40 files, 687 symbols, 4001 edges\n    _conn (tests/test_knowledge_index.py, in-degree 39)\n    _occ (tests/test_scip_import.py, in-degree 37)\n    _add_doc (tests/test_knowledge_index.py, in-degree 35)\n    dropped hubs: 644\n  src: 30 files, 385 symbols, 3095 edges\n    src.cairn.graph (src/cairn/graph/__init__.py, in-degree 54)\n    _result (src/cairn/cli/system/doctor.py, in-degree 48)\n    src.cairn.memory.store (src/cairn/memory/store.py, in-degree 19)\n    dropped hubs: 366\n  scripts: 3 files, 31 symbols, 395 edges\n    _note (scripts/measure_warm_time.py, in-degree 11)\n    _refuse (scripts/measure_warm_time.py, in-degree 8)\n    _apply_backend_policy (scripts/measure_warm_time.py, in-degree 4)\n    dropped hubs: 25\n  extensions: 1 files, 6 symbols, 11 edges\n    statusModel.worstState (extensions/vscode/src/statusModel.ts, in-degree 3)\n    statusModel.statusDisplay (extensions/vscode/src/statusModel.ts, in-degree 2)\n    statusModel.StatusDisplay (extensions/vscode/src/statusModel.ts, in-degree 1)\n    dropped hubs: 2\n  .github: 1 files, 5 symbols, 49 edges\n    _load (.github/scripts/bench_compare.py, in-degree 4)\n    _baseline_source (.github/scripts/bench_compare.py, in-degree 2)\n    _render (.github/scripts/bench_compare.py, in-degree 2)\n    dropped hubs: 1\n  dropped clusters: 0\nWorkspace hotspots\n  corpus:rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/timeline-definition-GS45XAXW.mjs timeline-definition-GS45XAXW.h (in-degree 69)\n  corpus:src/cairn/graph/__init__.py src.cairn.graph (in-degree 54)\n  corpus:src/cairn/cli/system/doctor.py _result (in-degree 48)\n  corpus:tests/test_knowledge_index.py _conn (in-degree 39)\n  corpus:tests/test_scip_import.py _occ (in-degree 37)\n  corpus:tests/test_knowledge_index.py _add_doc (in-degree 35)\n  corpus:tests/test_knowledge_index.py _bundle (in-degree 34)\n  corpus:rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs chunk-DZP67EKU.k (in-degree 33)\n  corpus:rust/crates/cairn-build/src/scip/importer.rs import_scip_file (in-degree 32)\n  corpus:tests/test_signals_csharp.py _parse (in-degree 32)\n  corpus:rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs chunk-NF366YI6.clear (in-degree 29)\n  corpus:rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-SLDQ463B.mjs chunk-SLDQ463B.p (in-degree 29)\n  dropped hotspots: 1939"
       }
     ],
     "structuredContent": {
-      "result": "Repository cairn\n  tests: <N> files, <N> symbols, <N> edges\n    FakeObserver.join (tests/test_watcher_service.py, in-degree <N>)\n    Runner.sum (tests/fixtures/kotlin/modern/trailing_commas.kt, in-degree <N>)\n    Runner.index (tests/fixtures/kotlin/modern/trailing_commas.kt, in-degree <N>)\n    dropped hubs: <N>\n  src: <N> files, <N> symbols, <N> edges\n    OKFBundle (src/cairn/okf/bundle.py, in-degree <N>)\n    _RecordingGroup.invoke (src/cairn/cli/main.py, in-degree <N>)\n    get_db (src/cairn/graph/schema.py, in-degree <N>)\n    dropped hubs: <N>\n  rust: <N> files, <N> symbols, <N> edges\n    McpClient.post (rust/crates/cairn-daemon/tests/common/mod.rs, in-degree <N>)\n    escape (rust/crates/cairn-store/src/dump.rs, in-degree <N>)\n    taint.find_symbol_paths (rust/crates/cairn-query/src/graph.rs, in-degree <N>)\n    dropped hubs: <N>\n  scripts: <N> files, <N> symbols, <N> edges\n    UsageError (scripts/fetch_t3_corpus.py, in-degree <N>)\n    verify_ground_truth (scripts/verify_ground_truth.py, in-degree <N>)\n    spike_queries.add (scripts/rust_migration/spike_golden.py, in-degree <N>)\n    dropped hubs: <N>\n  extensions: <N> files, <N> symbols, <N> edges\n    server.ServerManager.remove (extensions/vscode/src/server.ts, in-degree <N>)\n    statusModel.test.state (extensions/vscode/test/statusModel.test.ts, in-degree <N>)\n    server.ServerManager.states (extensions/vscode/src/server.ts, in-degree <N>)\n    dropped hubs: <N>\n  .github: <N> files, <N> symbols, <N> edges\n    _load (.github/scripts/bench_compare.py, in-degree <N>)\n    _baseline_source (.github/scripts/bench_compare.py, in-degree <N>)\n    _render (.github/scripts/bench_compare.py, in-degree <N>)\n    dropped hubs: <N>\n  .: <N> files, <N> symbols, <N> edges\n    dropped hubs: <N>\n  dropped clusters: <N>\nWorkspace hotspots\n  cairn:tests/test_watcher_service.py FakeObserver.join (in-degree <N>)\n  cairn:src/cairn/okf/bundle.py OKFBundle (in-degree <N>)\n  cairn:src/cairn/cli/main.py _RecordingGroup.invoke (in-degree <N>)\n  cairn:src/cairn/graph/schema.py get_db (in-degree <N>)\n  cairn:src/cairn/graph/schema.py src.cairn.graph.schema (in-degree <N>)\n  cairn:src/cairn/graph/embeddings.py src.cairn.graph.embeddings (in-degree <N>)\n  cairn:src/cairn/okf/bundle.py src.cairn.okf.bundle (in-degree <N>)\n  cairn:src/cairn/parsers/base.py ScopeTypeTracker.resolve (in-degree <N>)\n  cairn:src/cairn/graph/semantic.py src.cairn.graph.semantic (in-degree <N>)\n  cairn:src/cairn/parsers/base.py TreeSitterParserBase._node_text (in-degree <N>)\n  cairn:src/cairn/dashboard/data.py src.cairn.dashboard.data (in-degree <N>)\n  cairn:src/cairn/okf/concept.py OKFConcept (in-degree <N>)\n  dropped hotspots: <N>"
+      "result": "Repository corpus\n  rust: 25 files, 920 symbols, 7230 edges\n    timeline-definition-GS45XAXW.h (rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/timeline-definition-GS45XAXW.mjs, in-degree 69)\n    chunk-DZP67EKU.k (rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs, in-degree 33)\n    import_scip_file (rust/crates/cairn-build/src/scip/importer.rs, in-degree 32)\n    dropped hubs: 895\n  tests: 40 files, 687 symbols, 4001 edges\n    _conn (tests/test_knowledge_index.py, in-degree 39)\n    _occ (tests/test_scip_import.py, in-degree 37)\n    _add_doc (tests/test_knowledge_index.py, in-degree 35)\n    dropped hubs: 644\n  src: 30 files, 385 symbols, 3095 edges\n    src.cairn.graph (src/cairn/graph/__init__.py, in-degree 54)\n    _result (src/cairn/cli/system/doctor.py, in-degree 48)\n    src.cairn.memory.store (src/cairn/memory/store.py, in-degree 19)\n    dropped hubs: 366\n  scripts: 3 files, 31 symbols, 395 edges\n    _note (scripts/measure_warm_time.py, in-degree 11)\n    _refuse (scripts/measure_warm_time.py, in-degree 8)\n    _apply_backend_policy (scripts/measure_warm_time.py, in-degree 4)\n    dropped hubs: 25\n  extensions: 1 files, 6 symbols, 11 edges\n    statusModel.worstState (extensions/vscode/src/statusModel.ts, in-degree 3)\n    statusModel.statusDisplay (extensions/vscode/src/statusModel.ts, in-degree 2)\n    statusModel.StatusDisplay (extensions/vscode/src/statusModel.ts, in-degree 1)\n    dropped hubs: 2\n  .github: 1 files, 5 symbols, 49 edges\n    _load (.github/scripts/bench_compare.py, in-degree 4)\n    _baseline_source (.github/scripts/bench_compare.py, in-degree 2)\n    _render (.github/scripts/bench_compare.py, in-degree 2)\n    dropped hubs: 1\n  dropped clusters: 0\nWorkspace hotspots\n  corpus:rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/timeline-definition-GS45XAXW.mjs timeline-definition-GS45XAXW.h (in-degree 69)\n  corpus:src/cairn/graph/__init__.py src.cairn.graph (in-degree 54)\n  corpus:src/cairn/cli/system/doctor.py _result (in-degree 48)\n  corpus:tests/test_knowledge_index.py _conn (in-degree 39)\n  corpus:tests/test_scip_import.py _occ (in-degree 37)\n  corpus:tests/test_knowledge_index.py _add_doc (in-degree 35)\n  corpus:tests/test_knowledge_index.py _bundle (in-degree 34)\n  corpus:rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs chunk-DZP67EKU.k (in-degree 33)\n  corpus:rust/crates/cairn-build/src/scip/importer.rs import_scip_file (in-degree 32)\n  corpus:tests/test_signals_csharp.py _parse (in-degree 32)\n  corpus:rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs chunk-NF366YI6.clear (in-degree 29)\n  corpus:rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-SLDQ463B.mjs chunk-SLDQ463B.p (in-degree 29)\n  dropped hotspots: 1939"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus"
 }

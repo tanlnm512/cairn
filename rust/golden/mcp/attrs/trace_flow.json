@@ -4,6 +4,12 @@
   "arguments": {
     "entry": "fields"
   },
+  "replay": {
+    "args": {
+      "entry": "fields"
+    },
+    "seq": 15
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -24,8 +30,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:38.257062+00:00"
+    "captured_at": "2026-10-19T15:28:48.124356+00:00"
   },
   "normalization": {
     "rules": [
@@ -42,8 +47,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -59,5 +63,7 @@
     "structuredContent": {
       "result": "Traced 3 step(s) from 'fields' (1 branches, 2 terminals):\n- `fields` (function)\n  - `NotAnAttrsClassError` (class)\n  - `get_generic_base` (function)\n\nBranch points:\n  `fields` -> `get_generic_base`, `fields`, `NotAnAttrsClassError`\n\nTerminal calls: `NotAnAttrsClassError`, `get_generic_base`\n\nCyclic calls: `fields`"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
 }

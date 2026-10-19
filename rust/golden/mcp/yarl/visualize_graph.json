@@ -6,6 +6,14 @@
     "symbol": "__bool__",
     "depth": 2
   },
+  "replay": {
+    "args": {
+      "scope": "symbol",
+      "symbol": "__bool__",
+      "depth": 2
+    },
+    "seq": 11
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -26,8 +34,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:30.481587+00:00"
+    "captured_at": "2026-10-19T15:28:38.411669+00:00"
   },
   "normalization": {
     "rules": [
@@ -44,8 +51,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": true,
     "mask_list_lines": false
@@ -61,5 +67,7 @@
     "structuredContent": {
       "result": "\n    URL -->__bool__\n    URL[URL]\n    __bool__ -->bool\n    __bool__(__bool__)\n    bool[bool]\ngraph LR"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/yarl/store.kg",
+  "replay_workspace": "rust/golden/stores/yarl/corpus"
 }

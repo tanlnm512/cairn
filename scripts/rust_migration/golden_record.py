@@ -554,6 +554,8 @@ def run_capture(workspace: Path, keep_scratch: bool) -> tuple[dict, dict]:
                 "schema": SCHEMA,
                 "tool": tool,
                 "arguments": normalize_obj(cap["args"], rules),
+                "replay": replay_block(entry, cap["args"], rules,
+                                       seq=entries.index(entry)),
                 "capture": {**meta, "captured_at": datetime.now(timezone.utc).isoformat()},
                 "normalization": {
                     "rules": [name for name, _p, _r in rules],
@@ -572,6 +574,21 @@ def run_capture(workspace: Path, keep_scratch: bool) -> tuple[dict, dict]:
 
 
 # --- fixture IO + verify ----------------------------------------------------
+
+
+def replay_block(entry: dict, args: dict, rules: list, seq: int | None = None) -> dict:
+    """The exact replay arguments for one tool, stored as the additive `replay` key."""
+    block_args = {k: v for k, v in args.items() if k != "doc_id"}
+    block: dict = {"args": normalize_obj(block_args, rules)}
+    if "setup" in entry:
+        block["setup"] = {
+            "tool": entry["setup"]["tool"],
+            "args": normalize_obj(entry["setup"]["args"], rules),
+            "id_regex": entry["setup"]["id_regex"],
+        }
+    if seq is not None:
+        block["seq"] = seq
+    return block
 
 
 def compare_scope(fixture: dict) -> dict:

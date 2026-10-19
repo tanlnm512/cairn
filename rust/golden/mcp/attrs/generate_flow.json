@@ -4,6 +4,12 @@
   "arguments": {
     "entry": "fields"
   },
+  "replay": {
+    "args": {
+      "entry": "fields"
+    },
+    "seq": 16
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -24,8 +30,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:38.257161+00:00"
+    "captured_at": "2026-10-19T15:28:48.124493+00:00"
   },
   "normalization": {
     "rules": [
@@ -42,8 +47,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -59,5 +63,7 @@
     "structuredContent": {
       "result": "Compass: compass/flow-fields (quality=1.00)\n```cairn-critic\n{\n  \"passed\": true,\n  \"quality_score\": 1.0,\n  \"errors\": [],\n  \"warnings\": []\n}\n```"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
 }

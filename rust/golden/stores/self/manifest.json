@@ -1,0 +1,22 @@
+{
+  "schema": "cairn-rust-parity-pinned-store/1",
+  "store": "self",
+  "cap_files": 100,
+  "corpus_files": 101,
+  "corpus_bytes": 1183307,
+  "db_bytes": 12259328,
+  "total_bytes": 14300416,
+  "store_counts": {
+    "repos": 1,
+    "files": 100,
+    "symbols": 2034,
+    "edges": 14781
+  },
+  "knowledge_files": 540,
+  "knowledge_bundle_seeded_files": 537,
+  "env_pins": {
+    "CAIRN_EMBED_BACKEND": "hash",
+    "CAIRN_RERANK": "0",
+    "CAIRN_WATCH": "0"
+  }
+}

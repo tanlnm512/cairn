@@ -2,31 +2,44 @@
   "schema": "cairn-rust-golden-mcp/1",
   "tool": "trace_flow",
   "arguments": {
-    "entry": "kickoff"
+    "entry": "h"
+  },
+  "replay": {
+    "args": {
+      "entry": "h"
+    },
+    "seq": 15
   },
   "capture": {
     "impl": "python",
-    "harness": "scripts/rust_migration/flow_golden.py",
+    "harness": "scripts/rust_migration/parity.py",
     "corpus": {
-      "workspace": "rust/golden/flow/corpus",
-      "identity_method": "checked-in-corpus"
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
     },
-    "store": "rust/golden/flow/flow-store.kg",
+    "store": {
+      "repos": 1,
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
+    },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
-      "CAIRN_WATCH": "0",
-      "CAIRN_FUSION": "1"
+      "CAIRN_WATCH": "0"
     },
-    "captured_at": "2026-10-19T10:47:09.402502+00:00"
+    "captured_at": "2026-10-19T15:28:28.822629+00:00"
   },
   "normalization": {
     "rules": [
-      "store_home_resolved",
+      "workspace_resolved",
       "home_resolved",
-      "store_home",
-      "home",
+      "store_home_resolved",
       "workspace",
+      "home",
+      "store_home",
       "iso_ts",
       "epoch",
       "date",
@@ -44,13 +57,15 @@
     "content": [
       {
         "type": "text",
-        "text": "Traced 13 step(s) from 'kickoff' (3 branches, 1 terminals):\n- `kickoff` (function)\n  - `a` (function)\n  - `recurse` (function)\n  - `run_pipeline` (function)\n    - `b` (function)\n    - `dispatch` (function)\n    - `read_config` (function)\n      - `run_query` (function)\n        - `cursor` (method)\n        - `execute` (method)\n        - `get_db` (function)\n          - `Cur` (class)\n          - `Db` (class)\n\nBranch points:\n  `run_query` -> `get_db`, `cursor`, `execute`\n  `run_pipeline` -> `dispatch`, `read_config`\n  `kickoff` -> `a`, `run_pipeline`, `recurse`\n\nTerminal calls: `execute`\n\nCyclic calls: `a`, `recurse`"
+        "text": "No outgoing calls traced from 'h'."
       }
     ],
     "structuredContent": {
-      "result": "Traced 13 step(s) from 'kickoff' (3 branches, 1 terminals):\n- `kickoff` (function)\n  - `a` (function)\n  - `recurse` (function)\n  - `run_pipeline` (function)\n    - `b` (function)\n    - `dispatch` (function)\n    - `read_config` (function)\n      - `run_query` (function)\n        - `cursor` (method)\n        - `execute` (method)\n        - `get_db` (function)\n          - `Cur` (class)\n          - `Db` (class)\n\nBranch points:\n  `run_query` -> `get_db`, `cursor`, `execute`\n  `run_pipeline` -> `dispatch`, `read_config`\n  `kickoff` -> `a`, `run_pipeline`, `recurse`\n\nTerminal calls: `execute`\n\nCyclic calls: `a`, `recurse`"
+      "result": "No outgoing calls traced from 'h'."
     }
   },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus",
   "cases": [
     {
       "arguments": {

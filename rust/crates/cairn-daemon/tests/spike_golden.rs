@@ -17,6 +17,12 @@ fn repo_root() -> PathBuf {
         .expect("repo root")
 }
 
+/// The store a fixture replays over: its `replay_store` pointer when present,
+/// else the legacy checked-in default.
+fn fixture_store(root: &std::path::Path, fixture: &Value, default: &str) -> PathBuf {
+    root.join(fixture["replay_store"].as_str().unwrap_or(default))
+}
+
 // --- fixture normalization (ported from the recorder's scrub rules) ----------
 
 fn normalize_text(text: &str, rules: &[Rule]) -> String {
@@ -99,12 +105,12 @@ fn normalize_value(value: &Value, rules: &[Rule]) -> Value {
 async fn spike_serves_search_symbols_golden_equal() {
     let root = repo_root();
     let fixture_path = root.join("rust/golden/mcp/search_symbols.json");
-    let store_path = root.join("rust/golden/spike/search-store.kg");
     let fixture: Value = serde_json::from_str(
         &fs::read_to_string(&fixture_path)
             .unwrap_or_else(|e| panic!("read fixture {}: {e}", fixture_path.display())),
     )
     .expect("fixture json");
+    let store_path = fixture_store(&root, &fixture, "rust/golden/spike/search-store.kg");
     let entries = fixture["spike_queries"].as_array().unwrap_or_else(|| {
         panic!(
             "spike_queries missing in {}; regenerate with scripts/rust_migration/spike_golden.py",
@@ -128,7 +134,7 @@ async fn spike_serves_search_symbols_golden_equal() {
     let rules = normalization_rules(&fixture);
 
     let temp = TempStore::from_fixture(&store_path, "spike");
-    let db = temp.0.join("search-store.kg");
+    let db = temp.0.join(store_path.file_name().expect("store name"));
     let (addr, handle) = cairn_daemon::server::serve(db).await.expect("serve");
     let mut client = McpClient::connect(addr).expect("connect");
     client.initialize();

@@ -5,6 +5,13 @@
     "query": "how does the build resolve call edges",
     "limit": 10
   },
+  "replay": {
+    "args": {
+      "query": "how does the build resolve call edges",
+      "limit": 10
+    },
+    "seq": 6
+  },
   "capture": {
     "impl": "python",
     "harness": "scripts/rust_migration/parity.py",
@@ -25,8 +32,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 504,
-    "captured_at": "2026-10-18T22:48:38.254063+00:00"
+    "captured_at": "2026-10-19T15:28:48.122549+00:00"
   },
   "normalization": {
     "rules": [
@@ -43,8 +49,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -60,5 +65,57 @@
     "structuredContent": {
       "result": "No matches for 'how does the build resolve call edges' -- neither the vector scan nor the BM25 fallback found anything. The corpus may not be embedded yet (run `cairn embed` to index), or the wording may not match any token. Try search_symbols(\"...\") for a lexical match, or rephrase with more specific terms."
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus",
+  "spike_queries": [
+    {
+      "query": "how does the build resolve call edges",
+      "limit": 10,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "No matches for 'how does the build resolve call edges' -- neither the vector scan nor the BM25 fallback found anything. The corpus may not be embedded yet (run `cairn embed` to index), or the wording may not match any token. Try search_symbols(\"...\") for a lexical match, or rephrase with more specific terms."
+          }
+        ],
+        "structuredContent": {
+          "result": "No matches for 'how does the build resolve call edges' -- neither the vector scan nor the BM25 fallback found anything. The corpus may not be embedded yet (run `cairn embed` to index), or the wording may not match any token. Try search_symbols(\"...\") for a lexical match, or rephrase with more specific terms."
+        }
+      }
+    },
+    {
+      "query": "search_symbols",
+      "limit": 10,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "No matches for 'search_symbols' -- neither the vector scan nor the BM25 fallback found anything. The corpus may not be embedded yet (run `cairn embed` to index), or the wording may not match any token. Try search_symbols(\"...\") for a lexical match, or rephrase with more specific terms."
+          }
+        ],
+        "structuredContent": {
+          "result": "No matches for 'search_symbols' -- neither the vector scan nor the BM25 fallback found anything. The corpus may not be embedded yet (run `cairn embed` to index), or the wording may not match any token. Try search_symbols(\"...\") for a lexical match, or rephrase with more specific terms."
+        }
+      }
+    },
+    {
+      "query": "zzz_no_match_probe_queried",
+      "limit": 10,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "No matches for 'zzz_no_match_probe_queried' -- neither the vector scan nor the BM25 fallback found anything. The corpus may not be embedded yet (run `cairn embed` to index), or the wording may not match any token. Try search_symbols(\"...\") for a lexical match, or rephrase with more specific terms."
+          }
+        ],
+        "structuredContent": {
+          "result": "No matches for 'zzz_no_match_probe_queried' -- neither the vector scan nor the BM25 fallback found anything. The corpus may not be embedded yet (run `cairn embed` to index), or the wording may not match any token. Try search_symbols(\"...\") for a lexical match, or rephrase with more specific terms."
+        }
+      }
+    }
+  ]
 }

@@ -26,6 +26,12 @@ fn repo_root() -> PathBuf {
         .expect("repo root")
 }
 
+/// The store a fixture replays over: its `replay_store` pointer when present,
+/// else the legacy checked-in default.
+fn fixture_store(root: &Path, fixture: &Value, default: &str) -> PathBuf {
+    root.join(fixture["replay_store"].as_str().unwrap_or(default))
+}
+
 /// Copy-on-create scratch store; removes the directory on drop.
 struct TempStore(PathBuf);
 
@@ -53,10 +59,17 @@ impl Drop for TempStore {
     }
 }
 
-fn nav_store() -> (Connection, TempStore) {
-    let temp = TempStore::from_fixture(&repo_root().join("rust/golden/nav/nav-store.kg"));
+fn nav_store_from(src: &Path) -> (Connection, TempStore) {
+    let temp = TempStore::from_fixture(src);
     let conn = cairn_store::conn::open_read_only(&temp.db()).expect("open nav store");
     (conn, temp)
+}
+
+/// Python's `"\n".join(sorted(text.splitlines()))`.
+fn sorted_lines(text: &str) -> String {
+    let mut lines: Vec<&str> = text.lines().collect();
+    lines.sort();
+    lines.join("\n")
 }
 
 fn arg_i64(args: &Value, key: &str, default: i64) -> i64 {
@@ -109,8 +122,20 @@ fn nav_tools_are_golden_equal() {
             Some(expected),
             "{tool}: fixture envelope drift"
         );
-        let (conn, _temp) = nav_store();
-        let actual = call_tool(&conn, tool, &fixture["arguments"]);
+        let (conn, _temp) = nav_store_from(&fixture_store(
+            &repo_root(),
+            &fixture,
+            "rust/golden/nav/nav-store.kg",
+        ));
+        let mut actual = call_tool(&conn, tool, &fixture["arguments"]);
+        if fixture["normalization"]["sort_lines"]
+            .as_bool()
+            .unwrap_or(false)
+        {
+            // The fixture stores the capture's sorted line order; tie order
+            // must be compared rank-insensitively (the verify-time ruling).
+            actual = sorted_lines(&actual);
+        }
         assert_eq!(actual, expected, "{tool} diverges from the golden fixture");
     }
 }

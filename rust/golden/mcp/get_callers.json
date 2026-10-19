@@ -2,8 +2,15 @@
   "schema": "cairn-rust-golden-mcp/1",
   "tool": "get_callers",
   "arguments": {
-    "name": "invoke",
+    "name": "h",
     "limit": 20
+  },
+  "replay": {
+    "args": {
+      "name": "h",
+      "limit": 20
+    },
+    "seq": 1
   },
   "capture": {
     "impl": "python",
@@ -11,30 +18,30 @@
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "350643089ec5e88ce9f2376ba4156d1425924783",
-      "git_dirty_entries": 74
+      "git_commit": null,
+      "git_dirty_entries": 0
     },
     "store": {
       "repos": 1,
-      "files": 703,
-      "symbols": 11969,
-      "edges": 82818
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 505,
-    "captured_at": "2026-10-18T23:04:44.803204+00:00"
+    "captured_at": "2026-10-19T15:28:28.805185+00:00"
   },
   "normalization": {
     "rules": [
+      "workspace_resolved",
       "home_resolved",
       "store_home_resolved",
+      "workspace",
       "home",
       "store_home",
-      "workspace",
       "iso_ts",
       "epoch",
       "date",
@@ -42,14 +49,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates",
-      "memory_total",
-      "lang_totals",
-      "in_degree",
-      "dropped_hubs",
-      "dropped_hotspots",
-      "dropped_clusters"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -59,11 +59,13 @@
     "content": [
       {
         "type": "text",
-        "text": "20 callers of 'invoke':\n  class _RecordingGroup  src/cairn/cli/main.py:74  (cairn)\n  method invoke  src/cairn/cli/main.py:90  (cairn)\n  function serve_restart  src/cairn/cli/serve.py:290  (cairn)\n  function serve_restart  src/cairn/cli/serve.py:291  (cairn)\n  method _invoke  tests/test_agent_suite.py:301  (cairn)\n  method test_help_lists_agent_and_runs  tests/test_agent_suite.py:331  (cairn)\n  method test_agent_baseline_headers_and_compares  tests/test_agent_suite.py:378  (cairn)\n  method test_agent_baseline_regression_exits_2  tests/test_agent_suite.py:417  (cairn)\n  method test_task_missing_from_baseline_renders_no_baseline_marker  tests/test_agent_suite.py:461  (cairn)\n  function test_cli_multivector_rebuilds_both_indexes  tests/test_ann_vecmv.py:298  (cairn)\n  function test_cli_multivector_rebuilds_both_indexes  tests/test_ann_vecmv.py:325  (cairn)\n  function test_cli_build_index_flag_forces_rebuild_when_backend_off  tests/test_ann_vecmv.py:365  (cairn)\n  function test_query_commands_never_write_under_read_only  tests/test_audit_r2_a3.py:87  (cairn)\n  function test_impact_and_deps_json_empty_exit_nonzero  tests/test_audit_r2_a3.py:100  (cairn)\n  function test_impact_and_deps_json_empty_exit_nonzero  tests/test_audit_r2_a3.py:104  (cairn)\n  function test_impact_depth_is_bounded  tests/test_audit_r2_a3.py:116  (cairn)\n  function test_tree_reports_truncation  tests/test_audit_r2_a3.py:145  (cairn)\n  function test_path_rejects_empty_patterns  tests/test_audit_r2_a3.py:156  (cairn)\n  function test_dataflow_lookup_names_non_public_symbols  tests/test_audit_r2_a3.py:329  (cairn)\n  function test_dataflow_lookup_names_non_public_symbols  tests/test_audit_r2_a3.py:333  (cairn)\n  ... hit the limit cap; pass a higher limit for more."
+        "text": "20 callers of 'h':\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  ... hit the limit cap; pass a higher limit for more."
       }
     ],
     "structuredContent": {
-      "result": "20 callers of 'invoke':\n  class _RecordingGroup  src/cairn/cli/main.py:74  (cairn)\n  method invoke  src/cairn/cli/main.py:90  (cairn)\n  function serve_restart  src/cairn/cli/serve.py:290  (cairn)\n  function serve_restart  src/cairn/cli/serve.py:291  (cairn)\n  method _invoke  tests/test_agent_suite.py:301  (cairn)\n  method test_help_lists_agent_and_runs  tests/test_agent_suite.py:331  (cairn)\n  method test_agent_baseline_headers_and_compares  tests/test_agent_suite.py:378  (cairn)\n  method test_agent_baseline_regression_exits_2  tests/test_agent_suite.py:417  (cairn)\n  method test_task_missing_from_baseline_renders_no_baseline_marker  tests/test_agent_suite.py:461  (cairn)\n  function test_cli_multivector_rebuilds_both_indexes  tests/test_ann_vecmv.py:298  (cairn)\n  function test_cli_multivector_rebuilds_both_indexes  tests/test_ann_vecmv.py:325  (cairn)\n  function test_cli_build_index_flag_forces_rebuild_when_backend_off  tests/test_ann_vecmv.py:365  (cairn)\n  function test_query_commands_never_write_under_read_only  tests/test_audit_r2_a3.py:87  (cairn)\n  function test_impact_and_deps_json_empty_exit_nonzero  tests/test_audit_r2_a3.py:100  (cairn)\n  function test_impact_and_deps_json_empty_exit_nonzero  tests/test_audit_r2_a3.py:104  (cairn)\n  function test_impact_depth_is_bounded  tests/test_audit_r2_a3.py:116  (cairn)\n  function test_tree_reports_truncation  tests/test_audit_r2_a3.py:145  (cairn)\n  function test_path_rejects_empty_patterns  tests/test_audit_r2_a3.py:156  (cairn)\n  function test_dataflow_lookup_names_non_public_symbols  tests/test_audit_r2_a3.py:329  (cairn)\n  function test_dataflow_lookup_names_non_public_symbols  tests/test_audit_r2_a3.py:333  (cairn)\n  ... hit the limit cap; pass a higher limit for more."
+      "result": "20 callers of 'h':\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  module chunk-DZP67EKU  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  ... hit the limit cap; pass a higher limit for more."
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus"
 }

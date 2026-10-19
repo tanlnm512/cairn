@@ -16,6 +16,12 @@ fn repo_root() -> PathBuf {
         .expect("repo root")
 }
 
+/// The store a fixture replays over: its `replay_store` pointer when present,
+/// else the legacy checked-in default.
+fn fixture_store(root: &Path, fixture: &Value, default: &str) -> PathBuf {
+    root.join(fixture["replay_store"].as_str().unwrap_or(default))
+}
+
 /// Copy-on-create scratch store; removes the directory on drop.
 struct TempStore(PathBuf);
 
@@ -30,10 +36,6 @@ impl TempStore {
         fs::create_dir_all(&dir).expect("temp dir");
         fs::copy(src, dir.join(src.file_name().expect("store name"))).expect("copy fixture store");
         Self(dir)
-    }
-
-    fn db(&self, name: &str) -> PathBuf {
-        self.0.join(name)
     }
 }
 
@@ -147,8 +149,11 @@ fn search_symbols_serves_the_golden_fixture() {
     );
     let rules = normalization_rules(&fixture);
 
-    let temp = TempStore::from_fixture(&root.join("rust/golden/spike/search-store.kg"), "lex");
-    let conn = cairn_store::conn::open_read_only(&temp.db("search-store.kg")).expect("open store");
+    let store_src = fixture_store(&root, &fixture, "rust/golden/spike/search-store.kg");
+    let temp = TempStore::from_fixture(&store_src, "lex");
+    let conn =
+        cairn_store::conn::open_read_only(&temp.0.join(store_src.file_name().expect("store name")))
+            .expect("open store");
 
     for entry in entries {
         let pattern = entry["pattern"].as_str().expect("pattern");
@@ -211,9 +216,11 @@ fn semantic_search_serves_the_golden_fixture() {
         server_api_key: None,
     };
 
-    let temp = TempStore::from_fixture(&root.join("rust/golden/search/semantic-store.kg"), "sem");
+    let store_src = fixture_store(&root, &fixture, "rust/golden/search/semantic-store.kg");
+    let temp = TempStore::from_fixture(&store_src, "sem");
     let conn =
-        cairn_store::conn::open_read_only(&temp.db("semantic-store.kg")).expect("open store");
+        cairn_store::conn::open_read_only(&temp.0.join(store_src.file_name().expect("store name")))
+            .expect("open store");
 
     for entry in entries {
         let query = entry["query"].as_str().expect("query");

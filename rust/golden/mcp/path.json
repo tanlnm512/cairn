@@ -2,9 +2,17 @@
   "schema": "cairn-rust-golden-mcp/1",
   "tool": "path",
   "arguments": {
-    "from_pattern": "AgentReport",
-    "to_pattern": "_totals",
+    "from_pattern": "A",
+    "to_pattern": "I",
     "max_depth": 4
+  },
+  "replay": {
+    "args": {
+      "from_pattern": "A",
+      "to_pattern": "I",
+      "max_depth": 4
+    },
+    "seq": 4
   },
   "capture": {
     "impl": "python",
@@ -12,30 +20,30 @@
     "corpus": {
       "workspace": "<WORKSPACE>",
       "identity_method": "git_commit",
-      "git_commit": "350643089ec5e88ce9f2376ba4156d1425924783",
-      "git_dirty_entries": 74
+      "git_commit": null,
+      "git_dirty_entries": 0
     },
     "store": {
       "repos": 1,
-      "files": 703,
-      "symbols": 11969,
-      "edges": 82818
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
     },
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "knowledge_bundle_seeded_files": 505,
-    "captured_at": "2026-10-18T23:04:44.805788+00:00"
+    "captured_at": "2026-10-19T15:28:28.805935+00:00"
   },
   "normalization": {
     "rules": [
+      "workspace_resolved",
       "home_resolved",
       "store_home_resolved",
+      "workspace",
       "home",
       "store_home",
-      "workspace",
       "iso_ts",
       "epoch",
       "date",
@@ -43,14 +51,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates",
-      "memory_total",
-      "lang_totals",
-      "in_degree",
-      "dropped_hubs",
-      "dropped_hotspots",
-      "dropped_clusters"
+      "float"
     ],
     "sort_lines": true,
     "mask_list_lines": false
@@ -60,11 +61,13 @@
     "content": [
       {
         "type": "text",
-        "text": "  src/cairn/bench/agent_suite.py:500 _totals [exact]\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\n  src/cairn/bench/agent_suite.py:529 to_table [exact]\n  tests/test_agent_suite.py:216 test_totals_sum_task_medians [exact]\npath 1 (AgentReport -> _totals, 1 hops):\npath 2 (AgentReport -> _totals, 2 hops):\npath 3 (AgentReport -> _totals, 1 hops):"
+        "text": "  .github/scripts/bench_compare.py:1 bench_compare [exact]\n  .github/scripts/bench_compare.py:1 bench_compare [exact]\n  .github/scripts/bench_compare.py:1 bench_compare [exact]\n  .github/scripts/bench_compare.py:1 bench_compare [exact]\n  .github/scripts/bench_compare.py:1 bench_compare [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:60 _baseline_source [exact]\n  .github/scripts/bench_compare.py:60 _baseline_source [exact]\n  .github/scripts/bench_compare.py:60 _baseline_source [exact]\n  .github/scripts/bench_compare.py:91 _render [exact]\n  .github/scripts/bench_compare.py:91 _render [exact]\n  extensions/vscode/src/statusModel.ts:1 statusModel [exact]\n  extensions/vscode/src/statusModel.ts:33 isDegraded [exact]\n  extensions/vscode/src/statusModel.ts:39 statusDisplay [exact]\n  extensions/vscode/src/statusModel.ts:39 statusDisplay [exact]\n  extensions/vscode/src/statusModel.ts:66 aggregateDisplay [exact]\n  extensions/vscode/src/statusModel.ts:66 aggregateDisplay [exact]\n  extensions/vscode/src/statusModel.ts:8 StatusDisplay [exact]\n  rust/crates/cairn-build/src/config.rs:1 config [exact]\n  rust/crates/cairn-build/src/config.rs:15 load_config [exact]\n  rust/crates/cairn-build/src/config.rs:7 CairnConfig [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:1 importer [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:110 terminal_name [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:165 workspace_repo_ids [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:18 SKIP_PARSE_ERROR [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:19 SKIP_JOIN_ANOMALY [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:200 parse_index [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:23 JOIN_ANOMALY_THRESHOLD [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:339 count_disagreements [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:38 DELETE_FILE_CALLREF_EDGES [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:391 write_overlay [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:46 INSERT_ANOMALY_SKIP [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:565 terminal_name_matches_python_label_table [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:586 norm_rel_separator_canonicalization [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:593 innermost_containment_is_one_based [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:98 TargetResolution [exact]\n  rust/crates/cairn-build/tests/embeddings_parity.rs:1 embeddings_parity [exact]\n  rust/crates/cairn-build/tests/embeddings_parity.rs:258 embed_limit_bounds_base_and_mv_passes [exact]\n  rust/crates/cairn-build/tests/embeddings_parity.rs:282 embed_symbols_resyncs_the_vec0_row_in_place [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1106 fromRegion [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:156 edgeView [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:173 setEdgeKindHidden [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:188 setKindHidden [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:301 layoutOptions [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:351 optionsFor [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:351 optionsFor [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:415 renderLegend [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:658 renderInspect [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:696 inspectPanel [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:81 kindColor [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:867 confirmFocus [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:909 highlight [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:909 highlight [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:909 highlight [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:923 entry [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:923 entry [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:954 open [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:954 open [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:954 open [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:954 open [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:981 pick [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:981 pick [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:981 pick [exact]\npath 1 (A -> I, 1 hops):\npath 10 (A -> I, 4 hops):\npath 11 (A -> I, 1 hops):\npath 12 (A -> I, 1 hops):\npath 13 (A -> I, 2 hops):\npath 14 (A -> I, 1 hops):\npath 15 (A -> I, 1 hops):\npath 16 (A -> I, 1 hops):\npath 17 (A -> I, 1 hops):\npath 18 (A -> I, 1 hops):\npath 19 (A -> I, 1 hops):\npath 2 (A -> I, 4 hops):\npath 20 (A -> I, 1 hops):\npath 21 (A -> I, 1 hops):\npath 22 (A -> I, 1 hops):\npath 23 (A -> I, 1 hops):\npath 24 (A -> I, 1 hops):\npath 25 (A -> I, 1 hops):\npath 26 (A -> I, 1 hops):\npath 27 (A -> I, 1 hops):\npath 28 (A -> I, 1 hops):\npath 29 (A -> I, 1 hops):\npath 3 (A -> I, 1 hops):\npath 30 (A -> I, 1 hops):\npath 31 (A -> I, 1 hops):\npath 32 (A -> I, 1 hops):\npath 33 (A -> I, 1 hops):\npath 34 (A -> I, 1 hops):\npath 35 (A -> I, 1 hops):\npath 36 (A -> I, 1 hops):\npath 37 (A -> I, 1 hops):\npath 38 (A -> I, 1 hops):\npath 39 (A -> I, 2 hops):\npath 4 (A -> I, 2 hops):\npath 40 (A -> I, 2 hops):\npath 41 (A -> I, 2 hops):\npath 42 (A -> I, 2 hops):\npath 43 (A -> I, 2 hops):\npath 44 (A -> I, 3 hops):\npath 45 (A -> I, 3 hops):\npath 46 (A -> I, 2 hops):\npath 47 (A -> I, 2 hops):\npath 48 (A -> I, 2 hops):\npath 49 (A -> I, 2 hops):\npath 5 (A -> I, 4 hops):\npath 50 (A -> I, 2 hops):\npath 6 (A -> I, 5 hops):\npath 7 (A -> I, 3 hops):\npath 8 (A -> I, 1 hops):\npath 9 (A -> I, 3 hops):"
       }
     ],
     "structuredContent": {
-      "result": "  src/cairn/bench/agent_suite.py:500 _totals [exact]\n  src/cairn/bench/agent_suite.py:500 _totals [exact]\n  src/cairn/bench/agent_suite.py:529 to_table [exact]\n  tests/test_agent_suite.py:216 test_totals_sum_task_medians [exact]\npath 1 (AgentReport -> _totals, 1 hops):\npath 2 (AgentReport -> _totals, 2 hops):\npath 3 (AgentReport -> _totals, 1 hops):"
+      "result": "  .github/scripts/bench_compare.py:1 bench_compare [exact]\n  .github/scripts/bench_compare.py:1 bench_compare [exact]\n  .github/scripts/bench_compare.py:1 bench_compare [exact]\n  .github/scripts/bench_compare.py:1 bench_compare [exact]\n  .github/scripts/bench_compare.py:1 bench_compare [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:141 main [exact]\n  .github/scripts/bench_compare.py:60 _baseline_source [exact]\n  .github/scripts/bench_compare.py:60 _baseline_source [exact]\n  .github/scripts/bench_compare.py:60 _baseline_source [exact]\n  .github/scripts/bench_compare.py:91 _render [exact]\n  .github/scripts/bench_compare.py:91 _render [exact]\n  extensions/vscode/src/statusModel.ts:1 statusModel [exact]\n  extensions/vscode/src/statusModel.ts:33 isDegraded [exact]\n  extensions/vscode/src/statusModel.ts:39 statusDisplay [exact]\n  extensions/vscode/src/statusModel.ts:39 statusDisplay [exact]\n  extensions/vscode/src/statusModel.ts:66 aggregateDisplay [exact]\n  extensions/vscode/src/statusModel.ts:66 aggregateDisplay [exact]\n  extensions/vscode/src/statusModel.ts:8 StatusDisplay [exact]\n  rust/crates/cairn-build/src/config.rs:1 config [exact]\n  rust/crates/cairn-build/src/config.rs:15 load_config [exact]\n  rust/crates/cairn-build/src/config.rs:7 CairnConfig [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:1 importer [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:110 terminal_name [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:165 workspace_repo_ids [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:18 SKIP_PARSE_ERROR [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:19 SKIP_JOIN_ANOMALY [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:200 parse_index [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:23 JOIN_ANOMALY_THRESHOLD [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:339 count_disagreements [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:38 DELETE_FILE_CALLREF_EDGES [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:391 write_overlay [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:46 INSERT_ANOMALY_SKIP [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:565 terminal_name_matches_python_label_table [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:586 norm_rel_separator_canonicalization [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:593 innermost_containment_is_one_based [exact]\n  rust/crates/cairn-build/src/scip/importer.rs:98 TargetResolution [exact]\n  rust/crates/cairn-build/tests/embeddings_parity.rs:1 embeddings_parity [exact]\n  rust/crates/cairn-build/tests/embeddings_parity.rs:258 embed_limit_bounds_base_and_mv_passes [exact]\n  rust/crates/cairn-build/tests/embeddings_parity.rs:282 embed_symbols_resyncs_the_vec0_row_in_place [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1 app [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:1106 fromRegion [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:156 edgeView [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:173 setEdgeKindHidden [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:188 setKindHidden [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:301 layoutOptions [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:351 optionsFor [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:351 optionsFor [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:415 renderLegend [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:658 renderInspect [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:696 inspectPanel [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:81 kindColor [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:867 confirmFocus [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:909 highlight [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:909 highlight [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:909 highlight [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:923 entry [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:923 entry [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:954 open [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:954 open [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:954 open [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:954 open [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:981 pick [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:981 pick [exact]\n  rust/crates/cairn-cli/dashboard-assets/static/app.js:981 pick [exact]\npath 1 (A -> I, 1 hops):\npath 10 (A -> I, 4 hops):\npath 11 (A -> I, 1 hops):\npath 12 (A -> I, 1 hops):\npath 13 (A -> I, 2 hops):\npath 14 (A -> I, 1 hops):\npath 15 (A -> I, 1 hops):\npath 16 (A -> I, 1 hops):\npath 17 (A -> I, 1 hops):\npath 18 (A -> I, 1 hops):\npath 19 (A -> I, 1 hops):\npath 2 (A -> I, 4 hops):\npath 20 (A -> I, 1 hops):\npath 21 (A -> I, 1 hops):\npath 22 (A -> I, 1 hops):\npath 23 (A -> I, 1 hops):\npath 24 (A -> I, 1 hops):\npath 25 (A -> I, 1 hops):\npath 26 (A -> I, 1 hops):\npath 27 (A -> I, 1 hops):\npath 28 (A -> I, 1 hops):\npath 29 (A -> I, 1 hops):\npath 3 (A -> I, 1 hops):\npath 30 (A -> I, 1 hops):\npath 31 (A -> I, 1 hops):\npath 32 (A -> I, 1 hops):\npath 33 (A -> I, 1 hops):\npath 34 (A -> I, 1 hops):\npath 35 (A -> I, 1 hops):\npath 36 (A -> I, 1 hops):\npath 37 (A -> I, 1 hops):\npath 38 (A -> I, 1 hops):\npath 39 (A -> I, 2 hops):\npath 4 (A -> I, 2 hops):\npath 40 (A -> I, 2 hops):\npath 41 (A -> I, 2 hops):\npath 42 (A -> I, 2 hops):\npath 43 (A -> I, 2 hops):\npath 44 (A -> I, 3 hops):\npath 45 (A -> I, 3 hops):\npath 46 (A -> I, 2 hops):\npath 47 (A -> I, 2 hops):\npath 48 (A -> I, 2 hops):\npath 49 (A -> I, 2 hops):\npath 5 (A -> I, 4 hops):\npath 50 (A -> I, 2 hops):\npath 6 (A -> I, 5 hops):\npath 7 (A -> I, 3 hops):\npath 8 (A -> I, 1 hops):\npath 9 (A -> I, 3 hops):"
     }
-  }
+  },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus"
 }
