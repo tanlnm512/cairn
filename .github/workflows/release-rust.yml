@@ -1,0 +1,154 @@
+name: Rust release
+
+# Build the Rust `cairn` binary for the distribution matrix on tag push (v*),
+# attach tarballs + sha256 checksums to the GitHub Release that release.yml
+# owns (one v* tag ships wheels + vsix + binaries), and push an updated
+# formula to the Homebrew tap. Independent of release.yml (PyPI distribution).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # softprops/action-gh-release attaches the binary assets
+
+# Serialize per-ref: a re-run must not race itself on the same Release.
+concurrency:
+  group: release-rust-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            cross: true
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            cross: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross == true
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build (cargo)
+        if: matrix.cross != true
+        working-directory: rust
+        run: cargo build --release --target ${{ matrix.target }} -p cairn-cli
+
+      - name: Build (cross)
+        if: matrix.cross == true
+        working-directory: rust
+        run: cross build --release --target ${{ matrix.target }} -p cairn-cli
+
+      - name: Verify static link (musl)
+        if: contains(matrix.target, 'musl')
+        run: file "rust/target/${{ matrix.target }}/release/cairn" | grep -q 'statically linked'
+
+      - name: Package tarball + checksum
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version="${REF_NAME#v}"
+          mkdir dist
+          cp "rust/target/${{ matrix.target }}/release/cairn" dist/
+          tar -czf "cairn-cli-${version}-${{ matrix.target }}.tar.gz" -C dist cairn
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "cairn-cli-${version}-${{ matrix.target }}.tar.gz" \
+              > "cairn-cli-${version}-${{ matrix.target }}.tar.gz.sha256"
+          else
+            shasum -a 256 "cairn-cli-${version}-${{ matrix.target }}.tar.gz" \
+              > "cairn-cli-${version}-${{ matrix.target }}.tar.gz.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: rust-bin-${{ matrix.target }}
+          path: |
+            cairn-cli-*.tar.gz
+            cairn-cli-*.tar.gz.sha256
+
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: rust-bin-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Attach binaries to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+
+  homebrew-tap:
+    name: Homebrew tap formula
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: rust-bin-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Render formula
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: scripts/render_homebrew_formula.sh packaging/homebrew/cairn.rb.template dist/cairn.rb "${REF_NAME#v}" dist
+
+      - name: Push formula to the tap
+        env:
+          TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}     # e.g. tanlnm512/homebrew-cairn
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -z "$TAP_REPO" ] || [ -z "$TAP_TOKEN" ]; then
+            echo "::notice::HOMEBREW_TAP_REPO / HOMEBREW_TAP_TOKEN not configured -- tap update skipped"
+            exit 0
+          fi
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
+          mkdir -p tap/Formula
+          cp dist/cairn.rb tap/Formula/cairn.rb
+          cd tap
+          git config user.name "cairn-release-bot"
+          git config user.email "actions@github.com"
+          git add Formula/cairn.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date"
+            exit 0
+          fi
+          git commit -m "chore: cairn ${REF_NAME#v}"
+          git push

@@ -27,6 +27,13 @@ cairn-store = { path = "../cairn-store" }
 name = "cairn"
 path = "src/main.rs"
 
+# cargo-binstall: install prebuilt cairn binaries from GitHub Releases
+# (assets published by .github/workflows/release-rust.yml) instead of compiling.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/cairn-cli-{ version }-{ target }.tar.gz"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 
