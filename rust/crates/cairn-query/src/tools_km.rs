@@ -1026,7 +1026,8 @@ pub fn tier_for_score(score: f64) -> &'static str {
     }
 }
 
-fn py_round3(x: f64) -> f64 {
+/// Python round(x, 3).
+pub fn py_round3(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
 }
 
@@ -1145,7 +1146,7 @@ pub fn create_memory(
 }
 
 /// Python-str-style float text ("0.578", "1.0").
-fn fmt_score(x: f64) -> String {
+pub fn fmt_score(x: f64) -> String {
     let r = py_round3(x);
     let s = format!("{r}");
     if s.contains('.') { s } else { format!("{s}.0") }
@@ -1947,7 +1948,7 @@ fn current_model(corpus: &str) -> String {
     }
 }
 
-fn unembedded_memory_hint(conn: &Connection, bundle: &Bundle) -> Result<String, ToolError> {
+pub fn unembedded_memory_hint(conn: &Connection, bundle: &Bundle) -> Result<String, ToolError> {
     let total = bundle.list_concepts(Some("memory/")).len();
     if total == 0 {
         return Ok(String::new());
@@ -2265,10 +2266,58 @@ pub fn add_document(
     description: Option<&str>,
     doc_source: &str,
 ) -> Result<String, ToolError> {
+    add_document_with_slug(
+        bundle,
+        title,
+        body,
+        doc_type,
+        tags,
+        affects_modules,
+        affects_repos,
+        resource,
+        owner,
+        epic_link,
+        steps,
+        description,
+        doc_source,
+        None,
+    )
+}
+
+/// `add_document` with an explicit slug override (import dedupe path).
+#[allow(clippy::too_many_arguments)]
+pub fn add_document_with_slug(
+    bundle: &Bundle,
+    title: &str,
+    body: &str,
+    doc_type: &str,
+    tags: Vec<String>,
+    affects_modules: Vec<String>,
+    affects_repos: Vec<String>,
+    resource: Option<&str>,
+    owner: Option<&str>,
+    epic_link: Option<&str>,
+    steps: Option<Vec<WorkflowStep>>,
+    description: Option<&str>,
+    doc_source: &str,
+    slug: Option<&str>,
+) -> Result<String, ToolError> {
     let title = strip_private_data(title);
     let body = strip_private_data(body);
     let description = description.map(strip_private_data);
-    let concept_id = doc_concept_id(&title, doc_type, None);
+    let steps = steps.map(|steps| -> Vec<WorkflowStep> {
+        steps
+            .into_iter()
+            .map(|mut step| {
+                if let Some(desc) = &step.description {
+                    let redacted = strip_private_data(desc);
+                    step.description = Some(redacted);
+                }
+                step
+            })
+            .collect()
+    });
+    let concept_id = doc_concept_id(&title, doc_type, slug);
 
     let mut extensions: Vec<(String, Yaml)> = vec![
         ("tier".into(), ys("asserted")),
@@ -2315,8 +2364,7 @@ pub fn list_documents(
         let Ok(concept) = bundle.read_concept(&cid) else {
             continue;
         };
-        if status.is_some_and(|status| concept.ext_str("doc_status").unwrap_or("active") != status)
-        {
+        if status.is_some_and(|status| concept.ext_str("doc_status") != Some(status)) {
             continue;
         }
         if tag.is_some_and(|tag| !concept.tags.iter().any(|t| t == tag)) {
@@ -2842,7 +2890,7 @@ fn load_namespaces() -> Vec<(String, String)> {
 
 // --- workflow (knowledge/workflow.py port) ---------------------------------------
 
-fn resolve_workflow(bundle: &Bundle, ref_: &str) -> Result<Option<Concept>, ToolError> {
+pub fn resolve_workflow(bundle: &Bundle, ref_: &str) -> Result<Option<Concept>, ToolError> {
     if ref_.starts_with("knowledge/workflow/") {
         return get_document(bundle, ref_);
     }
@@ -2880,6 +2928,66 @@ pub fn trace_workflow(bundle: &Bundle, ref_: &str) -> Result<Option<WorkflowTrac
             .to_string(),
         steps: steps_of(&concept),
     }))
+}
+
+/// Render the authoritative structured steps as a markdown body.
+pub fn render_steps_body(title: &str, steps: &[WorkflowStep]) -> String {
+    let mut lines = vec![format!("# {title}\n")];
+    for (i, step) in steps.iter().enumerate() {
+        let n = i + 1;
+        let name = match &step.name {
+            Some(name) if !name.is_empty() => name.clone(),
+            _ => format!("Step {n}"),
+        };
+        lines.push(format!("{n}. **{name}**"));
+        if let Some(desc) = &step.description
+            && !desc.is_empty()
+        {
+            lines.push(format!("   {desc}"));
+        }
+        if let Some(sym) = &step.symbol
+            && !sym.is_empty()
+        {
+            lines.push(format!("   - symbol: `{sym}`"));
+        }
+        if let Some(file) = &step.file
+            && !file.is_empty()
+        {
+            lines.push(format!("   - file: `{file}`"));
+        }
+    }
+    format!("{}\n", lines.join("\n"))
+}
+
+/// Store one nonempty workflow and return its concept id.
+pub fn add_workflow(
+    bundle: &Bundle,
+    title: &str,
+    steps: Vec<WorkflowStep>,
+    tags: Vec<String>,
+    affects_modules: Vec<String>,
+    affects_repos: Vec<String>,
+    resource: Option<&str>,
+) -> Result<String, ToolError> {
+    if steps.is_empty() {
+        return err("add_workflow requires at least one step");
+    }
+    let body = render_steps_body(title, &steps);
+    add_document(
+        bundle,
+        title,
+        &body,
+        "workflow",
+        tags,
+        affects_modules,
+        affects_repos,
+        resource,
+        None,
+        None,
+        Some(steps),
+        None,
+        "manual",
+    )
 }
 
 // --- compass tools (tools_compass.py + compass/router.py port) --------------------
@@ -3990,14 +4098,14 @@ fn without_notes(body: &str) -> String {
     format!("{}{}", &body[..start], &after[end..])
 }
 
-struct CriticResult {
-    passed: bool,
-    quality_score: f64,
-    errors: Vec<String>,
-    warnings: Vec<String>,
+pub struct CriticResult {
+    pub passed: bool,
+    pub quality_score: f64,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
-fn critic_concept(concept: &Concept, conn: &Connection) -> Result<CriticResult, ToolError> {
+pub fn critic_concept(concept: &Concept, conn: &Connection) -> Result<CriticResult, ToolError> {
     const SECTION_VOCAB: &[&str] = &[
         "# What Does This Module Do?",
         "# Subsystems",
@@ -4203,7 +4311,7 @@ pub fn recall_memory(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn shared_recall_entries(
+pub fn shared_recall_entries(
     conn: &Connection,
     bundle: &Bundle,
     agent_id: &str,
@@ -4409,7 +4517,8 @@ pub fn knowledge_add(
     Ok(format!("Stored knowledge document: {cid}{note}"))
 }
 
-fn split_csv(s: &str) -> Vec<String> {
+/// Split a comma-separated CLI value into stripped non-empty entries.
+pub fn split_csv(s: &str) -> Vec<String> {
     s.split(',')
         .map(|x| x.trim().to_string())
         .filter(|x| !x.is_empty())
@@ -4833,6 +4942,465 @@ fn ask_compass_file_context(
         }
     }
     Ok(out.join("\n"))
+}
+
+// --- knowledge index (knowledge/index.py + islands.py port) ----------------------
+
+/// One normalized relationship neighbor (`related_docs` row).
+pub struct RelatedDoc {
+    pub doc_id: String,
+    pub title: Option<String>,
+    pub relation: String,
+    pub kind: String,
+    pub provenance: Option<String>,
+    pub created_at: Option<f64>,
+    pub direction: &'static str,
+}
+
+/// Raw knowledge_edges row: doc, related, relation, kind, provenance, created_at.
+type EdgeRow = (String, String, String, String, Option<String>, Option<f64>);
+
+/// Deterministic normalized neighbors from both knowledge_edges directions.
+pub fn related_docs(
+    conn: &Connection,
+    bundle: &Bundle,
+    doc_id: &str,
+) -> Result<Vec<RelatedDoc>, ToolError> {
+    let normalized = normalize_doc_id(bundle, doc_id);
+    let mut neighbors: Vec<RelatedDoc> = Vec::new();
+    let mut seen: HashSet<(String, String, String, String)> = HashSet::new();
+    for (direction, column, order) in [
+        ("outgoing", "doc_id", "related_id"),
+        ("incoming", "related_id", "doc_id"),
+    ] {
+        let sql = format!(
+            "SELECT doc_id, related_id, relation, kind, provenance, created_at \
+             FROM knowledge_edges WHERE {column} = ? ORDER BY {order}"
+        );
+        let rows: Vec<EdgeRow> = conn
+            .prepare(&sql)
+            .and_then(|mut stmt| {
+                stmt.query_map(rusqlite::params![normalized], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                        r.get::<_, Option<f64>>(5)?,
+                    ))
+                })?
+                .collect()
+            })
+            .map_err(|e| ToolError(e.to_string()))?;
+        for (doc_id, related_id, relation, kind, provenance, created_at) in rows {
+            let row_key = (
+                doc_id.clone(),
+                related_id.clone(),
+                relation.clone(),
+                kind.clone(),
+            );
+            if !seen.insert(row_key) {
+                continue;
+            }
+            let neighbor = if column == "doc_id" {
+                related_id
+            } else {
+                doc_id
+            };
+            let Ok(concept) = bundle.read_concept(&neighbor) else {
+                continue; // deleted between rebuilds: never a phantom neighbor
+            };
+            neighbors.push(RelatedDoc {
+                doc_id: neighbor,
+                title: concept.title,
+                relation,
+                kind,
+                provenance,
+                created_at,
+                direction,
+            });
+        }
+    }
+    Ok(neighbors)
+}
+
+/// One member of a supersede chain.
+pub struct ChainMember {
+    pub concept_id: String,
+    pub title: Option<String>,
+    pub doc_status: String,
+    pub relation: Option<&'static str>,
+}
+
+/// Resolve a knowledge doc or reject missing and foreign ids.
+pub fn resolve_knowledge_doc(bundle: &Bundle, doc_id: &str) -> Result<Option<Concept>, ToolError> {
+    let Some(concept) = get_document(bundle, doc_id)? else {
+        return Ok(None);
+    };
+    refuse_out_of_namespace(bundle, doc_id, Some(&concept))?;
+    Ok(Some(concept))
+}
+
+/// The oldest-to-newest supersede chain containing `doc_id`.
+pub fn supersede_chain(
+    conn: &Connection,
+    bundle: &Bundle,
+    doc_id: &str,
+) -> Result<Option<Vec<ChainMember>>, ToolError> {
+    let Some(concept) = resolve_knowledge_doc(bundle, doc_id)? else {
+        return Ok(None);
+    };
+    let start = normalize_doc_id(bundle, &concept.concept_id);
+    let rows: Vec<(String, String, String)> = conn
+        .prepare(
+            "SELECT doc_id, related_id, relation FROM knowledge_edges \
+             WHERE relation IN ('supersedes', 'superseded-by')",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect()
+        })
+        .map_err(|e| ToolError(e.to_string()))?;
+
+    let mut newer_of: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut older_of: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut concepts: HashMap<String, Option<Concept>> = HashMap::new();
+    let concept_for =
+        |concepts: &mut HashMap<String, Option<Concept>>, cid: &str| -> Option<Concept> {
+            if !concepts.contains_key(cid) {
+                concepts.insert(cid.to_string(), bundle.read_concept(cid).ok());
+            }
+            concepts.get(cid).cloned().flatten()
+        };
+    for (doc_id, related_id, relation) in rows {
+        let (newer, older) = if relation == "supersedes" {
+            (doc_id, related_id)
+        } else {
+            (related_id, doc_id)
+        };
+        if concept_for(&mut concepts, &newer).is_none()
+            || concept_for(&mut concepts, &older).is_none()
+        {
+            continue;
+        }
+        newer_of
+            .entry(older.clone())
+            .or_default()
+            .insert(newer.clone());
+        older_of.entry(newer).or_default().insert(older);
+    }
+    concepts
+        .entry(start.clone())
+        .or_insert_with(|| Some(concept.clone()));
+
+    let mut back: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::from([start.clone()]);
+    let mut current = start.clone();
+    loop {
+        let mut older: Vec<String> = older_of
+            .get(&current)
+            .map(|set| set.iter().cloned().collect())
+            .unwrap_or_default();
+        older.sort();
+        let Some(next) = older.into_iter().find(|c| !seen.contains(c)) else {
+            break;
+        };
+        back.push(next.clone());
+        seen.insert(next.clone());
+        current = next;
+    }
+    let mut forward: Vec<String> = Vec::new();
+    let mut current = start.clone();
+    loop {
+        let mut newer: Vec<String> = newer_of
+            .get(&current)
+            .map(|set| set.iter().cloned().collect())
+            .unwrap_or_default();
+        newer.sort();
+        let Some(next) = newer.into_iter().find(|c| !seen.contains(c)) else {
+            break;
+        };
+        forward.push(next.clone());
+        seen.insert(next.clone());
+        current = next;
+    }
+
+    back.reverse();
+    let mut chain_ids = back;
+    chain_ids.push(start);
+    chain_ids.extend(forward);
+
+    let mut members = Vec::new();
+    for (pos, cid) in chain_ids.iter().enumerate() {
+        let member = concepts
+            .get(cid)
+            .cloned()
+            .flatten()
+            .or_else(|| bundle.read_concept(cid).ok());
+        let (title, doc_status) = match &member {
+            Some(c) => (
+                c.title.clone(),
+                c.ext_str("doc_status").unwrap_or("active").to_string(),
+            ),
+            None => (None, "active".to_string()),
+        };
+        members.push(ChainMember {
+            concept_id: cid.clone(),
+            title,
+            doc_status,
+            relation: if pos + 1 < chain_ids.len() {
+                Some("superseded-by")
+            } else {
+                None
+            },
+        });
+    }
+    Ok(Some(members))
+}
+
+/// Bare concept ids of every parsable knowledge doc, sorted.
+fn knowledge_doc_ids(bundle: &Bundle) -> Vec<String> {
+    bundle
+        .list_concepts(Some("knowledge/"))
+        .into_iter()
+        .filter(|cid| bundle.read_concept(cid).is_ok())
+        .collect()
+}
+
+/// Deterministic disconnected doc pairs worth linking (`doc_islands`).
+pub fn doc_islands(conn: &Connection, bundle: &Bundle) -> Vec<Vec<String>> {
+    let ids = knowledge_doc_ids(bundle);
+    let node: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    let mut adjacency: HashMap<&str, HashSet<&str>> =
+        ids.iter().map(|id| (id.as_str(), HashSet::new())).collect();
+    if let Ok(mut stmt) = conn.prepare("SELECT doc_id, related_id FROM knowledge_edges")
+        && let Ok(mapped) =
+            stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+    {
+        for (doc_id, related_id) in mapped.flatten() {
+            if let (Some(a), Some(b)) = (node.get(doc_id.as_str()), node.get(related_id.as_str())) {
+                adjacency.get_mut(*a).expect("node").insert(*b);
+                adjacency.get_mut(*b).expect("node").insert(*a);
+            }
+        }
+    }
+
+    let mut components: Vec<Vec<String>> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+    for id in &ids {
+        if seen.contains(id.as_str()) {
+            continue;
+        }
+        let mut stack = vec![id.as_str()];
+        let mut component: HashSet<&str> = HashSet::new();
+        while let Some(current) = stack.pop() {
+            if !component.insert(current) {
+                continue;
+            }
+            stack.extend(adjacency[current].difference(&component).copied());
+        }
+        let mut sorted: Vec<String> = component.iter().map(|c| (*c).to_string()).collect();
+        sorted.sort();
+        seen.extend(component);
+        components.push(sorted);
+    }
+
+    let mut units: Vec<Vec<String>> = Vec::new();
+    let mut singletons: Vec<Vec<String>> = Vec::new();
+    for component in components {
+        match component.len() {
+            2 => units.push(component),
+            1 => singletons.push(component),
+            _ => {}
+        }
+    }
+    for pair in singletons.chunks(2) {
+        if pair.len() == 2 {
+            units.push(vec![pair[0][0].clone(), pair[1][0].clone()]);
+        }
+    }
+    units
+}
+
+/// (task id, status, fact members) for doc-link tasks carrying members.
+pub fn doc_link_tasks(bundle: &Bundle) -> Vec<(String, String, Vec<String>)> {
+    let mut out = Vec::new();
+    for cid in bundle.list_concepts(Some("_tasks/")) {
+        if cid.ends_with(".result") {
+            continue;
+        }
+        let Ok(concept) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        if concept.type_ != "Task" {
+            continue;
+        }
+        if !concept
+            .ext_str("task_kind")
+            .unwrap_or("")
+            .starts_with("doc-link")
+        {
+            continue;
+        }
+        let Some(Yaml::Hash(facts)) = concept.ext("facts") else {
+            continue;
+        };
+        let Some(Yaml::Array(items)) = facts.get(&ys("members")) else {
+            continue;
+        };
+        let members: Vec<String> = items
+            .iter()
+            .map(|i| str_of(Some(i)).unwrap_or_default())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        let status = concept
+            .status
+            .clone()
+            .unwrap_or_else(|| concept.ext_str("status").unwrap_or("pending").to_string());
+        let id = cid.rsplit('/').next().unwrap_or(&cid).to_string();
+        out.push((id, status, members));
+    }
+    out
+}
+
+// --- memory sharing surface (memory/store.py: share/check/purge port) ------------
+
+/// Validate that every symbol entry is a non-empty string.
+fn validate_symbols(symbols: &[String]) -> Result<(), ToolError> {
+    if symbols.iter().any(String::is_empty) {
+        return err("symbols must be non-empty strings");
+    }
+    Ok(())
+}
+
+/// Record idempotent share rows; returns the inserted count.
+pub fn share_memory(
+    agent_id: &str,
+    symbols: &[String],
+    memory_id: Option<&str>,
+    conn: &Connection,
+) -> Result<i64, ToolError> {
+    validate_agent_id(agent_id)?;
+    validate_symbols(symbols)?;
+    let ts = iso_utc_now();
+    let mut inserted = 0i64;
+    for symbol in symbols {
+        let n = conn
+            .execute(
+                "INSERT INTO agent_symbols (agent_id, symbol, memory_id, kind, ts) \
+                 SELECT ?, ?, ?, 'share', ? \
+                 WHERE NOT EXISTS (\
+                 SELECT 1 FROM agent_symbols \
+                 WHERE agent_id = ? AND symbol = ? AND memory_id IS ? AND kind = 'share')",
+                rusqlite::params![agent_id, symbol, memory_id, ts, agent_id, symbol, memory_id],
+            )
+            .map_err(|e| ToolError(e.to_string()))?;
+        inserted += n as i64;
+    }
+    Ok(inserted)
+}
+
+/// One other-agent activity row (`check_overlap` row).
+pub struct OverlapRow {
+    pub agent_id: String,
+    pub symbol: String,
+    pub kind: String,
+    pub ts: String,
+}
+
+/// Other agents' recent activity on the validated symbols.
+pub fn check_overlap(
+    agent_id: &str,
+    symbols: &[String],
+    conn: &Connection,
+    recency_days: i64,
+) -> Result<Vec<OverlapRow>, ToolError> {
+    validate_agent_id(agent_id)?;
+    validate_symbols(symbols)?;
+    if recency_days < 1 {
+        return err("recency_days must be at least 1");
+    }
+    if symbols.is_empty() {
+        return Ok(Vec::new());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let cutoff = format_iso_utc(now - recency_days * 86_400);
+    let placeholders = vec!["?"; symbols.len()].join(",");
+    let sql = format!(
+        "SELECT agent_id, symbol, kind, ts FROM agent_symbols \
+         WHERE agent_id <> ? AND symbol IN ({placeholders}) AND ts >= ? \
+         ORDER BY symbol, ts, agent_id"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| ToolError(e.to_string()))?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params_from_iter(
+                std::iter::once(agent_id)
+                    .chain(symbols.iter().map(String::as_str))
+                    .chain(std::iter::once(cutoff.as_str())),
+            ),
+            |r| {
+                Ok(OverlapRow {
+                    agent_id: r.get(0)?,
+                    symbol: r.get(1)?,
+                    kind: r.get(2)?,
+                    ts: r.get(3)?,
+                })
+            },
+        )
+        .map_err(|e| ToolError(e.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ToolError(e.to_string()))?;
+    Ok(rows)
+}
+
+/// Delete archived memories older than max_days; returns the count purged.
+pub fn purge_archived(
+    bundle: &Bundle,
+    max_days: i64,
+    conn: Option<&Connection>,
+) -> Result<usize, ToolError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let _lock = bundle.lock();
+    let mut purged = 0;
+    for concept in list_memories(bundle, Some("archived"), None) {
+        let Some(ts) = concept
+            .timestamp
+            .as_deref()
+            .and_then(parse_memory_timestamp)
+        else {
+            continue;
+        };
+        let age = ((now - ts) as f64 / 86_400.0).floor() as i64;
+        if age <= max_days {
+            continue;
+        }
+        let file_path = bundle.root.join(format!("{}.md", concept.concept_id));
+        if file_path.exists() {
+            std::fs::remove_file(&file_path).map_err(|e| ToolError(e.to_string()))?;
+            purged += 1;
+            if let Some(conn) = conn {
+                delete_memory_rows(bundle, &concept.concept_id, conn)?;
+            }
+        }
+    }
+    Ok(purged)
 }
 
 #[cfg(test)]
