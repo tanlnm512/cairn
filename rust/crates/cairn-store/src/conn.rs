@@ -63,12 +63,14 @@ mod tests {
     use std::fs;
 
     fn temp_db(tag: &str) -> std::path::PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
         let dir = std::env::temp_dir().join(format!(
-            "cairn-store-conn-{tag}-{}-{nanos}",
+            "cairn-store-conn-{tag}-{}-{nanos}-{unique}",
             std::process::id()
         ));
         fs::create_dir_all(&dir).expect("temp dir");

@@ -3,6 +3,7 @@
 pub mod builder;
 pub mod closure;
 pub mod config;
+pub mod embeddings;
 pub mod gitignore;
 pub mod incremental;
 pub mod parse_dispatch;

@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 cairn-parse = { path = "../cairn-parse" }
+cairn-query = { path = "../cairn-query" }
 cairn-store = { path = "../cairn-store" }
 notify = "=8.2.0"
 prost = "=0.14.4"

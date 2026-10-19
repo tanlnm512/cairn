@@ -270,7 +270,8 @@ fn server_preset_base_url(name: &str) -> Option<&'static str> {
     }
 }
 
-fn server_base_url(name: &str) -> Result<String, String> {
+/// Active server base URL (config override, then the `omlx`/`ollama` preset).
+pub fn server_base_url(name: &str) -> Result<String, String> {
     if let Some(configured) = config_value("CAIRN_EMBED_BASE_URL") {
         return Ok(configured);
     }
@@ -283,12 +284,13 @@ fn server_base_url(name: &str) -> Result<String, String> {
         .to_string())
 }
 
-fn server_model() -> String {
+/// Adopted or configured server model id (the transport id, not the row stamp).
+pub fn server_model() -> String {
     config_value("CAIRN_EMBED_SERVER_MODEL").unwrap_or_else(|| "bge-m3".to_string())
 }
 
 /// Model stamp for the resolved server backend; vec0 table names derive from it.
-fn server_model_stamp(name: &str) -> Result<String, String> {
+pub fn server_model_stamp(name: &str) -> Result<String, String> {
     if let Some(stamp) = config_value("CAIRN_EMBED_MODEL_STAMP") {
         return Ok(stamp);
     }
@@ -473,7 +475,8 @@ pub fn hash_vec(text: &str) -> Vec<f64> {
     vec
 }
 
-fn floats_to_blob(floats: &[f32]) -> Vec<u8> {
+/// Float sequence → float32 little-endian BLOB (the `_floats_to_blob` contract).
+pub fn floats_to_blob(floats: &[f32]) -> Vec<u8> {
     let mut blob = Vec::with_capacity(floats.len() * 4);
     for f in floats {
         blob.extend_from_slice(&f.to_le_bytes());
@@ -668,7 +671,7 @@ fn malformed_error(body: &[u8]) -> String {
 }
 
 /// Embed texts through the configured server with bounded retries and validation.
-fn server_embed(
+pub fn server_embed(
     texts: &[String],
     base: &str,
     model: &str,

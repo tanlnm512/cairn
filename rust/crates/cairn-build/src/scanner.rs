@@ -576,7 +576,7 @@ pub fn file_sha256(path: &Path) -> Result<String, String> {
     Ok(hex(&hasher.finalize()))
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
         out.push_str(&format!("{b:02x}"));

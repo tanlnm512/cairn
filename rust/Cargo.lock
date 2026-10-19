@@ -139,6 +139,7 @@ name = "cairn-build"
 version = "0.22.0"
 dependencies = [
  "cairn-parse",
+ "cairn-query",
  "cairn-store",
  "notify",
  "prost",

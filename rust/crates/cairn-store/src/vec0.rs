@@ -93,6 +93,134 @@ fn source_table_ident(source: VecSource) -> &'static str {
     }
 }
 
+/// Outcome of a wholesale vec0 rebuild: indexed rows, or the skip reason
+/// (byte-identical to the Python user-visible strings).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RebuildOutcome {
+    Built {
+        model: String,
+        indexed: i64,
+        dim: i64,
+    },
+    Skipped {
+        model: String,
+        reason: String,
+    },
+}
+
+/// Wholesale rebuild of the vec0 table for `model` from `source` (no commit).
+pub fn rebuild_index(
+    conn: &Connection,
+    model: &str,
+    source: VecSource,
+) -> rusqlite::Result<RebuildOutcome> {
+    let table = table_name(model, source);
+    let dim: Option<i64> = conn
+        .query_row(
+            &format!(
+                "SELECT dim FROM {} WHERE model = ?1 LIMIT 1",
+                source_table_ident(source)
+            ),
+            [model],
+            |r| r.get(0),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        })?;
+    let Some(dim) = dim else {
+        let reason = match source {
+            VecSource::Embeddings => "no embeddings for model",
+            VecSource::EmbeddingsMv => "no embeddings_mv rows for model",
+        };
+        return Ok(RebuildOutcome::Skipped {
+            model: model.to_string(),
+            reason: reason.to_string(),
+        });
+    };
+
+    conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS {table};
+         CREATE VIRTUAL TABLE {table} USING vec0(embedding float[{dim}] distance_metric=cosine);"
+    ))?;
+    conn.execute(
+        &format!(
+            "INSERT INTO {table}(rowid, embedding) SELECT rowid, vec FROM {} WHERE model = ?1",
+            source_table_ident(source)
+        ),
+        [model],
+    )?;
+    let indexed: i64 =
+        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?;
+    Ok(RebuildOutcome::Built {
+        model: model.to_string(),
+        indexed,
+        dim,
+    })
+}
+
+/// Incrementally sync one vec0 row to an embeddings upsert (no commit);
+/// `Ok(false)` on a missing index or a sync error leaves the index stale
+/// for `doctor` to flag.
+pub fn sync_index_row(
+    conn: &Connection,
+    model: &str,
+    rowid: i64,
+    blob: &[u8],
+) -> rusqlite::Result<bool> {
+    if !index_exists(conn, model, VecSource::Embeddings)? {
+        return Ok(false);
+    }
+    let table = table_name(model, VecSource::Embeddings);
+    let sync = || -> rusqlite::Result<usize> {
+        // vec0 has no replace semantics; delete first and reinsert.
+        conn.execute(&format!("DELETE FROM {table} WHERE rowid = ?1"), [rowid])?;
+        conn.execute(
+            &format!("INSERT INTO {table} (rowid, embedding) VALUES (?1, ?2)"),
+            rusqlite::params![rowid, blob],
+        )
+    };
+    Ok(matches!(sync(), Ok(1)))
+}
+
+/// Delete the vec0 rows for embeddings rowids being removed (no commit);
+/// chunked IN-lists stay under any SQLite variable bound. A delete error
+/// keeps the rows already removed and drops the rest (index left stale).
+pub fn delete_index_rows(
+    conn: &Connection,
+    model: &str,
+    rowids: &[i64],
+) -> rusqlite::Result<usize> {
+    if rowids.is_empty() || !index_exists(conn, model, VecSource::Embeddings)? {
+        return Ok(0);
+    }
+    let table = table_name(model, VecSource::Embeddings);
+    let mut removed = 0;
+    for chunk in rowids.chunks(500) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!("DELETE FROM {table} WHERE rowid IN ({placeholders})");
+        match conn.execute(&sql, rusqlite::params_from_iter(chunk)) {
+            Ok(n) => removed += n,
+            Err(_) => break,
+        }
+    }
+    Ok(removed)
+}
+
+/// Row count of the vec0 table for `model`; `None` when no index exists.
+pub fn index_row_count(conn: &Connection, model: &str) -> rusqlite::Result<Option<i64>> {
+    if !index_exists(conn, model, VecSource::Embeddings)? {
+        return Ok(None);
+    }
+    let table = table_name(model, VecSource::Embeddings);
+    Ok(Some(conn.query_row(
+        &format!("SELECT COUNT(*) FROM {table}"),
+        [],
+        |r| r.get(0),
+    )?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,16 +247,107 @@ mod tests {
     }
 
     fn temp_conn() -> (Connection, std::path::PathBuf) {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("cairn-store-vec0-{}-{nanos}", std::process::id()));
+        // A process-unique counter keeps concurrent test threads off the same
+        // directory even when their nanosecond stamps collide.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "cairn-store-vec0-{}-{}-{unique}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("t.kg");
         let conn = Connection::open(&path).expect("open");
         (conn, path)
+    }
+
+    fn embedded_conn() -> (Connection, std::path::PathBuf) {
+        crate::conn::register_vec0();
+        let (conn, path) = temp_conn();
+        conn.execute_batch(
+            "CREATE TABLE embeddings (symbol_id TEXT, model TEXT, dim INTEGER, vec BLOB);
+             CREATE TABLE embeddings_mv (symbol_id TEXT, model TEXT, dim INTEGER, vec BLOB);
+             INSERT INTO embeddings (rowid, symbol_id, model, dim, vec) VALUES
+               (1, 'near', 'm', 2, x'0000803f0000803f'),
+               (2, 'far', 'm', 2, x'000080bf000080bf');",
+        )
+        .expect("source table");
+        (conn, path)
+    }
+
+    #[test]
+    fn rebuild_index_rebuilds_from_the_source_and_reports_counts() {
+        let (conn, path) = embedded_conn();
+        let out = rebuild_index(&conn, "m", VecSource::Embeddings).expect("rebuild");
+        assert_eq!(
+            out,
+            RebuildOutcome::Built {
+                model: "m".into(),
+                indexed: 2,
+                dim: 2
+            }
+        );
+        assert_eq!(
+            index_row_count(&conn, "m").expect("count"),
+            Some(2),
+            "vec_m carries both rows"
+        );
+        // A second rebuild is wholesale: same count, no dupes.
+        let out = rebuild_index(&conn, "m", VecSource::Embeddings).expect("re-rebuild");
+        assert_eq!(
+            out,
+            RebuildOutcome::Built {
+                model: "m".into(),
+                indexed: 2,
+                dim: 2
+            }
+        );
+
+        let out = rebuild_index(&conn, "absent", VecSource::Embeddings).expect("rebuild");
+        assert_eq!(
+            out,
+            RebuildOutcome::Skipped {
+                model: "absent".into(),
+                reason: "no embeddings for model".into()
+            }
+        );
+        let out = rebuild_index(&conn, "absent", VecSource::EmbeddingsMv).expect("rebuild mv");
+        assert_eq!(
+            out,
+            RebuildOutcome::Skipped {
+                model: "absent".into(),
+                reason: "no embeddings_mv rows for model".into()
+            }
+        );
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(path.parent().expect("parent"));
+    }
+
+    #[test]
+    fn sync_and_delete_row_ops_track_the_source_rows() {
+        let (conn, path) = embedded_conn();
+        rebuild_index(&conn, "m", VecSource::Embeddings).expect("rebuild");
+
+        let fresh = f32_blob(&[0.0, 1.0]);
+        assert!(sync_index_row(&conn, "m", 1, &fresh).expect("sync"));
+        assert!(!sync_index_row(&conn, "missing-model", 1, &fresh).expect("sync"));
+        assert_eq!(
+            ann_query(&conn, "m", &f32_blob(&[0.0, 1.0]), 1, VecSource::Embeddings)
+                .expect("query")
+                .expect("index"),
+            vec![("near".to_string(), 1.0)]
+        );
+        assert_eq!(delete_index_rows(&conn, "m", &[2]).expect("delete"), 1);
+        assert_eq!(delete_index_rows(&conn, "m", &[]).expect("delete"), 0);
+        assert_eq!(index_row_count(&conn, "m").expect("count"), Some(1));
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(path.parent().expect("parent"));
     }
 
     fn f32_blob(vals: &[f32]) -> Vec<u8> {
