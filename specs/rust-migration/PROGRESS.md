@@ -1,7 +1,7 @@
 # Progress: rust-migration
 
 Campaign ledger for the migration executed by `plan.md`. State recorded at
-branch `feat/rust-migration`, HEAD `07cb16e`. Landed workstreams carry their
+branch `feat/rust-migration`, HEAD `21fa36d`. Landed workstreams carry their
 commit; gate verdicts cite the recorded check outcomes; "Remaining work" is
 everything not landed at this HEAD.
 
@@ -78,13 +78,34 @@ lints in cairn-cli test code are fixed in 07cb16e).
 
 ## Remaining work
 
-1. **Flow golden harness untracked** — `rust/crates/cairn-query/tests/flow_golden.rs`, `rust/golden/flow/`, `scripts/rust_migration/flow_golden.py` pass locally (G3 round 1: `cargo test` exit 0) but are not committed at HEAD.
-2. **CLI stub groups** — knowledge ingest/rebuild/embed, knowledge export tarball mode, workflow sync, memory reflect/evolve/capture/embed/batch-critic/consolidate, compass generate/gaps/flow/flow-gaps, wiki generate/status/retry/export/enrich, task/skill/verify remain explicit not-ported stubs; `context`, `ask`, `review` stay PyPI-CLI.
-3. **SCIP overlay into the Rust builder** — the importer is ported; Python's `_apply_scip_overlay` builder hook has no Rust counterpart.
-4. **Distribution configuration** — Homebrew tap repo/token unconfigured (tap push skipped with a notice); cairn-cli crates.io publish pending (activates the binstall metadata).
-5. **Flip artifacts** — version still 0.22.0 (tracks pyproject); no v-tag or release cut; PyPI deprecation window not started; README wording describing the security-fixes-only policy is ahead of the actual flip.
-6. **`CAIRN_BUILD_IMPL=rust` runtime switch** — named by plan §6's G2 gate; recorded by no workstream (verified absent from rust/crates, src, scripts at HEAD).
-7. **Unrecorded gate measurements** — Rust daemon RSS ≤ 60% of Python and per-tool p95 no-regression vs the P0-2 baselines; closure ≥ 5× ratio on the blowup case (harness ready: `closure_bench.py`).
-8. **Provisional pins to finalize** — D-007 (notify), D-008 (prost), D-009 (minijinja), D-010 (yaml-rust2 batch) are marked provisional in `decisions.md`.
-9. **Corpus parity residual** — fresh yarl/attrs builds intermittently swap boundary rows in `search_symbols`/`find_definition` cap slices (cross-build bm25 tie volatility, owned by the parity runner's sort-lines normalization ruling).
-10. **Archive `plan.md`** — the 3e archive step was deferred while workstreams still read the plan.
+1. **CLI stub groups** — knowledge ingest/rebuild/embed, knowledge export tarball mode, workflow sync, memory reflect/evolve/capture/embed/batch-critic/consolidate, compass generate/gaps/flow/flow-gaps, wiki generate/status/retry/export/enrich, task/skill/verify remain explicit not-ported stubs; `context`, `ask`, `review` stay PyPI-CLI.
+2. **SCIP overlay into the Rust builder** — the importer is ported; Python's `_apply_scip_overlay` builder hook has no Rust counterpart.
+3. **Distribution configuration** — Homebrew tap repo/token unconfigured (tap push skipped with a notice); cairn-cli crates.io publish pending (activates the binstall metadata).
+4. **Flip artifacts** — version still 0.22.0 (tracks pyproject); no v-tag or release cut; PyPI deprecation window not started; README wording describing the security-fixes-only policy is ahead of the actual flip.
+5. **`CAIRN_BUILD_IMPL=rust` runtime switch** — named by plan §6's G2 gate; recorded by no workstream (verified absent from rust/crates, src, scripts at HEAD).
+6. **Unrecorded gate measurements** — Rust daemon RSS ≤ 60% of Python and per-tool p95 no-regression vs the P0-2 baselines; closure ≥ 5× ratio on the blowup case (harness ready: `closure_bench.py`).
+7. **Provisional pins to finalize** — D-007 (notify), D-008 (prost), D-009 (minijinja), D-010 (yaml-rust2 batch) are marked provisional in `decisions.md`.
+8. **Corpus parity residual** — fresh yarl/attrs builds intermittently swap boundary rows in `search_symbols`/`find_definition` cap slices (cross-build bm25 tie volatility, owned by the parity runner's sort-lines normalization ruling; replay over the pinned `rust/golden/stores/` bytes sidesteps it).
+9. **Archive `plan.md`** — the 3e archive step was deferred while workstreams still read the plan.
+
+## Re-verification
+
+Fix campaign closing the ledger's open fixture findings: untracked flow
+harness, oversized search goldens, and a rebuild-volatile parity oracle.
+
+| Finding | State | Summary | Commit |
+|---|---|---|---|
+| F1 | done | Parity oracle deterministic by construction: `parity.py --record` builds each store (self/yarl/attrs) over a 100-file evenly-spaced corpus subset, checks the exact bytes (store.kg + corpus/ + bundle/ + manifest.json) into `rust/golden/stores/<store>/`, and captures the 26 goldens over those bytes; replay copies the same bytes to scratch and reads every tool's arguments from the fixture's additive `replay` block (seq-ordered, setups re-derived), never probing a store for targets, and refuses (exit 2) a served store path resolving to the live `~/.cairn` one; spike_queries preserved by regeneration over the pinned bytes, flow `cases` carried forward; all four rust golden readers (spike_golden.rs, golden_search.rs, nav_golden.rs, flow_golden.rs) take fixture `replay_store`/`replay_workspace` pointers with legacy fallbacks | 27b91d5 |
+| F2 | done | Flow-tools golden harness landed: cairn-query `flow_golden.rs` integration test, fixtures under `rust/golden/flow/` (README, 11-file corpus, flow-store.kg, taint.json), generator `scripts/rust_migration/flow_golden.py`; `rust/golden/flow/.ruff.toml` scopes per-file-ignores to the corpus (golden fixtures are input data) | 8450bdb |
+| F3 | done | Search goldens slimmed 134.1MB -> 54.3MB combined (search-store.kg 26.6MB -> 8.5MB, semantic-store.kg 107.9MB -> 48.4MB) by building from a deterministic capped corpus subset (SUBSET_FILE_CAP=260 evenly spaced indexable files, recorded in `spike_golden.py`, shared by `semantic_golden.py`); `--record` mode re-baselines the slim store, the fixture responses, and the expected JSON (`rust/golden/mcp/search_symbols.json`, `rust/golden/mcp/semantic_search.json`); verify mode keeps the golden-equal drift tripwire; semantic golden re-baselined to the longest symbol name (score-separated — tie-heavy queries flip LIMIT-10 selection across rebuilds) and the semantic verify check compares sort_lines, mirroring spike_golden tie handling; spike_golden, golden_search (incl. the semantic_search golden), auth_lifecycle tests green | c5688d9 |
+| F4 | done | Workspace sweep: clippy `-D warnings` clean, full test suite 342 passing / 0 failing — no fixes or commits needed | — |
+| V3 repair r1 | done | `cli_golden.py` materializes the pinned self store via `parity.load_pinned_store` for the C-4 differential (27b91d5 removed live-store snapshotting); duplicate exclude key in `.pre-commit-config.yaml` repaired | 21fa36d |
+
+Re-verification gate verdicts:
+
+| Gate | Verdict | Recorded check outcomes |
+|---|---|---|
+| V1 | PASS (round 0) | self (x2) / yarl / attrs all 26/26 exit 0, no graft |
+| V2 | PASS (round 0) | test=0 clippy=0 fmt=0 |
+| V3 | PASS (round 1) | round 0: tracked=16 flowTest=0 cli=1 bytes=56926208; round 1: tracked=16 flowTest=0 cli=0 bytes=56926208 (bytes = combined pinned search-store fixtures) |
+| G2 re-run | PASS | `g2_check.sh` full run exit 0 — python-built and rust-built stores dump-equal |
