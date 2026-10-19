@@ -7,6 +7,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("canonical-dump") => cairn_cli::canonical_dump::run(&args[1..]),
         Some("build-graph") => cairn_cli::build_graph::run(&args[1..]),
+        Some("closure") => cairn_cli::closure::run(&args[1..]),
         _ => {
             println!("{}", cairn_cli::crate_name());
             ExitCode::SUCCESS
