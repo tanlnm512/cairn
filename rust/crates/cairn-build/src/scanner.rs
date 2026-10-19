@@ -633,6 +633,127 @@ pub fn resolve_repo_path(workspace: &str, repo_name: &str) -> Result<PathBuf, St
     Ok(ws.join(repo_name))
 }
 
+/// Resolve a stored graph path to an absolute disk path.
+pub fn resolve_file_path(workspace: &str, repo_id: &str, stored_path: &str) -> PathBuf {
+    let stored = Path::new(stored_path);
+    if stored.is_absolute() {
+        return stored.to_path_buf();
+    }
+    resolve_repo_path(workspace, repo_id)
+        .unwrap_or_else(|_| PathBuf::from(workspace))
+        .join(stored)
+}
+
+/// The stable repository id carried by a discovered repo path (dir-name fallback).
+pub fn repository_id_for_path(workspace: &str, repo_path: &Path) -> String {
+    discover_repo_records(workspace)
+        .ok()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|r| r.path == repo_path)
+        .map(|r| r.repo_id)
+        .unwrap_or_else(|| {
+            repo_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string()
+        })
+}
+
+/// Symlink-resolving path normalization that tolerates nonexistent leaves
+/// (Python `Path.resolve()` strict=False), so deletion events keep resolving.
+pub fn resolve_lenient(path: &Path) -> PathBuf {
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = path.to_path_buf();
+    loop {
+        if cur.symlink_metadata().is_ok() {
+            break;
+        }
+        match (cur.parent(), cur.file_name()) {
+            (Some(parent), Some(name)) if parent != cur => {
+                tail.push(name.to_os_string());
+                cur = parent.to_path_buf();
+            }
+            _ => break,
+        }
+    }
+    let base = std::fs::canonicalize(&cur).unwrap_or(cur);
+    tail.into_iter()
+        .rev()
+        .fold(base, |acc, part| acc.join(part))
+}
+
+/// Longest owning repository name for an absolute path under the workspace.
+pub fn infer_repo_for_path(workspace: &str, abs_path: &Path) -> Option<String> {
+    let resolved = resolve_lenient(abs_path);
+    let records = discover_repo_records(workspace).ok()?;
+    let mut best: Option<(usize, String)> = None;
+    for record in records {
+        let root = std::fs::canonicalize(&record.path).ok()?;
+        if resolved != root
+            && resolved.starts_with(&root)
+            && best
+                .as_ref()
+                .is_none_or(|(depth, _)| root.components().count() > *depth)
+        {
+            best = Some((root.components().count(), record.repo_id));
+        }
+    }
+    best.map(|(_, repo)| repo)
+}
+
+/// Layer A over a repo-relative path: any component is a default skip dir.
+pub fn path_under_skip_dir(rel: &Path) -> bool {
+    rel.components()
+        .any(|c| c.as_os_str().to_str().is_some_and(is_skip_dir_name))
+}
+
+/// Whether the full scan filter skips a path (the watcher's drift gate).
+pub fn is_skipped(path: &Path, repo_root: &Path) -> Result<bool, String> {
+    let is_source = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{e}"))
+        .and_then(|s| extension_language(&s))
+        .is_some();
+    if !is_source {
+        return Ok(true);
+    }
+    let specs = load_gitignores(repo_root);
+    let config = load_config(repo_root)?;
+    let exclude_spec = if config.exclude.is_empty() {
+        None
+    } else {
+        Some(GitIgnoreSpec::from_lines(
+            &config
+                .exclude
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        ))
+    };
+    let include_spec = if config.include.is_empty() {
+        None
+    } else {
+        Some(GitIgnoreSpec::from_lines(
+            &config
+                .include
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        ))
+    };
+    let (should_index, _) = classify_file(
+        path,
+        repo_root,
+        &specs,
+        exclude_spec.as_ref(),
+        include_spec.as_ref(),
+    );
+    Ok(!should_index)
+}
+
 /// Whether the workspace root itself is the repository.
 pub fn is_single_repo_workspace(workspace: &str) -> bool {
     let root = Path::new(workspace);

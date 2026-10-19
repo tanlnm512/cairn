@@ -67,17 +67,59 @@ struct ParseOutcome {
 }
 
 /// Deterministic 32-hex row ids, assigned at insert time in stable scan order.
-struct IdGen(u64);
+pub(crate) struct IdGen(u64);
 
 impl IdGen {
-    fn next_id(&mut self) -> String {
+    pub(crate) fn next_id(&mut self) -> String {
         self.0 += 1;
         format!("{:032x}", self.0)
     }
+
+    /// Continue the sequence after every sequence-shaped id already stored,
+    /// so a graft never collides with rows from the original build.
+    pub(crate) fn continuing(conn: &Connection) -> Result<IdGen, String> {
+        let mut max = 0u64;
+        for table in [
+            "files",
+            "symbols",
+            "edges",
+            "imports",
+            "rationale",
+            "parse_errors",
+        ] {
+            let mut stmt = conn
+                .prepare(&format!("SELECT id FROM {table}"))
+                .map_err(rusqlite_err)?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(rusqlite_err)?;
+            for id in rows {
+                let id = id.map_err(rusqlite_err)?;
+                if let Some(v) = sequence_id_value(&id)
+                    && v > max
+                {
+                    max = v;
+                }
+            }
+        }
+        Ok(IdGen(max))
+    }
+}
+
+/// The counter value behind a builder-shaped id; None for hash/uuid-shaped ids.
+fn sequence_id_value(id: &str) -> Option<u64> {
+    let stripped = id.trim_start_matches('0');
+    if stripped.is_empty() {
+        return Some(0);
+    }
+    if stripped.len() > 16 || !stripped.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u64::from_str_radix(stripped, 16).ok()
 }
 
 /// repo -> (file_id -> queued signals), in insertion order.
-type RepoEdges = Vec<(String, Vec<(String, Vec<EdgeSignal>)>)>;
+pub(crate) type RepoEdges = Vec<(String, Vec<(String, Vec<EdgeSignal>)>)>;
 
 /// Build or rebuild the graph for `workspace` into the store at `db_path`.
 /// `workers` pins the parse pool size; None honors CAIRN_WORKERS then cpu count.
@@ -265,7 +307,7 @@ pub fn build_graph(
     let t = Instant::now();
     {
         let tx = conn.transaction().map_err(rusqlite_err)?;
-        let import_edges = materialize_import_edges(&tx, &mut ids)?;
+        let import_edges = materialize_import_edges(&tx, &mut ids, None)?;
         tx.commit().map_err(rusqlite_err)?;
         timings.imports_ms = elapsed_ms(t);
         eprintln!("  materialized {import_edges} module imports edges");
@@ -344,7 +386,7 @@ fn record_skips(conn: &Connection, skips: &[scanner::SkipInfo]) -> Result<usize,
     Ok(recorded)
 }
 
-fn insert_parse_error(
+pub(crate) fn insert_parse_error(
     conn: &Connection,
     ids: &mut IdGen,
     repo: &str,
@@ -395,7 +437,7 @@ fn git_remote_url(repo_path: &str) -> Option<String> {
 
 /// Insert one parsed file and return symbol, edge, and import counts.
 #[allow(clippy::too_many_arguments)]
-fn insert_parsed_file(
+pub(crate) fn insert_parsed_file(
     conn: &Connection,
     ids: &mut IdGen,
     repo: &str,
@@ -872,18 +914,22 @@ fn import_module_bases(raw: &str) -> Vec<String> {
     bases
 }
 
-/// Rebuild import edges and return the number inserted.
-fn materialize_import_edges(conn: &Connection, ids: &mut IdGen) -> Result<usize, String> {
-    let module_rows: Vec<(String, String, String)> = {
+/// Rebuild import edges for `repo` (all repos when None) and return the count.
+pub(crate) fn materialize_import_edges(
+    conn: &Connection,
+    ids: &mut IdGen,
+    repo: Option<&str>,
+) -> Result<usize, String> {
+    let module_rows: Vec<(String, String, String, String)> = {
         let mut stmt = conn
             .prepare(
-                "SELECT s.id AS mid, f.id AS fid, f.path
+                "SELECT s.id AS mid, f.id AS fid, f.path, f.repo_id
                  FROM symbols s JOIN files f ON s.file_id = f.id
                  WHERE s.kind = 'module'",
             )
             .map_err(rusqlite_err)?;
 
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .map_err(rusqlite_err)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(rusqlite_err)?
@@ -895,7 +941,7 @@ fn materialize_import_edges(conn: &Connection, ids: &mut IdGen) -> Result<usize,
     let mut module_by_fid: HashMap<String, String> = HashMap::new();
     let mut module_qname_by_fid: HashMap<String, String> = HashMap::new();
     let mut files_by_candidate: HashMap<String, Vec<String>> = HashMap::new();
-    for (mid, fid, path) in &module_rows {
+    for (mid, fid, path, _) in &module_rows {
         if module_by_fid.contains_key(fid) {
             continue;
         }
@@ -910,24 +956,50 @@ fn materialize_import_edges(conn: &Connection, ids: &mut IdGen) -> Result<usize,
         }
     }
 
-    let import_rows: Vec<(String, String, Option<i64>)> = {
-        let mut stmt = conn
-            .prepare("SELECT file_id, imported_path, line FROM imports")
-            .map_err(rusqlite_err)?;
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-            .map_err(rusqlite_err)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(rusqlite_err)?
+    // Only the deleted sources and the re-read imports scope to `repo`;
+    // candidate maps above stay global so cross-repo modules still match.
+    let source_ids: Vec<String> = match repo {
+        Some(repo) => module_rows
+            .iter()
+            .filter(|(.., r)| r == repo)
+            .map(|(mid, ..)| mid.clone())
+            .collect(),
+        None => module_rows.iter().map(|(mid, ..)| mid.clone()).collect(),
     };
+    if source_ids.is_empty() {
+        return Ok(0);
+    }
 
-    let source_ids: Vec<&String> = module_rows.iter().map(|(mid, ..)| mid).collect();
+    let import_rows: Vec<(String, String, Option<i64>)> = match repo {
+        Some(repo) => {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT i.file_id, i.imported_path, i.line FROM imports i
+                     WHERE i.file_id IN (SELECT id FROM files WHERE repo_id = ?)",
+                )
+                .map_err(rusqlite_err)?;
+            stmt.query_map([repo], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map_err(rusqlite_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(rusqlite_err)?
+        }
+        None => {
+            let mut stmt = conn
+                .prepare("SELECT file_id, imported_path, line FROM imports")
+                .map_err(rusqlite_err)?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map_err(rusqlite_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(rusqlite_err)?
+        }
+    };
     {
         let placeholders = source_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql =
             format!("DELETE FROM edges WHERE kind = 'imports' AND source_id IN ({placeholders})");
         let params: Vec<&dyn rusqlite::ToSql> = source_ids
             .iter()
-            .map(|s| *s as &dyn rusqlite::ToSql)
+            .map(|s| s as &dyn rusqlite::ToSql)
             .collect();
         conn.execute(&sql, params.as_slice())
             .map_err(rusqlite_err)?;

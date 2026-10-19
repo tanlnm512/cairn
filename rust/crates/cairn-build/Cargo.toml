@@ -11,11 +11,14 @@ repository.workspace = true
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 cairn-parse = { path = "../cairn-parse" }
 cairn-store = { path = "../cairn-store" }
+notify = "=8.2.0"
+prost = "=0.14.4"
 rayon = "=1.12.0"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "=0.10.9"
+uuid = { version = "1.28.0", default-features = false, features = ["v4"] }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

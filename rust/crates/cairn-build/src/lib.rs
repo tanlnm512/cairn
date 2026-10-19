@@ -1,14 +1,18 @@
 //! Build path: scanner, parallel builder, resolver, incremental graft, streaming closure.
 
 pub mod builder;
+pub mod closure;
 pub mod config;
 pub mod gitignore;
+pub mod incremental;
 pub mod parse_dispatch;
 pub mod resolver;
 pub mod routes;
 pub mod scanner;
+pub mod scip;
 pub mod service_calls;
 pub mod timefmt;
+pub mod watcher;
 
 pub use builder::{BuildSummary, ResolutionCounts, StageTimings, build_graph};
 
