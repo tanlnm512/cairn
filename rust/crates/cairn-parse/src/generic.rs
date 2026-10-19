@@ -276,7 +276,7 @@ impl<T: GenericTier> Walk<'_, T> {
 }
 
 /// Collect a node's direct children; the cursor borrow must outlive them.
-fn children(node: Node<'_>) -> Vec<Node<'_>> {
+pub(crate) fn children(node: Node<'_>) -> Vec<Node<'_>> {
     let mut cursor = node.walk();
     node.children(&mut cursor).collect()
 }
