@@ -33,7 +33,7 @@ def _reexec_repo_venv() -> None:
 _reexec_repo_venv()
 
 import golden_record as gr  # reuse: path scrub rules + text normalizer
-import parity  # reuse: cairn_cli(), CARGO_BIN, RUST_WORKSPACE, snapshot_db
+import parity  # reuse: cairn_cli(), CARGO_BIN, RUST_WORKSPACE, load_pinned_store
 
 DB_NAME = parity.DB_NAME
 RUST_BIN = parity.RUST_WORKSPACE / "target" / "release" / "cairn"
@@ -98,12 +98,9 @@ def cli_env(scratch: Path, workspace: Path, cargo_path: bool) -> dict:
     return env
 
 
-def prepare_store(scratch: Path, cfg: dict) -> None:
-    """Scratch snapshot of the live self-store + seeded probe docs (gr.seed_concepts)."""
-    (scratch / "home").mkdir(parents=True, exist_ok=True)
-    parity.snapshot_db(Path(cfg["db"]), scratch / DB_NAME)
-    gr.seed_bundle(Path(cfg["knowledge"]), scratch / ".knowledge")
-    gr.seed_concepts(scratch / ".knowledge")
+def prepare_store(scratch: Path) -> None:
+    """Scratch materialization of the pinned self store (db, seeded bundle, corpus)."""
+    parity.load_pinned_store("self", scratch)
 
 
 def ensure_rust_binary() -> Path:
@@ -160,12 +157,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Keep the scratch store for inspection.")
     args = parser.parse_args(argv)
 
-    cfg = parity.cairn_config()
-    workspace = Path(cfg["workspace"])
     scratch = Path(tempfile.mkdtemp(prefix="cairn-rust-cli-golden-"))
     _note(f"scratch {scratch}")
+    workspace = scratch / "corpus"
     try:
-        prepare_store(scratch, cfg)
+        prepare_store(scratch)
         rules = gr.scrub_rules(scratch, scratch / "home", workspace)
         py_env = cli_env(scratch, workspace, cargo_path=False)
         rust_bin = Path(args.rust_bin) if args.rust_bin else ensure_rust_binary()

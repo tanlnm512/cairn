@@ -48,12 +48,8 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=500]
-        # Generated diagram artifacts (archify HTML inlines its viewer, ~750KB
-        # each) — docs-only bytes, no hygiene risk.
-        exclude: ^docs/diagrams/
-        # Checked-in pinned parity stores (rust/golden/stores/*/store.kg) are
-        # byte fixtures by design, capped per store by their manifest.
-        exclude: ^rust/golden/(stores|nav|search|spike)/.*\.kg$
+        # Docs diagram artifacts and pinned parity-store bytes are large by design.
+        exclude: ^docs/diagrams/|^rust/golden/(stores|nav|search|spike)/.*\.kg$
       - id: debug-statements    # catch pdb/breakpoint() left in
 
   # --- Comment-style ratchet: local mirror of the quality-ratchet CI job.
