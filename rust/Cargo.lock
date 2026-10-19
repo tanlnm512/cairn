@@ -206,13 +206,18 @@ dependencies = [
 name = "cairn-cli"
 version = "0.22.0"
 dependencies = [
+ "axum",
  "cairn-build",
  "cairn-daemon",
  "cairn-parse",
  "cairn-query",
  "cairn-store",
  "clap",
+ "rusqlite",
  "serde_json",
+ "sha2",
+ "tokio",
+ "yaml-rust2",
 ]
 
 [[package]]

@@ -1,9 +1,13 @@
-//! Daemon lifecycle: the launchd plist template and stray-sweep semantics.
+//! Daemon lifecycle: launchd plist, stray sweep, healthz reuse probe, daemon start.
 
 use std::collections::HashSet;
+use std::io::{Read as _, Write as _};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+use serde_json::Value;
 
 /// LaunchAgent label of the shared daemon.
 pub const LABEL: &str = "dev.cairn.mcp";
@@ -11,8 +15,15 @@ pub const LABEL: &str = "dev.cairn.mcp";
 pub const LEGACY_LABEL: &str = "dev.cairn.sse";
 pub const DEFAULT_PORT: u16 = 9876;
 pub const DEFAULT_HOST: &str = "127.0.0.1";
+/// Selects the implementation a daemon start launches (`rust` or `python`).
+pub const DAEMON_IMPL_ENV: &str = "CAIRN_DAEMON_IMPL";
+/// Path of the Rust daemon binary a `CAIRN_DAEMON_IMPL=rust` start execs.
+pub const RUST_BIN_ENV: &str = "CAIRN_RUST_BIN";
 const LAUNCHCTL_TIMEOUT: Duration = Duration::from_secs(15);
 const PROCBE_TIMEOUT: Duration = Duration::from_secs(5);
+const HEALTHZ_TIMEOUT: Duration = Duration::from_secs(2);
+const START_LOCK_TIMEOUT: Duration = Duration::from_secs(120);
+static LEGACY_UNLOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// `cairn serve <sub>` lifecycle subcommands: transient CLI invocations, never
 /// servers -- the stray sweeper must not target them.
@@ -563,4 +574,480 @@ pub fn sweep_strays(db_path: &Path, log: bool) -> usize {
         },
         log,
     )
+}
+
+// --- reuse probe: mcp_url + bounded HTTP GET /healthz ------------------------
+
+pub fn mcp_url(port: u16, host: &str) -> String {
+    format!("http://{host}:{port}/mcp")
+}
+
+fn xml_unescape(text: &str) -> String {
+    text.replace("&quot;", "\"")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+/// Bounded HTTP/1.1 GET returning (status, body); None on any transport or
+/// parse failure. Loopback-tool grade: no TLS, no redirects, no keep-alive.
+pub fn http_get(host: &str, port: u16, path: &str, timeout: Duration) -> Option<(u16, Vec<u8>)> {
+    use std::net::ToSocketAddrs as _;
+    let addr = (host, port).to_socket_addrs().ok()?.next()?;
+    let mut stream = TcpStream::connect_timeout(&addr, timeout).ok()?;
+    stream.set_read_timeout(Some(timeout)).ok()?;
+    stream.set_write_timeout(Some(timeout)).ok()?;
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).ok()?;
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).ok()?;
+    parse_http_response(&raw)
+}
+
+/// Split a head-of-line-blocked response into (status, body), decoding
+/// content-length, chunked, and read-to-end framings.
+fn parse_http_response(raw: &[u8]) -> Option<(u16, Vec<u8>)> {
+    let header_end = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let head = String::from_utf8_lossy(&raw[..header_end]);
+    let mut lines = head.lines();
+    let status = lines
+        .next()?
+        .split_whitespace()
+        .nth(1)?
+        .parse::<u16>()
+        .ok()?;
+    let mut content_length: Option<usize> = None;
+    let mut chunked = false;
+    for line in lines {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("content-length") {
+            content_length = value.parse().ok();
+        } else if name.eq_ignore_ascii_case("transfer-encoding")
+            && value.eq_ignore_ascii_case("chunked")
+        {
+            chunked = true;
+        }
+    }
+    let body = &raw[header_end + 4..];
+    let body = if chunked {
+        decode_chunked(body)?
+    } else if let Some(len) = content_length {
+        body.get(..len.min(body.len())).unwrap_or(body).to_vec()
+    } else {
+        body.to_vec()
+    };
+    Some((status, body))
+}
+
+fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    loop {
+        let line_end = rest.windows(2).position(|w| w == b"\r\n")?;
+        let size_text = String::from_utf8_lossy(&rest[..line_end]);
+        let size = usize::from_str_radix(size_text.split(';').next()?.trim(), 16).ok()?;
+        rest = &rest[line_end + 2..];
+        if size == 0 {
+            return Some(out);
+        }
+        if rest.len() < size {
+            return None;
+        }
+        out.extend_from_slice(&rest[..size]);
+        rest = rest.get(size + 2..).unwrap_or(&[]);
+    }
+}
+
+/// True when the daemon answers GET /healthz with 200 within `HEALTHZ_TIMEOUT`.
+pub fn healthz_responds(port: u16, host: &str) -> bool {
+    matches!(
+        http_get(host, port, "/healthz", HEALTHZ_TIMEOUT),
+        Some((200, _))
+    )
+}
+
+/// Parsed /healthz payload, or None when the daemon does not answer 200.
+pub fn healthz_json(port: u16, host: &str) -> Option<Value> {
+    let (_, body) = http_get(host, port, "/healthz", HEALTHZ_TIMEOUT)?;
+    serde_json::from_slice(&body).ok()
+}
+
+// --- impl selection -----------------------------------------------------------
+
+/// Daemon implementation a start launches: `rust` when CAIRN_DAEMON_IMPL=rust, else `python`.
+pub fn daemon_impl() -> &'static str {
+    if std::env::var(DAEMON_IMPL_ENV)
+        .unwrap_or_default()
+        .trim()
+        .eq_ignore_ascii_case("rust")
+    {
+        "rust"
+    } else {
+        "python"
+    }
+}
+
+/// Rust daemon binary path: CAIRN_RUST_BIN, else this process when named
+/// `cairn` (the Rust binary is itself the Rust daemon); None when neither.
+pub fn rust_bin() -> Option<String> {
+    if let Ok(cand) = std::env::var(RUST_BIN_ENV)
+        && !cand.trim().is_empty()
+        && Path::new(&cand).exists()
+    {
+        return Some(cand);
+    }
+    std::env::current_exe()
+        .ok()
+        .filter(|exe| exe.file_name().is_some_and(|n| n == "cairn"))
+        .map(|exe| exe.to_string_lossy().into_owned())
+}
+
+/// Binary a daemon start execs: the Rust binary when impl=rust, else cg_bin().
+pub fn daemon_bin() -> Result<String, String> {
+    if daemon_impl() == "python" {
+        return Ok(cg_bin());
+    }
+    rust_bin().ok_or_else(|| {
+        format!(
+            "{DAEMON_IMPL_ENV}=rust selected but no Rust daemon binary found; \
+             set {RUST_BIN_ENV} to the Rust cairn binary."
+        )
+    })
+}
+
+// --- bind discovery -------------------------------------------------------------
+
+/// Extract the (--port, --host) pair from a `serve run` argv; Nones when absent.
+pub fn args_bind(args: &[&str]) -> (Option<u16>, Option<String>) {
+    let mut port = None;
+    let mut host = None;
+    let mut iter = args.iter();
+    while let Some(tok) = iter.next() {
+        if *tok == "--port"
+            && let Some(next) = iter.next()
+            && let Ok(p) = next.parse::<u16>()
+        {
+            port = Some(p);
+        } else if *tok == "--host"
+            && let Some(next) = iter.next()
+        {
+            host = Some((*next).to_string());
+        }
+    }
+    (port, host)
+}
+
+/// ProgramArguments strings of the LaunchAgent plist at `path`, when parseable.
+pub fn plist_program_arguments(path: &Path) -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let start = text.find("<key>ProgramArguments</key>")? + "<key>ProgramArguments</key>".len();
+    let rest = &text[start..];
+    let array = rest.get(..rest.find("</array>")?)?;
+    let mut args = Vec::new();
+    let mut search = array;
+    while let Some(open) = search.find("<string>") {
+        let after = &search[open + "<string>".len()..];
+        let close = after.find("</string>")?;
+        args.push(xml_unescape(&after[..close]));
+        search = &after[close + "</string>".len()..];
+    }
+    Some(args)
+}
+
+/// (port, host) the managed daemon was started with, from its plist or argv;
+/// Nones when undiscoverable.
+pub fn daemon_bind() -> (Option<u16>, Option<String>) {
+    let args: Vec<String> = if is_macos() {
+        plist_program_arguments(&plist_path()).unwrap_or_default()
+    } else {
+        match pidfile_pid().and_then(pid_cmdline) {
+            Some(cmdline) => cmdline.split_whitespace().map(String::from).collect(),
+            None => Vec::new(),
+        }
+    };
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    args_bind(&refs)
+}
+
+// --- launchd load / unload --------------------------------------------------------
+
+fn unload_legacy_label_once() {
+    if LEGACY_UNLOADED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let legacy_plist = agents_dir().join(format!("{LEGACY_LABEL}.plist"));
+    if !legacy_plist.exists() {
+        return;
+    }
+    let _ = launchctl(&["unload", &legacy_plist.to_string_lossy()]);
+    // Without this, launchd re-launches the retired agent at every login.
+    let _ = std::fs::remove_file(&legacy_plist);
+}
+
+/// Load (and start) the LaunchAgent; Err carries the failure reason.
+pub fn load() -> Result<(), String> {
+    if !is_macos() {
+        return Err("LaunchAgent daemon management is macOS-only.".to_string());
+    }
+    let path = plist_path();
+    if !path.exists() {
+        return Err(format!(
+            "{} not found. Run `cairn serve start` first to create it.",
+            path.display()
+        ));
+    }
+    unload_legacy_label_once();
+    match launchctl(&["load", &path.to_string_lossy()]) {
+        None => Err(format!(
+            "launchctl load timed out after {}s",
+            LAUNCHCTL_TIMEOUT.as_secs()
+        )),
+        Some(output) if output.status.success() => Ok(()),
+        Some(_) => Err("launchctl load failed".to_string()),
+    }
+}
+
+/// Unload (and stop) the LaunchAgent; success includes already-unloaded.
+pub fn unload() -> Result<(), String> {
+    if !is_macos() {
+        return Err("LaunchAgent daemon management is macOS-only.".to_string());
+    }
+    let path = plist_path();
+    if !path.exists() {
+        return Ok(()); // nothing to unload
+    }
+    match launchctl(&["unload", &path.to_string_lossy()]) {
+        // unload returns nonzero if already unloaded; treat as success.
+        None => Err(format!(
+            "launchctl unload timed out after {}s",
+            LAUNCHCTL_TIMEOUT.as_secs()
+        )),
+        Some(_) => Ok(()),
+    }
+}
+
+// --- daemon start -------------------------------------------------------------------
+
+/// Store wiring a daemon start needs for the plist/env it launches with.
+pub struct StoreBinding {
+    pub workspace: PathBuf,
+    pub db: PathBuf,
+    pub knowledge: PathBuf,
+}
+
+/// Bounded exclusive flock over `path`; Err carries the timeout/failure text.
+pub fn lockfile_guard(
+    path: &Path,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<std::fs::File, String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .read(true)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "timed out after {}s waiting for the daemon start lock ({})",
+                        timeout.as_secs(),
+                        path.display()
+                    ));
+                }
+                std::thread::sleep(poll);
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
+fn wait_for_healthz(port: u16, host: &str) -> bool {
+    for _ in 0..60 {
+        if healthz_responds(port, host) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    false
+}
+
+fn write_pidfile(pid: u32) {
+    let path = pidfile_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, format!("{pid}\n"));
+}
+
+/// Kill a verified pidfile daemon that holds this db but is not serving healthz.
+fn cycle_wedged_daemon(port: u16, host: &str, db_path: &Path) {
+    let Some(pf_pid) = pidfile_pid() else {
+        return;
+    };
+    if healthz_responds(port, host) {
+        return;
+    }
+    let Some(cmdline) = pid_cmdline(pf_pid) else {
+        return;
+    };
+    if !is_cairn_serve_cmdline(&cmdline) {
+        return;
+    }
+    let Some(holders) = db_holder_pids(db_path) else {
+        return;
+    };
+    if !holders.contains(&pf_pid) {
+        return;
+    }
+    terminate_pid(
+        pf_pid,
+        Duration::from_secs(5),
+        Some(&is_cairn_serve_cmdline),
+    );
+    let _ = std::fs::remove_file(pidfile_path());
+}
+
+/// Launch a detached `serve run` child (the non-macOS daemonize fallback).
+#[allow(clippy::too_many_arguments)]
+fn spawn_daemonized(
+    bin: &str,
+    port: u16,
+    host: &str,
+    store: &StoreBinding,
+    api_key: Option<&str>,
+) -> std::io::Result<u32> {
+    use std::os::unix::process::CommandExt as _;
+    let log_path = daemon_log_path();
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+    let log_err = log.try_clone()?;
+    let mut cmd = Command::new(bin);
+    cmd.args(["serve", "run", "--port", &port.to_string(), "--host", host])
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err))
+        .env("CAIRN_WORKSPACE", &store.workspace)
+        .env("CAIRN_DB", &store.db)
+        .env("CAIRN_KNOWLEDGE", &store.knowledge);
+    if let Some(key) = api_key {
+        cmd.env("CAIRN_MCP_API_KEY", key);
+    }
+    cmd.process_group(0);
+    Ok(cmd.spawn()?.id())
+}
+
+fn ensure_running_launchd(
+    port: u16,
+    host: &str,
+    api_key: Option<&str>,
+    store: &StoreBinding,
+) -> Result<(Option<u32>, String, bool), String> {
+    if is_loaded() {
+        if healthz_responds(port, host) {
+            return Ok((running_pid(), mcp_url(port, host), false));
+        }
+        // KeepAlive respawn window: the job is loaded but not yet serving --
+        // wait it out before any write/load attempt.
+        if wait_for_healthz(port, host) {
+            return Ok((running_pid(), mcp_url(port, host), false));
+        }
+        unload()?; // wedged job: cycle it before a fresh load
+    }
+    sweep_strays(&store.db, true);
+    let plist = render_plist(
+        &daemon_bin()?,
+        port,
+        host,
+        Some(&store.workspace.to_string_lossy()),
+        Some(&store.db.to_string_lossy()),
+        Some(&store.knowledge.to_string_lossy()),
+        false,
+        api_key,
+    );
+    write_plist_file(&plist_path(), &plist).map_err(|e| e.to_string())?;
+    load()?;
+    if !wait_for_healthz(port, host) {
+        return Err("daemon loaded but healthz not responding".to_string());
+    }
+    Ok((running_pid(), mcp_url(port, host), true))
+}
+
+fn ensure_running_daemonize(
+    port: u16,
+    host: &str,
+    api_key: Option<&str>,
+    store: &StoreBinding,
+) -> Result<(Option<u32>, String, bool), String> {
+    if healthz_responds(port, host) {
+        return Ok((pidfile_pid(), mcp_url(port, host), false));
+    }
+    cycle_wedged_daemon(port, host, &store.db);
+    sweep_strays(&store.db, true);
+    let pid = spawn_daemonized(&daemon_bin()?, port, host, store, api_key)
+        .map_err(|e| format!("failed to start the daemon: {e}"))?;
+    write_pidfile(pid);
+    if !wait_for_healthz(port, host) {
+        return Err("daemon started but healthz not responding".to_string());
+    }
+    Ok((Some(pid), mcp_url(port, host), true))
+}
+
+/// Bring up the shared HTTP daemon; Ok carries (pid, mcp_url, started).
+pub fn ensure_daemon_running(
+    port: u16,
+    host: &str,
+    api_key: Option<&str>,
+    store: &StoreBinding,
+) -> Result<(Option<u32>, String, bool), String> {
+    let _lock = lockfile_guard(
+        &daemon_home().join("mcp-daemon.lock"),
+        START_LOCK_TIMEOUT,
+        Duration::from_millis(50),
+    )?;
+    if is_macos() {
+        ensure_running_launchd(port, host, api_key, store)
+    } else {
+        ensure_running_daemonize(port, host, api_key, store)
+    }
+}
+
+/// DB-lock holder identities as `command(pid)` strings, sorted; empty when lsof is unavailable.
+pub fn db_holder_identities(db_path: &Path) -> Vec<String> {
+    let Some(output) = run_with_timeout(Command::new("lsof").arg(db_path), PROCBE_TIMEOUT) else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let mut holders: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut cols = line.split_whitespace();
+            let command = cols.next()?;
+            let pid = cols.next()?;
+            Some(format!("{command}({pid})"))
+        })
+        .collect();
+    holders.sort();
+    holders.dedup();
+    holders
 }

@@ -224,7 +224,8 @@ pub const HASH_MODEL: &str = "hash-256-v1";
 /// Dimensionality of the hash fallback embedder.
 pub const DEFAULT_DIM: usize = 256;
 
-fn config_value(name: &str) -> Option<String> {
+/// Knob value resolved env > config file > None (the `get_config_value` chain).
+pub fn config_value(name: &str) -> Option<String> {
     if let Ok(raw) = env::var(name) {
         let raw = raw.trim().to_string();
         if !raw.is_empty() {

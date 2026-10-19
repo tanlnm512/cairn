@@ -351,3 +351,189 @@ fn healthz_payload_carries_the_reuse_guard_fields() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// --- reuse probe: mcp_url + healthz over the wire -------------------------------
+
+#[test]
+fn mcp_url_is_the_http_mcp_path() {
+    assert_eq!(
+        lifecycle::mcp_url(9876, "127.0.0.1"),
+        "http://127.0.0.1:9876/mcp"
+    );
+    assert_eq!(
+        lifecycle::mcp_url(9000, "localhost"),
+        "http://localhost:9000/mcp"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn healthz_probe_reads_a_live_daemon() {
+    let dir = tempfile_dir("probe");
+    let db_path = dir.join("store.kg");
+    std::fs::copy(
+        repo_root().join("rust/golden/spike/search-store.kg"),
+        &db_path,
+    )
+    .expect("seed store");
+    let (addr, handle) = cairn_daemon::server::serve(db_path).await.expect("serve");
+    let host = addr.ip().to_string();
+    let port = addr.port();
+
+    assert!(lifecycle::healthz_responds(port, &host));
+    let payload = lifecycle::healthz_json(port, &host).expect("healthz json");
+    assert_eq!(payload["impl"], "rust");
+    assert_eq!(payload["status"], "ok");
+
+    // No daemon on the port: the probe degrades to None/false, never an error.
+    assert!(!lifecycle::healthz_responds(port + 1, &host));
+    assert!(lifecycle::healthz_json(port + 1, &host).is_none());
+
+    handle.stop();
+}
+
+#[test]
+fn http_response_parser_covers_the_framings() {
+    fn response(headers: &str, body: &[u8]) -> Option<(u16, Vec<u8>)> {
+        let mut raw = format!("HTTP/1.1 200 OK\r\n{headers}\r\n\r\n").into_bytes();
+        raw.extend_from_slice(body);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let payload = raw.clone();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 1024];
+            let _ = std::io::Read::read(&mut stream, &mut buf);
+            std::io::Write::write_all(&mut stream, &payload).expect("write");
+        });
+        let result = lifecycle::http_get("127.0.0.1", port, "/healthz", Duration::from_secs(5));
+        server.join().expect("server thread");
+        result
+    }
+
+    assert_eq!(
+        response("Content-Length: 5", b"hello").expect("framed"),
+        (200, b"hello".to_vec())
+    );
+    assert_eq!(
+        response("Transfer-Encoding: chunked", b"5\r\nhello\r\n0\r\n\r\n").expect("chunked"),
+        (200, b"hello".to_vec())
+    );
+    assert_eq!(
+        response("X-Nothing: 1", b"eof-terminated").expect("eof"),
+        (200, b"eof-terminated".to_vec())
+    );
+    let (status, _) = response("Content-Length: 2", b"{}").expect("json shape");
+    assert_eq!(status, 200);
+    assert!(lifecycle::http_get("127.0.0.1", 1, "/healthz", Duration::from_millis(300)).is_none());
+}
+
+// --- bind discovery -------------------------------------------------------------
+
+#[test]
+fn args_bind_extracts_the_serve_run_pair() {
+    let args = [
+        "cairn", "serve", "run", "--port", "9001", "--host", "0.0.0.0",
+    ];
+    assert_eq!(
+        lifecycle::args_bind(&args),
+        (Some(9001), Some("0.0.0.0".to_string()))
+    );
+    assert_eq!(
+        lifecycle::args_bind(&["cairn", "serve", "run"]),
+        (None, None)
+    );
+    assert_eq!(
+        lifecycle::args_bind(&["--host", "localhost"]),
+        (None, Some("localhost".to_string()))
+    );
+    // A non-numeric --port is not a bind pair.
+    assert_eq!(lifecycle::args_bind(&["--port", "abc"]), (None, None));
+}
+
+#[test]
+fn plist_program_arguments_round_trips_the_written_plist() {
+    let plist = render_plist(
+        "/opt/cairn/bin/cairn",
+        9123,
+        "127.0.0.1",
+        Some("/ws & co"),
+        Some("/store/.kg"),
+        None,
+        false,
+        None,
+    );
+    let dir = tempfile_dir("plistargs");
+    let path = dir.join("probe.plist");
+    lifecycle::write_plist_file(&path, &plist).expect("write plist");
+    assert_eq!(
+        lifecycle::plist_program_arguments(&path).expect("args"),
+        vec![
+            "/opt/cairn/bin/cairn",
+            "serve",
+            "run",
+            "--port",
+            "9123",
+            "--host",
+            "127.0.0.1",
+        ]
+    );
+    assert_eq!(
+        lifecycle::plist_program_arguments(&dir.join("absent.plist")),
+        None
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// --- impl selection (serialized: process env) ------------------------------------
+
+#[test]
+fn daemon_impl_selection_matrix() {
+    let dir = tempfile_dir("impl");
+    let bin = dir.join("rust-cairn");
+    std::fs::write(&bin, b"#!/bin/sh\n").expect("bin stub");
+    unsafe {
+        std::env::remove_var(lifecycle::DAEMON_IMPL_ENV);
+        std::env::remove_var(lifecycle::RUST_BIN_ENV);
+        assert_eq!(lifecycle::daemon_impl(), "python");
+        std::env::set_var(lifecycle::DAEMON_IMPL_ENV, "RUST");
+        assert_eq!(lifecycle::daemon_impl(), "rust");
+
+        // impl=rust without any binary candidate: the exact runtime error text.
+        std::env::remove_var(lifecycle::RUST_BIN_ENV);
+        assert!(lifecycle::rust_bin().is_none());
+        assert_eq!(
+            lifecycle::daemon_bin().expect_err("no rust bin"),
+            format!(
+                "{}=rust selected but no Rust daemon binary found; set {} to the \
+                 Rust cairn binary.",
+                lifecycle::DAEMON_IMPL_ENV,
+                lifecycle::RUST_BIN_ENV
+            )
+        );
+
+        // CAIRN_RUST_BIN wins when it exists.
+        std::env::set_var(lifecycle::RUST_BIN_ENV, &bin);
+        assert_eq!(
+            lifecycle::rust_bin().as_deref(),
+            Some(bin.to_string_lossy().as_ref())
+        );
+
+        // A missing CAIRN_RUST_BIN falls back to the running cairn binary.
+        std::env::set_var(lifecycle::RUST_BIN_ENV, "/nonexistent/rust-cairn");
+        let current = std::env::current_exe().expect("current exe");
+        let expected = if current.file_name().is_some_and(|n| n == "cairn") {
+            Some(current.to_string_lossy().into_owned())
+        } else {
+            None
+        };
+        assert_eq!(lifecycle::rust_bin(), expected);
+
+        // impl=python resolves through cg_bin (never the rust error).
+        std::env::set_var(lifecycle::DAEMON_IMPL_ENV, "python");
+        assert_eq!(lifecycle::daemon_bin(), Ok(lifecycle::cg_bin()));
+
+        std::env::remove_var(lifecycle::DAEMON_IMPL_ENV);
+        std::env::remove_var(lifecycle::RUST_BIN_ENV);
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
