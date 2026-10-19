@@ -93,10 +93,29 @@ def capture_all(queries: list[dict], rules: list[tuple]) -> list[dict]:
     ]
 
 
+def has_matches(capture: dict) -> bool:
+    """Whether a captured semantic_search envelope carries ranked matches."""
+    return "No matches for" not in capture["content"][0]["text"]
+
+
+def probe_query(db: Path) -> str:
+    """The longest symbol name: a deterministic high-idf query whose top
+    matches are score-separated rather than a wide tie pool."""
+    row = sqlite3.connect(f"file:{db}?mode=ro", uri=True).execute(
+        "SELECT name FROM symbols WHERE name != '' "
+        "ORDER BY LENGTH(name) DESC, name LIMIT 1").fetchone()
+    if not row:
+        raise RuntimeError("subset store has no symbols")
+    return row[0]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", default=None,
                         help="Corpus workspace (default: the registered cairn workspace).")
+    parser.add_argument("--record", action="store_true",
+                        help="Re-baseline the fixture from the current corpus subset "
+                             "instead of asserting golden equality.")
     parser.add_argument("--keep-scratch", action="store_true",
                         help="Keep the scratch store for inspection.")
     args = parser.parse_args(argv)
@@ -108,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     queries = semantic_queries(fixture)
 
-    scratch = spike_golden._Scratch(workspace)
+    scratch = spike_golden._Scratch(workspace, subset=True)
     try:
         spike_golden.build_store(scratch)
         spike_golden._note("embedding (hash) ...")
@@ -121,11 +140,28 @@ def main(argv: list[str] | None = None) -> int:
                                           scratch.corpus_ws)
         captures = capture_all(queries, rules)
 
-        diff = golden_record._diff_path(fixture["response"], captures[0])
-        if diff:
-            print(f"GOLDEN DIFF {diff}")
-            return 1
-        spike_golden._note("query 1 is golden-equal to the committed fixture")
+        if args.record:
+            queries = [{"query": probe_query(scratch.db),
+                        "limit": queries[0]["limit"]}] + queries[1:]
+            spike_golden._note(
+                f"golden query re-baselined to {queries[0]['query']!r}")
+            captures = capture_all(queries, rules)
+            if not has_matches(captures[0]):
+                print("GOLDEN DIFF probe query matched nothing on the subset store")
+                return 1
+
+        if not args.record:
+            # Tie order among equal scores is volatile across rebuilds
+            # (parity.py's SORT_LINES_TOOLS ruling): compare sorted lines.
+            sorted_golden = golden_record.normalize_response(
+                fixture["response"], rules, True)
+            sorted_actual = golden_record.normalize_response(
+                captures[0], rules, True)
+            diff = golden_record._diff_path(sorted_golden, sorted_actual)
+            if diff:
+                print(f"GOLDEN DIFF {diff}")
+                return 1
+            spike_golden._note("query 1 is golden-equal to the committed fixture")
 
         names = [r[0] for r in sqlite3.connect(
             f"file:{scratch.db}?mode=ro", uri=True).execute(
@@ -145,6 +181,9 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         spike_golden._note("slim store is response-equal for every query")
 
+        fixture["response"] = captures[0]
+        if args.record:
+            fixture["arguments"]["query"] = queries[0]["query"]
         fixture["spike_queries"] = [
             {**q, "response": r} for q, r in zip(queries, captures)
         ]
@@ -153,22 +192,26 @@ def main(argv: list[str] | None = None) -> int:
         (SEARCH_DIR / "README.md").write_text(
             "# P1b search fixtures\n"
             "\n"
-            "- `semantic-store.kg` -- the cairn self-store corpus built and\n"
-            "  hash-embedded by this harness, pruned to the tables\n"
-            "  `semantic_search` reads (`repos`, `files`, `symbols`,\n"
-            "  `symbols_fts*`, `embeddings`) and response-verified\n"
-            "  query-for-query against the full store before check-in.\n"
+            "- `semantic-store.kg` -- the cairn self-store corpus, capped by\n"
+            "  `SUBSET_FILE_CAP` in `scripts/rust_migration/spike_golden.py` to an\n"
+            "  evenly spaced sample of indexable files, built and hash-embedded by\n"
+            "  this harness, pruned to the tables `semantic_search` reads\n"
+            "  (`repos`, `files`, `symbols`, `symbols_fts*`, `embeddings`) and\n"
+            "  response-verified query-for-query against the full scratch store\n"
+            "  before check-in.\n"
             "- `../mcp/semantic_search.json` -- `spike_queries` holds the captured\n"
             "  query / response pairs this store must serve golden-equal; entry 0\n"
             "  duplicates the committed golden capture.\n"
             "\n"
             "Regenerate with `.venv/bin/python scripts/rust_migration/semantic_golden.py`\n"
             "(a corpus change can move the nearest neighbors; see the golden diff\n"
-            "message). The Rust integration test reads only these checked-in bytes.\n",
+            "message, and pass `--record` to re-baseline). The Rust integration\n"
+            "test reads only these checked-in bytes.\n",
             encoding="utf-8",
         )
         print(json.dumps({
             "queries": [q["query"] for q in queries],
+            "record": args.record,
             "golden_equal": True,
             "slim_store": str(SEMANTIC_STORE.relative_to(REPO_ROOT)),
             "slim_bytes": slim_bytes,

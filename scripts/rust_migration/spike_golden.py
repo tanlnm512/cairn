@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -26,6 +27,40 @@ SPIKE_DIR = REPO_ROOT / "rust" / "golden" / "spike"
 SLIM_STORE = SPIKE_DIR / "search-store.kg"
 CONTROL_QUERY = "zzz_no_match_spike*"
 _KEEP_TABLES = {"repos", "files", "symbols"}
+
+# --- subset corpus -----------------------------------------------------------
+
+# Checked-in store fixtures are built from an evenly spaced sample of at most
+# this many indexable workspace files (sorted by path).
+SUBSET_FILE_CAP = 260
+
+
+def indexable_rel_paths(workspace: Path) -> list[str]:
+    """Sorted workspace-relative paths of the files the indexer would index."""
+    from cairn.graph import scanner as scanner_mod
+
+    rels: set[str] = set()
+    for repo in scanner_mod.discover_repos(str(workspace)):
+        files, _skips = scanner_mod.iter_files_and_skips(repo)
+        rels.update(os.path.relpath(f.path, str(workspace)) for f in files)
+    return sorted(rels)
+
+
+def stage_subset_corpus(workspace: Path, scratch: Path,
+                        cap: int = SUBSET_FILE_CAP) -> Path:
+    """Copy a deterministic <=cap-file sample of the workspace into scratch."""
+    rels = indexable_rel_paths(workspace)
+    if len(rels) > cap:
+        stride = len(rels) / cap
+        rels = [rels[min(int(k * stride), len(rels) - 1)] for k in range(cap)]
+    staged = scratch / "corpus"
+    for rel in rels:
+        dst = staged / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(workspace / rel, dst)
+    (staged / ".git").mkdir(exist_ok=True)
+    _note(f"subset corpus {len(rels)} files (cap {cap})")
+    return staged
 
 
 def _note(msg: str) -> None:
@@ -67,13 +102,16 @@ def spike_queries(fixture: dict) -> list[str]:
 class _Scratch:
     """Scratch home + registered store; env/paths patched, restored on exit."""
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, subset: bool = False):
         from cairn.paths import register_workspace
 
         self.dir = Path(tempfile.mkdtemp(prefix="cairn-rust-p05-"))
         self.home = self.dir / "home"
         self.home.mkdir(parents=True, exist_ok=True)
-        self.corpus_ws = baseline.stage_corpus(workspace, self.dir)
+        if subset:
+            self.corpus_ws = stage_subset_corpus(workspace, self.dir)
+        else:
+            self.corpus_ws = baseline.stage_corpus(workspace, self.dir)
         self._saved = {
             k: os.environ.get(k)
             for k in (*golden_record.ENV_PINS, "CAIRN_HOME", "CAIRN_WORKSPACE",
@@ -149,6 +187,25 @@ def capture_all(db: Path, queries: list[str], rules: list[tuple],
         os.environ.pop("CAIRN_READ_ONLY", None)
 
 
+def record_queries(scratch: _Scratch, fixture: dict) -> list[str]:
+    """Fixture-derived queries for a --record run, seeded from the committed
+    pattern when it still matches the subset corpus, else a store-derived
+    prefix; the seed capture must yield the >=5 query shapes."""
+    committed = fixture.get("arguments", {}).get("pattern")
+    row = sqlite3.connect(f"file:{scratch.db}?mode=ro", uri=True).execute(
+        "SELECT name FROM symbols WHERE name != '' ORDER BY id LIMIT 1").fetchone()
+    candidates = [p for p in (committed,
+                              row[0][:4] + "*" if row else None) if p]
+    for cand in candidates:
+        scratch.env()
+        try:
+            return spike_queries({"arguments": {"pattern": cand},
+                                  "response": capture_response(cand)})
+        except (IndexError, RuntimeError):
+            continue
+    raise RuntimeError("no seed pattern matches the subset corpus")
+
+
 def write_slim(store_db: Path, out: Path,
                keep_tables: frozenset[str] | None = None) -> int:
     """Backup the store, drop every table outside ``keep_tables``, VACUUM.
@@ -197,6 +254,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", default=None,
                         help="Corpus workspace (default: the registered cairn workspace).")
+    parser.add_argument("--record", action="store_true",
+                        help="Re-baseline the fixture from the current corpus subset "
+                             "instead of asserting golden equality.")
     parser.add_argument("--keep-scratch", action="store_true",
                         help="Keep the scratch store for inspection.")
     args = parser.parse_args(argv)
@@ -206,39 +266,44 @@ def main(argv: list[str] | None = None) -> int:
     workspace = (Path(args.workspace).resolve() if args.workspace
                  else resolve_store().workspace)
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    queries = spike_queries(fixture)
-    _note(f"queries: {queries}")
+    record = args.record
 
-    scratch = _Scratch(workspace)
+    scratch = _Scratch(workspace, subset=True)
     try:
         build_store(scratch)
         rules = golden_record.scrub_rules(scratch.store_home, scratch.home,
                                           scratch.corpus_ws)
+        if record:
+            queries = record_queries(scratch, fixture)
+        else:
+            queries = spike_queries(fixture)
+        _note(f"queries: {queries}")
         captures = capture_all(scratch.db, queries, rules, read_only=False)
 
-        # BM25/query tie order is volatile across builds (parity.py's
-        # SORT_LINES_TOOLS ruling): compare rank-insensitively, sorted lines.
-        sorted_golden = golden_record.normalize_response(
-            fixture["response"], rules, sort_lines=True)
-        sorted_actual = golden_record.normalize_response(
-            captures[0], rules, sort_lines=True)
-        golden_scope = golden_record.compare_scope({
-            "schema": fixture["schema"], "tool": fixture["tool"],
-            "arguments": {"pattern": queries[0]},
-            "normalization": fixture["normalization"],
-            "response": sorted_golden,
-        })
-        actual_scope = golden_record.compare_scope({
-            "schema": fixture["schema"], "tool": fixture["tool"],
-            "arguments": {"pattern": queries[0]},
-            "normalization": fixture["normalization"],
-            "response": sorted_actual,
-        })
-        diff = golden_record._diff_path(golden_scope, actual_scope)
-        if diff:
-            print(f"GOLDEN DIFF {diff}")
-            return 1
-        _note("query 1 is golden-equal to the committed fixture")
+        if not record:
+            # BM25/query tie order is volatile across builds (parity.py's
+            # SORT_LINES_TOOLS ruling): compare rank-insensitively, sorted lines.
+            sorted_golden = golden_record.normalize_response(
+                fixture["response"], rules, sort_lines=True)
+            sorted_actual = golden_record.normalize_response(
+                captures[0], rules, sort_lines=True)
+            golden_scope = golden_record.compare_scope({
+                "schema": fixture["schema"], "tool": fixture["tool"],
+                "arguments": {"pattern": queries[0]},
+                "normalization": fixture["normalization"],
+                "response": sorted_golden,
+            })
+            actual_scope = golden_record.compare_scope({
+                "schema": fixture["schema"], "tool": fixture["tool"],
+                "arguments": {"pattern": queries[0]},
+                "normalization": fixture["normalization"],
+                "response": sorted_actual,
+            })
+            diff = golden_record._diff_path(golden_scope, actual_scope)
+            if diff:
+                print(f"GOLDEN DIFF {diff}")
+                return 1
+            _note("query 1 is golden-equal to the committed fixture")
 
         slim_bytes = write_slim(scratch.db, SLIM_STORE)
         _note(f"slim store {SLIM_STORE} ({slim_bytes} B)")
@@ -254,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
         # spike test asserts it): both carry this build's raw capture. The
         # parity runner re-applies its own sort_lines flag at verify time, so
         # the stored order is not a parity contract.
+        if record:
+            fixture["arguments"] = {"pattern": queries[0]}
         fixture["response"] = captures[0]
         fixture["spike_queries"] = [
             {"pattern": q, "response": r} for q, r in zip(queries, captures)
@@ -261,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
         FIXTURE.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
         print(json.dumps({
             "queries": queries,
+            "record": record,
             "golden_equal": True,
             "slim_store": str(SLIM_STORE.relative_to(REPO_ROOT)),
             "slim_bytes": slim_bytes,
