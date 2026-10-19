@@ -10,6 +10,9 @@ shipped tool: read-path MCP daemon first, then the build path, then the CLI.
 The SQLite `.kg` schema and the MCP tool surface are frozen cross-language
 contracts; every phase is validated by golden/differential testing against the
 Python implementation, which stays authoritative until the final flip.
+Distribution is dual-channel after the flip: PyPI remains a required publish
+channel (maturin-built abi3 wheels wrapping the Rust binary, so `pip install`
+keeps working), alongside Python-free GitHub Release binaries and Homebrew.
 
 ## Why
 Performance and distribution, not language preference:
@@ -29,8 +32,9 @@ maintainer. The strangler approach ships standalone value at every phase gate
 and keeps a working Python product at all times.
 
 ## Business value
-Faster builds and queries on large repos; one-binary install via GitHub
-Releases/Homebrew; lower daemon memory. Success at Phase 1 exit: the Rust
+Faster builds and queries on large repos; installs keep working from PyPI
+(maturin wheels wrapping the rust binary) and gain Python-free channels
+(GitHub Releases/Homebrew); lower daemon memory. Success at Phase 1 exit: the Rust
 daemon serves all 26 tools golden-equivalent on ≥3 real stores with lower RSS.
 Success at Phase 2 exit: the Rust build matches Python's `.kg` content on the
 benchmark corpora and beats closure time by ≥5×.

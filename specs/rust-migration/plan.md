@@ -11,7 +11,10 @@ Goals:
   parity evidence, not on faith.
 - Kill the known super-linear paths (closure) and the per-file process-pool
   overhead.
-- Single-binary distribution; retire the Python version matrix at flip.
+- Dual-channel distribution: PyPI stays a supported publish channel
+  (maturin/PyO3 abi3-py310 wheels wrapping the rust binary) alongside
+  Python-free GitHub Release binaries + Homebrew; the Python-version matrix
+  still collapses — one abi3 wheel per platform covers py3.10+.
 
 Non-goals:
 - No tool-surface changes: same 26 MCP tools (see `docs/mcp-tools.md`), same
@@ -139,13 +142,20 @@ early adopters; Python build stays default until the flip.
   per command; C-4 machine contracts asserted by tests.
 - **3b** Dashboard: same templates + static assets served over HTTP
   (minijinja); no visual redesign rides the migration.
-- **3c** Distribution: cargo-dist (or release workflow) → GitHub Release
-  binaries (aarch64/x86_64 macOS + Linux, musl static), Homebrew tap,
-  `cargo binstall`. PyPI package stays through a deprecation window (two
-  minor releases) with an install hint pointing at the binary.
-- **3d** Flip (v1.0): the Rust binary is `cairn`; the Python package moves to
-  security-fix-only; agent-install templates unchanged (URL/key flow is
-  contract C-5, identical).
+- **3c** Distribution (dual channel, PyPI required):
+  - Wheels: maturin + PyO3 (abi3-py310) so `pip install cairn-intel`,
+    pipx and uv keep working; the wheel entry-point binding (PyO3 `#[pyo3(name
+    = "main")]` module vs bundled-binary exec shim, the ruff/uv pattern) is a
+    recorded D-### decision. Extend the existing tag-driven `release.yml`
+    Trusted Publishing flow to build and publish the wheel matrix — the
+    release pipeline is reused, not replaced.
+  - Binaries: cargo-dist (or release workflow) → GitHub Release binaries
+    (aarch64/x86_64 macOS + Linux, musl static), Homebrew tap,
+    `cargo binstall` — the Python-free channel.
+- **3d** Flip (v1.0): the Rust engine is `cairn` on every channel; the PyPI
+  package ships the rust binary in the wheel (impl=rust by default from the
+  wheel), no deprecation window — pip/pipx/uv installs transition in place.
+  Agent-install templates unchanged (URL/key flow is contract C-5, identical).
 - **3e** Docs sweep: README, `docs/*`, AGENTS.md CLI-fallback section updated
   to the binary; this spec moves to archive.
 
@@ -167,9 +177,11 @@ divergences get a recorded ruling and a CHANGELOG line, never a silent break.
 
 ## 9. What stays Python (sidecars)
 
-- `[ingest]` PDF/docx conversion: no equal-quality Rust counterparts; stays an
-  optional Python sidecar invoked by the binary as a subprocess, or drops if
-  usage data says it is unused.
+- `[ingest]` PDF/docx conversion: no equal-quality Rust counterparts; stays a
+  pip extra on the PyPI package (wheel installs keep `[ingest]`/`[semantic]`
+  working as today, binary detects them at runtime). Binary-only installs
+  (brew/binstall) invoke a pip-installed sidecar or skip the feature; drop it
+  only if usage data says it is unused.
 - `[semantic]` local embeddings: served by the embedding-server backend.
   An `ort`-based local backend is a possible post-flip D-###, explicitly out
   of scope here.
@@ -181,7 +193,8 @@ divergences get a recorded ruling and a CHANGELOG line, never a silent break.
 All crate additions land as recorded D-### decisions with cost (binary size,
 platform coverage, license) and pinned versions; cargo-deny gates from P0-1.
 First batch (P0-4): rmcp, rusqlite, sqlite-vec, tree-sitter core + 15 grammar
-crates, clap. Later batches: notify, prost, minijinja, cargo-dist tooling.
+crates, clap. Later batches: notify, prost, minijinja, cargo-dist tooling,
+maturin + pyo3 (abi3-py310) for the required PyPI wheel channel.
 
 ## 11. CI and shipping
 
@@ -204,6 +217,7 @@ crates, clap. Later batches: notify, prost, minijinja, cargo-dist tooling.
 | Two daemons, one port | Impl switch is explicit; connect's reuse-guard verifies store path; doctor reports the serving impl |
 | CI cost doubles during transition | Cross-compile + cargo cache for the Rust leg; corpus differentials nightly |
 | Kotlin crate coverage gap vs vendored grammar | Node-type revalidation gate in 2a before the vendored ext is dropped |
+| PyPI wheel channel re-adds per-platform wheel builds | abi3-py310 collapses the Python-version matrix to one wheel per platform; existing release.yml Trusted Publishing is reused |
 
 ## 13. Timeline (solo, elapsed)
 
