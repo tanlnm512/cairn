@@ -1,0 +1,18 @@
+
+
+make_fixture.py¨
+pkg/util.py<0scip-python pypi util 1.0.0/pkg/util.py/add( f).B?3scip-python pypi util 1.0.0/pkg/util.py/helper( f).B
+#local pkg/app.py:4:9-4:14B4
+0scip-python pypi util 1.0.0/pkg/util.py/add( f).(7
+3scip-python pypi util 1.0.0/pkg/util.py/helper( f).("pythonŸ
+
+pkg/app.py;/scip-python pypi app 1.0.0/pkg/app.py/main( f).B6,scip-python pypi app 1.0.0/pkg/app.py/Klass.BF:scip-python pypi app 1.0.0/pkg/app.py/Klass/method( self).B
+%local pkg/app.py:4:9-4:14B:0scip-python pypi util 1.0.0/pkg/util.py/add( f).B=3scip-python pypi util 1.0.0/pkg/util.py/helper( f).B
+
+B:scip-python pypi app 1.0.0/pkg/app.py/Klass/method( self).B:0scip-python pypi app 1.0.0/pkg/app.py/ghost( f).B#local pkg/app.py:4:9-4:14B8
+0scip-python pypi util 1.0.0/pkg/util.py/add( f).20scip-python pypi app 1.0.0/pkg/app.py/ghost( f).;3scip-python pypi util 1.0.0/pkg/util.py/helper( f).B3+scip-npm @scope/ext 2.0.0/ext/external( f).B3
+/scip-python pypi app 1.0.0/pkg/app.py/main( f).(0
+,scip-python pypi app 1.0.0/pkg/app.py/Klass.(>
+:scip-python pypi app 1.0.0/pkg/app.py/Klass/method( self).("pythonQ
+gen/extra.py91scip-python pypi gen 1.0.0/gen/extra.py/only( f).B"python/
++scip-npm @scope/ext 2.0.0/ext/external( f).(
