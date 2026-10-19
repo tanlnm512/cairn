@@ -3074,7 +3074,7 @@ mod tests {
             false,
         );
         assert_eq!(
-            std::fs::read(&path2.with_file_name("array.json.bak")).expect("bak"),
+            std::fs::read(path2.with_file_name("array.json.bak")).expect("bak"),
             b"[1, 2]"
         );
         assert!(read_config(&path2)["mcpServers"]["cairn"]["url"].is_string());

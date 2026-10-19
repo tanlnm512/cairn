@@ -2,37 +2,30 @@
   "schema": "cairn-rust-golden-mcp/1",
   "tool": "cross_repo_deps",
   "arguments": {
-    "repo": "cairn"
+    "repo": "corpus"
   },
   "capture": {
     "impl": "python",
-    "harness": "scripts/rust_migration/parity.py",
+    "harness": "scripts/rust_migration/flow_golden.py",
     "corpus": {
-      "workspace": "<WORKSPACE>",
-      "identity_method": "git_commit",
-      "git_commit": "350643089ec5e88ce9f2376ba4156d1425924783",
-      "git_dirty_entries": 74
+      "workspace": "rust/golden/flow/corpus",
+      "identity_method": "checked-in-corpus"
     },
-    "store": {
-      "repos": 1,
-      "files": 703,
-      "symbols": 11969,
-      "edges": 82818
-    },
+    "store": "rust/golden/flow/flow-store.kg",
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
-      "CAIRN_WATCH": "0"
+      "CAIRN_WATCH": "0",
+      "CAIRN_FUSION": "1"
     },
-    "knowledge_bundle_seeded_files": 505,
-    "captured_at": "2026-10-18T23:04:44.829097+00:00"
+    "captured_at": "2026-10-19T10:47:09.402647+00:00"
   },
   "normalization": {
     "rules": [
-      "home_resolved",
       "store_home_resolved",
-      "home",
+      "home_resolved",
       "store_home",
+      "home",
       "workspace",
       "iso_ts",
       "epoch",
@@ -41,14 +34,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates",
-      "memory_total",
-      "lang_totals",
-      "in_degree",
-      "dropped_hubs",
-      "dropped_hotspots",
-      "dropped_clusters"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -58,11 +44,49 @@
     "content": [
       {
         "type": "text",
-        "text": "=== cairn depends on ===\n  (none)\n=== Dependents of cairn ===\n  (none)"
+        "text": "=== corpus depends on ===\n  demo-sdk (flow.demo) x1\n=== Dependents of corpus ===\n  (none)"
       }
     ],
     "structuredContent": {
-      "result": "=== cairn depends on ===\n  (none)\n=== Dependents of cairn ===\n  (none)"
+      "result": "=== corpus depends on ===\n  demo-sdk (flow.demo) x1\n=== Dependents of corpus ===\n  (none)"
     }
-  }
+  },
+  "cases": [
+    {
+      "arguments": {
+        "repo": "corpus"
+      },
+      "sort_lines": false,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "=== corpus depends on ===\n  demo-sdk (flow.demo) x1\n=== Dependents of corpus ===\n  (none)"
+          }
+        ],
+        "structuredContent": {
+          "result": "=== corpus depends on ===\n  demo-sdk (flow.demo) x1\n=== Dependents of corpus ===\n  (none)"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "repo": "be-sdk"
+      },
+      "sort_lines": false,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "=== be-sdk depends on ===\n  (none)\n=== Dependents of be-sdk ===\n  (none)"
+          }
+        ],
+        "structuredContent": {
+          "result": "=== be-sdk depends on ===\n  (none)\n=== Dependents of be-sdk ===\n  (none)"
+        }
+      }
+    }
+  ]
 }

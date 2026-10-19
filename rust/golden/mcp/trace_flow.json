@@ -2,37 +2,30 @@
   "schema": "cairn-rust-golden-mcp/1",
   "tool": "trace_flow",
   "arguments": {
-    "entry": "invoke"
+    "entry": "kickoff"
   },
   "capture": {
     "impl": "python",
-    "harness": "scripts/rust_migration/parity.py",
+    "harness": "scripts/rust_migration/flow_golden.py",
     "corpus": {
-      "workspace": "<WORKSPACE>",
-      "identity_method": "git_commit",
-      "git_commit": "350643089ec5e88ce9f2376ba4156d1425924783",
-      "git_dirty_entries": 74
+      "workspace": "rust/golden/flow/corpus",
+      "identity_method": "checked-in-corpus"
     },
-    "store": {
-      "repos": 1,
-      "files": 703,
-      "symbols": 11969,
-      "edges": 82818
-    },
+    "store": "rust/golden/flow/flow-store.kg",
     "env_pins": {
       "CAIRN_EMBED_BACKEND": "hash",
       "CAIRN_RERANK": "0",
-      "CAIRN_WATCH": "0"
+      "CAIRN_WATCH": "0",
+      "CAIRN_FUSION": "1"
     },
-    "knowledge_bundle_seeded_files": 505,
-    "captured_at": "2026-10-18T23:04:44.830803+00:00"
+    "captured_at": "2026-10-19T10:47:09.402502+00:00"
   },
   "normalization": {
     "rules": [
-      "home_resolved",
       "store_home_resolved",
-      "home",
+      "home_resolved",
       "store_home",
+      "home",
       "workspace",
       "iso_ts",
       "epoch",
@@ -41,14 +34,7 @@
       "age",
       "id12",
       "id6",
-      "float",
-      "dispatch_candidates",
-      "memory_total",
-      "lang_totals",
-      "in_degree",
-      "dropped_hubs",
-      "dropped_hotspots",
-      "dropped_clusters"
+      "float"
     ],
     "sort_lines": false,
     "mask_list_lines": false
@@ -58,11 +44,68 @@
     "content": [
       {
         "type": "text",
-        "text": "Traced 59 step(s) from 'invoke' (21 branches, 17 terminals):\n- `invoke` (method)\n  - `_record_invocation` (function)\n  - `_wire_flusher_conn` (function)\n  - `sub_path` (function)\n    - `get_db` (function)\n    - `record_cli_invocation` (function)\n      - `_apply_schema` (function)\n      - `_maybe_backfill_fts` (function)\n      - `_maybe_backfill_memory_validity` (function)\n      - `_start_cli_flusher` (function)\n      - `build_row` (function)\n      - `is_read_only` (function)\n      - `is_telemetry_off` (function)\n      - `render_env_resolution_chain` (function)\n      - `resolve_store` (function)\n        - `OKFBundle` (class)\n        - `StorePaths` (class)\n        - `_entry` (function)\n        - `_extract_migration_name` (function)\n        - `_migrate_dataflow_pk` (function)\n        - `derive_session_id` (function)\n        - `join` (method)\n        - `list_concepts` (method)\n        - `lock` (method)\n        - `note_contention` (function)\n        - `read_concept` (method)\n        - `register_flusher` (function)\n        - `resolve_workspace` (function)\n        - `start_flusher` (function)\n        - `stat` (method)\n        - `store_key` (function)\n        - `strip_private_data` (function)\n          - `_is_lock_contention` (function)\n          - `_load_registry` (function)\n          - `_okf_bundle_lock` (function)\n          - `_settle_active` (method)\n          - `_spacer_if_needed` (method)\n          - `_validate_concept_path` (method)\n          - `from_file` (method)\n          - `index` (method)\n          - `resolve` (method)\n            - `_from_text` (method)\n            - `_stop_live` (method)\n            - `_value` (function)\n            - `open` (function)\n            - `warning` (function)\n              - `_coerce_timestamp` (function)\n              - `_split_frontmatter` (method)\n              - `entry` (function)\n              - `highlight` (function)\n              - `pop` (method)\n              - `stop` (method)\n                - `_frontmatter_close` (function)\n                - `_maybe_draw` (method)\n                - `find` (method)\n                - `pick` (function)\n                - `push` (method)\n                - `replace` (function)\n                - `write` (method)\n\nBranch points:\n  `resolve_workspace` -> `resolve`, `_load_registry`\n  `resolve_store` -> `resolve_workspace`, `store_key`, `StorePaths`\n  `render_env_resolution_chain` -> `join`, `_entry`, `resolve_store`\n  `note_contention` -> `_is_lock_contention`, `warning`\n  `_apply_schema` -> `_extract_migration_name`, `note_contention`, `_migrate_dataflow_pk`\n  `entry` -> `push`, `join`, `pick`\n  `open` -> `entry`, `highlight`\n  `_okf_bundle_lock` -> `resolve`, `open`\n\nTerminal calls: `_entry`, `_is_lock_contention`, `_migrate_dataflow_pk`, `_spacer_if_needed`, `_value`, `derive_session_id`, `highlight`, `index`\n\nCyclic calls: `invoke`"
+        "text": "Traced 13 step(s) from 'kickoff' (3 branches, 1 terminals):\n- `kickoff` (function)\n  - `a` (function)\n  - `recurse` (function)\n  - `run_pipeline` (function)\n    - `b` (function)\n    - `dispatch` (function)\n    - `read_config` (function)\n      - `run_query` (function)\n        - `cursor` (method)\n        - `execute` (method)\n        - `get_db` (function)\n          - `Cur` (class)\n          - `Db` (class)\n\nBranch points:\n  `run_query` -> `get_db`, `cursor`, `execute`\n  `run_pipeline` -> `dispatch`, `read_config`\n  `kickoff` -> `a`, `run_pipeline`, `recurse`\n\nTerminal calls: `execute`\n\nCyclic calls: `a`, `recurse`"
       }
     ],
     "structuredContent": {
-      "result": "Traced 59 step(s) from 'invoke' (21 branches, 17 terminals):\n- `invoke` (method)\n  - `_record_invocation` (function)\n  - `_wire_flusher_conn` (function)\n  - `sub_path` (function)\n    - `get_db` (function)\n    - `record_cli_invocation` (function)\n      - `_apply_schema` (function)\n      - `_maybe_backfill_fts` (function)\n      - `_maybe_backfill_memory_validity` (function)\n      - `_start_cli_flusher` (function)\n      - `build_row` (function)\n      - `is_read_only` (function)\n      - `is_telemetry_off` (function)\n      - `render_env_resolution_chain` (function)\n      - `resolve_store` (function)\n        - `OKFBundle` (class)\n        - `StorePaths` (class)\n        - `_entry` (function)\n        - `_extract_migration_name` (function)\n        - `_migrate_dataflow_pk` (function)\n        - `derive_session_id` (function)\n        - `join` (method)\n        - `list_concepts` (method)\n        - `lock` (method)\n        - `note_contention` (function)\n        - `read_concept` (method)\n        - `register_flusher` (function)\n        - `resolve_workspace` (function)\n        - `start_flusher` (function)\n        - `stat` (method)\n        - `store_key` (function)\n        - `strip_private_data` (function)\n          - `_is_lock_contention` (function)\n          - `_load_registry` (function)\n          - `_okf_bundle_lock` (function)\n          - `_settle_active` (method)\n          - `_spacer_if_needed` (method)\n          - `_validate_concept_path` (method)\n          - `from_file` (method)\n          - `index` (method)\n          - `resolve` (method)\n            - `_from_text` (method)\n            - `_stop_live` (method)\n            - `_value` (function)\n            - `open` (function)\n            - `warning` (function)\n              - `_coerce_timestamp` (function)\n              - `_split_frontmatter` (method)\n              - `entry` (function)\n              - `highlight` (function)\n              - `pop` (method)\n              - `stop` (method)\n                - `_frontmatter_close` (function)\n                - `_maybe_draw` (method)\n                - `find` (method)\n                - `pick` (function)\n                - `push` (method)\n                - `replace` (function)\n                - `write` (method)\n\nBranch points:\n  `resolve_workspace` -> `resolve`, `_load_registry`\n  `resolve_store` -> `resolve_workspace`, `store_key`, `StorePaths`\n  `render_env_resolution_chain` -> `join`, `_entry`, `resolve_store`\n  `note_contention` -> `_is_lock_contention`, `warning`\n  `_apply_schema` -> `_extract_migration_name`, `note_contention`, `_migrate_dataflow_pk`\n  `entry` -> `push`, `join`, `pick`\n  `open` -> `entry`, `highlight`\n  `_okf_bundle_lock` -> `resolve`, `open`\n\nTerminal calls: `_entry`, `_is_lock_contention`, `_migrate_dataflow_pk`, `_spacer_if_needed`, `_value`, `derive_session_id`, `highlight`, `index`\n\nCyclic calls: `invoke`"
+      "result": "Traced 13 step(s) from 'kickoff' (3 branches, 1 terminals):\n- `kickoff` (function)\n  - `a` (function)\n  - `recurse` (function)\n  - `run_pipeline` (function)\n    - `b` (function)\n    - `dispatch` (function)\n    - `read_config` (function)\n      - `run_query` (function)\n        - `cursor` (method)\n        - `execute` (method)\n        - `get_db` (function)\n          - `Cur` (class)\n          - `Db` (class)\n\nBranch points:\n  `run_query` -> `get_db`, `cursor`, `execute`\n  `run_pipeline` -> `dispatch`, `read_config`\n  `kickoff` -> `a`, `run_pipeline`, `recurse`\n\nTerminal calls: `execute`\n\nCyclic calls: `a`, `recurse`"
     }
-  }
+  },
+  "cases": [
+    {
+      "arguments": {
+        "entry": "kickoff"
+      },
+      "sort_lines": false,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "Traced 13 step(s) from 'kickoff' (3 branches, 1 terminals):\n- `kickoff` (function)\n  - `a` (function)\n  - `recurse` (function)\n  - `run_pipeline` (function)\n    - `b` (function)\n    - `dispatch` (function)\n    - `read_config` (function)\n      - `run_query` (function)\n        - `cursor` (method)\n        - `execute` (method)\n        - `get_db` (function)\n          - `Cur` (class)\n          - `Db` (class)\n\nBranch points:\n  `run_query` -> `get_db`, `cursor`, `execute`\n  `run_pipeline` -> `dispatch`, `read_config`\n  `kickoff` -> `a`, `run_pipeline`, `recurse`\n\nTerminal calls: `execute`\n\nCyclic calls: `a`, `recurse`"
+          }
+        ],
+        "structuredContent": {
+          "result": "Traced 13 step(s) from 'kickoff' (3 branches, 1 terminals):\n- `kickoff` (function)\n  - `a` (function)\n  - `recurse` (function)\n  - `run_pipeline` (function)\n    - `b` (function)\n    - `dispatch` (function)\n    - `read_config` (function)\n      - `run_query` (function)\n        - `cursor` (method)\n        - `execute` (method)\n        - `get_db` (function)\n          - `Cur` (class)\n          - `Db` (class)\n\nBranch points:\n  `run_query` -> `get_db`, `cursor`, `execute`\n  `run_pipeline` -> `dispatch`, `read_config`\n  `kickoff` -> `a`, `run_pipeline`, `recurse`\n\nTerminal calls: `execute`\n\nCyclic calls: `a`, `recurse`"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "entry": "main",
+        "max_depth": 1
+      },
+      "sort_lines": false,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "Traced 3 step(s) from 'main' (1 branches, 0 terminals):\n- `main` (function)\n  - `fetch_user` (function)\n  - `save_user` (function)\n\nBranch points:\n  `main` -> `fetch_user`, `save_user`"
+          }
+        ],
+        "structuredContent": {
+          "result": "Traced 3 step(s) from 'main' (1 branches, 0 terminals):\n- `main` (function)\n  - `fetch_user` (function)\n  - `save_user` (function)\n\nBranch points:\n  `main` -> `fetch_user`, `save_user`"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "entry": "recurse"
+      },
+      "sort_lines": false,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "No outgoing calls traced from 'recurse'."
+          }
+        ],
+        "structuredContent": {
+          "result": "No outgoing calls traced from 'recurse'."
+        }
+      }
+    }
+  ]
 }

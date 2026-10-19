@@ -1099,7 +1099,8 @@ fn candidates_from_ann_hits(
         .collect()
 }
 
-fn semantic_provenance(env: &SemanticEnv) -> String {
+/// Provenance label for a semantic-only hit; shared with the memory tools.
+pub fn semantic_provenance(env: &SemanticEnv) -> String {
     if env.hash_fallback {
         "semantic (hash backend)".to_string()
     } else {

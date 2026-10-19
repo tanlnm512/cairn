@@ -17,6 +17,8 @@ use rusqlite::Connection;
 use yaml_rust2::Yaml;
 use yaml_rust2::yaml::Hash;
 
+use crate::tools_search::{cosine_scan, embed_query, rrf_fuse, semantic_env, semantic_provenance};
+
 // --- errors -----------------------------------------------------------------
 
 /// Tool failure: the message a Python tool would have raised with.
@@ -1829,7 +1831,7 @@ fn lexical_memory_match(concepts: Vec<Concept>, query: &str) -> Vec<Concept> {
 }
 
 /// Search memories ranked by fused lexical + semantic matches (semantic gated
-/// on the memory embedding table; vectors land with the embeddings workstream).
+/// on the memory embedding table).
 #[allow(clippy::too_many_arguments)]
 pub fn search_memory(
     conn: &Connection,
@@ -1887,16 +1889,41 @@ pub fn search_memory(
         }
     }
 
-    let semantic_hits = semantic_memory_search(conn, tier, include_superseded, &query_key)?;
-    for c in semantic_hits {
-        resolved.insert(c.concept_id.clone(), c);
-    }
+    let mut semantic_hits =
+        semantic_memory_search(conn, bundle, query, tier, include_superseded, &query_key);
+    let lexical_ids: Vec<String> = lexical_hits.iter().map(|c| c.concept_id.clone()).collect();
 
-    // Without semantic hits the fused order is the lexical order.
     let mut results = Vec::new();
-    for c in &lexical_hits {
-        if let Some(rc) = resolved.get(&c.concept_id) {
-            results.push(rc.clone());
+    if semantic_hits.is_empty() {
+        // Without semantic hits the fused order is the lexical order.
+        for c in &lexical_hits {
+            if let Some(rc) = resolved.get(&c.concept_id) {
+                results.push(rc.clone());
+            }
+        }
+    } else {
+        // The semantic object carries the provenance stamp that must survive
+        // into the result, so it wins for any id found both ways; dual hits
+        // upgrade to "fused".
+        let semantic_ids: Vec<String> =
+            semantic_hits.iter().map(|c| c.concept_id.clone()).collect();
+        let lexical_id_set: HashSet<&str> = lexical_ids.iter().map(String::as_str).collect();
+        for c in &mut semantic_hits {
+            if lexical_id_set.contains(c.concept_id.as_str()) {
+                let prov = c
+                    .ext_str("provenance")
+                    .unwrap_or_default()
+                    .replace("semantic", "fused");
+                set_ext(&mut c.extensions, "provenance", ys(prov.as_str()));
+            }
+        }
+        for c in semantic_hits {
+            resolved.insert(c.concept_id.clone(), c);
+        }
+        for (cid, _score) in rrf_fuse(&[lexical_ids, semantic_ids], 60) {
+            if let Some(rc) = resolved.get(&cid) {
+                results.push(rc.clone());
+            }
         }
     }
 
@@ -1911,20 +1938,65 @@ pub fn search_memory(
     Ok(results)
 }
 
+/// Each embedded memory once at its best-matching chunk, cosine-ranked above
+/// 0.1; best-effort — any failure yields an empty list, never an error.
 fn semantic_memory_search(
     conn: &Connection,
+    bundle: &Bundle,
+    query: &str,
     tier: Option<&str>,
     include_superseded: bool,
     query_key: &str,
-) -> Result<Vec<Concept>, ToolError> {
-    let count = embed_memory_count(conn).unwrap_or(0);
-    if count == 0 {
-        return Ok(Vec::new());
+) -> Vec<Concept> {
+    const THRESHOLD: f64 = 0.1;
+    const LIMIT: usize = 20;
+    let env = semantic_env(None);
+    let rows: Vec<(String, Vec<u8>, i64)> = (|| {
+        let mut stmt = conn
+            .prepare("SELECT doc_id, vec, dim FROM memory_embeddings WHERE model = ?")
+            .ok()?;
+        stmt.query_map([&env.model], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Vec<u8>>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        })
+        .ok()?
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+    })()
+    .unwrap_or_default();
+    if rows.is_empty() {
+        return Vec::new();
     }
-    // Vector ranking is not available until the embeddings workstream lands;
-    // degrade to no semantic hits (the lexical path stays complete).
-    let _ = (tier, include_superseded, query_key);
-    Ok(Vec::new())
+    let Ok((q_blob, q_dim)) = embed_query(&env, query) else {
+        return Vec::new();
+    };
+    let vectors: Vec<(Vec<u8>, i64)> = rows
+        .iter()
+        .map(|(_, vec, dim)| (vec.clone(), *dim))
+        .collect();
+    let prov = semantic_provenance(&env);
+    let mut out: Vec<Concept> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for (_score, index) in cosine_scan(&q_blob, q_dim, &vectors, THRESHOLD) {
+        if !seen.insert(rows[index].0.clone()) {
+            continue; // keep only the best-scoring chunk per concept
+        }
+        let Ok(mut concept) = bundle.read_concept(&rows[index].0) else {
+            continue; // row orphaned by a since-moved/deleted memory
+        };
+        if !visible(&concept, tier, include_superseded, query_key) {
+            continue;
+        }
+        set_ext(&mut concept.extensions, "provenance", ys(prov.as_str()));
+        out.push(concept);
+        if out.len() >= LIMIT {
+            break;
+        }
+    }
+    out
 }
 
 fn embed_memory_count(conn: &Connection) -> Result<i64, rusqlite::Error> {

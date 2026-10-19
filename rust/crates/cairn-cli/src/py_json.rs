@@ -171,6 +171,6 @@ mod tests {
                 "empty": Value::Null,
             })
         );
-        assert_eq!(dumps(&value.get("score").expect("score")), "0.578");
+        assert_eq!(dumps(value.get("score").expect("score")), "0.578");
     }
 }
