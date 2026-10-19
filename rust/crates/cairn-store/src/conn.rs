@@ -45,6 +45,18 @@ pub fn open_read_only(path: &Path) -> Result<Connection, rusqlite::Error> {
     Ok(conn)
 }
 
+/// Open a `.kg` store read-write with the writable `get_db` pragma parity
+/// (`foreign_keys`, `journal_mode = WAL`, `mmap_size`, `busy_timeout`).
+pub fn open_writable(path: &Path) -> Result<Connection, rusqlite::Error> {
+    register_vec0();
+    let conn = Connection::open(path)?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA mmap_size = 268435456;",
+    )?;
+    conn.busy_timeout(Duration::from_millis(DEFAULT_BUSY_TIMEOUT_MS))?;
+    Ok(conn)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
