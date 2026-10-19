@@ -176,8 +176,6 @@ because those parser.c builds are what the goldens and `.kg` content encode
 - **Cost**: license MIT OR Apache-2.0. Pure Rust → unrestricted platforms.
   Binary size: small single-digit-MB order; record the measured delta at 3a.
 
----
-
 ## Provisional later-batch entries
 
 Pins recorded now per plan §10; re-pin at the phase's entry and convert to
@@ -253,6 +251,25 @@ gating it.
   `crypto-common`, `generic-array`, `typenum`, `cpufeatures` — all
   MIT OR Apache-2.0; binary delta single-digit KB.
 
+
+---
+
+## D-012: rayon =1.12.0 — parse pool for the build path (2c)
+
+- **What**: `rayon` pinned `=1.12.0` (newest stable; 1.10.0/1.11.0 exist and
+  are not taken), default features. Direct transitive additions to the
+  lockfile: `rayon-core 1.13.0`, `crossbeam-deque 0.8.8`,
+  `crossbeam-epoch 0.9.21`, `crossbeam-utils 0.8.23`.
+- **Why**: plan.md 2c mandates the rayon pool as the ProcessPoolExecutor
+  replacement ("a rayon thread pool over shared memory removes that overhead
+  class", spec.md). The `cairn-build` builder parses files on a
+  `ThreadPoolBuilder` pool sized by the `build_graph` `workers` argument
+  (None = CAIRN_WORKERS, then cpu count, clamped 1..=256, mirroring the
+  Python `_parse_all` cap), and restores scan order with a stable sort before
+  any insert so output is independent of parse completion order.
+- **Cost**: license MIT OR Apache-2.0 (inside the P0-1 allowlist; the
+  crossbeam stack is MIT OR Apache-2.0). Pure Rust → unrestricted platforms
+  incl. musl. No unsafe introduced by cairn crates.
 
 ---
 

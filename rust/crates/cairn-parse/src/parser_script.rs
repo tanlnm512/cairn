@@ -274,7 +274,8 @@ impl PythonParser {
         self.scope.clear();
         self.types.reset();
         let root = tree.root_node();
-        self.walk(root, source, &mut pf, &[]);
+        let mut decorators: Vec<tree_sitter::Node<'_>> = Vec::new();
+        self.walk(root, source, &mut pf, &mut decorators);
         pf.edges.extend(std::mem::take(&mut self.pending_edges));
         pf
     }
@@ -284,7 +285,7 @@ impl PythonParser {
         node: Node<'a>,
         source: &[u8],
         pf: &mut ParsedFile,
-        decorators: &[Node<'a>],
+        decorators: &mut Vec<Node<'a>>,
     ) {
         for child in children(node) {
             if rationale_from_comment("python", child, source, pf) {
@@ -299,7 +300,7 @@ impl PythonParser {
         node: Node<'a>,
         source: &[u8],
         pf: &mut ParsedFile,
-        decorators: &[Node<'a>],
+        decorators: &mut Vec<Node<'a>>,
     ) {
         match node.kind() {
             "import_statement" | "import_from_statement" => {
@@ -310,7 +311,11 @@ impl PythonParser {
                     .into_iter()
                     .filter(|c| c.kind() == "decorator")
                     .collect();
-                self.walk(node, source, pf, &wrapped);
+                *decorators = wrapped;
+                self.walk(node, source, pf, decorators);
+                // Python's finally wipes the slot; later siblings inherit
+                // nothing, mirroring the source parser exactly.
+                decorators.clear();
             }
             "decorator" => {}
             "class_definition" => {
@@ -2342,6 +2347,37 @@ mod tests {
             vec![
                 ("helper".into(), "cache".into(), 1),
                 ("helper".into(), "staticmethod_like".into(), 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn python_wrapper_decorators_wipe_after_their_inner_walk() {
+        // Class-body members inherit the class decorator only until a nested
+        // decorated_definition walks; python's finally clears the slot for
+        // everything after it in the enclosing body.
+        let src = b"\
+@dec0\nclass A:\n    def plain_first(self):\n        pass\n\n    @prop\n    def decorated(self):\n        pass\n\n    def plain_after(self):\n        pass\n\
+@dec1\nclass B:\n    def b_plain(self):\n        pass\n";
+        let parsed = PythonParser::new().parse_source(Path::new("sample.py"), src);
+        let mods: Vec<(String, Vec<String>)> = parsed
+            .symbols
+            .iter()
+            .filter(|s| s.kind == "method")
+            .map(|s| {
+                (
+                    s.qualified_name.clone().expect("qname"),
+                    s.modifiers.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            mods,
+            vec![
+                ("A.plain_first".to_string(), vec!["@dec0".to_string()]),
+                ("A.decorated".to_string(), vec!["@prop".to_string()]),
+                ("A.plain_after".to_string(), vec![]),
+                ("B.b_plain".to_string(), vec!["@dec1".to_string()]),
             ]
         );
     }

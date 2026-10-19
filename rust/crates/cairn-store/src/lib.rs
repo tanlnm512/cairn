@@ -2,6 +2,7 @@
 
 pub mod conn;
 pub mod dump;
+pub mod schema;
 pub mod vec0;
 
 /// Returns the crate name; skeleton smoke contract.

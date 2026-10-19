@@ -1,5 +1,6 @@
 //! The `cairn` binary crate.
 
+pub mod build_graph;
 pub mod canonical_dump;
 
 /// Returns the crate name; skeleton smoke contract.
