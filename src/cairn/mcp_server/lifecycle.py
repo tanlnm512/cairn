@@ -110,14 +110,31 @@ def shutil_which(name: str) -> str | None:
 
 
 def daemon_impl() -> str:
-    """Daemon implementation a start launches: 'rust' when CAIRN_DAEMON_IMPL=rust, else 'python'."""
-    return "rust" if os.environ.get(DAEMON_IMPL_ENV, "").strip().lower() == "rust" else "python"
+    """Daemon implementation a start launches: CAIRN_DAEMON_IMPL when set, else rust when a Rust binary is present, else python."""
+    chosen = os.environ.get(DAEMON_IMPL_ENV, "").strip().lower()
+    if chosen:
+        return "rust" if chosen == "rust" else "python"
+    return "rust" if rust_bin() is not None else "python"
 
 
 def rust_bin() -> str | None:
-    """Rust daemon binary path (CAIRN_RUST_BIN); None when unset or absent."""
+    """Rust daemon binary path: CAIRN_RUST_BIN, else a native `cairn` binary on PATH or ~/.local/bin; None when absent."""
     cand = os.environ.get(RUST_BIN_ENV)
-    return cand if cand and Path(cand).exists() else None
+    if cand and Path(cand).exists():
+        return cand
+    for cand in (shutil_which("cairn"), str(Path.home() / ".local" / "bin" / "cairn")):
+        if cand and Path(cand).exists() and _is_native_bin(Path(cand)):
+            return cand
+    return None
+
+
+def _is_native_bin(path: Path) -> bool:
+    """True for a native executable; excludes the #!-scripted Python console script that is also named `cairn`."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(2) != b"#!"
+    except OSError:
+        return False
 
 
 def daemon_bin() -> str:

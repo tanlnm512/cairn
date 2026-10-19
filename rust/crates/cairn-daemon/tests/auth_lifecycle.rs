@@ -492,13 +492,28 @@ fn daemon_impl_selection_matrix() {
     let bin = dir.join("rust-cairn");
     std::fs::write(&bin, b"#!/bin/sh\n").expect("bin stub");
     unsafe {
+        // Default fallback: no impl env and no binary candidate (the test
+        // harness is never named `cairn`) -> python.
         std::env::remove_var(lifecycle::DAEMON_IMPL_ENV);
         std::env::remove_var(lifecycle::RUST_BIN_ENV);
         assert_eq!(lifecycle::daemon_impl(), "python");
-        std::env::set_var(lifecycle::DAEMON_IMPL_ENV, "RUST");
+
+        // The flip: a present binary defaults the impl to rust.
+        std::env::set_var(lifecycle::RUST_BIN_ENV, &bin);
         assert_eq!(lifecycle::daemon_impl(), "rust");
 
-        // impl=rust without any binary candidate: the exact runtime error text.
+        // Explicit impl=python overrides the present binary.
+        std::env::set_var(lifecycle::DAEMON_IMPL_ENV, "python");
+        assert_eq!(lifecycle::daemon_impl(), "python");
+
+        // CAIRN_RUST_BIN wins when it exists.
+        assert_eq!(
+            lifecycle::rust_bin().as_deref(),
+            Some(bin.to_string_lossy().as_ref())
+        );
+
+        // Explicit RUST without any binary candidate: the exact runtime error text.
+        std::env::set_var(lifecycle::DAEMON_IMPL_ENV, "RUST");
         std::env::remove_var(lifecycle::RUST_BIN_ENV);
         assert!(lifecycle::rust_bin().is_none());
         assert_eq!(
@@ -509,13 +524,6 @@ fn daemon_impl_selection_matrix() {
                 lifecycle::DAEMON_IMPL_ENV,
                 lifecycle::RUST_BIN_ENV
             )
-        );
-
-        // CAIRN_RUST_BIN wins when it exists.
-        std::env::set_var(lifecycle::RUST_BIN_ENV, &bin);
-        assert_eq!(
-            lifecycle::rust_bin().as_deref(),
-            Some(bin.to_string_lossy().as_ref())
         );
 
         // A missing CAIRN_RUST_BIN falls back to the running cairn binary.

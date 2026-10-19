@@ -78,7 +78,7 @@ def _try_reuse(port: int, host: str) -> bool:
     "--impl",
     default=None,
     type=click.Choice(["python", "rust"]),
-    help="Daemon implementation a start launches (default: CAIRN_DAEMON_IMPL or python).",
+    help="Daemon implementation a start launches (default: rust when a Rust binary is present, else python; CAIRN_DAEMON_IMPL overrides).",
 )
 def connect(port, host, impl):
     """Start or reuse the shared HTTP daemon and print its MCP URL."""

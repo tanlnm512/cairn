@@ -215,9 +215,9 @@ def test_lock_timeout_fails_connect_without_sweep_or_start(monkeypatch):
     assert state["calls"] == [], "no sweep or start may run without the lock"
 
 
-def test_daemon_impl_env_selects_rust_binary_and_default_unchanged(monkeypatch, tmp_path):
-    """CAIRN_DAEMON_IMPL=rust makes a cold connect exec the CAIRN_RUST_BIN
-    binary; with the env unset the start still execs cg_bin's resolution."""
+def test_daemon_impl_selects_start_binary(monkeypatch, tmp_path):
+    """The daemon a cold connect execs: CAIRN_DAEMON_IMPL when set, else the
+    Rust binary when present, else cg_bin's python resolution."""
     from click.testing import CliRunner
 
     from cairn.cli import main
@@ -229,7 +229,6 @@ def test_daemon_impl_env_selects_rust_binary_and_default_unchanged(monkeypatch, 
     monkeypatch.setenv("CAIRN_WORKSPACE", str(tmp_path / "ws"))
     monkeypatch.setenv("CAIRN_DB", str(tmp_path / "ws" / "graph.db"))
     monkeypatch.setenv("CAIRN_KNOWLEDGE", str(tmp_path / "ws" / ".knowledge"))
-    monkeypatch.setenv("CAIRN_RUST_BIN", str(rust_bin))
     monkeypatch.setattr(lc, "is_macos", lambda: True)
     monkeypatch.setattr(lc, "healthz_json", lambda *a, **k: None)
     monkeypatch.setattr(lc, "sweep_strays", lambda *a, **k: 0)
@@ -241,17 +240,41 @@ def test_daemon_impl_env_selects_rust_binary_and_default_unchanged(monkeypatch, 
     monkeypatch.setattr(lc, "write_plist", written.append)
 
     runner = CliRunner()
+
+    # Explicit env wins: impl=rust execs CAIRN_RUST_BIN.
     monkeypatch.setenv("CAIRN_DAEMON_IMPL", "rust")
+    monkeypatch.setenv("CAIRN_RUST_BIN", str(rust_bin))
     result = runner.invoke(main, ["connect"])
     assert result.exit_code == 0, result.output
     assert "started" in result.output
     assert written, "a cold connect must write the launchd plist"
     assert written[-1]["ProgramArguments"][0] == str(rust_bin)
 
+    # The flip: with the env unset, a present Rust binary is the default.
     monkeypatch.delenv("CAIRN_DAEMON_IMPL")
     written.clear()
     result = runner.invoke(main, ["connect"])
     assert result.exit_code == 0, result.output
-    assert written, "the default-start connect must write the launchd plist"
+    assert written, "the flip: a present Rust binary is the default start"
+    assert written[-1]["ProgramArguments"][0] == str(rust_bin)
+
+    # Explicit impl=python still overrides the present binary.
+    monkeypatch.setenv("CAIRN_DAEMON_IMPL", "python")
+    written.clear()
+    result = runner.invoke(main, ["connect"])
+    assert result.exit_code == 0, result.output
+    assert written[-1]["ProgramArguments"][0] == lc.cg_bin()
+    assert written[-1]["ProgramArguments"][0] != str(rust_bin)
+
+    # The python fallback: no Rust binary anywhere -> cg_bin's resolution.
+    # which() is blocked and Path.home is suite-sandboxed, so discovery is
+    # hermetic even on a machine with a real `cairn` installed.
+    monkeypatch.delenv("CAIRN_DAEMON_IMPL")
+    monkeypatch.delenv("CAIRN_RUST_BIN")
+    monkeypatch.setattr(lc, "shutil_which", lambda name: None)
+    written.clear()
+    result = runner.invoke(main, ["connect"])
+    assert result.exit_code == 0, result.output
+    assert written, "the fallback-start connect must write the launchd plist"
     assert written[-1]["ProgramArguments"][0] == lc.cg_bin()
     assert written[-1]["ProgramArguments"][0] != str(rust_bin)

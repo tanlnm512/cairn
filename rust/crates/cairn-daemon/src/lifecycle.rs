@@ -17,7 +17,7 @@ pub const DEFAULT_PORT: u16 = 9876;
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 /// Selects the implementation a daemon start launches (`rust` or `python`).
 pub const DAEMON_IMPL_ENV: &str = "CAIRN_DAEMON_IMPL";
-/// Path of the Rust daemon binary a `CAIRN_DAEMON_IMPL=rust` start execs.
+/// Path of the Rust daemon binary a rust-impl start execs.
 pub const RUST_BIN_ENV: &str = "CAIRN_RUST_BIN";
 const LAUNCHCTL_TIMEOUT: Duration = Duration::from_secs(15);
 const PROCBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -678,13 +678,20 @@ pub fn healthz_json(port: u16, host: &str) -> Option<Value> {
 
 // --- impl selection -----------------------------------------------------------
 
-/// Daemon implementation a start launches: `rust` when CAIRN_DAEMON_IMPL=rust, else `python`.
+/// Daemon implementation a start launches: CAIRN_DAEMON_IMPL when set, else rust when a Rust binary is present, else python.
 pub fn daemon_impl() -> &'static str {
-    if std::env::var(DAEMON_IMPL_ENV)
+    let chosen = std::env::var(DAEMON_IMPL_ENV)
         .unwrap_or_default()
         .trim()
-        .eq_ignore_ascii_case("rust")
-    {
+        .to_owned();
+    if !chosen.is_empty() {
+        return if chosen.eq_ignore_ascii_case("rust") {
+            "rust"
+        } else {
+            "python"
+        };
+    }
+    if rust_bin().is_some() {
         "rust"
     } else {
         "python"

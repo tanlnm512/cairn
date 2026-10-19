@@ -41,7 +41,7 @@ pub enum SystemCommand {
         /// HTTP daemon host (loopback).
         #[arg(long, default_value = cairn_daemon::lifecycle::DEFAULT_HOST)]
         host: String,
-        /// Daemon implementation a start launches (default: CAIRN_DAEMON_IMPL or python).
+        /// Daemon implementation a start launches (default: rust when a Rust binary is present, else python; CAIRN_DAEMON_IMPL overrides).
         #[arg(long = "impl")]
         impl_: Option<String>,
     },
