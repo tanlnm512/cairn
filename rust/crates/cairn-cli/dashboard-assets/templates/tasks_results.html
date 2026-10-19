@@ -1,0 +1,29 @@
+{#-
+  The results region of /tasks (#tasks-results): the status select in
+  tasks.html hx-gets the route on change and the alpine-morph extension
+  morphs the fresh fragment over this region in place — a filter change
+  is a fragment, never a navigation. The route renders THIS template
+  alone on an HX-Request. The region is not polled (no hx-trigger), so
+  no live chrome arms here.
+-#}
+{% import "_table.html" as tables with context %}
+<div id="tasks-results" aria-live="polite">
+  {% if tasks %}
+  {% call tables.table(['ID', 'Kind', 'Status', 'Resource', 'Assigned to', 'Created', 'Claimed', 'Completed']) %}
+      {% for t in tasks %}
+      <tr>
+        <td class="cell-id"><code title="{{ t.id }}">{{ t.id }}</code></td>
+        <td>{{ t.kind }}</td>
+        <td><span class="badge badge-{{ t.status }}">{{ t.status }}</span></td>
+        <td class="cell-id"><code title="{{ t.resource }}">{{ t.resource }}</code></td>
+        <td>{{ t.assigned_to or "—" }}</td>
+        <td class="ts">{{ t.created_at or "—" }}</td>
+        <td class="ts">{{ t.claimed_at or "—" }}</td>
+        <td class="ts">{{ t.completed_at or "—" }}</td>
+      </tr>
+      {% endfor %}
+  {% endcall %}
+  {% else %}
+  {{ tables.empty_state('No tasks' ~ (' with status “' ~ status ~ '”' if status != 'all' else '') ~ ' in the queue') }}
+  {% endif %}
+</div>

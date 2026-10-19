@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Chains — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Session chains</h1>
+  <p class="muted">
+    Tool calls grouped per session, in call order; a new chain starts after
+    {{ gap_minutes }} minutes of inactivity.
+  </p>
+  {% include "chains_region.html" %}
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}"></script>{% endblock %}

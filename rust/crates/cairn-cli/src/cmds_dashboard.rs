@@ -91,48 +91,17 @@ pub fn run(args: DashboardArgs) -> ExitCode {
 }
 
 async fn serve(bind: SocketAddr, db_path: String) -> std::io::Result<()> {
-    let app = axum::Router::new().route(
-        "/",
-        axum::routing::get(move || {
-            let db_path = db_path.clone();
-            async move { index_page(&db_path) }
-        }),
-    );
+    let knowledge = crate::store_paths::resolve_store(None).knowledge;
+    let app = crate::dashboard::router(crate::dashboard::AppState::new(
+        Some(db_path),
+        Some(knowledge.to_string_lossy().into_owned()),
+    ));
     let listener = tokio::net::TcpListener::bind(bind).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await
-}
-
-/// Minimal read-only overview. Template parity over the full route surface is
-/// the Phase 3b dashboard workstream; this page serves the same banner facts.
-fn index_page(db_path: &str) -> String {
-    let (symbols, files, edges, parse_errors) = store_counts(Path::new(db_path));
-    format!(
-        "<!doctype html>\n<html><head><title>cairn dashboard</title></head>\n\
-         <body>\n<h1>cairn dashboard</h1>\n<p>read-only; served from \
-         <code>{db_path}</code></p>\n<ul>\n<li>symbols: {symbols}</li>\n\
-         <li>files: {files}</li>\n<li>edges: {edges}</li>\n\
-         <li>parse errors: {parse_errors}</li>\n</ul>\n</body></html>\n"
-    )
-}
-
-fn store_counts(db_path: &Path) -> (i64, i64, i64, i64) {
-    let Ok(conn) = cairn_store::conn::open_read_only(db_path) else {
-        return (0, 0, 0, 0);
-    };
-    let count = |sql: &str| -> i64 {
-        conn.query_row(sql, [], |row| row.get::<_, i64>(0))
-            .unwrap_or(0)
-    };
-    (
-        count("SELECT COUNT(*) FROM symbols"),
-        count("SELECT COUNT(*) FROM files"),
-        count("SELECT COUNT(*) FROM edges"),
-        count("SELECT COUNT(*) FROM parse_errors"),
-    )
 }
 
 #[cfg(test)]
@@ -191,7 +160,11 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         let body = body.expect("dashboard body");
-        assert!(body.contains("<h1>cairn dashboard</h1>"), "body {body}");
+        assert!(body.contains("<h1>Cairn Dashboard</h1>"), "body {body}");
+        assert!(
+            body.contains("href=\"/static/app.css?v="),
+            "asset version rides the css href"
+        );
         server.abort();
     }
 }

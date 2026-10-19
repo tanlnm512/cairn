@@ -14,7 +14,7 @@ pub use taint::{
 pub use trace::{FlowNode, trace_flow};
 pub use viz::{
     Graph, get_deps_graph, get_impact_graph, get_module_graph, get_repo_graph, get_symbol_graph,
-    to_dot, to_json, to_mermaid,
+    get_symbol_neighbors, get_symbol_overview, to_dot, to_json, to_mermaid,
 };
 
 /// Structural edges are followed by default; service edges require opt-in.
@@ -2187,72 +2187,8 @@ mod viz {
         })
     }
 
-    fn is_test_symbol(file_path: &str, symbol_name: &str, qualified_name: &str) -> bool {
-        const PATH_PATTERNS: [&str; 18] = [
-            "/src/test/",
-            "/src/androidTest/",
-            "/test/",
-            "/tests/",
-            "/__tests__/",
-            "/spec/",
-            "Test.kt",
-            "Test.java",
-            "Tests.java",
-            "_test.go",
-            "_test.dart",
-            "_test.py",
-            ".spec.ts",
-            ".spec.js",
-            ".test.ts",
-            ".test.js",
-            "Test.swift",
-            "Spec.swift",
-        ];
-        const STRONG: [&str; 13] = [
-            "/src/test/",
-            "/src/androidTest/",
-            "/test/",
-            "/tests/",
-            "/__tests__/",
-            "/spec/",
-            "_test.go",
-            "_test.dart",
-            "_test.py",
-            ".spec.ts",
-            ".spec.js",
-            ".test.ts",
-            ".test.js",
-        ];
-        let normalized = file_path.replace('\\', "/");
-        let base = normalized.rsplit('/').next().unwrap_or_default();
-        let mut path_hit = !file_path.is_empty()
-            && (PATH_PATTERNS.iter().any(|p| normalized.contains(p)) || base.starts_with("test_"));
-        if path_hit
-            && normalized.contains("/src/main/")
-            && !(STRONG.iter().any(|p| normalized.contains(p)) || base.starts_with("test_"))
-        {
-            path_hit = false;
-        }
-        let final_seg = qualified_name
-            .replace('/', ".")
-            .rsplit('.')
-            .next()
-            .unwrap_or_default()
-            .to_string();
-        let probe = if final_seg.is_empty() {
-            symbol_name
-        } else {
-            final_seg.as_str()
-        };
-        let mut name_hit = !probe.is_empty()
-            && ["Test", "Spec", "Tests", "Specs"]
-                .iter()
-                .any(|s| probe.ends_with(s));
-        if name_hit && !file_path.is_empty() && normalized.contains("/src/main/") && !path_hit {
-            name_hit = false;
-        }
-        path_hit && name_hit
-    }
+    // The canonical classifier (graph/tests.py port); viz keeps no local copy.
+    use crate::tools_nav::is_test_symbol as shared_is_test_symbol;
 
     /// One curated scope: kept nodes, deduped internal edges, honest metadata.
     type ScopeGraph = (Map<String, Value>, Vec<Value>, Value);
@@ -2296,7 +2232,9 @@ mod viz {
                 vendored_excluded += 1;
                 continue;
             }
-            if !include_tests && is_test_symbol(&path, &name, qualified.as_deref().unwrap_or("")) {
+            if !include_tests
+                && shared_is_test_symbol(&path, &name, qualified.as_deref().unwrap_or("")).is_some()
+            {
                 continue;
             }
             eligible += 1;
@@ -2577,6 +2515,138 @@ mod viz {
                 "scope": "repo", "repo": repo,
                 "node_count": nodes.len(),
                 "truncated": buckets.len() > REPO_MAX_NODES,
+            }
+        }))
+    }
+
+    /// The workspace's most-connected symbols as one canvas — the answer to
+    /// an empty focal name for the scopes that dispatch here.
+    pub fn get_symbol_overview(
+        conn: &Connection,
+        include_tests: bool,
+        scope: &str,
+    ) -> Result<Graph, rusqlite::Error> {
+        let (nodes, edges, meta) = curated_scope_graph(conn, include_tests, None)?;
+        let mut metadata = Map::new();
+        metadata.insert("scope".into(), Value::from(scope));
+        metadata.insert("focus".into(), Value::from(""));
+        if let Value::Object(m) = meta {
+            for (k, v) in m {
+                metadata.insert(k, v);
+            }
+        }
+        Ok(json!({
+            "nodes": nodes.values().cloned().collect::<Vec<_>>(),
+            "edges": edges,
+            "metadata": metadata,
+        }))
+    }
+
+    /// Each requested symbol (all its same-name rows) + 1-hop callers/callees,
+    /// capped per row per direction; blank names yield an empty graph.
+    pub fn get_symbol_neighbors(
+        conn: &Connection,
+        names: &[String],
+    ) -> Result<Graph, rusqlite::Error> {
+        let mut requested: Vec<String> = Vec::new();
+        for name in names {
+            let trimmed = name.trim();
+            if !trimmed.is_empty() && !requested.iter().any(|n| n == trimmed) {
+                requested.push(trimmed.to_string());
+            }
+        }
+        let mut nodes: Map<String, Value> = Map::new();
+        let mut edges: Vec<Value> = Vec::new();
+        let mut truncated = false;
+        if !requested.is_empty() {
+            let ph = vec!["?"; requested.len()].join(",");
+            let refs: Vec<&dyn rusqlite::ToSql> = requested
+                .iter()
+                .map(|n| n as &dyn rusqlite::ToSql)
+                .collect();
+            let focal_rows: Vec<(String, String, String, String, String)> = query_rows(
+                conn,
+                &format!(
+                    "SELECT s.id AS sid, s.name, s.kind, f.path, f.repo_id \
+                     FROM symbols s JOIN files f ON s.file_id = f.id \
+                     WHERE s.name IN ({ph})"
+                ),
+                &refs,
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                    ))
+                },
+            )?;
+            for (sid, name, kind, path, repo) in focal_rows {
+                add_node(&mut nodes, &name, &kind, Some(&path), Some(&repo));
+                let caller_sql = format!(
+                    "SELECT s.name AS caller, s.kind AS ckind, f.path, f.repo_id, e.kind AS ekind \
+                     FROM edges e JOIN symbols s ON e.source_id = s.id \
+                     JOIN files f ON s.file_id = f.id \
+                     WHERE e.target_id = ? LIMIT {}",
+                    NEIGHBOR_CAP + 1
+                );
+                let callers: Vec<(String, String, String, String, String)> =
+                    query_rows(conn, &caller_sql, &[&sid], |r| {
+                        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                    })?;
+                let mut callers = callers;
+                if callers.len() > NEIGHBOR_CAP {
+                    truncated = true;
+                    callers.truncate(NEIGHBOR_CAP);
+                }
+                for (caller, ckind, path, repo, ekind) in callers {
+                    add_node(&mut nodes, &caller, &ckind, Some(&path), Some(&repo));
+                    edges.push(json!({"source": caller, "target": name, "kind": ekind}));
+                }
+                let callee_sql = format!(
+                    "SELECT COALESCE(t.name, e.target_name) AS callee, t.kind, f.path, f.repo_id, \
+                     e.kind AS ekind \
+                     FROM edges e LEFT JOIN symbols t ON e.target_id = t.id \
+                     LEFT JOIN files f ON t.file_id = f.id \
+                     WHERE e.source_id = ? LIMIT {}",
+                    NEIGHBOR_CAP + 1
+                );
+                type CalleeRow = (
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                    String,
+                );
+                let callees: Vec<CalleeRow> = query_rows(conn, &callee_sql, &[&sid], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                })?;
+                let mut callees = callees;
+                if callees.len() > NEIGHBOR_CAP {
+                    truncated = true;
+                    callees.truncate(NEIGHBOR_CAP);
+                }
+                for (callee, kind, path, repo, ekind) in callees {
+                    let Some(callee) = callee else { continue };
+                    add_node(
+                        &mut nodes,
+                        &callee,
+                        kind.as_deref().unwrap_or("external"),
+                        path.as_deref(),
+                        repo.as_deref(),
+                    );
+                    edges.push(json!({"source": name, "target": callee, "kind": ekind}));
+                }
+            }
+        }
+        Ok(json!({
+            "nodes": nodes.values().cloned().collect::<Vec<_>>(),
+            "edges": edges,
+            "metadata": {
+                "scope": "neighbors", "requested": requested,
+                "node_count": nodes.len(), "edge_count": edges.len(),
+                "truncated": truncated,
             }
         }))
     }

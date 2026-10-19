@@ -15,6 +15,7 @@ pub mod cmds_doctor;
 pub mod cmds_knowledge;
 pub mod cmds_serve;
 pub mod cmds_system;
+pub mod dashboard;
 pub mod display;
 pub mod pack;
 pub mod py_json;

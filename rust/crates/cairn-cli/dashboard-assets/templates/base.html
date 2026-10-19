@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Cairn Dashboard{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}?v={{ asset_version }}">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='/favicon.svg') }}?v={{ asset_version }}">
+  <meta name="htmx-config" content='{"allowEval":false}'>
+  {#- Vendored interaction stack (no CDN, no build step): htmx serves
+      fragments, Alpine owns client state. All four load deferred and
+      execute in this order before DOMContentLoaded: htmx core, its
+      alpine-morph extension (defineExtension needs the htmx global),
+      Alpine's morph plugin (registers Alpine.morph on alpine:init),
+      Alpine core. -#}
+  <script defer src="{{ url_for('static', path='/htmx.min.js') }}?v={{ asset_version }}"></script>
+  <script defer src="{{ url_for('static', path='/alpine-morph.js') }}?v={{ asset_version }}"></script>
+  <script defer src="{{ url_for('static', path='/alpinejs-morph.min.js') }}?v={{ asset_version }}"></script>
+  <script defer src="{{ url_for('static', path='/alpine.min.js') }}?v={{ asset_version }}"></script>
+  <script>
+    (function () {
+      "use strict";
+      var STORAGE_KEY = "cairn-theme";
+      function applyTheme() {
+        var stored = null;
+        try {
+          stored = window.localStorage.getItem(STORAGE_KEY);
+        } catch (err) {
+          stored = null;
+        }
+        var prefersDark = window.matchMedia
+          ? window.matchMedia("(prefers-color-scheme: dark)").matches
+          : null;
+        /* Resolution order: stored choice, then system preference, then
+           dark — dark is the dashboard's default look. */
+        var dark =
+          stored === "dark" ||
+          (stored === null && (prefersDark === null || prefersDark));
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        var toggle = document.getElementById("theme-toggle");
+        if (toggle) {
+          /* The button shows the icon of the theme it switches TO (sun in
+             dark, moon in light — CSS picks the glyph); the label states
+             the action for assistive tech. */
+          var label = dark ? "Switch to light theme" : "Switch to dark theme";
+          toggle.setAttribute("aria-label", label);
+          toggle.title = label;
+        }
+      }
+      window.__cairnApplyTheme = applyTheme;
+      applyTheme();
+      document.addEventListener("DOMContentLoaded", function () {
+        applyTheme();
+      });
+      document.addEventListener("click", function (event) {
+        var toggle =
+          event.target && event.target.closest
+            ? event.target.closest("#theme-toggle")
+            : null;
+        if (!toggle) {
+          return;
+        }
+        var next =
+          document.documentElement.dataset.theme === "dark"
+            ? "light"
+            : "dark";
+        try {
+          window.localStorage.setItem(STORAGE_KEY, next);
+        } catch (err) {
+          /* storage unavailable: the choice lasts only for this page */
+        }
+        applyTheme();
+      });
+    })();
+  </script>
+  <script{% if shell is defined and shell.selector.options %} data-valid-stores='{{ shell.selector.options | map(attribute='key') | list | tojson }}'{% endif %}>
+    /* Workspace stickiness: the store selection rides the URL
+       (?store=<key>, the store seam), which a typed URL or new tab
+       drops — so, like the theme, the last explicit selection is
+       remembered (localStorage "cairn-store") and a bare visit
+       redirects to it. Until the user picks a workspace, nothing is
+       stored and bare URLs keep the launch store, byte-identical. A
+       remembered key that no longer names a populated store (the
+       workspace was deleted) is NOT redirected to — that would poison
+       every future visit with the missing-DB page — it is forgotten and
+       the launch store serves; the valid key set rides this tag's
+       data-valid-stores attribute, server-rendered from the same
+       enumerate_stores rows the selector lists. */
+    (function () {
+      "use strict";
+      var STORAGE_KEY = "cairn-store";
+      var url = new URL(window.location.href);
+      var selected = (url.searchParams.get("store") || "").trim();
+      try {
+        if (selected) {
+          window.localStorage.setItem(STORAGE_KEY, selected);
+        } else {
+          var remembered = window.localStorage.getItem(STORAGE_KEY);
+          var valid = null;
+          var validRaw = document.currentScript
+            ? document.currentScript.getAttribute("data-valid-stores")
+            : null;
+          if (validRaw) {
+            try {
+              valid = JSON.parse(validRaw);
+            } catch (err) {
+              valid = null; /* unparsable set: redirect as before */
+            }
+          }
+          var known = valid === null ||
+            valid.indexOf(remembered) !== -1;
+          if (remembered && known) {
+            url.searchParams.set("store", remembered);
+            window.location.replace(
+              url.pathname + url.search + url.hash
+            );
+          } else if (remembered) {
+            window.localStorage.removeItem(STORAGE_KEY);
+          }
+        }
+      } catch (err) {
+        /* storage unavailable: the selection stays URL-only */
+      }
+    })();
+  </script>
+  <script>
+    /* Sidebar collapse, applied pre-paint like the theme: the remembered
+       state (localStorage "cairn-sidebar", set by shell.js's toggle) sets
+       data-sidebar on the root before the shell renders, so a collapsed
+       session never flashes the expanded sidebar first. */
+    (function () {
+      "use strict";
+      try {
+        if (window.localStorage.getItem("cairn-sidebar") === "collapsed") {
+          document.documentElement.dataset.sidebar = "collapsed";
+        }
+      } catch (err) {
+        /* storage unavailable: the sidebar stays expanded */
+      }
+    })();
+  </script>
+</head>
+<body class="app-shell" hx-ext="alpine-morph">
+  {%- set shell_ctx = shell if shell is defined else none %}
+  {%- set nav_sections = (shell_ctx.nav.sections if shell_ctx else none) or [] %}
+  {%- set selector = (shell_ctx.selector if shell_ctx else none) %}
+  {%- set palette = (shell_ctx.palette if shell_ctx else none) %}
+  <aside class="sidebar">
+    {#- Keep the selected store on every nav hop; empty when the
+        launch store is served (byte-identical plain hrefs). -#}
+    {% set nav_query = '' if not store_key else '?store=' + (store_key | urlencode) %}
+    {% set path = request.url.path %}
+    <a class="brand" href="/{{ nav_query }}">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="m12 3.5 4.5 5.5h-9L12 3.5z"/><path d="m12 12 4.5 5.5h-9L12 12z"/><path d="M12 21.5v-1"/></svg>
+      <span>cairn</span>
+    </a>
+    {% import "_icons.html" as icons %}
+    <nav class="side-nav">
+      {% for section in nav_sections %}
+      <div class="nav-group{% if not section["label"] %} nav-group-standalone{% endif %}">
+        {% if section["label"] %}<div class="nav-group-label">{{ section["label"] }}</div>{% endif %}
+        {% for item in section["items"] %}
+        <a href="{{ item.href }}"{% if item.active %} class="active" aria-current="page"{% endif %}>
+          {{ icons.svg(item.id) }}
+          <span>{{ item.label }}</span>
+        </a>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </nav>
+    <div class="sidebar-foot">
+      <button type="button" id="sidebar-collapse" class="sidebar-collapse" aria-label="Collapse sidebar" title="Collapse sidebar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+      </button>
+      <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Switch theme" title="Switch theme">
+        <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41-1.41"/></svg>
+        <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+    </div>
+  </aside>
+  <div class="app-body">
+    <header class="topbar">
+      {#- The topbar label derives from the path segment ("/" -> Overview);
+          views may override via the view_title block. -#}
+      <div class="topbar-title">{% block view_title %}{{ 'Overview' if path == '/' else ((path | trim('/') | split('/'))[0] | capitalize) }}{% endblock %}</div>
+      <div class="topbar-actions">
+        {#- Global workspace selector (the seam stays the URL param):
+            switching rewrites ?store= on the current URL and reloads, so
+            every tab shows the selected workspace. shell.js owns the
+            change behavior; the options are server-rendered. -#}
+        {% if selector %}
+        <label class="store-picker">
+          <span class="visually-hidden">Workspace</span>
+          <select id="store-select" aria-label="Workspace">
+            <option value="">{{ selector.launch_label }}</option>
+            {%- for o in selector.options %}
+            <option value="{{ o.key }}"{% if o.key == selector.selected %} selected{% endif %}{% if o.path %} title="{{ o.path }} — {{ o.key }}"{% endif %}>{{ o.label }}</option>
+            {%- endfor %}
+          </select>
+        </label>
+        {% endif %}
+        {% if palette %}
+        <button type="button" id="palette-open" class="palette-open" aria-label="Open search (Ctrl+K or Cmd+K)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="palette-open-label">Search</span>
+          <kbd id="palette-kbd">Ctrl K</kbd>
+        </button>
+        {% endif %}
+        <div id="live-controls" class="muted" data-state="running" hidden>
+          <span id="live-state"></span>
+          <button type="button" id="live-pause">Pause</button>
+        </div>
+      </div>
+    </header>
+    <main class="site-main">{% include "_embed_banner.html" %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  {% if palette %}
+  {#- Command palette: a native <dialog> (showModal() provides the focus
+      trap and Esc-to-close) driven by the Alpine "palette" component in
+      shell.js — Ctrl/Cmd+K toggle, active-row highlight, focus restored
+      to the launching element on close. Rows come from two sources: the
+      seed JSON below draws the initial unfiltered list the moment the
+      palette opens, and typing re-fetches filtered rows as an htmx
+      fragment from /palette/results (the same seed composition plus the
+      /graph/suggest symbol matches, decided server-side). The dialog
+      sits at body level so live-refresh region swaps never touch it. -#}
+  <div x-data="palette">
+    <dialog id="palette" class="palette" x-ref="dialog" aria-label="Search"
+            @click="maybeDismiss($event)" @mousedown="pressTarget = $event.target"
+            @close="onClosed()">
+      <div class="palette-card">
+        <input id="palette-input" x-ref="input" type="text" name="q"
+               aria-label="Search"
+               placeholder="Jump to a view, workspace, or symbol…"
+               autocomplete="off" role="combobox" aria-expanded="true"
+               aria-controls="palette-list" aria-autocomplete="list"
+               {% if store_key %}hx-get="/palette/results?store={{ store_key | urlencode }}"{% else %}hx-get="/palette/results"{% endif %}
+               hx-target="#palette-list"
+               hx-swap="innerHTML" hx-sync="this:replace"
+               hx-trigger="input changed delay:200ms"
+               @keydown.arrow-down.prevent="move(1)"
+               @keydown.arrow-up.prevent="move(-1)"
+               @keydown.enter.prevent="choose()">
+        <ul id="palette-list" x-ref="list" role="listbox" @click="pick($event)"></ul>
+        <p class="palette-hint muted">↑ ↓ navigate · ↵ open · esc close</p>
+      </div>
+    </dialog>
+    <script id="palette-data" type="application/json">{{ palette | tojson }}</script>
+  </div>
+  {% endif %}
+  <script src="{{ url_for('static', path='/shell.js') }}?v={{ asset_version }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

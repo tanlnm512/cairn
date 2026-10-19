@@ -1,0 +1,1946 @@
+/* Cairn dashboard — design tokens, dark-first: a near-black surface
+   ladder stepped through 1px hairlines (no drop shadows — elevation is
+   a surface step plus a hairline), one indigo accent, 13px density,
+   system fonts.
+   Theme contract (pinned by the dashboard theme test — that test
+   locates blocks by first substring match, so keep selector spellings
+   OUT of comments):
+   - The first variable block below holds the theme tokens (dark values)
+     and NOTHING else — no constants, no component declarations.
+   - Both theme blocks that follow redefine every theme token plus the
+     color scheme: the dark block restates the defaults verbatim, the
+     light block carries the light ladder. New theme-dependent tokens go
+     into ALL THREE blocks, never the constants one.
+   - Theme resolution lives in base.html's inline head script — no
+     system-color-scheme media query may appear in this file. */
+
+:root {
+  --bg-0: #08090a;
+  --bg-1: #0f1011;
+  --bg-2: #141516;
+  --bg-3: #18191a;
+  --line-1: #23252a;
+  --line-2: #34343a;
+  --text-1: #f7f8f8;
+  --text-2: #d0d6e0;
+  --text-3: #8a8f98;
+  --text-4: #62666d;
+  --accent: #5e6ad2;
+  --accent-hover: #828fff;
+  --ok: #27a644;
+  --warn: #f5a623;
+  --err: #ee5d5d;
+  --kind-function: #2dd4bf;
+  --kind-method: #4ade80;
+  --kind-class: #a78bfa;
+  --kind-interface: #60a5fa;
+  --kind-enum: #f472b6;
+  --kind-module: #fbbf24;
+  --kind-external: #8b9bb4;
+  --edge-calls: #7aa2f7;
+  --edge-extends: #c084fc;
+  --edge-implements: #34d399;
+  --edge-embeds: #2dd4bf;
+  --edge-with: #f472b6;
+  --edge-references: #8a8f98;
+  --edge-decorates: #fbbf24;
+  --edge-imports: #fb923c;
+  --edge-contains: #62666d;
+  color-scheme: dark;
+}
+
+[data-theme="dark"] {
+  --bg-0: #08090a;
+  --bg-1: #0f1011;
+  --bg-2: #141516;
+  --bg-3: #18191a;
+  --line-1: #23252a;
+  --line-2: #34343a;
+  --text-1: #f7f8f8;
+  --text-2: #d0d6e0;
+  --text-3: #8a8f98;
+  --text-4: #62666d;
+  --accent: #5e6ad2;
+  --accent-hover: #828fff;
+  --ok: #27a644;
+  --warn: #f5a623;
+  --err: #ee5d5d;
+  --kind-function: #2dd4bf;
+  --kind-method: #4ade80;
+  --kind-class: #a78bfa;
+  --kind-interface: #60a5fa;
+  --kind-enum: #f472b6;
+  --kind-module: #fbbf24;
+  --kind-external: #8b9bb4;
+  --edge-calls: #7aa2f7;
+  --edge-extends: #c084fc;
+  --edge-implements: #34d399;
+  --edge-embeds: #2dd4bf;
+  --edge-with: #f472b6;
+  --edge-references: #8a8f98;
+  --edge-decorates: #fbbf24;
+  --edge-imports: #fb923c;
+  --edge-contains: #62666d;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg-0: #ffffff;
+  --bg-1: #f7f8f8;
+  --bg-2: #f2f3f4;
+  --bg-3: #ececee;
+  --line-1: #e6e7ea;
+  --line-2: #d0d3d8;
+  --text-1: #17181a;
+  --text-2: #3f4148;
+  --text-3: #6b6e78;
+  --text-4: #9a9da6;
+  --accent: #5260c9;
+  --accent-hover: #404db3;
+  --ok: #1a7f37;
+  --warn: #b45309;
+  --err: #cf222e;
+  --kind-function: #0d9488;
+  --kind-method: #16a34a;
+  --kind-class: #7c3aed;
+  --kind-interface: #2563eb;
+  --kind-enum: #db2777;
+  --kind-module: #b45309;
+  --kind-external: #6b7280;
+  --edge-calls: #4c6ef5;
+  --edge-extends: #9333ea;
+  --edge-implements: #059669;
+  --edge-embeds: #0d9488;
+  --edge-with: #db2777;
+  --edge-references: #6b7280;
+  --edge-decorates: #b45309;
+  --edge-imports: #c2410c;
+  --edge-contains: #9ca3af;
+  color-scheme: light;
+}
+
+/* Theme-invariant design constants (NOT scanned by the theme test —
+   keep them out of the first variable block above). */
+:root {
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  /* Radius scale */
+  --radius-xs: 4px;
+  --radius-s: 6px;
+  --radius: 10px;
+  --radius-l: 14px;
+  /* Type scale — 13px base */
+  --font-xs: 11px;
+  --font-s: 12px;
+  --font-m: 13px;
+  --font-l: 14px;
+  --font-xl: 16px;
+  --font-2xl: 20px;
+  /* Layout dims — control height is the dense 30px row; the shared
+     filter-bar pairs it with 1.2 line-heights and slim paddings so
+     13px control text fits unclipped. */
+  --control-h: 30px;
+  --sidebar-w: 232px;
+  --sidebar-w-collapsed: 60px;
+  --topbar-h: 56px;
+  /* System font stacks */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-sans: -apple-system, system-ui, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  /* Derived theme-adaptive colors: tints and veils recomputed from the
+     active theme's own tokens. */
+  --accent-contrast: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --backdrop: color-mix(in srgb, var(--bg-0) 62%, transparent);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Alpine-managed DOM marked x-cloak stays hidden until Alpine
+   initializes and strips the attribute. */
+[x-cloak] {
+  display: none !important;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--bg-0);
+  color: var(--text-1);
+  font-size: var(--font-m);
+  line-height: 1.55;
+}
+
+a {
+  color: var(--accent);
+}
+
+a:hover,
+a:focus {
+  color: var(--accent-hover);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- App shell: sidebar + topbar + main ---- */
+
+body.app-shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1rem 0 0;
+  background: var(--bg-1);
+  border-right: 1px solid var(--line-1);
+  overflow-y: auto;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 0.6rem 0.9rem;
+  color: var(--text-1);
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+}
+
+.brand svg {
+  color: var(--accent);
+}
+
+.brand:hover,
+.brand:focus {
+  color: var(--text-1);
+}
+
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-top: 0.85rem;
+}
+
+.nav-group-label {
+  padding: 0 0.65rem 0.1rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  opacity: 0.75;
+}
+
+.side-nav a {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.48rem 0.65rem;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  text-decoration: none;
+  font-size: 0.92rem;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.side-nav a svg {
+  flex: none;
+  opacity: 0.85;
+}
+
+.side-nav a:hover,
+.side-nav a:focus {
+  color: var(--text-1);
+  background: var(--accent-soft);
+}
+
+.side-nav a.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.side-nav a.active svg {
+  opacity: 1;
+}
+
+.sidebar-foot {
+  /* Pinned to the rail's visible bottom: the nav outgrew short viewports
+     (13 items), and with the rail scrollable the footer buttons used to
+     end up below the fold. Sticky keeps them reachable without scrolling;
+     the fill + border cover nav rows scrolling underneath. */
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: 0.75rem;
+  background: var(--bg-1);
+  border-top: 1px solid var(--line-1);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.sidebar-collapse {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.sidebar-collapse:hover,
+.sidebar-collapse:focus {
+  color: var(--text-1);
+  background: var(--accent-soft);
+}
+
+/* Collapsed rail (desktop only — the ≤920px sidebar is a horizontal
+   bar where collapse does not apply): icon rail, labels and group
+   headers hidden, chevron flips. */
+@media (min-width: 921px) {
+  html[data-sidebar="collapsed"] body.app-shell {
+    grid-template-columns: var(--sidebar-w-collapsed) minmax(0, 1fr);
+  }
+
+  html[data-sidebar="collapsed"] .brand span,
+  html[data-sidebar="collapsed"] .nav-group-label,
+  html[data-sidebar="collapsed"] .side-nav a span,
+  html[data-sidebar="collapsed"] .theme-toggle {
+    display: none;
+  }
+
+  html[data-sidebar="collapsed"] .side-nav a,
+  html[data-sidebar="collapsed"] .brand,
+  html[data-sidebar="collapsed"] .sidebar-collapse {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  html[data-sidebar="collapsed"] .sidebar-collapse svg {
+    transform: rotate(180deg);
+  }
+}
+
+.app-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: var(--topbar-h);
+  padding: 0 1.5rem;
+  background: var(--bg-0);
+  background: color-mix(in srgb, var(--bg-0) 78%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.topbar-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* ---- Topbar actions: workspace selector + live chrome ---- */
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-left: auto;
+}
+
+.store-picker select {
+  max-width: 260px;
+  height: var(--control-h);
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-s);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.store-picker select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ---- Command palette ---- */
+
+.palette-open {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: var(--control-h);
+  padding: 0 0.65rem;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-s);
+  background: var(--bg-2);
+  color: var(--text-3);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.palette-open:hover,
+.palette-open:focus {
+  color: var(--text-1);
+  background: var(--accent-soft);
+}
+
+.palette-open kbd {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--line-1);
+  border-radius: 4px;
+  background: var(--bg-2);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-3);
+}
+
+/* Native <dialog>: showModal() provides the focus trap and Esc-to-close.
+   The dialog itself is a full-viewport click-catcher (click-outside
+   dismisses; the card carries the surface) and ::backdrop dims the page
+   through the theme's backdrop token. */
+.palette {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: none;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  overflow: hidden;
+}
+
+.palette::backdrop {
+  background: var(--backdrop);
+}
+
+.palette-card {
+  position: relative;
+  max-width: 560px;
+  margin: 12vh auto 0;
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-l);
+  overflow: hidden;
+}
+
+.palette-card input {
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border: none;
+  border-bottom: 1px solid var(--line-1);
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+/* The card's overflow clips an outward ring, so the input's ring sits
+   inside its own box. */
+.palette-card input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.palette-card ul {
+  max-height: 46vh;
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.palette-row.active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.palette-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-row-hint {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: 0.78rem;
+}
+
+.palette-row-empty {
+  justify-content: center;
+  cursor: default;
+  color: var(--text-3);
+}
+
+.palette-hint {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--line-1);
+  font-size: 0.75rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.site-main {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.75rem 1.5rem 3.5rem;
+}
+
+/* ---- Panels (the per-view card container) ---- */
+
+.panel {
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-l);
+  padding: 1.5rem 1.7rem;
+  overflow-x: auto;
+}
+
+.panel h1 {
+  margin: 0 0 0.6rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.link-list {
+  margin: 0.75rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.link-list li {
+  margin: 0.2rem 0;
+}
+
+/* ---- Theme toggle ---- */
+
+.theme-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+/* The glyph shows the theme the button switches to: sun while dark,
+   moon while light — the accessible label states the same action. */
+.theme-toggle .icon-sun {
+  display: none;
+}
+
+[data-theme="dark"] .theme-toggle .icon-sun {
+  display: block;
+}
+
+[data-theme="dark"] .theme-toggle .icon-moon {
+  display: none;
+}
+
+.theme-toggle:hover,
+.theme-toggle:focus {
+  color: var(--text-1);
+  background: var(--accent-soft);
+}
+
+/* ---- Live refresh chrome (topbar-mounted) ---- */
+
+/* display:flex sits behind :not([hidden]) on purpose: an author display
+   rule beats the UA's [hidden] { display: none }, so the unguarded
+   flex rule rendered the Pause button — dead, the loop never arms
+   without a #refresh-region — on every view that has no live region. */
+#live-controls:not([hidden]) {
+  display: flex;
+}
+
+#live-controls {
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+#live-controls:not([hidden])::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+#live-controls[data-state="disconnected"] {
+  color: var(--err);
+}
+
+#live-controls[data-state="disconnected"]::before {
+  background: var(--err);
+  animation: none;
+}
+
+#live-controls[data-state="paused"] {
+  opacity: 0.6;
+}
+
+#live-controls[data-state="paused"]::before {
+  animation: none;
+}
+
+#live-controls:not([hidden]) #live-banner:not(:empty) {
+  color: var(--err);
+}
+
+#live-controls:not([hidden]) #live-pause {
+  height: var(--control-h);
+  padding: 0 0.7rem;
+  border: 1px solid var(--line-1);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--text-3);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+#live-controls:not([hidden]) #live-pause:hover,
+#live-controls:not([hidden]) #live-pause:focus {
+  color: var(--text-1);
+  border-color: var(--accent);
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ---- Filter bar (the shared control row) ---- */
+
+/* One fixed row height for every control (--control-h): selects, text
+   inputs, and buttons carry different intrinsic widget heights, which
+   bottom-aligned rows turn into ragged label baselines. The fixed height
+   pairs with line-height 1.2 and slim vertical padding so 13px control
+   text sits unclipped inside the 30px row. */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.9rem;
+  margin: 0.6rem 0;
+}
+
+.filter-bar label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.filter-bar input[type="text"],
+.filter-bar input[type="number"],
+.filter-bar input[type="password"],
+.filter-bar select {
+  min-width: 0;
+  height: var(--control-h);
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-s);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  letter-spacing: normal;
+  transition: border-color 120ms ease;
+}
+
+.filter-bar input[type="number"] {
+  width: 7.5rem;
+}
+
+.filter-bar input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* Checkbox toggles share the control height and row direction so the box
+   centers against the neighboring inputs/buttons instead of stacking the
+   checkbox above its caption (column direction inherited from the label
+   rule above). */
+.filter-bar .filter-check {
+  flex-direction: row;
+  align-items: center;
+  height: var(--control-h);
+  gap: 0.45rem;
+}
+
+/* Bare inline items interleaved in the row (env-pin markers, the API-key
+   status chip) must meet the same bottom line as the controls they
+   annotate. */
+.filter-bar .env-pin,
+.filter-bar > .muted {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h);
+  gap: 0.35rem;
+}
+
+.filter-bar .env-pin {
+  font-size: 0.78rem;
+  color: var(--text-3);
+}
+
+/* Intent tint only — the focus outline itself is never removed (the
+   global :focus-visible ring is the keyboard location feedback). */
+.filter-bar input:focus,
+.filter-bar select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.filter-bar button[type="submit"] {
+  height: var(--control-h);
+  padding: 0 0.9rem;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: normal;
+  cursor: pointer;
+  transition: filter 120ms ease;
+}
+
+.filter-bar button[type="submit"]:hover {
+  filter: brightness(1.08);
+}
+
+#symbol-search {
+  min-width: 240px;
+}
+
+.graph-stage {
+  position: relative;
+}
+
+.graph-canvas {
+  height: min(72vh, 780px);
+  min-height: 480px;
+  background: var(--bg-0);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+}
+
+/* Canvas + inspect side panel. The panel participates only while visible
+   (:has keeps the canvas full-width when it's hidden). */
+.graph-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 0.8rem;
+  align-items: start;
+}
+
+.graph-layout:has(> .graph-panel[hidden]) {
+  grid-template-columns: 1fr;
+}
+
+.graph-panel {
+  max-height: min(72vh, 780px);
+  overflow-y: auto;
+  padding: 0.75rem 0.85rem;
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+  font-size: 0.86rem;
+}
+
+.panel-head-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.panel-kind {
+  flex: none;
+  padding: 0.08rem 0.5rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.panel-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.panel-sub {
+  margin: 0.2rem 0 0;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.panel-doc {
+  margin: 0.45rem 0 0;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--line-1);
+  color: var(--text-3);
+}
+
+.panel-note {
+  margin: 0.25rem 0 0;
+  color: var(--text-3);
+  font-size: 0.78rem;
+}
+
+.panel-section {
+  margin-top: 0.7rem;
+}
+
+.panel-head {
+  margin: 0 0 0.25rem;
+  font-size: 0.8rem;
+  color: var(--text-3);
+  font-weight: 600;
+}
+
+.panel-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.panel-row {
+  display: flex;
+  flex-direction: column;
+  padding: 0.22rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line-1) 55%, transparent);
+}
+
+.panel-row:last-child {
+  border-bottom: none;
+}
+
+.panel-name {
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+
+/* Panel names are deep links into the symbol-focused graph: the accent
+   comes from the global anchor rule; underline only on intent. */
+.panel-row a.panel-name {
+  text-decoration: none;
+}
+
+.panel-row a.panel-name:hover,
+.panel-row a.panel-name:focus {
+  text-decoration: underline;
+}
+
+.panel-empty {
+  margin: 0.15rem 0;
+  color: var(--text-3);
+}
+
+/* The inspect panel's exit link to the doc's full detail page. */
+.panel-open {
+  display: inline-block;
+  margin-top: 0.7rem;
+  font-weight: 500;
+}
+
+@media (max-width: 900px) {
+  .graph-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.graph-overlay {
+  position: absolute;
+  left: 0.8rem;
+  bottom: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  pointer-events: none;
+}
+
+.graph-overlay button {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--bg-2) 82%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.graph-overlay button:hover,
+.graph-overlay button:focus {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.84rem;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-width: 0;
+  padding: 0.14rem 0.55rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.legend-item:hover,
+.legend-item:focus {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.legend-item.off {
+  opacity: 0.45;
+}
+
+.legend-item.off .legend-name {
+  text-decoration: line-through;
+}
+
+.legend-count {
+  color: var(--text-3);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: none;
+}
+
+/* Knowledge-graph legend groups: a "kind" / "relation" word heads each
+   chip run, and the kind chips' swatch previews the exact edge line
+   style (solid extracted/derived, dashed inferred) with the color set
+   from the token palette by the canvas script. */
+.legend-group-label {
+  align-self: center;
+  padding-right: 0.2rem;
+  color: var(--text-4);
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 14px;
+  border-top: 2px solid;
+  flex: none;
+}
+
+.legend-line-dashed {
+  border-top-style: dashed;
+}
+
+#graph-counts strong {
+  color: var(--accent);
+}
+
+.empty-state {
+  padding: 2.4rem 1rem;
+  border: 1px dashed var(--line-1);
+  border-radius: var(--radius);
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* ---- Data tables (dense: ~33px rows at the 13px base) ---- */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+/* Transparent header row with a strong rule under it — the header reads
+   as typography, not a filled strip. */
+.data-table th {
+  padding: 0.35rem 0.7rem;
+  border-bottom: 2px solid color-mix(in srgb, var(--text-1) 16%, transparent);
+  background: none;
+  text-align: left;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line-1) 55%, transparent);
+  vertical-align: top;
+}
+
+.data-table tbody tr:hover {
+  background: var(--accent-soft);
+}
+
+.data-table .num,
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Timestamp cells: ISO stamps break at their hyphens, so under width
+   pressure they wrap mid-string — hold them to one line. */
+.data-table td.ts {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Long identifier chips (memory IDs): word-break on code collapses the
+   column's min-content width, so the auto table layout squeezes it to a
+   one-glyph sliver. Cap the chip to one ellipsized line; the full id
+   rides the title attribute. */
+.data-table td.cell-id code {
+  display: inline-block;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+code {
+  padding: 0.08rem 0.42rem;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-s);
+  background: var(--bg-2);
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  word-break: break-all;
+}
+
+/* ---- Badges ---- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.08rem 0.6rem;
+  border: 1px solid var(--line-1);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--text-3);
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.55;
+  white-space: nowrap;
+}
+
+.badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: none;
+}
+
+.badge-ok,
+.badge-done,
+.badge-active {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 32%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.badge-warn,
+.badge-partial,
+.badge-superseded,
+.badge-archived {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 32%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.badge-error,
+.badge-failed {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 32%, transparent);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+}
+
+.badge-embedded,
+.badge-in-progress {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: var(--accent-soft);
+}
+
+/* Memory/knowledge concept types (memories: decision, pattern, mistake,
+   workaround; knowledge doc families: decision, spec, workflow,
+   business-rule): purple distinguishes them from operational statuses. */
+.badge-decision,
+.badge-spec,
+.badge-workflow,
+.badge-business-rule,
+.badge-pattern,
+.badge-mistake,
+.badge-workaround {
+  color: var(--accent-hover);
+  border-color: color-mix(in srgb, var(--accent-hover) 32%, transparent);
+  background: color-mix(in srgb, var(--accent-hover) 12%, transparent);
+}
+
+/* Knowledge catalog rows link wholesale: the title anchor's hit area
+   stretches over its row, so a click anywhere on the row opens the doc;
+   the keyboard focus ring stays on the anchor's own box. */
+#knowledge-results .data-table tbody tr {
+  position: relative;
+}
+
+#knowledge-results .data-table tbody tr td:first-child a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+/* ---- Cards & stat tiles ---- */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.card {
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+}
+
+.card h2 {
+  margin: 0 0 0.35rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+
+.card-value {
+  margin: 0.1rem 0 0.35rem;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.card .muted {
+  font-size: 0.84rem;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.9rem;
+  margin: 0.9rem 0 1.2rem;
+}
+
+.stat-tile {
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+  padding: 0.8rem 1rem;
+}
+
+.stat-value {
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  margin-top: 0.15rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+
+/* ---- Secondary button / export chips ---- */
+
+.btn-secondary {
+  display: inline-block;
+  padding: 0.3rem 0.85rem;
+  border: 1px solid var(--line-1);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--text-3);
+  font-size: 0.84rem;
+  text-decoration: none;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.btn-secondary:hover,
+.btn-secondary:focus {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ---- Window control (segmented) ---- */
+
+.window-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.window-control strong {
+  padding: 0.16rem 0.72rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.82rem;
+}
+
+.window-control a {
+  padding: 0.16rem 0.72rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-3);
+  text-decoration: none;
+}
+
+.window-control a:hover,
+.window-control a:focus {
+  color: var(--text-1);
+  border-color: var(--line-1);
+  background: var(--bg-2);
+}
+
+/* Memory view's type filter rides the window-control pills; same margin
+   as the wiki state filter so both sit identically above their tables. */
+.memory-type-filter {
+  margin: 0.45rem 0 0.2rem;
+}
+
+/* ---- Session chains (the chains view's call sequences) ---- */
+
+/* CSS-only chain connection — the view itself stays JS-free; app.js
+   only drives the shared live-refresh region swap. */
+.chain {
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+  padding: 0.6rem 1rem;
+  margin: 0.7rem 0;
+  background: var(--bg-1);
+}
+
+.chain-head {
+  margin-bottom: 0.4rem;
+}
+
+.chain-calls {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+}
+
+.chain-call {
+  display: flex;
+  align-items: center;
+}
+
+.chain-call:not(:last-child)::after {
+  content: "→";
+  color: var(--accent);
+  margin: 0 0.45rem;
+  font-weight: 700;
+}
+
+.call-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: 999px;
+  padding: 0.12rem 0.7rem;
+}
+
+.call-tool {
+  font-weight: 600;
+  font-size: 0.8125rem;
+}
+
+/* ---- Launcher (landing page) ---- */
+
+.launcher-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 0.9rem;
+  margin-top: 1.2rem;
+}
+
+.launcher-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 1rem 1.05rem;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--text-1);
+  text-decoration: none;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+
+.launcher-card svg {
+  color: var(--accent);
+}
+
+.launcher-card:hover,
+.launcher-card:focus {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  color: var(--text-1);
+}
+
+.launcher-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.launcher-blurb {
+  font-size: 0.82rem;
+  color: var(--text-3);
+}
+
+/* ---- Responsive: sidebar collapses to a horizontal bar ---- */
+
+@media (max-width: 920px) {
+  body.app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0.9rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-1);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .brand {
+    padding: 0 0.75rem 0 0.2rem;
+    white-space: nowrap;
+  }
+
+  .side-nav {
+    flex-direction: row;
+    gap: 0.25rem;
+  }
+
+  .side-nav a {
+    white-space: nowrap;
+    padding: 0.4rem 0.55rem;
+  }
+
+  .sidebar-foot {
+    position: static;
+    margin-top: 0;
+    margin-left: auto;
+    padding: 0 0.75rem;
+    border-top: 0;
+    border-left: 1px solid var(--line-1);
+  }
+
+  .topbar {
+    padding: 0 1rem;
+  }
+
+  .site-main {
+    padding: 1.25rem 1rem 2.5rem;
+  }
+}
+
+/* ---- Wiki: catalog, article prose, and page navigation ---- */
+
+.wiki-state-filter {
+  margin: 0.45rem 0 0.2rem;
+}
+
+.wiki-repo-heading {
+  margin: 1.7rem 0 0.55rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--line-1);
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.wiki-repo-heading .muted {
+  font-weight: 400;
+  font-size: 0.82rem;
+}
+
+.wiki-breadcrumb {
+  margin-bottom: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--text-3);
+}
+
+.wiki-breadcrumb a {
+  color: var(--text-3);
+  text-decoration: none;
+}
+
+.wiki-breadcrumb a:hover,
+.wiki-breadcrumb a:focus {
+  color: var(--accent);
+}
+
+/* Article + TOC rail; the rail docks beside the article on wide screens
+   and stacks below it (hidden from the flow, simply full-width) below
+   1100px. */
+.wiki-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.6rem;
+  align-items: start;
+}
+
+@media (min-width: 1100px) {
+  .wiki-layout {
+    grid-template-columns: minmax(0, 1fr) 210px;
+  }
+
+  .wiki-toc {
+    position: sticky;
+    top: calc(var(--topbar-h) + 1.25rem);
+  }
+}
+
+.wiki-body {
+  max-width: 46rem;
+  line-height: 1.68;
+}
+
+.wiki-body h2 {
+  margin-top: 1.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line-1);
+}
+
+.wiki-body h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.wiki-body pre {
+  overflow-x: auto;
+}
+
+.wiki-body pre.mermaid {
+  display: flex;
+  justify-content: center;
+  padding: 0.9rem;
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+}
+
+.wiki-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.wiki-body th,
+.wiki-body td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line-1) 55%, transparent);
+  text-align: left;
+}
+
+.wiki-body th {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+
+/* Backtick refs that link into the graph: the code chip is the anchor —
+   intent (hover/focus) tints it, no underline to fight the chip border. */
+a.code-ref {
+  text-decoration: none;
+}
+
+a.code-ref:hover code,
+a.code-ref:focus code {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wiki-toc {
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  font-size: 0.82rem;
+}
+
+.wiki-toc-label {
+  margin-bottom: 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+.wiki-toc ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wiki-toc li {
+  margin: 0.2rem 0;
+}
+
+.wiki-toc-l3 {
+  padding-left: 0.75rem;
+}
+
+.wiki-toc a {
+  color: var(--text-3);
+  text-decoration: none;
+}
+
+.wiki-toc a:hover,
+.wiki-toc a:focus {
+  color: var(--accent);
+}
+
+.wiki-pager {
+  margin-top: 1.9rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line-1);
+  font-size: 0.9rem;
+}
+
+/* ---- Knowledge doc detail: chain, relationships, refs, provenance ---- */
+
+.doc-subpanel {
+  max-width: 46rem;
+  margin-top: 1.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line-1);
+}
+
+.doc-subpanel h2 {
+  margin: 0 0 0.7rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+/* Supersede chain: ordered oldest -> newest, one labeled hop (relation
+   + direction arrow) between neighbors; the viewed doc reads accent. */
+.supersede-chain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.75rem;
+  font-size: 0.86rem;
+}
+
+.chain-member {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.chain-member.chain-current > a {
+  color: var(--accent);
+}
+
+.chain-id {
+  color: var(--text-4);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  word-break: break-all;
+}
+
+.chain-hop {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+}
+
+.chain-relation {
+  color: var(--text-3);
+}
+
+.chain-arrow {
+  color: var(--accent);
+}
+
+.rel-group {
+  margin-bottom: 0.9rem;
+}
+
+.rel-group:last-child {
+  margin-bottom: 0;
+}
+
+.rel-relation {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.rel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.86rem;
+}
+
+.rel-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.rel-direction {
+  color: var(--text-4);
+  font-size: 0.74rem;
+}
+
+/* Relationship kind labels: extracted reads accent (the trusted record),
+   inferred warns with a dashed border (low-trust, dashed like the
+   graph's inferred edges), derived keeps the neutral badge look. */
+.badge-kind-extracted {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.badge-kind-inferred {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 32%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-style: dashed;
+}
+
+.doc-refs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.86rem;
+}
+
+.doc-refs li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.doc-refs a {
+  text-decoration: none;
+}
+
+.doc-refs a:hover code,
+.doc-refs a:focus code {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ref-kind {
+  color: var(--text-4);
+  font-size: 0.74rem;
+}
+
+.prov-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  font-size: 0.86rem;
+}
+
+.prov-item {
+  display: contents;
+}
+
+.prov-item dt {
+  padding-top: 0.1rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+.prov-item dd {
+  margin: 0;
+  min-width: 0;
+}
+
+/* ---- Symbol-search typeahead dropdown ---- */
+.suggest-wrap {
+  position: relative;
+  display: block;
+}
+
+.suggest-box {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  margin-top: 4px;
+  max-height: 18rem;
+  overflow-y: auto;
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  padding: 4px 0;
+}
+
+.suggest-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.suggest-item:hover,
+.suggest-item.active {
+  background: var(--accent-soft);
+}
+
+.suggest-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.suggest-ctx {
+  color: var(--text-3);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggest-empty {
+  padding: 6px 12px;
+  color: var(--text-3);
+  font-size: 0.8rem;
+}
+
+/* ---- Reduced motion ---- */
+
+/* prefers-reduced-motion: reduce collapses the UI's motion to ~zero —
+   scrolling stops smoothing, every transition/animation completes in
+   0s with no delay, loops do not repeat — while the underlying
+   behavior (toggles, hovers, htmx swaps) is unchanged. The !important
+   guards are load-bearing: a bare universal rule loses to any
+   single-class transition/animation declaration. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  /* The live-refresh pulse loops forever by design; stop it outright
+     instead of running a zero-length loop. */
+  #live-controls:not([hidden])::before {
+    animation: none !important;
+  }
+}

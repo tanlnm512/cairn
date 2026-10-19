@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% import "_links.html" as links with context %}
+{% import "_table.html" as tables with context %}
+{% block title %}Memory — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Memory</h1>
+  <p class="muted">Recent memories from the knowledge bundle, newest first.</p>
+  {% if memories or memory_type != "all" %}
+  <p class="window-control memory-type-filter">
+    Type:
+    {%- for t in ["all"] + (memory_types | list) %}
+    {%- set q = {"type": t} if t != "all" else {} %}
+    {%- if not loop.first %} · {% endif %}{% if t == memory_type %}<strong>{{ t }}</strong>{% else %}<a href="{{ links.url('/memory', q) }}">{{ t }}</a>{% endif %}
+    {%- endfor %}
+  </p>
+  {% endif %}
+  {% if memories %}
+  {% call tables.table(['Type', 'Title', 'Tier', 'Recorded', 'ID']) %}
+      {% for m in memories %}
+      <tr>
+        <td><span class="badge badge-{{ m.type }}">{{ m.type }}</span></td>
+        <td>
+          {%- if m.tier and m.slug %}
+          <a href="{{ links.url('/memory/' ~ m.tier ~ '/' ~ m.slug) }}">{{ m.title }}</a>
+          {%- else %}{{ m.title }}{% endif %}
+        </td>
+        <td>{{ m.tier or "—" }}</td>
+        <td class="ts">{{ m.timestamp or "—" }}</td>
+        <td class="cell-id"><code title="{{ m.id }}">{{ m.id }}</code></td>
+      </tr>
+      {% endfor %}
+  {% endcall %}
+  {% else %}
+  {{ tables.empty_state('No ' ~ memory_type ~ ' memories recorded' if memory_type != 'all' else 'No memories recorded yet — capture one with', code='' if memory_type != 'all' else 'cairn memory record') }}
+  {% endif %}
+</section>
+{% endblock %}

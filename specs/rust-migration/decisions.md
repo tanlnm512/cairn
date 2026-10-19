@@ -205,7 +205,11 @@ gating it.
 
 ## D-009 (provisional): minijinja =3.0.1 — dashboard templates (Phase 3b)
 
-- **What**: `minijinja` pinned `=3.0.1`, default features.
+- **What**: `minijinja` pinned `=3.0.1`, default features. Amended at 3b
+  landing: adds `serde` (context values), `json` (`tojson`), `urlencode`,
+  and `preserve_order` (dict key order must match Jinja2's insertion order —
+  the settings/embeddings tables iterate `cfg.items()`); each is a pure-Rust
+  or serde side dependency already in the lockfile graph.
 - **Why**: 3b dashboard serving (plan.md §6), replacing `jinja2>=3.0`
   (pyproject.toml:47); required for embedding templates in the single binary.
 - **Cost**: license Apache-2.0. Pure Rust → unrestricted platforms.

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Tokens — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Token usage</h1>
+  <p class="muted">
+    Estimated context tokens per tool, ranked by total — the most
+    context-expensive tool first.
+  </p>
+  {% include "tokens_region.html" %}
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}"></script>{% endblock %}

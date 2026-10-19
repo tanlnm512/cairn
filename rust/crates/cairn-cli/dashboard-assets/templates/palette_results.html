@@ -1,0 +1,12 @@
+{#- Command-palette results fragment: the palette input's hx-get target,
+    swapped into #palette-list (innerHTML). Every actionable row carries
+    its action as a data attribute — data-href navigates, data-store-key
+    switches the workspace — so seed rows and fragment rows activate
+    through one client code path; rows with neither attribute (the
+    keep-typing notice) are inert. -#}
+{% for row in rows -%}
+<li class="palette-row" role="option" aria-selected="false" id="palette-row-{{ loop.index0 }}"{% if row.href %} data-href="{{ row.href }}"{% endif %}{% if row.store_key %} data-store-key="{{ row.store_key }}"{% endif %}><span class="palette-row-label">{{ row.label }}</span>{% if row.hint %}<span class="palette-row-hint">{{ row.hint }}</span>{% endif %}</li>
+{% endfor -%}
+{%- if not rows %}
+<li class="palette-row palette-row-empty"><span class="palette-row-label">no matches</span></li>
+{% endif -%}
