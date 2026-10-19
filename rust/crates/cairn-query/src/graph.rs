@@ -3,11 +3,13 @@
 use rusqlite::Connection;
 
 pub use cross_repo::{RepoDep, cross_repo_deps, resolve_namespaces};
-pub use impact::{CLOSURE_MAX_DEPTH, ImpactEntry, ImpactResult, impact_analysis};
-pub use lexical::{lexical_search_symbols, pattern_to_fts};
+pub use impact::{
+    CLOSURE_MAX_DEPTH, ImpactEntry, ImpactResult, impact_analysis, impact_analysis_seeded,
+};
+pub use lexical::{is_fts_prefix_pattern, lexical_search_symbols, pattern_to_fts};
 pub use taint::{
-    PathHop, SymbolPath, TaintHop, TaintPath, find_paths, find_symbol_paths, format_taint_warning,
-    intersect_seeds, resolve_pattern_symbols,
+    PathHop, SymbolPath, TaintHop, TaintPath, find_paths, find_paths_registry, find_symbol_paths,
+    format_taint_warning, intersect_seeds, merged_registry, resolve_pattern_symbols,
 };
 pub use trace::{FlowNode, trace_flow};
 pub use viz::{
@@ -524,11 +526,74 @@ mod impact {
         Ok(impact_dfs(conn, name, max_depth, fuzzy, limit))
     }
 
+    /// Id-pinned traversal: the seed symbol is exact, and every hop resolves
+    /// callers by symbol id (`impact_analysis(..., seed_id=...)`).
+    pub fn impact_analysis_seeded(
+        conn: &Connection,
+        name: &str,
+        seed_id: &str,
+        max_depth: i64,
+        limit: usize,
+    ) -> Result<ImpactResult, rusqlite::Error> {
+        if max_depth < CLOSURE_MAX_DEPTH
+            && closure_available(conn)
+            && !closure_has_seed_cycle(conn, std::slice::from_ref(&seed_id.to_string()))
+            && let Some(result) = impact_from_closure(
+                conn,
+                std::slice::from_ref(&seed_id.to_string()),
+                max_depth,
+                limit,
+            )
+        {
+            return Ok(result);
+        }
+        let mut state = DfsState {
+            conn,
+            fuzzy: false,
+            max_depth,
+            limit,
+            seeded: true,
+            allowed: Some(STRUCTURAL_EDGE_KINDS.iter().copied().collect()),
+            min_depth: HashMap::new(),
+            rows_by_id: HashMap::new(),
+            on_path: HashSet::new(),
+            results: Vec::new(),
+            cycles: Vec::new(),
+            cycles_seen: HashSet::new(),
+            truncated: false,
+            callers_memo: HashMap::new(),
+        };
+        state.on_path.insert(seed_id.to_string());
+        let root_callers = state.callers(Some(seed_id), name);
+        for c in root_callers {
+            if state
+                .allowed
+                .as_ref()
+                .is_some_and(|allowed| !allowed.contains(c.edge_kind.as_str()))
+            {
+                continue;
+            }
+            state.record_caller(&c, 0);
+            if state.truncated {
+                break;
+            }
+        }
+        Ok(ImpactResult {
+            impacted: state.results,
+            cycles: state.cycles,
+            total: 0,
+            truncated: state.truncated,
+        }
+        .with_total())
+    }
+
     struct DfsState<'a> {
         conn: &'a Connection,
         fuzzy: bool,
         max_depth: i64,
         limit: usize,
+        /// Id-pinned mode: each hop resolves callers by the symbol's exact id.
+        seeded: bool,
         allowed: Option<HashSet<&'static str>>,
         min_depth: HashMap<String, i64>,
         rows_by_id: HashMap<String, usize>,
@@ -599,8 +664,12 @@ mod impact {
             self.min_depth.insert(sym_id.to_string(), depth - 1);
             self.on_path.insert(sym_id.to_string());
             // Name-keyed lookup: the unseeded DFS resolves callers of every
-            // same-named symbol, not just this definition's id.
-            let callers = self.callers(None, sym_name);
+            // same-named symbol; the seeded DFS pins the exact id.
+            let callers = if self.seeded {
+                self.callers(Some(sym_id), sym_name)
+            } else {
+                self.callers(None, sym_name)
+            };
             for c in callers {
                 if self
                     .allowed
@@ -630,6 +699,7 @@ mod impact {
             fuzzy,
             max_depth,
             limit,
+            seeded: false,
             allowed: Some(STRUCTURAL_EDGE_KINDS.iter().copied().collect()),
             min_depth: HashMap::new(),
             rows_by_id: HashMap::new(),
@@ -1271,6 +1341,71 @@ mod taint {
             fuzzy,
             max_depth,
         )
+    }
+
+    /// Category -> call-name tables (defaults merged with config overrides).
+    pub type TaintRegistryTables = (Vec<(String, Vec<String>)>, Vec<(String, Vec<String>)>);
+
+    /// Category -> call-name tables merged with overrides (`build_registry`).
+    pub fn merged_registry(
+        source_overrides: &[(String, Vec<String>)],
+        sink_overrides: &[(String, Vec<String>)],
+    ) -> TaintRegistryTables {
+        fn merge(
+            defaults: Vec<(&'static str, Vec<&'static str>)>,
+            overrides: &[(String, Vec<String>)],
+        ) -> Vec<(String, Vec<String>)> {
+            let mut merged: Vec<(String, Vec<String>)> = defaults
+                .into_iter()
+                .map(|(category, names)| {
+                    (
+                        category.to_string(),
+                        names.into_iter().map(String::from).collect(),
+                    )
+                })
+                .collect();
+            for (category, names) in overrides {
+                match merged.iter_mut().find(|(c, _)| c == category) {
+                    Some(item) => item.1 = names.clone(),
+                    None => merged.push((category.clone(), names.clone())),
+                }
+            }
+            merged
+        }
+        (
+            merge(default_sources(), source_overrides),
+            merge(default_sinks(), sink_overrides),
+        )
+    }
+
+    fn string_pattern_names(pattern: &str, table: &[(String, Vec<String>)]) -> Option<Vec<String>> {
+        if let Some(item) = table.iter().find(|item| item.0 == pattern) {
+            return Some(item.1.clone());
+        }
+        table
+            .iter()
+            .flat_map(|(_, names)| names.iter())
+            .find(|name| *name == pattern)
+            .map(|name| vec![name.clone()])
+    }
+
+    /// Taint paths under an explicit registry (config-merged categories).
+    pub fn find_paths_registry(
+        conn: &Connection,
+        sources: &[(String, Vec<String>)],
+        sinks: &[(String, Vec<String>)],
+        from_pattern: &str,
+        to_pattern: &str,
+        fuzzy: bool,
+        max_depth: i64,
+    ) -> Result<Vec<TaintPath>, rusqlite::Error> {
+        let Some(from_names) = string_pattern_names(from_pattern, sources) else {
+            return Ok(vec![]);
+        };
+        let Some(to_names) = string_pattern_names(to_pattern, sinks) else {
+            return Ok(vec![]);
+        };
+        discover_paths(conn, &from_names, &to_names, fuzzy, max_depth)
     }
 
     /// Taint paths whose entry or sink symbol name is in `seeds`.

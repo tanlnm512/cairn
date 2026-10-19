@@ -39,13 +39,27 @@ DB_NAME = parity.DB_NAME
 RUST_BIN = parity.RUST_WORKSPACE / "target" / "release" / "cairn"
 CMD_TIMEOUT_S = 120.0
 # C-4 machine contracts: stdout-pure JSON modes + exit codes, over the seeded scratch store.
+# One command per knowledge-family group: knowledge, workflow, memory, compass, wiki.
 COMMANDS = [
     ["config", "--json"],
     ["config", "--db"],
     ["config", "--mcp-config"],
+    ["config", "--list"],
+    ["def", "--json", "resolve_store"],
+    ["callers", "--json", "resolve_store"],
+    ["callees", "--json", "search_symbols"],
+    ["search", "--json", "impact"],
+    ["impact", "--json", "search_symbols"],
+    ["deps", "--json", "cairn"],
+    ["tree", "cairn"],
+    ["pack", "--json", "--task", "parse dispatch", "--budget", "512"],
     ["knowledge", "list", "--json"],
     ["knowledge", "search", "--json", "golden capture"],
     ["knowledge", "islands", "--json"],
+    ["knowledge", "workflow", "trace", "--json", "golden capture workflow"],
+    ["memory", "list"],
+    ["compass", "list"],
+    ["wiki", "search", "golden capture"],
 ]
 DIFF_PRINT_CHARS = 300
 
@@ -66,6 +80,13 @@ def cli_env(scratch: Path, workspace: Path, cargo_path: bool) -> dict:
                 "CAIRN_DB", "CAIRN_KNOWLEDGE", "CAIRN_WORKSPACE", "CAIRN_HOME"):
         env.pop(key, None)
     env.update(gr.ENV_PINS)
+    # Pack costs differ when the python leg resolves the exact tokenizer from a
+    # locally cached model; the Rust leg is heuristic-only, so pin the probe to
+    # a never-cached name and differential-run the heuristic contract on both.
+    env["CAIRN_EMBED_LOCAL_MODEL"] = "cairn-golden-no-such-model"
+    # Python-side logging (ann-index degrade warnings, rich handler) is noise
+    # this gate does not contract on; the C-4 surface is stdout + exit codes.
+    env["CAIRN_LOG_LEVEL"] = "ERROR"
     env["CAIRN_HOME"] = str(scratch / "home")
     env["CAIRN_DB"] = str(scratch / DB_NAME)
     env["CAIRN_KNOWLEDGE"] = str(scratch / ".knowledge")

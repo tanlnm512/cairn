@@ -29,33 +29,83 @@ fn paint_with(color: bool, style: &str, text: &str) -> String {
     }
 }
 
+/// Console width the python rich console wraps at (non-TTY default).
+pub const CONSOLE_WIDTH: usize = 80;
+
+/// Print through the rich-console fold: greedy word wrap at the console width,
+/// trailing whitespace retained at each break (rich's non-TTY shape).
+pub fn console_print(line: &str) {
+    if line.chars().count() <= CONSOLE_WIDTH {
+        println!("{line}");
+        return;
+    }
+    let mut current = String::new();
+    let mut chunk = String::new();
+    for ch in line.chars() {
+        chunk.push(ch);
+        if ch == ' ' {
+            flush_chunk(&mut current, &chunk);
+            chunk.clear();
+        }
+    }
+    if !chunk.is_empty() {
+        flush_chunk(&mut current, &chunk);
+    }
+    if !current.is_empty() {
+        println!("{current}");
+    }
+}
+
+/// Greedy word placement; a word longer than the width hard-breaks at the
+/// boundary (rich's fold behavior).
+fn flush_chunk(current: &mut String, chunk: &str) {
+    if current.chars().count() + chunk.chars().count() > CONSOLE_WIDTH && !current.is_empty() {
+        println!("{current}");
+        current.clear();
+    }
+    if current.chars().count() + chunk.chars().count() <= CONSOLE_WIDTH {
+        current.push_str(chunk);
+        return;
+    }
+    // The chunk alone exceeds the width: split it at the boundary.
+    let mut rest = chunk;
+    while rest.chars().count() > CONSOLE_WIDTH - current.chars().count() {
+        let take = CONSOLE_WIDTH - current.chars().count();
+        let head: String = rest.chars().take(take).collect();
+        println!("{current}{head}");
+        current.clear();
+        rest = &rest[head.len()..];
+    }
+    current.push_str(rest);
+}
+
 pub fn success(msg: &str) {
-    println!("{} {msg}", paint(SUCCESS, "✓"));
+    console_print(&format!("{} {msg}", paint(SUCCESS, "✓")));
 }
 
 pub fn warning(msg: &str) {
-    println!("{} {msg}", paint(WARNING, "!"));
+    console_print(&format!("{} {msg}", paint(WARNING, "!")));
 }
 
 pub fn error(msg: &str) {
-    println!("{} {msg}", paint(ERROR, "✗"));
+    console_print(&format!("{} {msg}", paint(ERROR, "✗")));
 }
 
 pub fn info(msg: &str) {
-    println!("{} {msg}", paint(INFO, "⠿"));
+    console_print(&format!("{} {msg}", paint(INFO, "⠿")));
 }
 
 pub fn dim(msg: &str) {
-    println!("{}", paint(DIM, msg));
+    console_print(&paint(DIM, msg));
 }
 
 /// Print a styled `label  value` line with the label padded to 14 columns.
 pub fn kv(label: &str, value: &str) {
-    println!(
+    console_print(&format!(
         "{} {}",
         paint(LABEL, &format!("{label:14}")),
         paint(NUMBER, value)
-    );
+    ));
 }
 
 #[cfg(test)]

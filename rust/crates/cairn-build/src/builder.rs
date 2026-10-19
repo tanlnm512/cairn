@@ -310,7 +310,7 @@ pub fn build_graph(
         let import_edges = materialize_import_edges(&tx, &mut ids, None)?;
         tx.commit().map_err(rusqlite_err)?;
         timings.imports_ms = elapsed_ms(t);
-        eprintln!("  materialized {import_edges} module imports edges");
+        let _ = import_edges;
     }
 
     timings.total_ms = elapsed_ms(started);
