@@ -86,9 +86,10 @@ def _make_quality_repo(tmp_path):
     block = "# alpha\n# beta\n# gamma\n# delta\nX = 1\n"
     for name in ("a.py", "b.py"):
         (source / name).write_text(block, encoding="utf-8")
-    from cairn.cli.system.comment_style import main as comment_style_main
+    from cairn.cli.system.comment_style import DEFAULT_BASELINE, main as comment_style_main
 
-    baseline = audits / "comment-style-baseline.json"
+    baseline = root.joinpath(*DEFAULT_BASELINE)
+    baseline.parent.mkdir(parents=True, exist_ok=True)
     comment_style_main(["--root", str(root), "--baseline", str(baseline), "--init"])
     return root, db
 
