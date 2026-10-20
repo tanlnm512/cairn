@@ -61,3 +61,6 @@ specs/*/spawns/
 
 # ---- Rust (rust/ workspace) ----
 rust/target/
+# SQLite WAL sidecars created when readers open checked-in golden stores
+*.kg-wal
+*.kg-shm
