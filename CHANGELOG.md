@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Added
+- PyPI wheels bundle the rust engine binary (spec D-011, exec-shim binding): the daemon defaults to rust when the bundled binary is present (`CAIRN_RUST_BIN` env > bundled package path > PATH; the python fallback and `CAIRN_DAEMON_IMPL` precedence are unchanged), the release pipeline injects the per-platform binary into the wheel builds while the sdist stays binary-free, and `scripts/rust_migration/wheel_smoke.sh` proves the installed product end to end (fresh venv, C-4 machine contracts, binary discovery).
+
+### Fixed
+- Flaky `flow_golden` rust test: TempStore scratch dirs named from wall-clock nanos collided under macOS parallel test threads; now named from a process-global counter.
 
 ## [0.23.0] - 2026-10-20
 ### Added
