@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.22.0" # tracks pyproject until the flip
+version = "0.23.0" # tracks pyproject until the flip
 edition = "2024"
 license = "MIT"
 authors = ["Tan Le"]
