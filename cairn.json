@@ -1,1 +1,1 @@
-{"exclude": ["src/cairn/dashboard/static/chunks/", "benchmarks/datasource/"]}
+{"exclude": ["src/cairn/dashboard/static/chunks/", "benchmarks/datasource/", "rust/"]}
