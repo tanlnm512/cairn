@@ -34,6 +34,11 @@ CONFIG_FILE = CAIRN_HOME / "config.json"
 # live directly in lib/ and stay usable via _inject_shared_libs.
 SHARED_LIB = CAIRN_HOME / "lib"
 
+# Package-data dir for the injected engine binary: release/wheel builds copy
+# the platform `cairn` binary in immediately before packaging; a source
+# checkout ships none (gitignored) and binary discovery falls through to PATH.
+BUNDLED_BIN_DIR = Path(__file__).resolve().parent / "_bin"
+
 
 # CAIRN_HOME constraint: the binding above is import-time, while the
 # helpers below re-read os.environ at call time (tests and long-lived
@@ -98,6 +103,12 @@ def shared_lib_path() -> Path:
     if override:
         return Path(override)
     return SHARED_LIB / _abi_tag()
+
+
+def bundled_binary() -> Path | None:
+    """The bundled `cairn` engine binary inside the package tree, or None when absent (source checkouts)."""
+    cand = BUNDLED_BIN_DIR / "cairn"
+    return cand if cand.exists() else None
 
 
 def _inject_shared_libs() -> None:

@@ -60,6 +60,76 @@ jobs:
         if: runner.os == 'Linux'
         run: uv build --sdist
 
+      # --- Rust engine binary for the bundled-binary wheels -------------------
+      # Runs after the sdist build so the sdist stays binary-free. The macOS
+      # arm64 wheel bundles the aarch64-apple-darwin binary; the manylinux
+      # x86_64/aarch64 wheels bundle the musl-static Linux binaries -- the
+      # same per-target bytes the tarball channel ships, cross-built like
+      # release-rust.yml (static binaries exec on glibc). Windows bundles
+      # nothing: the release matrix has no Windows target, so binary
+      # discovery falls through and the daemon default stays python.
+
+      - name: Set up Rust (aarch64-apple-darwin)
+        if: runner.os == 'macOS'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        if: runner.os == 'macOS'
+        with:
+          workspaces: rust
+          key: wheel-aarch64-apple-darwin
+
+      - name: Build rust engine (aarch64-apple-darwin)
+        if: runner.os == 'macOS'
+        working-directory: rust
+        run: cargo build --release --target aarch64-apple-darwin -p cairn-cli
+
+      # Injected as package data ([tool.setuptools.package-data] "cairn" =
+      # ["_bin/*"]); fails loudly here so no engine-less wheel can ship.
+      - name: Bundle rust engine into package data
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p src/cairn/_bin
+          cp rust/target/aarch64-apple-darwin/release/cairn src/cairn/_bin/cairn
+          chmod 755 src/cairn/_bin/cairn
+          test -x src/cairn/_bin/cairn
+
+      - name: Set up Rust (linux musl targets)
+        if: runner.os == 'Linux'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+        if: runner.os == 'Linux'
+        with:
+          workspaces: rust
+          key: wheel-linux-musl
+
+      - name: Install cross
+        if: runner.os == 'Linux'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build rust engines (musl-static)
+        if: runner.os == 'Linux'
+        working-directory: rust
+        run: |
+          cross build --release --target x86_64-unknown-linux-musl -p cairn-cli
+          cross build --release --target aarch64-unknown-linux-musl -p cairn-cli
+
+      - name: Verify static link (musl)
+        if: runner.os == 'Linux'
+        run: |
+          for tgt in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            out=$(file "rust/target/$tgt/release/cairn")
+            echo "$out"
+            echo "$out" | grep -Eq 'statically linked|static-pie linked'
+          done
+
       # cp310-* + setup.py's py_limited_api -> one cp310-abi3 wheel per
       # platform (cibuildwheel auto-runs abi3audit on it). Supported: macOS
       # Apple Silicon, manylinux x86_64 + aarch64, Windows AMD64. musllinux
@@ -80,6 +150,21 @@ jobs:
           CIBW_ARCHS_MACOS: "arm64"
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_TEST_REQUIRES: tree_sitter
+          # Copy the matching musl binary into package data inside each arch's
+          # build container (the repo root is the container's /project, so the
+          # host-built binaries at rust/target/ are visible); a missing or
+          # wrong-arch binary fails the wheel build loudly.
+          CIBW_BEFORE_BUILD_LINUX: |
+            set -eux
+            case "$(uname -m)" in
+              x86_64) tgt=x86_64-unknown-linux-musl ;;
+              aarch64) tgt=aarch64-unknown-linux-musl ;;
+              *) echo "unexpected arch: $(uname -m)" >&2; exit 1 ;;
+            esac
+            mkdir -p src/cairn/_bin
+            cp "rust/target/$tgt/release/cairn" src/cairn/_bin/cairn
+            chmod 755 src/cairn/_bin/cairn
+            test -x src/cairn/_bin/cairn
           # Smoke-test the compiled grammar in every wheel (supersedes the
           # old post-build "Verify the wheel imports" step).
           CIBW_TEST_COMMAND: >-

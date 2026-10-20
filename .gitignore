@@ -61,6 +61,9 @@ specs/*/spawns/
 
 # ---- Rust (rust/ workspace) ----
 rust/target/
+# Injected engine binary for wheel builds: copied in by the release/wheel
+# build immediately before packaging, never committed.
+src/cairn/_bin/
 # SQLite WAL sidecars created when readers open checked-in golden stores
 *.kg-wal
 *.kg-shm

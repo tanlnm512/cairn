@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cairn_store::conn;
 use serde_json::{Value, json};
@@ -30,14 +30,12 @@ struct TempStore(PathBuf);
 
 impl TempStore {
     fn from_fixture(src: &Path) -> Self {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
+        // Counter not clock: parallel test threads read the same clock tick.
+        static SEQ: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
             "cairn-flow-golden-{}-{}",
             std::process::id(),
-            nanos
+            SEQ.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&dir).expect("temp dir");
         fs::copy(src, dir.join(src.file_name().expect("store name"))).expect("copy fixture store");
