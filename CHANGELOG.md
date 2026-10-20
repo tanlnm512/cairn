@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+
+## [0.23.0] - 2026-10-20
 ### Added
 - The rust migration's first full campaign (spec `specs/rust-migration/`, phases 0-3): a six-crate rust workspace under `rust/` (store, query, parse, build, daemon, cli) — an rmcp streamable-HTTP daemon serving all 26 tools golden-equal against pinned store snapshots, the rayon build path (parsers for all 15 grammars, resolver triage, streaming transitive closure, incremental graft, SCIP import via prost), the clap CLI byte-compatible on the machine contracts, the dashboard on minijinja, and a `CAIRN_DAEMON_IMPL=rust` opt-in switch (`cairn connect --impl rust`). Distribution is planned dual-channel: PyPI wheels (maturin, abi3) plus Python-free release binaries. Parity is enforced by deterministic oracles — MCP golden fixtures with frozen replay arguments, the canonical `.kg` dump/diff, `cli_golden.py`, and `g2_check.sh` (python-built and rust-built stores dump-equal).
 - CI gains a rust leg (fmt, clippy `-D warnings`, workspace tests, cargo-deny, release build matrix including musl-static) alongside the python matrix.
