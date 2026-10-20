@@ -301,7 +301,8 @@ def test_quality_gate_failures_degrade_without_diagnostics(tmp_path, monkeypatch
     (root / "docs" / "audits" / "2026-10-02.status.json").write_text(
         "{not-json", encoding="utf-8"
     )
-    (root / "docs" / "audits" / "comment-style-baseline.json").write_text(
+    (root / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
+    (root / "scripts" / "hooks" / "comment-style-baseline.json").write_text(
         "{not-json", encoding="utf-8"
     )
     monkeypatch.chdir(root)
