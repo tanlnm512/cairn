@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Added
+- The rust migration's first full campaign (spec `specs/rust-migration/`, phases 0-3): a six-crate rust workspace under `rust/` (store, query, parse, build, daemon, cli) — an rmcp streamable-HTTP daemon serving all 26 tools golden-equal against pinned store snapshots, the rayon build path (parsers for all 15 grammars, resolver triage, streaming transitive closure, incremental graft, SCIP import via prost), the clap CLI byte-compatible on the machine contracts, the dashboard on minijinja, and a `CAIRN_DAEMON_IMPL=rust` opt-in switch (`cairn connect --impl rust`). Distribution is planned dual-channel: PyPI wheels (maturin, abi3) plus Python-free release binaries. Parity is enforced by deterministic oracles — MCP golden fixtures with frozen replay arguments, the canonical `.kg` dump/diff, `cli_golden.py`, and `g2_check.sh` (python-built and rust-built stores dump-equal).
+- CI gains a rust leg (fmt, clippy `-D warnings`, workspace tests, cargo-deny, release build matrix including musl-static) alongside the python matrix.
+
+### Removed
+- The legacy `docs/` and `brainstorms/` trees, keeping the operationally referenced pages (architecture, cli-reference, deployment, review-checklist, release-checklist, mcp-tools) and the README header art.
+
 ### Fixed
 - Second fix wave over the 2026-10-15 audit (the post-fix rerun's 158 findings; 152 fixed, 3 refuted with evidence, 3 deferred as design decisions). Highlights:
 - **Data loss and crashes (both verified highs)**: a full build whose scan indexes nothing but skips refuses to replace a populated store (the non-staging sibling of the staging guard); worktree store seeding retargets only the main repo and drops sibling rows instead of colliding, and cleans up its partial store on failure.
