@@ -308,3 +308,82 @@ gating it.
   drop the patch section and delete the vendor dir then. Verified green on
   macOS/gnu via the cairn-store + cairn-build suites (incl. embeddings
   vec0 parity); musl proof lands in the CI release builds.
+
+---
+
+## D-011: wheel binding and binary discovery — bundled-binary exec shim in the existing per-platform wheels (3c)
+
+(Id note: a `D-011` above already records the sha2 pin and `D-010` appears
+twice; this entry keeps the id the campaign assigned to the plan.md §7 3c
+distribution decision — the next unused id is D-013.)
+
+- **What**: the PyPI wheel carries the prebuilt `cairn` engine binary as
+  package data (`[tool.setuptools.package-data]`, the mechanism that already
+  ships agent templates and dashboard assets, pyproject.toml:195-203) and the
+  console entry point stays the Python shim `cairn = "cairn.cli:main"`
+  (pyproject.toml:186-187) — the uv pattern. The PyO3 alternative (engine
+  compiled as a cpython extension behind a thin shim, the ruff pattern, named
+  as the open choice at plan.md:146-149) is rejected. Bundling rides the
+  existing per-platform wheel matrix, not a separate binary package.
+  Consequence: neither maturin nor PyO3 joins the build — the setuptools
+  backend (pyproject.toml:1-3) + cibuildwheel pipeline (release.yml:72-87)
+  already produces the cp310-abi3 one-wheel-per-platform matrix
+  (release.yml:63-64) that plan.md:15-17 assumed needed maturin/PyO3, so
+  plan §10's "maturin + pyo3 (abi3-py310)" line never lands as a dependency.
+- **Why**: the product is a CLI + supervised daemon, not an in-process
+  library — every consumer already crosses a process boundary: launchd
+  `ProgramArguments = [bin_, "serve", "run", …]` (lifecycle.py:182) on macOS,
+  `fork` + `os.execvpe` of the binary (lifecycle.py:606-627, 661-663)
+  elsewhere, and the MCP leg is HTTP to that daemon. A PyO3 module cannot be
+  the daemon (launchd execs a standalone binary), so it would be a second,
+  differently-compiled engine artifact beside the real one. The binding keeps
+  the wheel byte-identical to the tarball channel: release-rust.yml packages
+  `target/<target>/release/cairn` into the tarball + sha256
+  (release-rust.yml:78-92) and the Homebrew formula / binstall metadata key
+  off those bytes (release-rust.yml:130-133) — the wheel copies the same
+  per-target bytes, so one artifact, one checksum, one golden-equal engine
+  per target. The wheel matrix is already per-platform for compiled grammar
+  extensions (D-005's ~34 MB of parser .so tables; release.yml:82-87
+  smoke-imports the compiled kotlin grammar in every wheel), so a
+  per-platform binary adds no new dimension; a separate binary package would
+  duplicate the publish surface (second PyPI project, second Trusted
+  Publishing config, package/engine version skew) for zero gain. Platform
+  mapping: the macOS arm64 wheel bundles the aarch64-apple-darwin binary; the
+  manylinux x86_64/aarch64 wheels bundle the musl-static Linux binaries
+  (static linkage asserted at release-rust.yml:71-77 — they exec on glibc);
+  musllinux wheels stay skipped (release.yml:65-67, musl users are served by
+  the tarball/binstall channel); Windows wheels bundle nothing — the release
+  matrix has no Windows target (release-rust.yml:31-42; Windows out of
+  matrix per the Roll-up), so there discovery falls through and the daemon
+  default stays python.
+- **Discovery contract** (src/cairn/mcp_server/lifecycle.py `rust_bin()`,
+  today env → PATH → ~/.local/bin, lifecycle.py:120-128): explicit
+  `CAIRN_RUST_BIN` env > bundled package-relative binary > PATH /
+  `~/.local/bin`. Env stays first (dev/CI override; `daemon_impl()` keys on
+  `CAIRN_DAEMON_IMPL`, lifecycle.py:112-117, env names at :18-19). Bundled
+  before PATH so a wheel install execs its own version-locked engine, never a
+  foreign `cairn` a PATH search happens to find. The bundled leg exists only
+  in wheel installs — a source checkout has no injected binary and falls
+  through, preserving dev behavior. The `_is_native_bin` `#!`-script
+  exclusion stays (the Python console script is also named `cairn`,
+  lifecycle.py:131-137). Effect on the default: `daemon_impl()`'s "rust when
+  a Rust binary is present, else python" (lifecycle.py:113-117) flips to rust
+  on wheel installs with zero config — the 3d contract (plan.md:155-157);
+  explicit `CAIRN_DAEMON_IMPL=python` still wins and explicit rust without a
+  binary still errors loudly (lifecycle.py:145-150).
+- **Build-time injection**: the repository tree never commits the binary
+  (`rust/target/` is gitignored, .gitignore:63; no binary artifact is
+  tracked). The CI release legs and the wheel smoke script copy the built
+  binary into the package tree immediately before the wheel build, and a
+  wheel build with no platform binary fails loudly instead of silently
+  shipping an engine-less wheel. Byte-identity is preserved by copying the
+  release artifact, never rebuilding inside the wheel job.
+- **Cost**: wheel size grows by the full release binary per platform
+  (grammar tables alone are ~34 MB statically linked, D-005); the measured
+  per-wheel delta records when 3c lands ("Open measurements"). The binary is
+  Python-version-independent, so one binary per platform serves every wheel
+  of that platform (requires-python >=3.10, pyproject.toml:11). License: none
+  — no new dependency, which is the point of the ruling. Costs avoided by
+  rejecting PyO3: a second engine artifact to keep golden-equal, an abi3
+  build of the engine, and a wheel channel no longer byte-identical to the
+  checksummed tarball/brew artifacts.
