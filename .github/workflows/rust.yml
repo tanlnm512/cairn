@@ -126,4 +126,7 @@ jobs:
         run: cross build --release --target ${{ matrix.target }}
       - name: Verify static link (musl)
         if: contains(matrix.target, 'musl')
-        run: file "rust/target/${{ matrix.target }}/release/cairn" | grep -q 'statically linked'
+        run: |
+          out=$(file "rust/target/${{ matrix.target }}/release/cairn")
+          echo "$out"
+          echo "$out" | grep -Eq 'statically linked|static-pie linked'
