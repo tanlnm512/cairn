@@ -25,3 +25,8 @@ all = "deny"
 
 [profile.release]
 strip = true
+
+[patch.crates-io]
+# sqlite-vec 0.1.9 vendored with upstream main's musl typedef fix (D-010);
+# drop this patch when a stable release > 0.1.9 ships the fix.
+sqlite-vec = { path = "vendor/sqlite-vec" }

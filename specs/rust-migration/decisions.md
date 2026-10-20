@@ -292,3 +292,19 @@ gating it.
   before landing.
 - **Open measurements** (record at P0-1/P0-5): bundled-SQLite binary delta,
   rmcp dependency-stack delta, exact Rust-linked grammar-table sizes.
+
+## D-010: sqlite-vec 0.1.9 vendored with the upstream musl typedef fix
+
+- **What**: `[patch.crates-io] sqlite-vec = { path = "vendor/sqlite-vec" }` —
+  the published 0.1.9 crate vendored under `rust/vendor/sqlite-vec` with one
+  change: the `u_int8_t`/`u_int16_t`/`u_int64_t` fallback-typedef block
+  removed, exactly as upstream `main` already did. `rust/Cargo.lock` pins the
+  patch; the version stays `0.1.9`, matching the python side's vec0 format.
+- **Why**: 0.1.9's `sqlite-vec.c` is not musl-portable (BSD-only typedefs;
+  glibc defines them, musl does not), failing both musl release builds with
+  conflicting-types errors. Upstream fixed it after 0.1.9; no stable release
+  carries the fix yet (max stable is 0.1.9, 0.1.10 is alpha-only).
+- **Cost**: a vendored copy to carry until a stable `> 0.1.9` ships the fix —
+  drop the patch section and delete the vendor dir then. Verified green on
+  macOS/gnu via the cairn-store + cairn-build suites (incl. embeddings
+  vec0 parity); musl proof lands in the CI release builds.
