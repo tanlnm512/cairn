@@ -1,1 +1,5 @@
 recursive-include vendor *.c *.h *.json LICENSE
+
+# The injected engine binary ships only in wheels (package-data); the sdist
+# stays binary-free.
+recursive-exclude src/cairn/_bin *

@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from cairn.paths import cairn_home_env, resolve_store
+from cairn.paths import bundled_binary, cairn_home_env, resolve_store
 
 LABEL = "dev.cairn.mcp"
 LEGACY_LABEL = "dev.cairn.sse"
@@ -118,10 +118,13 @@ def daemon_impl() -> str:
 
 
 def rust_bin() -> str | None:
-    """Rust daemon binary path: CAIRN_RUST_BIN, else a native `cairn` binary on PATH or ~/.local/bin; None when absent."""
+    """Rust daemon binary path: CAIRN_RUST_BIN, then the bundled package binary, then a native `cairn` on PATH or ~/.local/bin; None when absent."""
     cand = os.environ.get(RUST_BIN_ENV)
     if cand and Path(cand).exists():
         return cand
+    bundled = bundled_binary()
+    if bundled is not None:
+        return str(bundled)
     for cand in (shutil_which("cairn"), str(Path.home() / ".local" / "bin" / "cairn")):
         if cand and Path(cand).exists() and _is_native_bin(Path(cand)):
             return cand
