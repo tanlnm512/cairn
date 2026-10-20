@@ -46,12 +46,28 @@ deterministic critic, and the LLM never sits in the query path.
 
 **1. Install the CLI**
 
+Two install channels, both supported:
+
 ```bash
-pip install cairn-intel
+pip install cairn-intel   # or: uv tool install / pipx install
+brew install tanlnm512/cairn/cairn                 # Python-free binary channel
+cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli
 ```
 
-Already installed? `cairn upgrade` updates in place (detects `uv tool` /
-`pipx` / `pip`; `--check` previews without changing anything).
+The PyPI package is the full-surface install: every command plus the
+Python-side extras (local embeddings, PDF/DOCX ingest). Future releases ship
+the rust engine inside the wheel (`specs/rust-migration/plan.md` §7), so
+pip/pipx/uv installs transition in place; `cairn upgrade` updates in place
+today (detects `uv tool` / `pipx` / `pip`; `--check` previews without
+changing anything).
+
+The standalone binary is the Python-free alternative: release tarballs from
+the [releases page](https://github.com/tanlnm512/cairn/releases)
+(aarch64 / x86_64 on macOS and Linux, musl-static on Linux) or
+`cargo install --path rust/crates/cairn-cli` from a clone. Release tags
+populate the tarballs, the Homebrew formula, and the binstall metadata. The
+binary carries the core graph, daemon, and agent-wiring surface and exits
+non-zero with a named diagnostic for anything not yet ported.
 
 **2. Wire up your agent(s)**
 
@@ -320,7 +336,10 @@ Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
 
 ## CLI Reference
 
-`cairn --help` (or `cairn <group> --help`) is authoritative. The essentials:
+`cairn --help` (or `cairn <group> --help`) is authoritative. The PyPI CLI is
+the complete surface; the binary ports the core graph, daemon, and
+agent-wiring commands (coverage detail:
+[docs/cli-reference.md](docs/cli-reference.md)). The essentials:
 
 | Command | What it does |
 |---------|--------------|
@@ -342,7 +361,7 @@ Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
 | `cairn context <file>` | Compass + memory + wiki context for a file |
 | `cairn memory / compass / wiki / task / knowledge …` | The layered stores + LLM task queue (memory: `share`/`check` multi-agent verbs, `timeline <symbol>`, `search --as-of <date>`) |
 | `cairn install-agents` / `cairn uninstall` | Wire / remove agent integration |
-| `cairn upgrade` | In-place update from PyPI (`--check` to preview) |
+| `cairn upgrade` | In-place update from PyPI (`--check` to preview; PyPI CLI) |
 | `cairn eval` / `cairn bench` | Retrieval-quality / performance harnesses |
 | `cairn doctor` | 11 health checks (PASS/WARN/FAIL; exit code gates CI) |
 | `cairn report` | Redacted diagnostic bundle for bug reports (never uploads) |
@@ -370,7 +389,9 @@ the default is `false`. A linked worktree without a store is seeded from the
 main checkout graph and then refreshed for worktree drift; the main store is
 never mutated.
 
-The default install is dependency-light and network-free. Opt in with extras:
+The default install is dependency-light and network-free. Extras are a
+PyPI-package concept — the binary ships without them; opt in with the PyPI
+install:
 
 | Extra | Adds | Key env var |
 |-------|------|-------------|
@@ -388,8 +409,10 @@ Also: `CAIRN_HOME` (store location, default `~/.cairn`), `CAIRN_TELEMETRY=off`
 
 ## Supported Platforms & Agents
 
-- **Platforms** — anywhere Python ≥ 3.10 runs; CI tests 3.10–3.14 (macOS +
-  Linux; `make ci-local` replicates CI in a clean Linux container).
+- **Platforms** — binary: macOS aarch64 / x86_64 and Linux aarch64 / x86_64
+  (static musl); Python package: anywhere Python ≥ 3.10 runs, CI tests
+  3.10–3.14 (macOS + Linux; `make ci-local` replicates CI in a clean Linux
+  container).
 - **Agents** — Claude Code, Cursor, ZCode, Droid, opencode, agy, kilo, omp —
   wired by `cairn install-agents`, or any MCP client via the
   manual JSON block above.
@@ -427,6 +450,8 @@ retrieval, and doc-ingestion pipelines. Contribution and release procedures:
 
 ## Development
 
+Python:
+
 ```bash
 pip install -e ".[dev]"   # full review gate: pytest, ruff, mypy, bandit,
                             # pip-audit, pre-commit, commitizen
@@ -435,6 +460,14 @@ pytest -m core            # fast <3s smoke subset (one test per core function)
 pytest                    # full suite (default gate + infra tier; CI splits them)
 pytest -m infra           # bench/dataset/soak tier alone (CI runs it on main pushes)
 make ci-local             # clean-room CI replication in a Linux container
+```
+
+Rust workspace (`rust/`):
+
+```bash
+cargo fmt --manifest-path rust/Cargo.toml --all
+cargo clippy --manifest-path rust/Cargo.toml --workspace -- -D warnings
+cargo test --manifest-path rust/Cargo.toml --workspace
 ```
 
 `pytest -m core` includes the **cairn-on-cairn self-demo**: cairn indexes its
@@ -454,7 +487,7 @@ time; the `BAAI/bge-m3` embedding model (MIT) downloads on demand to
 
 ## Status
 
-**Beta — pre-1.0 (v0.21.1).** Public surfaces (CLI flags, MCP tool shapes,
+**Beta — pre-1.0.** Public surfaces (CLI flags, MCP tool shapes,
 knowledge-file layout) may still shift before 1.0. Feedback welcome via
 [GitHub issues](https://github.com/tanlnm512/cairn/issues).
 

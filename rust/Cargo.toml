@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cairn-build",
+    "crates/cairn-cli",
+    "crates/cairn-daemon",
+    "crates/cairn-parse",
+    "crates/cairn-query",
+    "crates/cairn-store",
+    "vendor/tree-sitter-dart",
+]
+
+[workspace.package]
+version = "0.23.0" # tracks pyproject until the flip
+edition = "2024"
+license = "MIT"
+authors = ["Tan Le"]
+repository = "https://github.com/tanlnm512/cairn"
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+
+[profile.release]
+strip = true
+
+[patch.crates-io]
+# sqlite-vec 0.1.9 vendored with upstream main's musl typedef fix (D-010);
+# drop this patch when a stable release > 0.1.9 ships the fix.
+sqlite-vec = { path = "vendor/sqlite-vec" }

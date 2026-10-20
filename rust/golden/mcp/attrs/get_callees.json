@@ -1,0 +1,71 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "get_callees",
+  "arguments": {
+    "name": "A",
+    "limit": 20
+  },
+  "replay": {
+    "args": {
+      "name": "A",
+      "limit": 20
+    },
+    "seq": 2
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 50,
+      "symbols": 1722,
+      "edges": 6482
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:48.112729+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "20 callees of 'A':\n  foo  tests/test_abc.py:47\n  resolve_types  tests/test_annotations.py:182\n  resolve_types  tests/test_annotations.py:575\n  define  tests/test_annotations.py:654\n  define  tests/test_annotations.py:674\n  define  tests/test_forward_references.py:13\n  define  tests/test_funcs.py:554\n  xx  tests/test_make.py:443\n  define  tests/test_make.py:1245\n  field  tests/test_make.py:1247\n  field  tests/test_make.py:1248\n  field  tests/test_make.py:1249\n  define  tests/test_make.py:1295\n  field  tests/test_make.py:1297\n  field  tests/test_make.py:1298\n  field  tests/test_make.py:1299\n  define  tests/test_make.py:1615\n  define  tests/test_make.py:3134\n  field  tests/test_make.py:3136\n  field  tests/test_make.py:3137\n  ... hit the limit cap; pass a higher limit for more."
+      }
+    ],
+    "structuredContent": {
+      "result": "20 callees of 'A':\n  foo  tests/test_abc.py:47\n  resolve_types  tests/test_annotations.py:182\n  resolve_types  tests/test_annotations.py:575\n  define  tests/test_annotations.py:654\n  define  tests/test_annotations.py:674\n  define  tests/test_forward_references.py:13\n  define  tests/test_funcs.py:554\n  xx  tests/test_make.py:443\n  define  tests/test_make.py:1245\n  field  tests/test_make.py:1247\n  field  tests/test_make.py:1248\n  field  tests/test_make.py:1249\n  define  tests/test_make.py:1295\n  field  tests/test_make.py:1297\n  field  tests/test_make.py:1298\n  field  tests/test_make.py:1299\n  define  tests/test_make.py:1615\n  define  tests/test_make.py:3134\n  field  tests/test_make.py:3136\n  field  tests/test_make.py:3137\n  ... hit the limit cap; pass a higher limit for more."
+    }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
+}

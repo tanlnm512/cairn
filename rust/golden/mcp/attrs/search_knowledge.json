@@ -1,0 +1,71 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "search_knowledge",
+  "arguments": {
+    "query": "golden capture rollback",
+    "limit": 10
+  },
+  "replay": {
+    "args": {
+      "query": "golden capture rollback",
+      "limit": 10
+    },
+    "seq": 13
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 50,
+      "symbols": 1722,
+      "edges": 6482
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:48.123639+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "1 results matching 'golden capture rollback':\n  golden capture rollback rule (<STORE_HOME>/.knowledge/knowledge/business-rule/golden-capture-rollback-rule)\n    golden capture rollback rule"
+      }
+    ],
+    "structuredContent": {
+      "result": "1 results matching 'golden capture rollback':\n  golden capture rollback rule (<STORE_HOME>/.knowledge/knowledge/business-rule/golden-capture-rollback-rule)\n    golden capture rollback rule"
+    }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
+}

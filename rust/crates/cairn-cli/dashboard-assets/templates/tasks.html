@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% import "_filters.html" as forms with context %}
+{% block title %}Tasks — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Tasks</h1>
+  {#- The status select is an htmx trigger: a change hx-gets the route
+      (delay:300ms) and morph-swaps the results region below — no page
+      reload. The form stays OUTSIDE #tasks-results so the swap can never
+      touch the control; Apply remains the no-htmx fallback. -#}
+  {{ forms.form_open('/tasks', hx={'target': '#tasks-results', 'trigger': 'change delay:300ms'}, form_id='tasks-filters') }}
+  {{ forms.field('select', 'status', 'Status', status, options=['all'] + (statuses | list)) }}
+  {{ forms.form_close() }}
+  {% include "tasks_results.html" %}
+</section>
+{% endblock %}

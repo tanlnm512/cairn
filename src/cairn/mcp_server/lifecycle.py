@@ -15,6 +15,8 @@ LABEL = "dev.cairn.mcp"
 LEGACY_LABEL = "dev.cairn.sse"
 DEFAULT_PORT = 9876
 DEFAULT_HOST = "127.0.0.1"
+DAEMON_IMPL_ENV = "CAIRN_DAEMON_IMPL"
+RUST_BIN_ENV = "CAIRN_RUST_BIN"
 _LAUNCHCTL_TIMEOUT = 15.0
 # Bounds the blocking start lock: a wedged holder must fail callers with a
 # clear error instead of blocking them forever.
@@ -107,6 +109,47 @@ def shutil_which(name: str) -> str | None:
     return shutil.which(name)
 
 
+def daemon_impl() -> str:
+    """Daemon implementation a start launches: CAIRN_DAEMON_IMPL when set, else rust when a Rust binary is present, else python."""
+    chosen = os.environ.get(DAEMON_IMPL_ENV, "").strip().lower()
+    if chosen:
+        return "rust" if chosen == "rust" else "python"
+    return "rust" if rust_bin() is not None else "python"
+
+
+def rust_bin() -> str | None:
+    """Rust daemon binary path: CAIRN_RUST_BIN, else a native `cairn` binary on PATH or ~/.local/bin; None when absent."""
+    cand = os.environ.get(RUST_BIN_ENV)
+    if cand and Path(cand).exists():
+        return cand
+    for cand in (shutil_which("cairn"), str(Path.home() / ".local" / "bin" / "cairn")):
+        if cand and Path(cand).exists() and _is_native_bin(Path(cand)):
+            return cand
+    return None
+
+
+def _is_native_bin(path: Path) -> bool:
+    """True for a native executable; excludes the #!-scripted Python console script that is also named `cairn`."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(2) != b"#!"
+    except OSError:
+        return False
+
+
+def daemon_bin() -> str:
+    """Binary a daemon start execs: the Rust binary when impl=rust (RuntimeError without one), else cg_bin()."""
+    if daemon_impl() == "python":
+        return cg_bin()
+    rust = rust_bin()
+    if rust is None:
+        raise RuntimeError(
+            f"{DAEMON_IMPL_ENV}=rust selected but no Rust daemon binary found; "
+            f"set {RUST_BIN_ENV} to the Rust cairn binary."
+        )
+    return rust
+
+
 def render_plist(
     port: int = DEFAULT_PORT,
     host: str = DEFAULT_HOST,
@@ -117,7 +160,7 @@ def render_plist(
     api_key: str | None = None,
 ) -> dict:
     """Build the LaunchAgent plist dict for a read-write-by-default `cairn serve run` daemon."""
-    bin_ = cg_bin()
+    bin_ = daemon_bin()
     env = {
         # Inherit the user PATH so `cairn` can find python etc.
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
@@ -614,7 +657,7 @@ def _ensure_running_daemonize(port: int, host: str, api_key: str | None = None) 
     }
     if api_key:
         env["CAIRN_MCP_API_KEY"] = api_key
-    bin_ = cg_bin()
+    bin_ = daemon_bin()
     pid = os.fork()
     if pid == 0:
         _daemonize_exec(port, host, bin_, env)

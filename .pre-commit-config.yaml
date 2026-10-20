@@ -28,7 +28,7 @@ repos:
         # root extend-exclude cannot reach them, so the hook itself must
         # never hand them to ruff. Linting pinned data has no fixable
         # finding, only a red gate over immutable bytes.
-        exclude: ^benchmarks/datasource/(t2/yarl|ds2/second-corpus)/
+        exclude: ^benchmarks/datasource/(t2/yarl|ds2/second-corpus)/|^rust/golden/stores/.*/corpus/
 
   # --- Secret scanning. Catches API keys / tokens / .env blobs before they
   # reach the remote. Cheap insurance for a repo that ships agent-integration
@@ -48,9 +48,8 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=500]
-        # Generated diagram artifacts (archify HTML inlines its viewer, ~750KB
-        # each) — docs-only bytes, no hygiene risk.
-        exclude: ^docs/diagrams/
+        # Docs diagram artifacts and pinned parity-store bytes are large by design.
+        exclude: ^docs/diagrams/|^rust/golden/(stores|nav|search|spike)/.*\.kg$
       - id: debug-statements    # catch pdb/breakpoint() left in
 
   # --- Comment-style ratchet: local mirror of the quality-ratchet CI job.
@@ -64,6 +63,24 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+  # --- Rust gates: local mirror of the Rust CI leg. GATE-only like ruff
+  # above (fmt runs with --check, never rewrites). Requires the rustup
+  # toolchain on PATH; runs only when rust/ files are staged.
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check (rust workspace)
+        entry: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+        language: system
+        pass_filenames: false
+        files: ^rust/.*\.rs$
+      - id: cargo-clippy
+        name: cargo clippy -D warnings (rust workspace)
+        entry: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+        language: system
+        pass_filenames: false
+        files: ^rust/(.*\.(rs|toml)|Cargo\.lock)$
 
   # NOTE: scripts/verify_no_code_change.py is deliberately NOT wired here.
   # It compares the *working tree* against HEAD, but pre-commit always stashes

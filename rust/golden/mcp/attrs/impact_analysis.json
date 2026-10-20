@@ -1,0 +1,73 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "impact_analysis",
+  "arguments": {
+    "name": "fields",
+    "depth": 3,
+    "limit": 100
+  },
+  "replay": {
+    "args": {
+      "name": "fields",
+      "depth": 3,
+      "limit": 100
+    },
+    "seq": 3
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 50,
+      "symbols": 1722,
+      "edges": 6482
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:48.112882+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "Impact of 'fields': 85 total impacted symbols.\nCycles: ['asdict', '_asdict_anything', 'asdict', 'astuple', 'astuple', 'fields', 'assert_proper_dict_class', 'assert_proper_tuple_class', 'assert_proper_col_class']\n  Depth 0: 68 callers\n  Depth 1: 17 callers\nAffected tests (75 \u2014 run these to verify the change):\n  test_empty  tests/test_funcs.py  (corpus, path)\n  test_no_changes  tests/test_funcs.py  (corpus, path)\n  test_change  tests/test_funcs.py  (corpus, path)\n  test_unknown  tests/test_funcs.py  (corpus, path)\n  test_frozen  tests/test_funcs.py  (corpus, path)\n  test_auto_attribs  tests/test_annotations.py  (corpus, path)\n  test_annotations_strings  tests/test_annotations.py  (corpus, path)\n  test_basic_resolve  tests/test_annotations.py  (corpus, path)\n  test_extra_resolve  tests/test_annotations.py  (corpus, path)\n  test_resolve_types_auto_attrib  tests/test_annotations.py  (corpus, path)\n  test_self_reference  tests/test_annotations.py  (corpus, path)\n  test_forward_reference  tests/test_annotations.py  (corpus, path)\n  test_inheritance  tests/test_annotations.py  (corpus, path)\n  test_resolve_twice  tests/test_annotations.py  (corpus, path)\n  test_forward_class_reference  tests/test_forward_references.py  (corpus, path)\n  ... and 60 more"
+      }
+    ],
+    "structuredContent": {
+      "result": "Impact of 'fields': 85 total impacted symbols.\nCycles: ['asdict', '_asdict_anything', 'asdict', 'astuple', 'astuple', 'fields', 'assert_proper_dict_class', 'assert_proper_tuple_class', 'assert_proper_col_class']\n  Depth 0: 68 callers\n  Depth 1: 17 callers\nAffected tests (75 \u2014 run these to verify the change):\n  test_empty  tests/test_funcs.py  (corpus, path)\n  test_no_changes  tests/test_funcs.py  (corpus, path)\n  test_change  tests/test_funcs.py  (corpus, path)\n  test_unknown  tests/test_funcs.py  (corpus, path)\n  test_frozen  tests/test_funcs.py  (corpus, path)\n  test_auto_attribs  tests/test_annotations.py  (corpus, path)\n  test_annotations_strings  tests/test_annotations.py  (corpus, path)\n  test_basic_resolve  tests/test_annotations.py  (corpus, path)\n  test_extra_resolve  tests/test_annotations.py  (corpus, path)\n  test_resolve_types_auto_attrib  tests/test_annotations.py  (corpus, path)\n  test_self_reference  tests/test_annotations.py  (corpus, path)\n  test_forward_reference  tests/test_annotations.py  (corpus, path)\n  test_inheritance  tests/test_annotations.py  (corpus, path)\n  test_resolve_twice  tests/test_annotations.py  (corpus, path)\n  test_forward_class_reference  tests/test_forward_references.py  (corpus, path)\n  ... and 60 more"
+    }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
+}

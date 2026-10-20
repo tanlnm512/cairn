@@ -1,0 +1,26 @@
+{#-
+  Shared table markup for the list views. Every data table renders
+  through `table` (headers + the caller's tbody) so column semantics and
+  the dense data-table styling stay identical across views; `empty_state`
+  renders the standard no-data notice. Import with context, like
+  _links.html.
+-#}
+{% macro table(headers) -%}
+<table class="data-table">
+  <thead>
+    <tr>
+      {%- for header in headers %}
+      <th scope="col">{{ header }}</th>
+      {%- endfor %}
+    </tr>
+  </thead>
+  <tbody>
+{{ caller() }}
+  </tbody>
+</table>
+{%- endmacro %}
+
+{#- `code` appends a command chip ("run `cairn build`") to the notice. -#}
+{% macro empty_state(message, code='') -%}
+<p class="empty-state">{{ message }}{%- if code %} <code>{{ code }}</code>{%- endif %}.</p>
+{%- endmacro %}

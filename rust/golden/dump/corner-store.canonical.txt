@@ -1,0 +1,22 @@
+# cairn-canonical-dump 1
+[table cells]
+# columns: id	n	r	t	b
+1	0	0x0.0p+0	zero-int zero-real	x''
+2	-7	0x0.0p+0	tab\there\nnewline\rcr\\backslash	x'deadbeef00'
+3	9223372036854775807	0x1.999999999999ap-4	/Users/x/repo/src/main.rs	x'00ff10'
+4	\N	0x1.1ccf385ebc8a0p+1023	unicode é中 text	\N
+5	42	0x0.0000000000001p-1022	inf-dot-and-nul: end\0	x'0a0d09005c'
+6	\N	-inf	\N	x'01'
+7	\N	inf	\N	\N
+[table empty_t]
+# columns: x	y
+[table events]
+# columns: id	msg
+1	first
+[table tricky]
+# columns: a
+\[table z]
+plain
+[table weird "name"]
+# columns: a b	c"d
+quoted	3

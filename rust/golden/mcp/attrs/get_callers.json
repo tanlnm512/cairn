@@ -1,0 +1,71 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "get_callers",
+  "arguments": {
+    "name": "fields",
+    "limit": 20
+  },
+  "replay": {
+    "args": {
+      "name": "fields",
+      "limit": 20
+    },
+    "seq": 1
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 50,
+      "symbols": 1722,
+      "edges": 6482
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:48.112479+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "20 callers of 'fields':\n  function asdict  src/attr/_funcs.py:80  (corpus)\n  function astuple  src/attr/_funcs.py:274  (corpus)\n  function assoc  src/attr/_funcs.py:415  (corpus)\n  function resolve_types  src/attr/_funcs.py:488  (corpus)\n  function evolve  src/attr/_make.py:633  (corpus)\n  module _make  src/attr/_make.py:1891  (corpus)\n  function fields  src/attr/_make.py:1923  (corpus)\n  function validate  src/attr/_make.py:1983  (corpus)\n  method test_basic_annotations  tests/test_annotations.py:48  (corpus)\n  method test_basic_annotations  tests/test_annotations.py:49  (corpus)\n  method test_basic_annotations  tests/test_annotations.py:50  (corpus)\n  method test_typing_annotations  tests/test_annotations.py:78  (corpus)\n  method test_typing_annotations  tests/test_annotations.py:79  (corpus)\n  method test_only_attrs_annotations_collected  tests/test_annotations.py:93  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:124  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:126  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:127  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:129  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:130  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:132  (corpus)\n  ... hit the limit cap; pass a higher limit for more."
+      }
+    ],
+    "structuredContent": {
+      "result": "20 callers of 'fields':\n  function asdict  src/attr/_funcs.py:80  (corpus)\n  function astuple  src/attr/_funcs.py:274  (corpus)\n  function assoc  src/attr/_funcs.py:415  (corpus)\n  function resolve_types  src/attr/_funcs.py:488  (corpus)\n  function evolve  src/attr/_make.py:633  (corpus)\n  module _make  src/attr/_make.py:1891  (corpus)\n  function fields  src/attr/_make.py:1923  (corpus)\n  function validate  src/attr/_make.py:1983  (corpus)\n  method test_basic_annotations  tests/test_annotations.py:48  (corpus)\n  method test_basic_annotations  tests/test_annotations.py:49  (corpus)\n  method test_basic_annotations  tests/test_annotations.py:50  (corpus)\n  method test_typing_annotations  tests/test_annotations.py:78  (corpus)\n  method test_typing_annotations  tests/test_annotations.py:79  (corpus)\n  method test_only_attrs_annotations_collected  tests/test_annotations.py:93  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:124  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:126  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:127  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:129  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:130  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:132  (corpus)\n  ... hit the limit cap; pass a higher limit for more."
+    }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
+}

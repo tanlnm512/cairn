@@ -1,0 +1,71 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "file_api",
+  "arguments": {
+    "path": "src/attr/__init__.py",
+    "repo": "corpus"
+  },
+  "replay": {
+    "args": {
+      "path": "src/attr/__init__.py",
+      "repo": "corpus"
+    },
+    "seq": 9
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 50,
+      "symbols": 1722,
+      "edges": 6482
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:48.123483+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "4 symbols in 'src/attr/__init__.py':\n  module signature unavailable [1, 1]\n  class signature unavailable [37, 38]\n  function signature unavailable [81, 101]\n  function signature unavailable [87, 99]"
+      }
+    ],
+    "structuredContent": {
+      "result": "4 symbols in 'src/attr/__init__.py':\n  module signature unavailable [1, 1]\n  class signature unavailable [37, 38]\n  function signature unavailable [81, 101]\n  function signature unavailable [87, 99]"
+    }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
+}

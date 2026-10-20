@@ -1,0 +1,79 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "knowledge_status",
+  "arguments": {
+    "new_status": "superseded",
+    "doc_id": "knowledge/decision/golden-mcp-capture-status-probe"
+  },
+  "replay": {
+    "args": {
+      "new_status": "superseded"
+    },
+    "setup": {
+      "tool": "knowledge_add",
+      "args": {
+        "title": "golden mcp capture status probe",
+        "body": "golden capture probe document",
+        "doc_type": "decision"
+      },
+      "id_regex": "Stored knowledge document: (\\S+)"
+    },
+    "seq": 25
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:28.824327+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "Updated 'knowledge/decision/golden-mcp-capture-status-probe' status -> superseded."
+      }
+    ],
+    "structuredContent": {
+      "result": "Updated 'knowledge/decision/golden-mcp-capture-status-probe' status -> superseded."
+    }
+  },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus"
+}

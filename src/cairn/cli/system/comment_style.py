@@ -14,7 +14,7 @@ from pathlib import Path
 
 MAX_BLOCK_LINES = 3
 BASELINE_SCHEMA_VERSION = 1
-DEFAULT_BASELINE = ("docs", "audits", "comment-style-baseline.json")
+DEFAULT_BASELINE = ("scripts", "hooks", "comment-style-baseline.json")
 _FINGERPRINT_RE = re.compile(r"(?:comment|docstring):[0-9a-f]{64}")
 
 
@@ -345,7 +345,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--baseline",
         type=Path,
         default=None,
-        help="baseline path (default: <root>/docs/audits/comment-style-baseline.json)",
+        help="baseline path (default: <root>/scripts/hooks/comment-style-baseline.json)",
     )
     writers = parser.add_mutually_exclusive_group()
     writers.add_argument("--init", action="store_true", help="create the baseline; refuses an existing file")

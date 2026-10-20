@@ -1,0 +1,161 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "search_symbols",
+  "arguments": {
+    "pattern": "A*"
+  },
+  "replay": {
+    "args": {
+      "pattern": "A*"
+    },
+    "seq": 7
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 50,
+      "symbols": 1722,
+      "edges": 6482
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:48.122635+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": true,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "100 symbols matching 'A*':\n  method test_attr_args  tests/test_make.py:1382  (corpus)\n  method test_hook_applied_auto_attrib  tests/test_hooks.py:37  (corpus)\n  method test_auto_attribs_partially_annotated  tests/test_next_gen.py:152  (corpus)\n  function _attach_attrs_init  src/attr/_make.py:1133  (corpus)\n  method test_auto_attribs_detect_fields_and_annotations  tests/test_next_gen.py:132  (corpus)\n  function _asdict_anything  src/attr/_funcs.py:154  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:100  (corpus)\n  function asdict  src/attr/_next_gen.py:623  (corpus)\n  method test_only_attrs_annotations_collected  tests/test_annotations.py:82  (corpus)\n  function simple_attr  tests/utils.py:39  (corpus)\n  function assert_init_annotations  tests/test_annotations.py:20  (corpus)\n  class NEW_A  tests/test_slots.py:1187  (corpus)\n  method add_match_args  src/attr/_make.py:1110  (corpus)\n  method add_attrs_init  src/attr/_make.py:1117  (corpus)\n  class A  tests/test_annotations.py:184  (corpus)\n  class A  tests/test_annotations.py:237  (corpus)\n  class A  tests/test_make.py:3135  (corpus)\n  function astuple  src/attr/_next_gen.py:639  (corpus)\n  method test_auto_attribs_detect_annotations  tests/test_next_gen.py:171  (corpus)\n  method test_converter_attrib_annotations  tests/test_annotations.py:227  (corpus)\n  method test_init_false_attribute_after_keyword_attribute  tests/test_make.py:1146  (corpus)\n  method test_adds_all_by_default  tests/test_make.py:606  (corpus)\n  function exclude  src/attr/filters.py:48  (corpus)\n  method test_adds_keyword_only_arguments  tests/test_make.py:979  (corpus)\n  class A  tests/test_annotations.py:557  (corpus)\n  method test_asdict  tests/test_functional.py:152  (corpus)\n  class AttrsAttributeNotFoundError  src/attr/exceptions.py:39  (corpus)\n  method test_abc_implementation  tests/test_abc.py:17  (corpus)\n  method test_sets_attrs  tests/test_make.py:500  (corpus)\n  function include  src/attr/filters.py:21  (corpus)\n  method test_auto_attribs_unannotated  tests/test_annotations.py:157  (corpus)\n  function save_args  tests/test_converters.py:72  (corpus)\n  method test_converter_annotations  tests/test_annotations.py:203  (corpus)\n  method test_keyword_only_auto_attribs  tests/test_annotations.py:437  (corpus)\n  method test_override_auto_attribs_false  tests/test_next_gen.py:100  (corpus)\n  function validate  src/attr/_make.py:1971  (corpus)\n  method test_works_as_adapter  tests/test_converters.py:63  (corpus)\n  method test_override_auto_attribs_true  tests/test_next_gen.py:87  (corpus)\n  function test_slots_unpickle_after_attr_added  tests/test_slots.py:1176  (corpus)\n  function _C  tests/test_funcs.py:32  (corpus)\n  class AttrsInstance  src/attr/__init__.py:37  (corpus)\n  class AliasedField  tests/dataclass_transform_example.py:50  (corpus)\n  class _Attributes  src/attr/_make.py:288  (corpus)\n  class A  tests/test_slots.py:1147  (corpus)\n  method test_init_false_attribute_after_keyword_attribute_with_inheritance  tests/test_make.py:1171  (corpus)\n  method test_remain_abstract  tests/test_abc.py:39  (corpus)\n  method test_attrs_attrclass  tests/test_hooks.py:204  (corpus)\n  class A  tests/test_abc.py:45  (corpus)\n  class A  tests/test_annotations.py:213  (corpus)\n  class A  tests/test_annotations.py:222  (corpus)\n  ... and 50 more"
+      }
+    ],
+    "structuredContent": {
+      "result": "100 symbols matching 'A*':\n  method test_attr_args  tests/test_make.py:1382  (corpus)\n  method test_hook_applied_auto_attrib  tests/test_hooks.py:37  (corpus)\n  method test_auto_attribs_partially_annotated  tests/test_next_gen.py:152  (corpus)\n  function _attach_attrs_init  src/attr/_make.py:1133  (corpus)\n  method test_auto_attribs_detect_fields_and_annotations  tests/test_next_gen.py:132  (corpus)\n  function _asdict_anything  src/attr/_funcs.py:154  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:100  (corpus)\n  function asdict  src/attr/_next_gen.py:623  (corpus)\n  method test_only_attrs_annotations_collected  tests/test_annotations.py:82  (corpus)\n  function simple_attr  tests/utils.py:39  (corpus)\n  function assert_init_annotations  tests/test_annotations.py:20  (corpus)\n  class NEW_A  tests/test_slots.py:1187  (corpus)\n  method add_match_args  src/attr/_make.py:1110  (corpus)\n  method add_attrs_init  src/attr/_make.py:1117  (corpus)\n  class A  tests/test_annotations.py:184  (corpus)\n  class A  tests/test_annotations.py:237  (corpus)\n  class A  tests/test_make.py:3135  (corpus)\n  function astuple  src/attr/_next_gen.py:639  (corpus)\n  method test_auto_attribs_detect_annotations  tests/test_next_gen.py:171  (corpus)\n  method test_converter_attrib_annotations  tests/test_annotations.py:227  (corpus)\n  method test_init_false_attribute_after_keyword_attribute  tests/test_make.py:1146  (corpus)\n  method test_adds_all_by_default  tests/test_make.py:606  (corpus)\n  function exclude  src/attr/filters.py:48  (corpus)\n  method test_adds_keyword_only_arguments  tests/test_make.py:979  (corpus)\n  class A  tests/test_annotations.py:557  (corpus)\n  method test_asdict  tests/test_functional.py:152  (corpus)\n  class AttrsAttributeNotFoundError  src/attr/exceptions.py:39  (corpus)\n  method test_abc_implementation  tests/test_abc.py:17  (corpus)\n  method test_sets_attrs  tests/test_make.py:500  (corpus)\n  function include  src/attr/filters.py:21  (corpus)\n  method test_auto_attribs_unannotated  tests/test_annotations.py:157  (corpus)\n  function save_args  tests/test_converters.py:72  (corpus)\n  method test_converter_annotations  tests/test_annotations.py:203  (corpus)\n  method test_keyword_only_auto_attribs  tests/test_annotations.py:437  (corpus)\n  method test_override_auto_attribs_false  tests/test_next_gen.py:100  (corpus)\n  function validate  src/attr/_make.py:1971  (corpus)\n  method test_works_as_adapter  tests/test_converters.py:63  (corpus)\n  method test_override_auto_attribs_true  tests/test_next_gen.py:87  (corpus)\n  function test_slots_unpickle_after_attr_added  tests/test_slots.py:1176  (corpus)\n  function _C  tests/test_funcs.py:32  (corpus)\n  class AttrsInstance  src/attr/__init__.py:37  (corpus)\n  class AliasedField  tests/dataclass_transform_example.py:50  (corpus)\n  class _Attributes  src/attr/_make.py:288  (corpus)\n  class A  tests/test_slots.py:1147  (corpus)\n  method test_init_false_attribute_after_keyword_attribute_with_inheritance  tests/test_make.py:1171  (corpus)\n  method test_remain_abstract  tests/test_abc.py:39  (corpus)\n  method test_attrs_attrclass  tests/test_hooks.py:204  (corpus)\n  class A  tests/test_abc.py:45  (corpus)\n  class A  tests/test_annotations.py:213  (corpus)\n  class A  tests/test_annotations.py:222  (corpus)\n  ... and 50 more"
+    }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus",
+  "spike_queries": [
+    {
+      "pattern": "A*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "100 symbols matching 'A*':\n  method test_attr_args  tests/test_make.py:1382  (corpus)\n  method test_hook_applied_auto_attrib  tests/test_hooks.py:37  (corpus)\n  method test_auto_attribs_partially_annotated  tests/test_next_gen.py:152  (corpus)\n  function _attach_attrs_init  src/attr/_make.py:1133  (corpus)\n  method test_auto_attribs_detect_fields_and_annotations  tests/test_next_gen.py:132  (corpus)\n  function _asdict_anything  src/attr/_funcs.py:154  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:100  (corpus)\n  function asdict  src/attr/_next_gen.py:623  (corpus)\n  method test_only_attrs_annotations_collected  tests/test_annotations.py:82  (corpus)\n  function simple_attr  tests/utils.py:39  (corpus)\n  function assert_init_annotations  tests/test_annotations.py:20  (corpus)\n  class NEW_A  tests/test_slots.py:1187  (corpus)\n  method add_match_args  src/attr/_make.py:1110  (corpus)\n  method add_attrs_init  src/attr/_make.py:1117  (corpus)\n  class A  tests/test_annotations.py:184  (corpus)\n  class A  tests/test_annotations.py:237  (corpus)\n  class A  tests/test_make.py:3135  (corpus)\n  function astuple  src/attr/_next_gen.py:639  (corpus)\n  method test_auto_attribs_detect_annotations  tests/test_next_gen.py:171  (corpus)\n  method test_converter_attrib_annotations  tests/test_annotations.py:227  (corpus)\n  method test_init_false_attribute_after_keyword_attribute  tests/test_make.py:1146  (corpus)\n  method test_adds_all_by_default  tests/test_make.py:606  (corpus)\n  function exclude  src/attr/filters.py:48  (corpus)\n  method test_adds_keyword_only_arguments  tests/test_make.py:979  (corpus)\n  class A  tests/test_annotations.py:557  (corpus)\n  method test_asdict  tests/test_functional.py:152  (corpus)\n  class AttrsAttributeNotFoundError  src/attr/exceptions.py:39  (corpus)\n  method test_abc_implementation  tests/test_abc.py:17  (corpus)\n  method test_sets_attrs  tests/test_make.py:500  (corpus)\n  function include  src/attr/filters.py:21  (corpus)\n  method test_auto_attribs_unannotated  tests/test_annotations.py:157  (corpus)\n  function save_args  tests/test_converters.py:72  (corpus)\n  method test_converter_annotations  tests/test_annotations.py:203  (corpus)\n  method test_keyword_only_auto_attribs  tests/test_annotations.py:437  (corpus)\n  method test_override_auto_attribs_false  tests/test_next_gen.py:100  (corpus)\n  function validate  src/attr/_make.py:1971  (corpus)\n  method test_works_as_adapter  tests/test_converters.py:63  (corpus)\n  method test_override_auto_attribs_true  tests/test_next_gen.py:87  (corpus)\n  function test_slots_unpickle_after_attr_added  tests/test_slots.py:1176  (corpus)\n  function _C  tests/test_funcs.py:32  (corpus)\n  class AttrsInstance  src/attr/__init__.py:37  (corpus)\n  class AliasedField  tests/dataclass_transform_example.py:50  (corpus)\n  class _Attributes  src/attr/_make.py:288  (corpus)\n  class A  tests/test_slots.py:1147  (corpus)\n  method test_init_false_attribute_after_keyword_attribute_with_inheritance  tests/test_make.py:1171  (corpus)\n  method test_remain_abstract  tests/test_abc.py:39  (corpus)\n  method test_attrs_attrclass  tests/test_hooks.py:204  (corpus)\n  class A  tests/test_abc.py:45  (corpus)\n  class A  tests/test_annotations.py:213  (corpus)\n  class A  tests/test_annotations.py:222  (corpus)\n  ... and 50 more"
+          }
+        ],
+        "structuredContent": {
+          "result": "100 symbols matching 'A*':\n  method test_attr_args  tests/test_make.py:1382  (corpus)\n  method test_hook_applied_auto_attrib  tests/test_hooks.py:37  (corpus)\n  method test_auto_attribs_partially_annotated  tests/test_next_gen.py:152  (corpus)\n  function _attach_attrs_init  src/attr/_make.py:1133  (corpus)\n  method test_auto_attribs_detect_fields_and_annotations  tests/test_next_gen.py:132  (corpus)\n  function _asdict_anything  src/attr/_funcs.py:154  (corpus)\n  method test_auto_attribs  tests/test_annotations.py:100  (corpus)\n  function asdict  src/attr/_next_gen.py:623  (corpus)\n  method test_only_attrs_annotations_collected  tests/test_annotations.py:82  (corpus)\n  function simple_attr  tests/utils.py:39  (corpus)\n  function assert_init_annotations  tests/test_annotations.py:20  (corpus)\n  class NEW_A  tests/test_slots.py:1187  (corpus)\n  method add_match_args  src/attr/_make.py:1110  (corpus)\n  method add_attrs_init  src/attr/_make.py:1117  (corpus)\n  class A  tests/test_annotations.py:184  (corpus)\n  class A  tests/test_annotations.py:237  (corpus)\n  class A  tests/test_make.py:3135  (corpus)\n  function astuple  src/attr/_next_gen.py:639  (corpus)\n  method test_auto_attribs_detect_annotations  tests/test_next_gen.py:171  (corpus)\n  method test_converter_attrib_annotations  tests/test_annotations.py:227  (corpus)\n  method test_init_false_attribute_after_keyword_attribute  tests/test_make.py:1146  (corpus)\n  method test_adds_all_by_default  tests/test_make.py:606  (corpus)\n  function exclude  src/attr/filters.py:48  (corpus)\n  method test_adds_keyword_only_arguments  tests/test_make.py:979  (corpus)\n  class A  tests/test_annotations.py:557  (corpus)\n  method test_asdict  tests/test_functional.py:152  (corpus)\n  class AttrsAttributeNotFoundError  src/attr/exceptions.py:39  (corpus)\n  method test_abc_implementation  tests/test_abc.py:17  (corpus)\n  method test_sets_attrs  tests/test_make.py:500  (corpus)\n  function include  src/attr/filters.py:21  (corpus)\n  method test_auto_attribs_unannotated  tests/test_annotations.py:157  (corpus)\n  function save_args  tests/test_converters.py:72  (corpus)\n  method test_converter_annotations  tests/test_annotations.py:203  (corpus)\n  method test_keyword_only_auto_attribs  tests/test_annotations.py:437  (corpus)\n  method test_override_auto_attribs_false  tests/test_next_gen.py:100  (corpus)\n  function validate  src/attr/_make.py:1971  (corpus)\n  method test_works_as_adapter  tests/test_converters.py:63  (corpus)\n  method test_override_auto_attribs_true  tests/test_next_gen.py:87  (corpus)\n  function test_slots_unpickle_after_attr_added  tests/test_slots.py:1176  (corpus)\n  function _C  tests/test_funcs.py:32  (corpus)\n  class AttrsInstance  src/attr/__init__.py:37  (corpus)\n  class AliasedField  tests/dataclass_transform_example.py:50  (corpus)\n  class _Attributes  src/attr/_make.py:288  (corpus)\n  class A  tests/test_slots.py:1147  (corpus)\n  method test_init_false_attribute_after_keyword_attribute_with_inheritance  tests/test_make.py:1171  (corpus)\n  method test_remain_abstract  tests/test_abc.py:39  (corpus)\n  method test_attrs_attrclass  tests/test_hooks.py:204  (corpus)\n  class A  tests/test_abc.py:45  (corpus)\n  class A  tests/test_annotations.py:213  (corpus)\n  class A  tests/test_annotations.py:222  (corpus)\n  ... and 50 more"
+        }
+      }
+    },
+    {
+      "pattern": "test_attr_args*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "1 symbols matching 'test_attr_args*':\n  method test_attr_args  tests/test_make.py:1382  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "1 symbols matching 'test_attr_args*':\n  method test_attr_args  tests/test_make.py:1382  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "test_attr_args",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "1 symbols matching 'test_attr_args':\n  method test_attr_args  tests/test_make.py:1382  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "1 symbols matching 'test_attr_args':\n  method test_attr_args  tests/test_make.py:1382  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "NEW_A*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "4 symbols matching 'NEW_A*':\n  class NEW_A  tests/test_slots.py:1164  (corpus)\n  class NEW_A  tests/test_slots.py:1187  (corpus)\n  function get_run_validators  src/attr/_config.py:23  (corpus)\n  function set_run_validators  src/attr/_config.py:8  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "4 symbols matching 'NEW_A*':\n  class NEW_A  tests/test_slots.py:1164  (corpus)\n  class NEW_A  tests/test_slots.py:1187  (corpus)\n  function get_run_validators  src/attr/_config.py:23  (corpus)\n  function set_run_validators  src/attr/_config.py:8  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "test_init_false_attribute_after_keyword_attribute_with_inheritance",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "4 symbols matching 'test_init_false_attribute_after_keyword_attribute_with_inheritance':\n  class KwArgBeforeInitFalseParent  tests/test_make.py:1182  (corpus)\n  class KwArgBeforeInitFalseChild  tests/test_make.py:1186  (corpus)\n  method _init_to_init  tests/test_make.py:1193  (corpus)\n  method test_init_false_attribute_after_keyword_attribute_with_inheritance  tests/test_make.py:1171  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "4 symbols matching 'test_init_false_attribute_after_keyword_attribute_with_inheritance':\n  class KwArgBeforeInitFalseParent  tests/test_make.py:1182  (corpus)\n  class KwArgBeforeInitFalseChild  tests/test_make.py:1186  (corpus)\n  method _init_to_init  tests/test_make.py:1193  (corpus)\n  method test_init_false_attribute_after_keyword_attribute_with_inheritance  tests/test_make.py:1171  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "zzz_no_match_spike*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "No symbols matching 'zzz_no_match_spike*'. The token may not be indexed or may use different casing/wording. Try a broader pattern (fewer characters, a leading wildcard), or semantic_search(\"zzz_no_match_spike*\") to match by meaning."
+          }
+        ],
+        "structuredContent": {
+          "result": "No symbols matching 'zzz_no_match_spike*'. The token may not be indexed or may use different casing/wording. Try a broader pattern (fewer characters, a leading wildcard), or semantic_search(\"zzz_no_match_spike*\") to match by meaning."
+        }
+      }
+    }
+  ]
+}

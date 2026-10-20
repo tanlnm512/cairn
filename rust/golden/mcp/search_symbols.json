@@ -1,0 +1,161 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "search_symbols",
+  "arguments": {
+    "pattern": "A*"
+  },
+  "replay": {
+    "args": {
+      "pattern": "A*"
+    },
+    "seq": 7
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:28.819851+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": true,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "100 symbols matching 'A*':\n  function applyLabels  rust/crates/cairn-cli/dashboard-assets/static/app.js:389  (corpus)\n  function applyTheme  rust/crates/cairn-cli/dashboard-assets/static/app.js:536  (corpus)\n  function _assemble  src/cairn/cli/prs.py:122  (corpus)\n  module test_audit_r2_a13  tests/test_audit_r2_a13.py:1  (corpus)\n  method _import_alias  src/cairn/parsers/dart.py:455  (corpus)\n  function aggregateDisplay  extensions/vscode/src/statusModel.ts:66  (corpus)\n  method test_alias_directive_records_target_path_and_alias  tests/test_signals_csharp.py:60  (corpus)\n  method test_this_and_bare_and_lowercase_receivers_abstain  tests/test_signals_csharp.py:207  (corpus)\n  class AgentReport  src/cairn/bench/agent_suite.py:491  (corpus)\n  function _median_arm  src/cairn/bench/agent_suite.py:688  (corpus)\n  function tool_tokens_aggregate_and_sort  rust/crates/cairn-cli/src/dashboard/data.rs:1408  (corpus)\n  function _as_items  src/cairn/knowledge/relationships.py:90  (corpus)\n  function appendGroup  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:256  (corpus)\n  function applyFilters  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:311  (corpus)\n  function applyTheme  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:380  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-SLDQ463B.mjs:2  (corpus)\n  method arcTo  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-SLDQ463B.mjs:87  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/diagram-EYOLEXXS.mjs:3  (corpus)\n  function A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1  (corpus)\n  function ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1  (corpus)\n  function file_api  rust/crates/cairn-query/src/tools_repo.rs:345  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  variable A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addState  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addLink  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addRelationObjs  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addRelation  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addDescription  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addStyleClass  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  function arg_str  rust/crates/cairn-daemon/src/tools.rs:78  (corpus)\n  function _abi_tag  src/cairn/paths.py:85  (corpus)\n  function capture_all  scripts/rust_migration/semantic_golden.py:87  (corpus)\n  function _remove_agents  src/cairn/cli/uninstall.py:43  (corpus)\n  function age_str  rust/crates/cairn-cli/src/dashboard/data.rs:381  (corpus)\n  function a  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  function Ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable at  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable At  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:7  (corpus)\n  method autolink  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:31  (corpus)\n  function ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:70  (corpus)\n  variable An  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:70  (corpus)\n  function _add_doc  tests/test_knowledge_index.py:122  (corpus)\n  function test_pool_reopens_after_atomic_swap  tests/test_conn_pool.py:67  (corpus)\n  function test_tick_and_finish_with_no_active_step_are_noops  tests/test_display_rail.py:145  (corpus)\n  class _ControlAgent  src/cairn/bench/agent_suite.py:87  (corpus)\n  method test_params_array_arity_is_none  tests/test_signals_csharp.py:296  (corpus)\n  module app  rust/crates/cairn-cli/dashboard-assets/static/app.js:1  (corpus)\n  function test_corrupt_index_aborts_before_any_write  tests/test_scip_import.py:662  (corpus)\n  method as_str  rust/crates/cairn-store/src/dump.rs:36  (corpus)\n  ... and 50 more"
+      }
+    ],
+    "structuredContent": {
+      "result": "100 symbols matching 'A*':\n  function applyLabels  rust/crates/cairn-cli/dashboard-assets/static/app.js:389  (corpus)\n  function applyTheme  rust/crates/cairn-cli/dashboard-assets/static/app.js:536  (corpus)\n  function _assemble  src/cairn/cli/prs.py:122  (corpus)\n  module test_audit_r2_a13  tests/test_audit_r2_a13.py:1  (corpus)\n  method _import_alias  src/cairn/parsers/dart.py:455  (corpus)\n  function aggregateDisplay  extensions/vscode/src/statusModel.ts:66  (corpus)\n  method test_alias_directive_records_target_path_and_alias  tests/test_signals_csharp.py:60  (corpus)\n  method test_this_and_bare_and_lowercase_receivers_abstain  tests/test_signals_csharp.py:207  (corpus)\n  class AgentReport  src/cairn/bench/agent_suite.py:491  (corpus)\n  function _median_arm  src/cairn/bench/agent_suite.py:688  (corpus)\n  function tool_tokens_aggregate_and_sort  rust/crates/cairn-cli/src/dashboard/data.rs:1408  (corpus)\n  function _as_items  src/cairn/knowledge/relationships.py:90  (corpus)\n  function appendGroup  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:256  (corpus)\n  function applyFilters  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:311  (corpus)\n  function applyTheme  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:380  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-SLDQ463B.mjs:2  (corpus)\n  method arcTo  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-SLDQ463B.mjs:87  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/diagram-EYOLEXXS.mjs:3  (corpus)\n  function A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1  (corpus)\n  function ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1  (corpus)\n  function file_api  rust/crates/cairn-query/src/tools_repo.rs:345  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  variable A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addState  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addLink  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addRelationObjs  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addRelation  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addDescription  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addStyleClass  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  function arg_str  rust/crates/cairn-daemon/src/tools.rs:78  (corpus)\n  function _abi_tag  src/cairn/paths.py:85  (corpus)\n  function capture_all  scripts/rust_migration/semantic_golden.py:87  (corpus)\n  function _remove_agents  src/cairn/cli/uninstall.py:43  (corpus)\n  function age_str  rust/crates/cairn-cli/src/dashboard/data.rs:381  (corpus)\n  function a  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  function Ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable at  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable At  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:7  (corpus)\n  method autolink  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:31  (corpus)\n  function ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:70  (corpus)\n  variable An  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:70  (corpus)\n  function _add_doc  tests/test_knowledge_index.py:122  (corpus)\n  function test_pool_reopens_after_atomic_swap  tests/test_conn_pool.py:67  (corpus)\n  function test_tick_and_finish_with_no_active_step_are_noops  tests/test_display_rail.py:145  (corpus)\n  class _ControlAgent  src/cairn/bench/agent_suite.py:87  (corpus)\n  method test_params_array_arity_is_none  tests/test_signals_csharp.py:296  (corpus)\n  module app  rust/crates/cairn-cli/dashboard-assets/static/app.js:1  (corpus)\n  function test_corrupt_index_aborts_before_any_write  tests/test_scip_import.py:662  (corpus)\n  method as_str  rust/crates/cairn-store/src/dump.rs:36  (corpus)\n  ... and 50 more"
+    }
+  },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus",
+  "spike_queries": [
+    {
+      "pattern": "A*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "100 symbols matching 'A*':\n  function applyLabels  rust/crates/cairn-cli/dashboard-assets/static/app.js:389  (corpus)\n  function applyTheme  rust/crates/cairn-cli/dashboard-assets/static/app.js:536  (corpus)\n  function _assemble  src/cairn/cli/prs.py:122  (corpus)\n  module test_audit_r2_a13  tests/test_audit_r2_a13.py:1  (corpus)\n  method _import_alias  src/cairn/parsers/dart.py:455  (corpus)\n  function aggregateDisplay  extensions/vscode/src/statusModel.ts:66  (corpus)\n  method test_alias_directive_records_target_path_and_alias  tests/test_signals_csharp.py:60  (corpus)\n  method test_this_and_bare_and_lowercase_receivers_abstain  tests/test_signals_csharp.py:207  (corpus)\n  class AgentReport  src/cairn/bench/agent_suite.py:491  (corpus)\n  function _median_arm  src/cairn/bench/agent_suite.py:688  (corpus)\n  function tool_tokens_aggregate_and_sort  rust/crates/cairn-cli/src/dashboard/data.rs:1408  (corpus)\n  function _as_items  src/cairn/knowledge/relationships.py:90  (corpus)\n  function appendGroup  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:256  (corpus)\n  function applyFilters  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:311  (corpus)\n  function applyTheme  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:380  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-SLDQ463B.mjs:2  (corpus)\n  method arcTo  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-SLDQ463B.mjs:87  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/diagram-EYOLEXXS.mjs:3  (corpus)\n  function A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1  (corpus)\n  function ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1  (corpus)\n  function file_api  rust/crates/cairn-query/src/tools_repo.rs:345  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  variable A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addState  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addLink  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addRelationObjs  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addRelation  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addDescription  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addStyleClass  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  function arg_str  rust/crates/cairn-daemon/src/tools.rs:78  (corpus)\n  function _abi_tag  src/cairn/paths.py:85  (corpus)\n  function capture_all  scripts/rust_migration/semantic_golden.py:87  (corpus)\n  function _remove_agents  src/cairn/cli/uninstall.py:43  (corpus)\n  function age_str  rust/crates/cairn-cli/src/dashboard/data.rs:381  (corpus)\n  function a  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  function Ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable at  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable At  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:7  (corpus)\n  method autolink  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:31  (corpus)\n  function ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:70  (corpus)\n  variable An  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:70  (corpus)\n  function _add_doc  tests/test_knowledge_index.py:122  (corpus)\n  function test_pool_reopens_after_atomic_swap  tests/test_conn_pool.py:67  (corpus)\n  function test_tick_and_finish_with_no_active_step_are_noops  tests/test_display_rail.py:145  (corpus)\n  class _ControlAgent  src/cairn/bench/agent_suite.py:87  (corpus)\n  method test_params_array_arity_is_none  tests/test_signals_csharp.py:296  (corpus)\n  module app  rust/crates/cairn-cli/dashboard-assets/static/app.js:1  (corpus)\n  function test_corrupt_index_aborts_before_any_write  tests/test_scip_import.py:662  (corpus)\n  method as_str  rust/crates/cairn-store/src/dump.rs:36  (corpus)\n  ... and 50 more"
+          }
+        ],
+        "structuredContent": {
+          "result": "100 symbols matching 'A*':\n  function applyLabels  rust/crates/cairn-cli/dashboard-assets/static/app.js:389  (corpus)\n  function applyTheme  rust/crates/cairn-cli/dashboard-assets/static/app.js:536  (corpus)\n  function _assemble  src/cairn/cli/prs.py:122  (corpus)\n  module test_audit_r2_a13  tests/test_audit_r2_a13.py:1  (corpus)\n  method _import_alias  src/cairn/parsers/dart.py:455  (corpus)\n  function aggregateDisplay  extensions/vscode/src/statusModel.ts:66  (corpus)\n  method test_alias_directive_records_target_path_and_alias  tests/test_signals_csharp.py:60  (corpus)\n  method test_this_and_bare_and_lowercase_receivers_abstain  tests/test_signals_csharp.py:207  (corpus)\n  class AgentReport  src/cairn/bench/agent_suite.py:491  (corpus)\n  function _median_arm  src/cairn/bench/agent_suite.py:688  (corpus)\n  function tool_tokens_aggregate_and_sort  rust/crates/cairn-cli/src/dashboard/data.rs:1408  (corpus)\n  function _as_items  src/cairn/knowledge/relationships.py:90  (corpus)\n  function appendGroup  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:256  (corpus)\n  function applyFilters  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:311  (corpus)\n  function applyTheme  rust/crates/cairn-cli/dashboard-assets/static/knowledge-graph.js:380  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-SLDQ463B.mjs:2  (corpus)\n  method arcTo  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-SLDQ463B.mjs:87  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/diagram-EYOLEXXS.mjs:3  (corpus)\n  function A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1  (corpus)\n  function ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-WUBWJARI.mjs:1  (corpus)\n  function file_api  rust/crates/cairn-query/src/tools_repo.rs:345  (corpus)\n  variable ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  variable A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addState  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addLink  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addRelationObjs  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addRelation  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addDescription  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  method addStyleClass  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-NF366YI6.mjs:6  (corpus)\n  function arg_str  rust/crates/cairn-daemon/src/tools.rs:78  (corpus)\n  function _abi_tag  src/cairn/paths.py:85  (corpus)\n  function capture_all  scripts/rust_migration/semantic_golden.py:87  (corpus)\n  function _remove_agents  src/cairn/cli/uninstall.py:43  (corpus)\n  function age_str  rust/crates/cairn-cli/src/dashboard/data.rs:381  (corpus)\n  function a  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:1  (corpus)\n  function Ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable A  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable at  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:6  (corpus)\n  variable At  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:7  (corpus)\n  method autolink  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:31  (corpus)\n  function ae  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:70  (corpus)\n  variable An  rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/chunk-DZP67EKU.mjs:70  (corpus)\n  function _add_doc  tests/test_knowledge_index.py:122  (corpus)\n  function test_pool_reopens_after_atomic_swap  tests/test_conn_pool.py:67  (corpus)\n  function test_tick_and_finish_with_no_active_step_are_noops  tests/test_display_rail.py:145  (corpus)\n  class _ControlAgent  src/cairn/bench/agent_suite.py:87  (corpus)\n  method test_params_array_arity_is_none  tests/test_signals_csharp.py:296  (corpus)\n  module app  rust/crates/cairn-cli/dashboard-assets/static/app.js:1  (corpus)\n  function test_corrupt_index_aborts_before_any_write  tests/test_scip_import.py:662  (corpus)\n  method as_str  rust/crates/cairn-store/src/dump.rs:36  (corpus)\n  ... and 50 more"
+        }
+      }
+    },
+    {
+      "pattern": "applyLabels*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "1 symbols matching 'applyLabels*':\n  function applyLabels  rust/crates/cairn-cli/dashboard-assets/static/app.js:389  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "1 symbols matching 'applyLabels*':\n  function applyLabels  rust/crates/cairn-cli/dashboard-assets/static/app.js:389  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "_assemble",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "1 symbols matching '_assemble':\n  function _assemble  src/cairn/cli/prs.py:122  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "1 symbols matching '_assemble':\n  function _assemble  src/cairn/cli/prs.py:122  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "AgentReport*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "5 symbols matching 'AgentReport*':\n  method _totals  src/cairn/bench/agent_suite.py:500  (corpus)\n  method to_dict  src/cairn/bench/agent_suite.py:508  (corpus)\n  method to_json  src/cairn/bench/agent_suite.py:526  (corpus)\n  class AgentReport  src/cairn/bench/agent_suite.py:491  (corpus)\n  method to_table  src/cairn/bench/agent_suite.py:529  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "5 symbols matching 'AgentReport*':\n  method _totals  src/cairn/bench/agent_suite.py:500  (corpus)\n  method to_dict  src/cairn/bench/agent_suite.py:508  (corpus)\n  method to_json  src/cairn/bench/agent_suite.py:526  (corpus)\n  class AgentReport  src/cairn/bench/agent_suite.py:491  (corpus)\n  method to_table  src/cairn/bench/agent_suite.py:529  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "test_alias_directive_records_target_path_and_alias",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "1 symbols matching 'test_alias_directive_records_target_path_and_alias':\n  method test_alias_directive_records_target_path_and_alias  tests/test_signals_csharp.py:60  (corpus)"
+          }
+        ],
+        "structuredContent": {
+          "result": "1 symbols matching 'test_alias_directive_records_target_path_and_alias':\n  method test_alias_directive_records_target_path_and_alias  tests/test_signals_csharp.py:60  (corpus)"
+        }
+      }
+    },
+    {
+      "pattern": "zzz_no_match_spike*",
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "No symbols matching 'zzz_no_match_spike*'. The token may not be indexed or may use different casing/wording. Try a broader pattern (fewer characters, a leading wildcard), or semantic_search(\"zzz_no_match_spike*\") to match by meaning."
+          }
+        ],
+        "structuredContent": {
+          "result": "No symbols matching 'zzz_no_match_spike*'. The token may not be indexed or may use different casing/wording. Try a broader pattern (fewer characters, a leading wildcard), or semantic_search(\"zzz_no_match_spike*\") to match by meaning."
+        }
+      }
+    }
+  ]
+}

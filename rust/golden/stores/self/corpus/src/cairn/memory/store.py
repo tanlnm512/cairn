@@ -1,0 +1,621 @@
+"""Memory storage: tiered OKF files (raw/drafts/tribal/archived)."""
+from __future__ import annotations
+
+import logging
+import re
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import List, Optional
+
+from ..okf.bundle import OKFBundle
+from ..okf.concept import OKFConcept
+from ..okf.provenance import Tier
+from ..okf.utils import slugify
+
+logger = logging.getLogger(__name__)
+
+TIERS = ("raw", "drafts", "tribal", "archived")
+STANCES = ("preferred", "tentative", "contested")
+TIER_DIRS = {
+    "raw": "memory/raw",
+    "drafts": "memory/drafts",
+    "tribal": "memory/tribal",
+    "archived": "memory/archived",
+}
+TIER_TYPE_PREFIX = {
+    "raw": "Raw",
+    "drafts": "Draft",
+    "tribal": "Tribal",
+    "archived": "Tribal",  # archived keeps its tribal type
+}
+
+
+def tier_for_score(score: float) -> str:
+    """Map a memory score to a tier."""
+    if score < 0.3:
+        return "raw"
+    if score < 0.5:
+        return "drafts"
+    return "tribal"
+
+
+AGENT_ID_MAX_LEN = 64
+_AGENT_ID_RE = re.compile(r"[A-Za-z0-9._-]+")
+OVERLAP_RECENCY_DAYS = 7
+
+
+def validate_agent_id(agent_id: str) -> str:
+    """Return a bounded agent id or raise ValueError."""
+    if not isinstance(agent_id, str) or not agent_id:
+        raise ValueError("agent id must be a non-empty string")
+    if len(agent_id) > AGENT_ID_MAX_LEN:
+        raise ValueError(f"agent id exceeds {AGENT_ID_MAX_LEN} characters")
+    if not _AGENT_ID_RE.fullmatch(agent_id):
+        raise ValueError("agent id allows only [A-Za-z0-9._-]")
+    return agent_id
+
+
+def _validate_symbols(symbols: List[str]) -> None:
+    """Reject a symbols list containing non-string or empty entries."""
+    for symbol in symbols:
+        if not isinstance(symbol, str) or not symbol:
+            raise ValueError("symbols must be non-empty strings")
+
+
+def create_memory(
+    type_: str,
+    title: str,
+    body: str,
+    resource: Optional[str] = None,
+    confidence: float = 0.5,
+    session_origin: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    score: Optional[float] = None,
+    supersedes: Optional[List[str]] = None,
+    stance: Optional[str] = None,
+) -> OKFConcept:
+    """Build a memory concept with lifecycle, stance, and supersession metadata."""
+    if stance is not None and stance not in STANCES:
+        raise ValueError(
+            f"stance must be one of {'|'.join(STANCES)}, got {stance!r}"
+        )
+    confidence = min(1.0, max(0.0, float(confidence)))
+    tier = tier_for_score(score if score is not None else confidence)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    okf_type = f"{TIER_TYPE_PREFIX[tier]}-{type_}"
+    extensions = {
+        "memory_status": tier if tier != "drafts" else "draft",
+        "memory_score": round(score if score is not None else confidence, 3),
+        "memory_signals": {
+            "agent_confidence": confidence,
+            "freshness": 1.0,
+            "staleness_days": 0,
+        },
+        "memory_tier": tier,
+        "tier": Tier.ASSERTED.value,
+        "memory_type": type_,
+        "session_origin": session_origin or "",
+        "promotion_history": [
+            {"date": ts, "action": "captured", "score": round(confidence, 3), "tier": tier}
+        ],
+        "memory_is_latest": True,
+        "memory_supersedes": list(supersedes) if supersedes else [],
+        "memory_superseded_by": None,
+    }
+    if stance is not None:
+        extensions["memory_stance"] = stance
+    return OKFConcept(
+        type=okf_type,
+        title=title,
+        description=title,
+        resource=resource,
+        tags=tags or [type_],
+        timestamp=ts,
+        body=body,
+        extensions=extensions,
+    )
+
+
+def _rel_id(bundle: OKFBundle, concept_id: str) -> str:
+    """Normalize a concept_id to bundle-relative (from_file sets absolute paths)."""
+    try:
+        # Resolve both sides: from_file concept_ids carry the resolved root,
+        # so a symlinked bundle root defeats plain lexical relative_to.
+        return str(Path(concept_id).resolve().relative_to(Path(bundle.root).resolve()))
+    except (ValueError, OSError):
+        return concept_id
+
+
+def _in_memory_namespace(bundle: OKFBundle, concept: OKFConcept) -> bool:
+    """Whether the concept's resolved id lives under the bundle's memory/ tree."""
+    resolved = concept.concept_id
+    try:
+        resolved = str(
+            Path(resolved).resolve().relative_to(Path(bundle.root).resolve())
+        )
+    except ValueError:
+        pass
+    return resolved == "memory/" or resolved.startswith("memory/")
+
+
+def parse_memory_timestamp(ts) -> Optional[datetime]:
+    """Return aware UTC time, or None for missing, naive, or malformed input."""
+    if not isinstance(ts, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo is not None else None
+
+
+def write_validity(
+    concept: OKFConcept,
+    *,
+    valid_from: str,
+    valid_until: Optional[str] = None,
+    successor_symbol: Optional[str] = None,
+    bundle: Optional[OKFBundle] = None,
+    conn=None,
+) -> None:
+    """Write validity extensions and their indexed projection row."""
+    if not valid_from:
+        raise ValueError("valid_from is required")
+    cid = concept.concept_id
+    if not cid:
+        raise ValueError("concept_id is required")
+    concept.extensions["valid_from"] = valid_from
+    for key, value in (("valid_until", valid_until),
+                       ("successor_symbol", successor_symbol)):
+        if value is None:
+            concept.extensions.pop(key, None)
+        else:
+            concept.extensions[key] = value
+    if bundle is not None:
+        cid = _rel_id(bundle, cid)
+        bundle.write_concept(concept)
+    if conn is not None:
+        conn.execute(
+            "INSERT INTO memory_validity"
+            " (concept_id, valid_from, valid_until, successor_symbol)"
+            " VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(concept_id) DO UPDATE SET"
+            " valid_from = excluded.valid_from,"
+            " valid_until = excluded.valid_until,"
+            " successor_symbol = excluded.successor_symbol",
+            (cid, valid_from, valid_until, successor_symbol),
+        )
+
+
+def store_memory(
+    concept: OKFConcept,
+    bundle: OKFBundle,
+    tier: Optional[str] = None,
+    old_id: Optional[str] = None,
+    conn=None,
+):
+    """Write a memory to its tier and move validity and old-file cleanup with it."""
+    t = tier or concept.extensions.get("memory_tier", "drafts")
+    old_rel = _rel_id(bundle, old_id) if old_id else None
+    if old_rel and old_rel.startswith(TIER_DIRS[t] + "/"):
+        # Same-tier re-store keeps the id so refs and embedding rows stay attached.
+        concept.concept_id = old_rel
+    else:
+        slug = slugify(concept.title or "") or "memory"
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        import uuid
+        unique_suffix = uuid.uuid4().hex[:6]
+        if t == "raw":
+            concept.concept_id = f"{TIER_DIRS['raw']}/{ts}-{slug}-{unique_suffix}"
+        else:
+            concept.concept_id = f"{TIER_DIRS[t]}/{slug}-{unique_suffix}"
+    # Keep tier metadata in sync with file location.
+    concept.extensions["memory_tier"] = t
+    try:
+        write_validity(
+            concept,
+            valid_from=(
+                concept.extensions.get("valid_from")
+                or concept.timestamp
+                or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            ),
+            valid_until=concept.extensions.get("valid_until") or None,
+            successor_symbol=concept.extensions.get("successor_symbol") or None,
+            bundle=bundle,
+            conn=conn,
+        )
+    except Exception:
+        # A failed move must not leave the new-tier file beside the untouched
+        # old-tier file: unlink the copy so retries re-do the move cleanly.
+        if old_rel and old_rel != concept.concept_id:
+            new_file = Path(bundle.root) / f"{concept.concept_id}.md"
+            if new_file.exists():
+                new_file.unlink()
+                bundle.invalidate_search_index()
+        raise
+    # Clean up old tier file only when the id actually moved.
+    if old_rel and old_rel != concept.concept_id:
+        old_file = Path(bundle.root) / f"{old_rel}.md"
+        if old_file.exists():
+            old_file.unlink()
+            bundle.invalidate_search_index()
+        if conn is not None:
+            conn.execute(
+                "DELETE FROM memory_validity WHERE concept_id = ?",
+                (old_rel,),
+            )
+    return concept.concept_id
+
+
+def share_memory(
+    agent_id: str,
+    symbols: List[str],
+    memory_id: Optional[str] = None,
+    *,
+    conn,
+) -> int:
+    """Record one idempotent shared-memory pointer per validated agent and symbol."""
+    validate_agent_id(agent_id)
+    _validate_symbols(symbols)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    inserted = 0
+    for symbol in symbols:
+        cur = conn.execute(
+            "INSERT INTO agent_symbols (agent_id, symbol, memory_id, kind, ts)"
+            " SELECT ?, ?, ?, 'share', ?"
+            " WHERE NOT EXISTS ("
+            " SELECT 1 FROM agent_symbols"
+            " WHERE agent_id = ? AND symbol = ? AND memory_id IS ? AND kind = 'share')",
+            (agent_id, symbol, memory_id, ts, agent_id, symbol, memory_id),
+        )
+        if cur.rowcount and cur.rowcount > 0:
+            inserted += cur.rowcount
+    return inserted
+
+
+def check_overlap(
+    agent_id: str,
+    symbols: List[str],
+    *,
+    conn,
+    recency_days: int = OVERLAP_RECENCY_DAYS,
+) -> List[tuple]:
+    """Return other agents' recent activity on validated symbols."""
+    validate_agent_id(agent_id)
+    _validate_symbols(symbols)
+    if recency_days < 1:
+        raise ValueError("recency_days must be at least 1")
+    if not symbols:
+        return []
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=recency_days)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    placeholders = ",".join("?" * len(symbols))
+    cur = conn.execute(
+        "SELECT agent_id, symbol, kind, ts FROM agent_symbols"
+        f" WHERE agent_id <> ? AND symbol IN ({placeholders}) AND ts >= ?"
+        " ORDER BY symbol, ts, agent_id",
+        (agent_id, *symbols, cutoff),
+    )
+    return [tuple(row) for row in cur.fetchall()]
+
+
+def shared_recall_entries(
+    conn,
+    bundle: OKFBundle,
+    agent_id: str,
+    query: str,
+    *,
+    tier: Optional[str] = None,
+    include_superseded: bool = False,
+    as_of: Optional[str] = None,
+    result_ids: set,
+) -> tuple[list, dict]:
+    """Return shared extra concepts and attribution keyed by concept id."""
+    from .promotion import _instant_key, _parse_instant, _valid_at
+
+    def _attribution(pairs) -> str:
+        by_agent: dict = {}
+        for row_agent, symbol in pairs:
+            by_agent.setdefault(row_agent, []).append(symbol)
+        return "shared by " + "; ".join(
+            f"{a} on '{', '.join(syms)}'" for a, syms in by_agent.items()
+        )
+
+    tokens = {t.lower() for t in re.split(r"[\s,;]+", query) if t}
+    if not tokens:
+        return [], {}
+    instant = _parse_instant(as_of) if as_of is not None else datetime.now(timezone.utc)
+    if instant is None:
+        raise ValueError(f"as_of must be an ISO-8601 date, got {as_of!r}")
+    query_key = _instant_key(instant)
+    try:
+        rows = conn.execute(
+            "SELECT agent_id, symbol, memory_id FROM agent_symbols"
+            " WHERE kind = 'share' AND agent_id <> ? ORDER BY ts",
+            (agent_id,),
+        ).fetchall()
+    except sqlite3.Error:
+        return [], {}
+    found_ids = {cid.rsplit("/", 1)[-1]: cid for cid in result_ids}
+    pairs_by_memory: dict = {}
+    attribution: dict = {}
+    for row_agent, symbol, memory_id in rows:
+        if not memory_id or str(symbol).lower() not in tokens:
+            continue
+        key = memory_id.rsplit("/", 1)[-1]
+        pair = (row_agent, symbol)
+        in_results = found_ids.get(key)
+        if in_results is not None:
+            # Already surfaced by the search: attach the attribution in place.
+            pairs = attribution.setdefault(in_results, [])
+            if pair not in pairs:
+                pairs.append(pair)
+            continue
+        entry = pairs_by_memory.get(key)
+        if entry is None:
+            pairs_by_memory[key] = (memory_id, [pair])
+        elif pair not in entry[1]:
+            entry[1].append(pair)
+    out = []
+    for memory_id, pairs in pairs_by_memory.values():
+        try:
+            c = bundle.read_concept(memory_id)
+        except Exception:
+            continue  # row orphaned by a since-deleted memory
+        if c is None:
+            continue
+        if tier and not c.extensions.get("memory_tier", "").startswith(tier):
+            continue
+        if not include_superseded and c.extensions.get("memory_is_latest", True) is False:
+            continue
+        if not _valid_at(c, query_key):
+            continue
+        out.append(c)
+        attribution[c.concept_id] = pairs
+    return out, {cid: _attribution(pairs) for cid, pairs in attribution.items()}
+
+
+def list_memories(
+    bundle: OKFBundle, tier: Optional[str] = None, tag: Optional[str] = None
+) -> List[OKFConcept]:
+    """List memory concepts, optionally filtered by tier or tag."""
+    prefix = TIER_DIRS[tier] + "/" if tier else "memory/"
+    out = []
+    for cid in bundle.list_concepts(prefix=prefix):
+        try:
+            c = bundle.read_concept(cid)
+        except Exception:
+            logger.warning("skipping unreadable memory concept: %s", cid)
+            continue
+        if tag and tag not in c.tags:
+            continue
+        out.append(c)
+    return out
+
+
+def get_memory(bundle: OKFBundle, path: str) -> Optional[OKFConcept]:
+    """Read a memory-namespaced concept by its full concept id or path."""
+    cid = path
+    if cid.endswith(".md"):
+        cid = cid[:-3]
+    if not cid.startswith("memory/") and "/memory/" not in cid:
+        cid = f"memory/{cid}"
+    try:
+        concept = bundle.read_concept(cid)
+    except FileNotFoundError:
+        # Try as a relative path from the bundle root.
+        try:
+            concept = bundle.read_concept(path.replace(".md", ""))
+        except FileNotFoundError:
+            return None
+    # The fallback can resolve outside memory/ (compass/wiki); refuse it.
+    return concept if _in_memory_namespace(bundle, concept) else None
+
+
+def delete_memory(bundle: OKFBundle, memory_path: str, conn=None) -> bool:
+    """Delete only a memory-namespaced concept and its exact reference rows."""
+    cid = memory_path
+    if cid.endswith(".md"):
+        cid = cid[:-3]
+    if not cid.startswith("memory/"):
+        cid = f"memory/{cid}"
+    with bundle.lock():
+        try:
+            concept = get_memory(bundle, memory_path)
+        except ValueError:
+            return False
+        abs_cid = cid
+        if concept is not None:
+            if not _in_memory_namespace(bundle, concept):
+                return False
+            cid = concept.concept_id
+            abs_cid = cid
+            cid = _rel_id(bundle, cid)
+        # Route the file path through the write-path validator so a malformed
+        # concept_id can't escape the bundle root via the delete path. Raises
+        # ValueError if cid escapes root; treat that as "nothing to delete".
+        try:
+            file_path = bundle._validate_concept_path(cid)
+        except ValueError:
+            return False
+        if not file_path.exists():
+            return False
+        file_path.unlink()
+        # Unlink bypasses write_concept: drop the cached index or the deleted
+        # concept stays searchable.
+        bundle.invalidate_search_index()
+    if conn is not None:
+        _delete_memory_rows(bundle, abs_cid, conn)
+    return True
+
+
+TIER_ORDER = ["tribal", "drafts", "raw", "archived"]
+
+
+def demote_memory(bundle: OKFBundle, memory_path: str, target_tier: str = "raw", conn=None) -> Optional[str]:
+    """Move a memory to a strictly lower tier and return its new path."""
+    with bundle.lock():
+        concept = get_memory(bundle, memory_path)
+        if concept is None:
+            return None
+        current_tier = concept.extensions.get("memory_tier", "drafts")
+        try:
+            # TIER_ORDER is highest-first: tribal=0, drafts=1, raw=2, archived=3.
+            # Demotion means target index > current index. Reject promotions (target < current)
+            # and same-tier moves.
+            if TIER_ORDER.index(target_tier) <= TIER_ORDER.index(current_tier):
+                return None  # target is same or higher — not a demotion
+        except ValueError:
+            return None  # invalid tier name
+        # Normalize concept_id to relative (from_file sets absolute paths).
+        old_id = _rel_id(bundle, concept.concept_id)
+        concept.extensions["memory_tier"] = target_tier
+        new_id = store_memory(concept, bundle, tier=target_tier, old_id=old_id, conn=conn)
+        # Carry the embedding forward in place (a demote never changes content,
+        # so re-embedding would be wasted work). old_id is already relative here.
+        # Import via the cairn.graph public surface per the layering rule.
+        if conn is not None:
+            from ..graph import embeddings as _emb
+            _emb.rename_memory_embedding(conn, old_id, new_id)  # caller commits
+        return new_id
+
+
+def purge_archived(bundle: OKFBundle, max_days: int = 90, conn=None) -> int:
+    """Delete archived memories older than max_days. Returns count purged."""
+    now = datetime.now(timezone.utc)
+    purged = 0
+    with bundle.lock():
+        for concept in list_memories(bundle, tier="archived"):
+            dt = parse_memory_timestamp(concept.timestamp)
+            if dt is None:
+                continue
+            if (now - dt).days > max_days:
+                file_path = Path(bundle.root) / f"{concept.concept_id}.md"
+                if file_path.exists():
+                    file_path.unlink()
+                    bundle.invalidate_search_index()
+                    purged += 1
+                    _delete_memory_rows(bundle, concept.concept_id, conn)
+    return purged
+
+
+def _delete_memory_rows(bundle: OKFBundle, concept_id: str, conn) -> None:
+    """Drop the validity, ref, and embedding rows keyed to a deleted memory."""
+    if conn is None:
+        return
+    ref_ids = [_rel_id(bundle, concept_id)]
+    if concept_id != ref_ids[0]:
+        ref_ids.append(concept_id)
+    placeholders = ",".join("?" * len(ref_ids))
+    conn.execute(
+        f"DELETE FROM memory_refs WHERE memory_path IN ({placeholders})", ref_ids
+    )
+    conn.execute(
+        f"DELETE FROM memory_validity WHERE concept_id IN ({placeholders})", ref_ids
+    )
+    conn.execute(
+        f"DELETE FROM memory_embeddings WHERE doc_id IN ({placeholders})", ref_ids
+    )
+
+
+def _slugify(text: str) -> str:
+    import re
+    text = text.lower().strip()
+    text = re.sub(r"[^\w\s-]", "", text)
+    return re.sub(r"[-\s]+", "-", text).strip("-")
+
+
+def consolidate_memories(bundle: OKFBundle, conn=None) -> int:
+    """Merge duplicate raw memories and archive their sources."""
+    with bundle.lock():
+        raw_ids = bundle.list_concepts(prefix="memory/raw")
+        if len(raw_ids) < 2:
+            return 0
+
+        concepts = []
+        for cid in raw_ids:
+            try:
+                concepts.append(bundle.read_concept(cid))
+            except Exception:
+                logger.warning("skipping unreadable memory concept: %s", cid)
+
+        groups: dict[str, list[OKFConcept]] = {}
+        for c in concepts:
+            key = (c.title or "").strip().lower()
+            if not key:
+                continue
+            groups.setdefault(key, []).append(c)
+
+        consolidated_count = 0
+        for title_key, group in groups.items():
+            if len(group) < 2:
+                continue
+
+            primary = group[0]
+            merged_body_lines = [primary.body or ""]
+            for c in group[1:]:
+                if c.body and c.body not in merged_body_lines:
+                    merged_body_lines.append(c.body)
+
+            new_title = primary.title or title_key.title()
+            # UUID suffix so distinct consolidations that share a title don't
+            # clobber each other via write_concept's atomic os.replace.
+            import uuid
+            unique_suffix = uuid.uuid4().hex[:6]
+            unified_concept = OKFConcept(
+                type="TribalMemory",
+                title=new_title,
+                description=primary.description or f"Consolidated memory for {new_title}",
+                body="\n\n---\n\n".join(merged_body_lines),
+                tags=list(set(sum([c.tags for c in group if c.tags], []))),
+                concept_id=f"memory/tribal/{_slugify(new_title)}-{unique_suffix}",
+                extensions={
+                    "memory_tier": "tribal",
+                    "consolidated_from": [_rel_id(bundle, c.concept_id) for c in group],
+                },
+            )
+            bundle.write_concept(unified_concept)
+            if conn is not None:
+                write_validity(
+                    unified_concept,
+                    valid_from=(
+                        unified_concept.extensions.get("valid_from")
+                        or unified_concept.timestamp
+                        or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    ),
+                    bundle=None,
+                    conn=conn,
+                )
+
+            for c in group:
+                if c.concept_id and c.concept_id != unified_concept.concept_id:
+                    source_id = _rel_id(bundle, c.concept_id)
+                    try:
+                        old_file = Path(bundle.root) / f"{c.concept_id}.md"
+                        c.extensions["memory_tier"] = "archived"
+                        # UUID suffix (same format as store_memory's non-raw tier)
+                        # so distinct memories that share a title don't clobber
+                        # each other via write_concept's atomic os.replace.
+                        archived_suffix = uuid.uuid4().hex[:6]
+                        c.concept_id = f"memory/archived/{_slugify(c.title or 'memory')}-{archived_suffix}"
+                        bundle.write_concept(c)
+                        if old_file.exists():
+                            old_file.unlink()
+                            bundle.invalidate_search_index()
+                        if conn is not None:
+                            conn.execute(
+                                "UPDATE memory_validity SET concept_id = ?"
+                                " WHERE concept_id = ?",
+                                (c.concept_id, source_id),
+                            )
+                            from ..graph import embeddings as _emb
+                            _emb.rename_memory_embedding(conn, source_id, c.concept_id)
+                        consolidated_count += 1
+                    except Exception:
+                        logger.warning(
+                            "failed to archive consolidated source: %s", source_id
+                        )
+
+    return consolidated_count

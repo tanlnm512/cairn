@@ -3,22 +3,44 @@
 ← [Docs index](README.md)
 
 Read this when MCP tools aren't available or you're scripting cairn. Every
-command runs through the `cairn` entry point (`cairn.cli:main`, Click).
-Pass `--db` / `--workspace` explicitly in scripts — `CAIRN_HOME` and friends
-are read at process start, not per call.
+command runs through the `cairn` entry point. Pass `--db` / `--workspace`
+explicitly in scripts — `CAIRN_HOME` and friends are read at process start,
+not per call.
+
+Two builds provide the surface during the transition window:
+
+- **The `cairn` binary** (Homebrew tap / `cargo binstall` / release tarball)
+  ports the core graph commands (`init config build import-scip stats
+  checkpoint update def callers search callees impact deps federated-search
+  tree pack path taint`), the serving + wiring commands (`serve` with
+  `run|start|stop|status|restart`, `connect`, `dashboard`, `install-agents`,
+  `uninstall-agents`, `doctor`), and the knowledge-layer reads/writes
+  (`knowledge` minus `ingest`/`rebuild`/`embed`, `memory` minus the
+  `reflect`/`evolve`/`capture`/`embed`/`batch-critic`/`consolidate`
+  maintenance verbs, `wiki search`, `compass list|validate`). A command
+  outside its set exits non-zero with a named diagnostic.
+- **The PyPI CLI** (`pip install cairn-intel`) carries the complete surface
+  below and remains authoritative where the two differ.
+
+Machine contracts (`config --json`/`--db`/`--mcp-config` shapes, stdout-pure
+JSON modes, exit codes) are identical across both.
 
 ## Build & lifecycle
 
 | Command | Purpose |
 |---|---|
 | `cairn init [--with-hooks]` | interactive first-time setup (runs a build); `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)) |
-| `cairn build [--lsp]` | full workspace rebuild (see [indexing.md](indexing.md)) || `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
+| `cairn build [--lsp]` | full workspace rebuild (see [indexing.md](indexing.md)) |
+| `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
 | `cairn stats` | graph statistics |
 | `cairn checkpoint` | snapshot the store |
 | `cairn config` | show effective configuration (`--json` emits `cairn_home`/`workspace`/`db`/`knowledge` as one JSON document — read-only, registers nothing; the scripting/probe surface) |
 | `cairn uninstall` | remove cairn integration artifacts |
 
 ### `cairn build` pyright upgrade pass
+
+Python-build surface; the binary accepts `--lsp` and builds without the
+pass.
 
 - Runs `pyright --stdio` for ambiguous Python call edges by default when
   pyright is on `PATH`, capped by a wall-clock budget (60 s default) and a
@@ -49,6 +71,10 @@ are read at process start, not per call.
   committed or checked-out range.
 
 ## Query
+
+Binary coverage in this section: `def`, `import-scip`, `callers`, `callees`,
+`search`, `impact`, `deps`, `federated-search`, `tree`, `pack`, `path`,
+`taint` — the remaining rows are PyPI-CLI commands.
 
 | Command | Purpose |
 |---|---|
@@ -180,6 +206,8 @@ are read at process start, not per call.
 
 ## Embeddings & rerank
 
+PyPI-CLI commands (the binary reports them as not ported).
+
 | Command | Purpose |
 |---|---|
 | `cairn embed` | compute/refresh symbol embeddings (`--multivector`, `--build-index`, `--install-deps`, `--download-model`, `--adopt-server-model [ID]` to make a parity-verified server fallback permanent) |
@@ -188,6 +216,10 @@ are read at process start, not per call.
 ## Knowledge
 
 Group: `cairn knowledge …`
+
+Binary coverage: `add`, `import`, `islands`, `related`, `chain`, `search`,
+`list`, `impact`, `remove`, `status`, `export`, `workflow add|trace` —
+`ingest`, `rebuild`, `embed`, and `workflow sync` are PyPI-CLI commands.
 
 | Subcommand | Purpose |
 |---|---|
@@ -205,6 +237,11 @@ Group: `cairn knowledge …`
 ## Memory
 
 Group: `cairn memory …`
+
+Binary coverage: `record`, `search` (incl. `--as-of`), `timeline`, `list`,
+`stats`, `digest`, `promote`, `decay`, `forget`, `demote`, `purge`, `share`,
+`check` — `reflect`, `evolve`, `capture`, `embed`, `batch-critic`, and
+`consolidate` are PyPI-CLI commands.
 
 | Subcommand | Purpose |
 |---|---|
@@ -250,6 +287,10 @@ contested).
 
 ## Compass / wiki / tasks / dataflow
 
+Binary coverage in this section: `wiki search` and `compass list|validate`
+— the wiki generation lifecycle, the task queue, `skill`, and `dataflow`
+are PyPI-CLI commands.
+
 | Command | Purpose |
 |---|---|
 | `cairn compass generate|list|validate|gaps|flow|flow-gaps` | module navigation guides |
@@ -264,6 +305,9 @@ contested).
 | `cairn dataflow build\|lookup` | precomputed impact index; `build` caps public symbols per run — `--max-symbols`, else `CAIRN_DATAFLOW_MAX_SYMBOLS`, else 2000 — and warns on stderr when truncating (partial index) |
 
 ## Health & ops
+
+Binary coverage in this section: `doctor` — the remaining rows are
+PyPI-CLI commands.
 
 | Command | Purpose |
 |---|---|

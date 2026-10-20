@@ -1,0 +1,231 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "visualize_graph",
+  "arguments": {
+    "scope": "symbol",
+    "symbol": "He",
+    "depth": 2
+  },
+  "replay": {
+    "args": {
+      "scope": "symbol",
+      "symbol": "He",
+      "depth": 2
+    },
+    "seq": 11
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:28.821670+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": true,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "\n    Bt -->He\n    Bt(Bt)\n    He -->He\n    He -->He\n    He -->join\n    He -->join\n    He -->join\n    He -->join\n    He -->push\n    He -->r\n    He -->shift\n    He(He)\n    chunk_DZP67EKU -->He\n    chunk_DZP67EKU[chunk-DZP67EKU/]\n    join[join]\n    push[push]\n    r[r]\n    shift[shift]\ngraph LR"
+      }
+    ],
+    "structuredContent": {
+      "result": "\n    Bt -->He\n    Bt(Bt)\n    He -->He\n    He -->He\n    He -->join\n    He -->join\n    He -->join\n    He -->join\n    He -->push\n    He -->r\n    He -->shift\n    He(He)\n    chunk_DZP67EKU -->He\n    chunk_DZP67EKU[chunk-DZP67EKU/]\n    join[join]\n    push[push]\n    r[r]\n    shift[shift]\ngraph LR"
+    }
+  },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus",
+  "cases": [
+    {
+      "arguments": {
+        "scope": "symbol",
+        "symbol": "fetch_user",
+        "depth": 2
+      },
+      "sort_lines": true,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "\n    fetch_user -->load_payload\n    fetch_user -->loads\n    fetch_user(fetch_user)\n    load_payload(load_payload)\n    loads[loads]\n    main -->fetch_user\n    main(main)\n    service -->fetch_user\n    service[service/]\n    test_fetch_user -->fetch_user\n    test_fetch_user(test_fetch_user)\ngraph LR"
+          }
+        ],
+        "structuredContent": {
+          "result": "\n    fetch_user -->load_payload\n    fetch_user -->loads\n    fetch_user(fetch_user)\n    load_payload(load_payload)\n    loads[loads]\n    main -->fetch_user\n    main(main)\n    service -->fetch_user\n    service[service/]\n    test_fetch_user -->fetch_user\n    test_fetch_user(test_fetch_user)\ngraph LR"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "scope": "symbol",
+        "symbol": "fetch_user",
+        "depth": 2,
+        "format": "dot"
+      },
+      "sort_lines": true,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "    fetch_user -> load_payload;\n    fetch_user -> loads;\n    fetch_user [label=\"fetch_user\"];\n    load_payload [label=\"load_payload\"];\n    loads [label=\"loads\"];\n    main -> fetch_user;\n    main [label=\"main\"];\n    node [shape=box, style=rounded];\n    rankdir=LR;\n    service -> fetch_user;\n    service [label=\"service\"];\n    test_fetch_user -> fetch_user;\n    test_fetch_user [label=\"test_fetch_user\"];\ndigraph cairn {\n}"
+          }
+        ],
+        "structuredContent": {
+          "result": "    fetch_user -> load_payload;\n    fetch_user -> loads;\n    fetch_user [label=\"fetch_user\"];\n    load_payload [label=\"load_payload\"];\n    loads [label=\"loads\"];\n    main -> fetch_user;\n    main [label=\"main\"];\n    node [shape=box, style=rounded];\n    rankdir=LR;\n    service -> fetch_user;\n    service [label=\"service\"];\n    test_fetch_user -> fetch_user;\n    test_fetch_user [label=\"test_fetch_user\"];\ndigraph cairn {\n}"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "scope": "symbol",
+        "symbol": "fetch_user",
+        "depth": 2,
+        "format": "json"
+      },
+      "sort_lines": false,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"nodes\": [\n    {\n      \"id\": \"fetch_user\",\n      \"kind\": \"function\",\n      \"file\": \"app/service.py\",\n      \"repo\": \"corpus\"\n    },\n    {\n      \"id\": \"main\",\n      \"kind\": \"function\",\n      \"file\": \"app/main.py\",\n      \"repo\": \"corpus\"\n    },\n    {\n      \"id\": \"service\",\n      \"kind\": \"module\",\n      \"file\": \"app/service.py\",\n      \"repo\": \"corpus\"\n    },\n    {\n      \"id\": \"test_fetch_user\",\n      \"kind\": \"function\",\n      \"file\": \"tests/test_service.py\",\n      \"repo\": \"corpus\"\n    },\n    {\n      \"id\": \"load_payload\",\n      \"kind\": \"function\",\n      \"file\": \"app/service.py\",\n      \"repo\": \"corpus\"\n    },\n    {\n      \"id\": \"loads\",\n      \"kind\": \"external\",\n      \"file\": null,\n      \"repo\": null\n    }\n  ],\n  \"edges\": [\n    {\n      \"source\": \"main\",\n      \"target\": \"fetch_user\",\n      \"kind\": \"calls\"\n    },\n    {\n      \"source\": \"service\",\n      \"target\": \"fetch_user\",\n      \"kind\": \"contains\"\n    },\n    {\n      \"source\": \"test_fetch_user\",\n      \"target\": \"fetch_user\",\n      \"kind\": \"calls\"\n    },\n    {\n      \"source\": \"fetch_user\",\n      \"target\": \"load_payload\",\n      \"kind\": \"calls\"\n    },\n    {\n      \"source\": \"fetch_user\",\n      \"target\": \"loads\",\n      \"kind\": \"calls\"\n    }\n  ],\n  \"metadata\": {\n    \"scope\": \"symbol\",\n    \"symbol\": \"fetch_user\",\n    \"node_count\": 6,\n    \"edge_count\": 5,\n    \"truncated\": false\n  }\n}"
+          }
+        ],
+        "structuredContent": {
+          "result": "{\n  \"nodes\": [\n    {\n      \"id\": \"fetch_user\",\n      \"kind\": \"function\",\n      \"file\": \"app/service.py\",\n      \"repo\": \"corpus\"\n    },\n    {\n      \"id\": \"main\",\n      \"kind\": \"function\",\n      \"file\": \"app/main.py\",\n      \"repo\": \"corpus\"\n    },\n    {\n      \"id\": \"service\",\n      \"kind\": \"module\",\n      \"file\": \"app/service.py\",\n      \"repo\": \"corpus\"\n    },\n    {\n      \"id\": \"test_fetch_user\",\n      \"kind\": \"function\",\n      \"file\": \"tests/test_service.py\",\n      \"repo\": \"corpus\"\n    },\n    {\n      \"id\": \"load_payload\",\n      \"kind\": \"function\",\n      \"file\": \"app/service.py\",\n      \"repo\": \"corpus\"\n    },\n    {\n      \"id\": \"loads\",\n      \"kind\": \"external\",\n      \"file\": null,\n      \"repo\": null\n    }\n  ],\n  \"edges\": [\n    {\n      \"source\": \"main\",\n      \"target\": \"fetch_user\",\n      \"kind\": \"calls\"\n    },\n    {\n      \"source\": \"service\",\n      \"target\": \"fetch_user\",\n      \"kind\": \"contains\"\n    },\n    {\n      \"source\": \"test_fetch_user\",\n      \"target\": \"fetch_user\",\n      \"kind\": \"calls\"\n    },\n    {\n      \"source\": \"fetch_user\",\n      \"target\": \"load_payload\",\n      \"kind\": \"calls\"\n    },\n    {\n      \"source\": \"fetch_user\",\n      \"target\": \"loads\",\n      \"kind\": \"calls\"\n    }\n  ],\n  \"metadata\": {\n    \"scope\": \"symbol\",\n    \"symbol\": \"fetch_user\",\n    \"node_count\": 6,\n    \"edge_count\": 5,\n    \"truncated\": false\n  }\n}"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "scope": "impact",
+        "symbol": "a",
+        "depth": 3
+      },
+      "sort_lines": true,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "\n    a -->b\n    a[a]\n    b -->a\n    b[b]\n    kickoff -->a\n    kickoff[kickoff]\ngraph TB"
+          }
+        ],
+        "structuredContent": {
+          "result": "\n    a -->b\n    a[a]\n    b -->a\n    b[b]\n    kickoff -->a\n    kickoff[kickoff]\ngraph TB"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "scope": "module",
+        "module": "pipeline"
+      },
+      "sort_lines": true,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "\n    dispatch -->run_query\n    dispatch(dispatch)\n    pipeline -->dispatch\n    pipeline -->read_config\n    pipeline -->run_pipeline\n    pipeline -->run_query\n    pipeline[pipeline/]\n    read_config -->dispatch\n    read_config(read_config)\n    run_pipeline -->dispatch\n    run_pipeline -->read_config\n    run_pipeline(run_pipeline)\n    run_query(run_query)\ngraph TB"
+          }
+        ],
+        "structuredContent": {
+          "result": "\n    dispatch -->run_query\n    dispatch(dispatch)\n    pipeline -->dispatch\n    pipeline -->read_config\n    pipeline -->run_pipeline\n    pipeline -->run_query\n    pipeline[pipeline/]\n    read_config -->dispatch\n    read_config(read_config)\n    run_pipeline -->dispatch\n    run_pipeline -->read_config\n    run_pipeline(run_pipeline)\n    run_query(run_query)\ngraph TB"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "scope": "repo",
+        "repo": "corpus"
+      },
+      "sort_lines": true,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "\n    app__32_[app (32)/]\n    tests__2_[tests (2)/]\ngraph TB"
+          }
+        ],
+        "structuredContent": {
+          "result": "\n    app__32_[app (32)/]\n    tests__2_[tests (2)/]\ngraph TB"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "scope": "deps"
+      },
+      "sort_lines": true,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "\n    corpus -->|\"flow.demo\"|demo_sdk\n    corpus[[corpus]]\ngraph LR"
+          }
+        ],
+        "structuredContent": {
+          "result": "\n    corpus -->|\"flow.demo\"|demo_sdk\n    corpus[[corpus]]\ngraph LR"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "scope": "bogus"
+      },
+      "sort_lines": false,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "Unknown scope 'bogus'. Available: symbol, impact, module, repo, deps"
+          }
+        ],
+        "structuredContent": {
+          "result": "Unknown scope 'bogus'. Available: symbol, impact, module, repo, deps"
+        }
+      }
+    }
+  ]
+}

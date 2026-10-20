@@ -1,0 +1,107 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "cross_repo_deps",
+  "arguments": {
+    "repo": "corpus"
+  },
+  "replay": {
+    "args": {
+      "repo": "corpus"
+    },
+    "seq": 10
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:28.821637+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "=== corpus depends on ===\n  (none)\n=== Dependents of corpus ===\n  (none)"
+      }
+    ],
+    "structuredContent": {
+      "result": "=== corpus depends on ===\n  (none)\n=== Dependents of corpus ===\n  (none)"
+    }
+  },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus",
+  "cases": [
+    {
+      "arguments": {
+        "repo": "corpus"
+      },
+      "sort_lines": false,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "=== corpus depends on ===\n  demo-sdk (flow.demo) x1\n=== Dependents of corpus ===\n  (none)"
+          }
+        ],
+        "structuredContent": {
+          "result": "=== corpus depends on ===\n  demo-sdk (flow.demo) x1\n=== Dependents of corpus ===\n  (none)"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "repo": "be-sdk"
+      },
+      "sort_lines": false,
+      "response": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": "=== be-sdk depends on ===\n  (none)\n=== Dependents of be-sdk ===\n  (none)"
+          }
+        ],
+        "structuredContent": {
+          "result": "=== be-sdk depends on ===\n  (none)\n=== Dependents of be-sdk ===\n  (none)"
+        }
+      }
+    }
+  ]
+}

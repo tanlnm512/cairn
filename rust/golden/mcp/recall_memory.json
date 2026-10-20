@@ -1,0 +1,69 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "recall_memory",
+  "arguments": {
+    "query": "h"
+  },
+  "replay": {
+    "args": {
+      "query": "h"
+    },
+    "seq": 20
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 100,
+      "symbols": 2034,
+      "edges": 14781
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:28.822880+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": false,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "20 memories matching 'h':\n  [archived 0.632, refs-verified=n/a (0 refs)] GitHub resolved-comment read path: gh CLI (gh api graphql) primary, bearer-token curl fallback\n    GitHub resolved-comment read path: gh CLI (gh api graphql) primary, bearer-token curl fallback\n  [tribal 0.61, refs-verified=n/a (0 refs)] Dashboard canvas scripts share graph-shared.js helpers\n    Dashboard canvas scripts share graph-shared.js helpers\n  [archived 0.285, refs-verified=0.0] ARCHIFY_CHROME must point at Playwright's Chrome for Testing binary [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    ARCHIFY_CHROME must point at Playwright's Chrome for Testing binary\n  [tribal 0.621, refs-verified=n/a (0 refs)] Shared-memory-bus TC chains: bare wait returns 0 so search runs before the share verb exists\n    Shared-memory-bus TC chains: bare wait returns 0 so search runs before the share verb exists\n  [archived 0.275, refs-verified=0.0, stance=preferred] Bench env snapshot/restore lives in cairn/bench/_env.py [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    Bench env snapshot/restore lives in cairn/bench/_env.py\n  [tribal 0.621, refs-verified=n/a (0 refs)] Rust binary distribution rides the shared v-tag release, not cargo-dist\n    Rust binary distribution rides the shared v-tag release, not cargo-dist\n  [tribal 0.621, refs-verified=n/a (0 refs)] rust-migration spec: phase-gated Python\u2192Rust strangler plan with frozen .kg + MCP contracts\n    rust-migration spec: phase-gated Python\u2192Rust strangler plan with frozen .kg + MCP contracts\n  [tribal 0.61, refs-verified=0.333] Slim checked-in .kg fixtures make Rust parity tests hermetic [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    Slim checked-in .kg fixtures make Rust parity tests hermetic\n  [drafts 0.492, refs-verified=0.667] find_symbol_paths fork tie-break flips across rebuilds [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    find_symbol_paths fork tie-break flips across rebuilds\n  [tribal 0.6, refs-verified=n/a (0 refs)] Baseline p95 latency is dominated by the per-call freshness walk, not queries\n    Baseline p95 latency is dominated by the per-call freshness walk, not queries\n  [tribal 0.61, refs-verified=n/a (0 refs)] Canonical .kg dump normalization policy for Rust-migration parity\n    Canonical .kg dump normalization policy for Rust-migration parity\n  [tribal 0.502, refs-verified=0.0] gh subprocess boundary: one allowlisted wrapper in graph/prs.py [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    gh subprocess boundary: one allowlisted wrapper in graph/prs.py\n  [tribal 0.578, refs-verified=n/a (0 refs)] Shared share-recall merge lives in memory.store.shared_recall_entries\n    Shared share-recall merge lives in memory.store.shared_recall_entries\n  [archived 0.632, refs-verified=n/a (0 refs)] Dashboard nav additions must sweep the palette count pins in test_dashboard_app.py\n    Dashboard nav additions must sweep the palette count pins in test_dashboard_app.py\n  [tribal 0.61, refs-verified=n/a (0 refs)] worked-bundle scrub templates tempdir paths; repo anchor prefers cwd\n    worked-bundle scrub templates tempdir paths; repo anchor prefers cwd\n  [archived 0.632, refs-verified=n/a (0 refs)] PR #148 merged 2e7a7e7 after two CI fix rounds\n    PR #148 merged 2e7a7e7 after two CI fix rounds\n  [tribal 0.621, refs-verified=n/a (0 refs)] Files-table lookups must be scoped by repo_id (path is only unique per repo)\n    Files-table lookups must be scoped by repo_id (path is only unique per repo)\n  [tribal 0.61, refs-verified=n/a (0 refs)] Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n    Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n  [tribal 0.632, refs-verified=n/a (0 refs)] Fresh-store ranged update dropped the first indexed file on a missing repos row\n    Fresh-store ranged update dropped the first indexed file on a missing repos row\n  [tribal 0.61, refs-verified=n/a (0 refs)] rust dashboard embeds assets and renders via minijinja\n    rust dashboard embeds assets and renders via minijinja\n(535 of 535 memories not yet embedded -- run `cairn memory embed` for semantic recall)"
+      }
+    ],
+    "structuredContent": {
+      "result": "20 memories matching 'h':\n  [archived 0.632, refs-verified=n/a (0 refs)] GitHub resolved-comment read path: gh CLI (gh api graphql) primary, bearer-token curl fallback\n    GitHub resolved-comment read path: gh CLI (gh api graphql) primary, bearer-token curl fallback\n  [tribal 0.61, refs-verified=n/a (0 refs)] Dashboard canvas scripts share graph-shared.js helpers\n    Dashboard canvas scripts share graph-shared.js helpers\n  [archived 0.285, refs-verified=0.0] ARCHIFY_CHROME must point at Playwright's Chrome for Testing binary [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    ARCHIFY_CHROME must point at Playwright's Chrome for Testing binary\n  [tribal 0.621, refs-verified=n/a (0 refs)] Shared-memory-bus TC chains: bare wait returns 0 so search runs before the share verb exists\n    Shared-memory-bus TC chains: bare wait returns 0 so search runs before the share verb exists\n  [archived 0.275, refs-verified=0.0, stance=preferred] Bench env snapshot/restore lives in cairn/bench/_env.py [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    Bench env snapshot/restore lives in cairn/bench/_env.py\n  [tribal 0.621, refs-verified=n/a (0 refs)] Rust binary distribution rides the shared v-tag release, not cargo-dist\n    Rust binary distribution rides the shared v-tag release, not cargo-dist\n  [tribal 0.621, refs-verified=n/a (0 refs)] rust-migration spec: phase-gated Python\u2192Rust strangler plan with frozen .kg + MCP contracts\n    rust-migration spec: phase-gated Python\u2192Rust strangler plan with frozen .kg + MCP contracts\n  [tribal 0.61, refs-verified=0.333] Slim checked-in .kg fixtures make Rust parity tests hermetic [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    Slim checked-in .kg fixtures make Rust parity tests hermetic\n  [drafts 0.492, refs-verified=0.667] find_symbol_paths fork tie-break flips across rebuilds [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    find_symbol_paths fork tie-break flips across rebuilds\n  [tribal 0.6, refs-verified=n/a (0 refs)] Baseline p95 latency is dominated by the per-call freshness walk, not queries\n    Baseline p95 latency is dominated by the per-call freshness walk, not queries\n  [tribal 0.61, refs-verified=n/a (0 refs)] Canonical .kg dump normalization policy for Rust-migration parity\n    Canonical .kg dump normalization policy for Rust-migration parity\n  [tribal 0.502, refs-verified=0.0] gh subprocess boundary: one allowlisted wrapper in graph/prs.py [STALE]\n    ^ a cited file/symbol no longer exists in the graph -- verify before relying on this memory\n    gh subprocess boundary: one allowlisted wrapper in graph/prs.py\n  [tribal 0.578, refs-verified=n/a (0 refs)] Shared share-recall merge lives in memory.store.shared_recall_entries\n    Shared share-recall merge lives in memory.store.shared_recall_entries\n  [archived 0.632, refs-verified=n/a (0 refs)] Dashboard nav additions must sweep the palette count pins in test_dashboard_app.py\n    Dashboard nav additions must sweep the palette count pins in test_dashboard_app.py\n  [tribal 0.61, refs-verified=n/a (0 refs)] worked-bundle scrub templates tempdir paths; repo anchor prefers cwd\n    worked-bundle scrub templates tempdir paths; repo anchor prefers cwd\n  [archived 0.632, refs-verified=n/a (0 refs)] PR #148 merged 2e7a7e7 after two CI fix rounds\n    PR #148 merged 2e7a7e7 after two CI fix rounds\n  [tribal 0.621, refs-verified=n/a (0 refs)] Files-table lookups must be scoped by repo_id (path is only unique per repo)\n    Files-table lookups must be scoped by repo_id (path is only unique per repo)\n  [tribal 0.61, refs-verified=n/a (0 refs)] Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n    Rust daemon healthz payload is a Python-parity superset with uptime and impl fields\n  [tribal 0.632, refs-verified=n/a (0 refs)] Fresh-store ranged update dropped the first indexed file on a missing repos row\n    Fresh-store ranged update dropped the first indexed file on a missing repos row\n  [tribal 0.61, refs-verified=n/a (0 refs)] rust dashboard embeds assets and renders via minijinja\n    rust dashboard embeds assets and renders via minijinja\n(535 of 535 memories not yet embedded -- run `cairn memory embed` for semantic recall)"
+    }
+  },
+  "replay_store": "rust/golden/stores/self/store.kg",
+  "replay_workspace": "rust/golden/stores/self/corpus"
+}

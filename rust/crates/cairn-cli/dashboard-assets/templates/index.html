@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% import "_links.html" as links with context %}
+{% import "_icons.html" as icons %}
+{% block title %}Cairn Dashboard{% endblock %}
+{% block view_title %}Overview{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Cairn Dashboard</h1>
+  <p class="muted">
+    Read-only view over the graph DB:
+    <code>{{ db_path }}</code>
+  </p>
+  {#- A selected store rides every landing-card link (links.url);
+      empty selection keeps the bare hrefs, byte-identical. The glyphs
+      come from the same _icons macro the sidebar renders. -#}
+  <div class="launcher-grid">
+    <a class="launcher-card" href="{{ links.url('/workspaces') }}">
+      {{ icons.svg('workspaces', 18) }}
+      <span class="launcher-title">Workspaces</span>
+      <span class="launcher-blurb">Local stores, one click away</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/projects') }}">
+      {{ icons.svg('projects', 18) }}
+      <span class="launcher-title">Projects &amp; index status</span>
+      <span class="launcher-blurb">Indexed repos and embeddings</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/graph') }}">
+      {{ icons.svg('graph', 18) }}
+      <span class="launcher-title">Graph explorer</span>
+      <span class="launcher-blurb">Interactive symbol graph</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/history') }}">
+      {{ icons.svg('history', 18) }}
+      <span class="launcher-title">Tool-call history</span>
+      <span class="launcher-blurb">Every recorded invocation</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/tokens') }}">
+      {{ icons.svg('tokens', 18) }}
+      <span class="launcher-title">Token usage</span>
+      <span class="launcher-blurb">Context cost per tool</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/chains') }}">
+      {{ icons.svg('chains', 18) }}
+      <span class="launcher-title">Session chains</span>
+      <span class="launcher-blurb">Calls grouped per session</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/health') }}">
+      {{ icons.svg('health', 18) }}
+      <span class="launcher-title">Health</span>
+      <span class="launcher-blurb">Same checks as cairn doctor</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/knowledge') }}">
+      {{ icons.svg('knowledge', 18) }}
+      <span class="launcher-title">Knowledge</span>
+      <span class="launcher-blurb">Ingested docs and relationships</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/memory') }}">
+      {{ icons.svg('memory', 18) }}
+      <span class="launcher-title">Memory</span>
+      <span class="launcher-blurb">Recent tribal knowledge</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/wiki') }}">
+      {{ icons.svg('wiki', 18) }}
+      <span class="launcher-title">Wiki</span>
+      <span class="launcher-blurb">Generated project pages</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/tasks') }}">
+      {{ icons.svg('tasks', 18) }}
+      <span class="launcher-title">Task queue</span>
+      <span class="launcher-blurb">LLM synthesis jobs</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/embeddings') }}">
+      {{ icons.svg('embeddings', 18) }}
+      <span class="launcher-title">Embeddings</span>
+      <span class="launcher-blurb">Backend, stamp, per-corpus state</span>
+    </a>
+    <a class="launcher-card" href="{{ links.url('/settings') }}">
+      {{ icons.svg('settings', 18) }}
+      <span class="launcher-title">Settings</span>
+      <span class="launcher-blurb">Embedding config + parity check</span>
+    </a>
+  </div>
+</section>
+{% endblock %}

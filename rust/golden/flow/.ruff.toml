@@ -1,0 +1,7 @@
+# Golden fixture corpus: captured input data, not product code.
+extend-exclude = ["corpus"]
+force-exclude = true
+
+[lint]
+select = ["F"]
+per-file-ignores = { "**/corpus/**" = ["ALL"] }

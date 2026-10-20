@@ -1,0 +1,41 @@
+[package]
+name = "cairn-cli"
+description = "The `cairn` binary."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+cairn-build = { path = "../cairn-build" }
+clap = { version = "=4.6.7", features = ["derive"] }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "=0.10.9"
+yaml-rust2 = { version = "=0.13.0", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query", "form", "json"] }
+minijinja = { version = "=3.0.1", features = ["serde", "json", "urlencode", "preserve_order"] }
+cairn-daemon = { path = "../cairn-daemon" }
+cairn-parse = { path = "../cairn-parse" }
+cairn-query = { path = "../cairn-query" }
+cairn-store = { path = "../cairn-store" }
+
+[[bin]]
+name = "cairn"
+path = "src/main.rs"
+
+# cargo-binstall: install prebuilt cairn binaries from GitHub Releases
+# (assets published by .github/workflows/release-rust.yml) instead of compiling.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/cairn-cli-{ version }-{ target }.tar.gz"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true

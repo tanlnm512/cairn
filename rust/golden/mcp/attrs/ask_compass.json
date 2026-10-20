@@ -1,0 +1,69 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "ask_compass",
+  "arguments": {
+    "query": "how does the build resolve call edges"
+  },
+  "replay": {
+    "args": {
+      "query": "how does the build resolve call edges"
+    },
+    "seq": 14
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 50,
+      "symbols": 1722,
+      "edges": 6482
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:48.123690+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": true,
+    "mask_list_lines": true
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  Resolver parity oracle replays captured signals over a resolution-pinned python build\n  callees: [21 members]\n  callers: [15 members]\n  neighbor_count: 36\n  seed_count: 11\n  seeds: [11 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
+      }
+    ],
+    "structuredContent": {
+      "result": "\n\n  Knowledge index rebuilds are idempotent and never guess pointers\n  PHP parser edges use bare namespace tails\n  Resolver parity oracle replays captured signals over a resolution-pinned python build\n  callees: [21 members]\n  callers: [15 members]\n  neighbor_count: 36\n  seed_count: 11\n  seeds: [11 members]\n(Showing fallback results \u2014 targeted layer had no coverage.)\nIntent: feature_understanding (routed to L2; queried: graph, memory)\n[graph]\n[memory]"
+    }
+  },
+  "replay_store": "rust/golden/stores/attrs/store.kg",
+  "replay_workspace": "rust/golden/stores/attrs/corpus"
+}

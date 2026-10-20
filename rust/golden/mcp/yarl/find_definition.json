@@ -1,0 +1,71 @@
+{
+  "schema": "cairn-rust-golden-mcp/1",
+  "tool": "find_definition",
+  "arguments": {
+    "name": "A",
+    "limit": 5
+  },
+  "replay": {
+    "args": {
+      "name": "A",
+      "limit": 5
+    },
+    "seq": 0
+  },
+  "capture": {
+    "impl": "python",
+    "harness": "scripts/rust_migration/parity.py",
+    "corpus": {
+      "workspace": "<WORKSPACE>",
+      "identity_method": "git_commit",
+      "git_commit": null,
+      "git_dirty_entries": 0
+    },
+    "store": {
+      "repos": 1,
+      "files": 24,
+      "symbols": 1090,
+      "edges": 4183
+    },
+    "env_pins": {
+      "CAIRN_EMBED_BACKEND": "hash",
+      "CAIRN_RERANK": "0",
+      "CAIRN_WATCH": "0"
+    },
+    "captured_at": "2026-10-19T15:28:38.393631+00:00"
+  },
+  "normalization": {
+    "rules": [
+      "workspace_resolved",
+      "home_resolved",
+      "store_home_resolved",
+      "workspace",
+      "home",
+      "store_home",
+      "iso_ts",
+      "epoch",
+      "date",
+      "duration",
+      "age",
+      "id12",
+      "id6",
+      "float"
+    ],
+    "sort_lines": true,
+    "mask_list_lines": false
+  },
+  "response": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "tests/test_cached_property.py:6  class A  (corpus)"
+      }
+    ],
+    "structuredContent": {
+      "result": "tests/test_cached_property.py:6  class A  (corpus)"
+    }
+  },
+  "replay_store": "rust/golden/stores/yarl/store.kg",
+  "replay_workspace": "rust/golden/stores/yarl/corpus"
+}

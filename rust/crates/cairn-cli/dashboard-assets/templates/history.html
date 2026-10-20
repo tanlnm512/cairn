@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% import "_filters.html" as forms with context %}
+{% block title %}History — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  {#- The filter form is an htmx trigger, not a page reload: typing
+      (input changed delay:300ms) hx-gets the route and morph-swaps the
+      results region below. It must stay OUTSIDE #refresh-region so the
+      region's swaps — filter fragments and the 5s poll alike — can never
+      destroy the fields being typed into (the #refresh-region contract:
+      in-progress filter input survives every swap). The Apply submit
+      stays as the no-htmx fallback and the URL-carrying apply. -#}
+  {{ forms.form_open('/history', {'window': window}, hx={'target': '#refresh-region', 'trigger': 'input changed delay:300ms'}, form_id='history-filters') }}
+  {{ forms.field('text', 'tool', 'Tool', tool) }}
+  {{ forms.field('text', 'session', 'Session', session) }}
+  {{ forms.field('text', 'source', 'Source', source) }}
+  {{ forms.form_close() }}
+  {% include "history_region.html" %}
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', path='/app.js') }}?v={{ asset_version }}"></script>{% endblock %}

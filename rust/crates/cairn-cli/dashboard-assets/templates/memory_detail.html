@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% import "_links.html" as links with context %}
+{% block title %}{{ memory.title }} — Cairn Dashboard{% endblock %}
+{% block content %}
+<section class="panel">
+  <nav class="wiki-breadcrumb" aria-label="Breadcrumb">
+    <a href="{{ links.url('/memory') }}">Memory</a> /
+    <span>{{ memory.title }}</span>
+  </nav>
+  <h1>{{ memory.title }}</h1>
+  <p>
+    <span class="badge badge-{{ memory.type }}">{{ memory.type }}</span>
+    <span class="badge badge-{{ memory.status }}">{{ memory.status }}</span>
+    {% if memory.is_latest %}<span class="badge badge-ok">latest</span>{% else %}<span class="badge badge-warn">superseded</span>{% endif %}
+    {% for tag in memory.tags %}<code>{{ tag }}</code> {% endfor %}
+  </p>
+  {% if memory.description and memory.description != memory.title %}
+  <p class="muted">{{ memory.description }}</p>
+  {% endif %}
+  <dl class="prov-list">
+    <div class="prov-item">
+      <dt>ID</dt>
+      <dd><code title="{{ memory.id }}">{{ memory.id }}</code></dd>
+    </div>
+    <div class="prov-item">
+      <dt>Tier</dt>
+      <dd>{{ memory.tier or "—" }}</dd>
+    </div>
+    <div class="prov-item">
+      <dt>Score</dt>
+      <dd>{{ memory.score if memory.score is not none else "—" }}</dd>
+    </div>
+    <div class="prov-item">
+      <dt>Recorded</dt>
+      <dd class="ts">{{ memory.recorded or "—" }}</dd>
+    </div>
+    {% if memory.valid_from %}
+    <div class="prov-item">
+      <dt>Valid from</dt>
+      <dd class="ts">{{ memory.valid_from }}</dd>
+    </div>
+    {% endif %}
+    {% if memory.valid_until %}
+    <div class="prov-item">
+      <dt>Valid until</dt>
+      <dd class="ts">{{ memory.valid_until }}</dd>
+    </div>
+    {% endif %}
+    {% if memory.session_origin %}
+    <div class="prov-item">
+      <dt>Session origin</dt>
+      <dd><code>{{ memory.session_origin }}</code></dd>
+    </div>
+    {% endif %}
+  </dl>
+  <div class="wiki-body">
+    {{ memory.html | safe }}
+  </div>
+
+  {#- Version history: the supersedes declaration and its back-pointer,
+      each neighbor linking its own detail page. -#}
+  {% if memory.supersedes or memory.superseded_by %}
+  <section class="doc-subpanel" aria-labelledby="mem-version-heading">
+    <h2 id="mem-version-heading">Version history</h2>
+    {% if memory.supersedes %}
+    <h3 class="rel-relation">Supersedes</h3>
+    <ul class="rel-list">
+      {% for m in memory.supersedes %}
+      <li>
+        <a href="{{ links.url('/memory/' ~ m.tier ~ '/' ~ m.slug) }}">{{ m.title }}</a>
+        <span class="chain-id">{{ m.id }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if memory.superseded_by %}
+    <h3 class="rel-relation">Superseded by</h3>
+    <ul class="rel-list">
+      <li>
+        <a href="{{ links.url('/memory/' ~ memory.superseded_by.tier ~ '/' ~ memory.superseded_by.slug) }}">{{ memory.superseded_by.title }}</a>
+        <span class="chain-id">{{ memory.superseded_by.id }}</span>
+      </li>
+    </ul>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {#- Promotion history: the lifecycle audit trail in recorded order. -#}
+  {% if memory.promotion_history %}
+  <section class="doc-subpanel" aria-labelledby="mem-history-heading">
+    <h2 id="mem-history-heading">Promotion history</h2>
+    <ol class="supersede-chain">
+      {% for entry in memory.promotion_history %}
+      <li class="chain-member">
+        <span class="chain-relation">{{ entry.action }}</span>
+        <span class="chain-id">{{ entry.tier }}</span>
+        <span class="ts">{{ entry.date }}</span>
+        {% if entry.score is not none %}<span class="muted">score {{ entry.score }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+  {% endif %}
+
+  {#- Signals: the quality scores behind the tier. -#}
+  {% if memory.signals %}
+  <section class="doc-subpanel" aria-labelledby="mem-signals-heading">
+    <h2 id="mem-signals-heading">Signals</h2>
+    <dl class="prov-list">
+      {% for name, value in memory.signals.items() %}
+      <div class="prov-item">
+        <dt>{{ name | replace("_", " ") }}</dt>
+        <dd>{{ value }}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+  </section>
+  {% endif %}
+</section>
+{% endblock %}
