@@ -37,4 +37,4 @@ the archive entry above.
 - [grade-a-guardrails](grade-a-guardrails/spec.md) — done (delivered bb4268c, 2026-10-06)
 - [comment-sweep](archive/2026-10-09-comment-sweep/spec.md) — done (delivered 4fdc478, 2026-10-08)
 - [exact-edge-precision](exact-edge-precision/spec.md) — draft (created 2026-10-09; baseline measured, FR-005 ruling pending)
-- [rust-migration](rust-migration/spec.md) — draft (created 2026-10-18; phase-gated plan in plan.md — daemon, build path, CLI; frozen .kg + MCP contracts)
+- [rust-migration](rust-migration/spec.md) — in review (created 2026-10-18; phases 0-3 executed on `feat/rust-migration` as PR #183 with the v0.23.0 tag staged; dual-channel distribution ruling in plan.md §7; ledger in PROGRESS.md)

@@ -46,33 +46,28 @@ deterministic critic, and the LLM never sits in the query path.
 
 **1. Install the CLI**
 
-The `cairn` binary is the install path:
-
-```bash
-brew install tanlnm512/cairn/cairn                 # Homebrew tap
-cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli
-```
-
-or grab a tarball for your platform from the
-[releases page](https://github.com/tanlnm512/cairn/releases)
-(aarch64 / x86_64 on macOS and Linux, musl-static on Linux), or build from
-source: `cargo install --path rust/crates/cairn-cli` in a clone. Release
-tags populate the tarballs, the Homebrew formula, and the binstall metadata.
-
-The PyPI package is deprecated in favor of the `cairn` binary: it receives
-security fixes only, for the next two minor releases. Through that window it
-stays a full-surface install:
+Two install channels, both supported:
 
 ```bash
 pip install cairn-intel   # or: uv tool install / pipx install
+brew install tanlnm512/cairn/cairn                 # Python-free binary channel
+cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli
 ```
 
-The PyPI CLI carries every command; the binary carries the core graph,
-daemon, and agent-wiring surface and exits non-zero with a named diagnostic
-for anything not yet ported. Python-side extras (local embeddings, PDF/DOCX
-ingest) are PyPI-only. Already on PyPI? `cairn upgrade` updates in place
-(detects `uv tool` / `pipx` / `pip`; `--check` previews without changing
-anything).
+The PyPI package is the full-surface install: every command plus the
+Python-side extras (local embeddings, PDF/DOCX ingest). Future releases ship
+the rust engine inside the wheel (`specs/rust-migration/plan.md` §7), so
+pip/pipx/uv installs transition in place; `cairn upgrade` updates in place
+today (detects `uv tool` / `pipx` / `pip`; `--check` previews without
+changing anything).
+
+The standalone binary is the Python-free alternative: release tarballs from
+the [releases page](https://github.com/tanlnm512/cairn/releases)
+(aarch64 / x86_64 on macOS and Linux, musl-static on Linux) or
+`cargo install --path rust/crates/cairn-cli` from a clone. Release tags
+populate the tarballs, the Homebrew formula, and the binstall metadata. The
+binary carries the core graph, daemon, and agent-wiring surface and exits
+non-zero with a named diagnostic for anything not yet ported.
 
 **2. Wire up your agent(s)**
 

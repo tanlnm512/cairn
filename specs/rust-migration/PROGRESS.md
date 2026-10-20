@@ -109,3 +109,12 @@ Re-verification gate verdicts:
 | V2 | PASS (round 0) | test=0 clippy=0 fmt=0 |
 | V3 | PASS (round 1) | round 0: tracked=16 flowTest=0 cli=1 bytes=56926208; round 1: tracked=16 flowTest=0 cli=0 bytes=56926208 (bytes = combined pinned search-store fixtures) |
 | G2 re-run | PASS | `g2_check.sh` full run exit 0 — python-built and rust-built stores dump-equal |
+
+## Release prep
+
+- Version bumped 0.22.0 -> 0.23.0 (changelog finalized; rust workspace tracks
+  it; tag `v0.23.0` staged on the branch tip, to be pushed after the PR
+  merges per the release checklist).
+- Ship vehicle: PR #183 on `feat/rust-migration`.
+- Docs aligned with the dual-channel ruling (PyPI wheels + Python-free
+  binaries; no deprecation window); `rust/README.md` added.
