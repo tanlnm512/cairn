@@ -87,6 +87,7 @@ lints in cairn-cli test code are fixed in 07cb16e).
 7. **Provisional pins to finalize** — D-007 (notify), D-008 (prost), D-009 (minijinja), D-010 (yaml-rust2 batch) are marked provisional in `decisions.md`.
 8. **Corpus parity residual** — fresh yarl/attrs builds intermittently swap boundary rows in `search_symbols`/`find_definition` cap slices (cross-build bm25 tie volatility, owned by the parity runner's sort-lines normalization ruling; replay over the pinned `rust/golden/stores/` bytes sidesteps it).
 9. **Archive `plan.md`** — the 3e archive step was deferred while workstreams still read the plan.
+10. **Python-engine removal** — the surface-gap porting (item 1) and the eventual removal of the Python engine stay open; the wheel wrapping itself landed (see Wheel wrapping).
 
 ## Re-verification
 
@@ -118,3 +119,24 @@ Re-verification gate verdicts:
 - Ship vehicle: PR #183 on `feat/rust-migration`.
 - Docs aligned with the dual-channel ruling (PyPI wheels + Python-free
   binaries; no deprecation window); `rust/README.md` added.
+
+## Wheel wrapping
+
+Campaign binding the rust engine into the PyPI wheels per D-011 (plan §7 3c;
+`decisions.md` "D-011: wheel binding and binary discovery"). Landed on
+branch `feat/rust-wheel`.
+
+| Workstream | State | Summary | Commit |
+|---|---|---|---|
+| D-011 binding decider | done | Decision recorded in `decisions.md`: the PyPI wheel binds the engine as a bundled prebuilt binary exec'd through the python console-script shim (uv pattern; PyO3 rejected), riding the existing per-platform cp310-abi3 wheels rather than a separate binary package; discovery contract CAIRN_RUST_BIN env > bundled package-relative binary > PATH for `rust_bin()`'s rust-when-present default; build-time-only injection — the repo never commits the binary | 7cae0ec |
+| W1 wheel packager | done | `paths.BUNDLED_BIN_DIR` + `bundled_binary()` (src/cairn/paths.py:40,108); `rust_bin()` reordered to CAIRN_RUST_BIN > bundled package binary > PATH/~/.local/bin (src/cairn/mcp_server/lifecycle.py:120-131); package-data `cairn = ["_bin/*"]` in pyproject.toml excluded from the sdist via MANIFEST.in and gitignored in the tree; hermetic discovery tests (tests/test_wheel_binary_discovery.py, 4 passed) and `scripts/rust_migration/wheel_smoke.sh`; python fallback and CAIRN_DAEMON_IMPL precedence untouched; `.github/workflows` and `rust/` untouched | b0e1bd2 |
+| W2 release-pipeline extender | done | `release.yml` build job so published wheels carry the engine binary: the macOS leg natively builds aarch64-apple-darwin and copies it to `src/cairn/_bin/cairn` before "Build wheels"; the Linux leg builds x86_64/aarch64 musl-static via cross (mirroring `release-rust.yml`, incl. the static-link assertion) after the sdist step and copies the matching binary inside each cibuildwheel arch container via CIBW_BEFORE_BUILD_LINUX; the Windows leg gets no rust step (D-011: Windows wheels bundle nothing); triggers, matrix, concurrency, publish-pypi and github-release byte-unchanged | d1e0908 |
+| wheel-wave | done | W1 + W2 landed as two conventional commits, pre-commit hooks green on both; working tree clean; nothing pushed or tagged | b0e1bd2, d1e0908 |
+| gate-repair T r1 | done | TempStore scratch dirs in `flow_golden.rs` were named from wall-clock nanos, and macOS returns duplicate nanos to parallel test threads, so two tests shared one temp dir — concurrent `fs::copy` tore the copied sqlite store ("no such table: symbols") and one Drop deleted the other test's dir (SQLITE_CANTOPEN); now named from a process-global AtomicU64 counter (+pid), which cannot collide in-process | aa76756 |
+
+Gate verdicts:
+
+| Gate | Verdict | Recorded check outcomes |
+|---|---|---|
+| W — wheel smoke | PASS (round 0) | round 0: `scripts/rust_migration/wheel_smoke.sh` exit 0 end-to-end — all three installed-product probes green (`cairn --version`; `config --json` C-4 keys; `daemon_impl=rust` resolving to the wheel's `site-packages/_bin/cairn`, which executes) |
+| T — workspace tests | PASS (round 1) | round 0: `cargo test` exit 101, `pytest` exit 0 (flow_golden temp-dir collision, fixed by gate-repair T r1); round 1: `cargo test` exit 0, `pytest` exit 0 |
