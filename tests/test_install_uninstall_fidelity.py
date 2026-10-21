@@ -1486,9 +1486,9 @@ class TestAgyProbePath:
     def test_check_installed_probes_the_installer_config_path(
         self, fake_home, tmp_path, monkeypatch
     ):
-        """The agy probe must read the path the installer writes (XDG-aware),
-        not a hardcoded ~/.gemini — otherwise a Linux/XDG install reads as
-        not installed."""
+        """The agy probe must read the paths the installer writes: the workspace
+        .agents/mcp_config.json plus the documented ~/.gemini/config global
+        (XDG_CONFIG_HOME is deliberately not honored on any platform)."""
         monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.setenv("XDG_CONFIG_HOME", str(fake_home / "xdg"))
         ws = tmp_path / "ws"
@@ -1496,6 +1496,7 @@ class TestAgyProbePath:
 
         install(str(ws), clients=["agy"])
 
+        assert (ws / ".agents" / "mcp_config.json").exists()
         assert check_installed(str(ws))["agy"] is True
 
 

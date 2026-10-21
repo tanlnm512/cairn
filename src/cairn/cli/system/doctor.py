@@ -677,6 +677,7 @@ _REG_WS_FILES: dict[str, str] = {
     "opencode": "opencode.json",
     "kilo": "kilo.json",
     "omp": ".omp/mcp.json",
+    "agy": ".agents/mcp_config.json",
 }
 _REG_HOME_FILES: dict[str, tuple[str, ...]] = {
     "claude": ("~/.claude.json",),

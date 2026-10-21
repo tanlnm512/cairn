@@ -14,35 +14,31 @@ def agy_config_path() -> Path:
     if sys.platform.startswith("win"):
         base = Path(os.environ.get("APPDATA", str(Path.home())))
         return base / "gemini" / "config" / "mcp_config.json"
-    if sys.platform == "darwin":
-        return Path.home() / ".gemini" / "config" / "mcp_config.json"
-    # Linux / other Unix: respect XDG_CONFIG_HOME, default to ~/.config.
-    xdg = os.environ.get("XDG_CONFIG_HOME")
-    base = Path(xdg) if xdg else Path.home() / ".config"
-    return base / "gemini" / "config" / "mcp_config.json"
+    return Path.home() / ".gemini" / "config" / "mcp_config.json"
+
+
+def agy_workspace_config_path(workspace: str) -> Path:
+    """Return agy's workspace MCP config path (.agents/mcp_config.json)."""
+    return Path(workspace) / ".agents" / "mcp_config.json"
 
 
 def agy_mcp_config_json() -> dict:
-    """Return an AGY MCP entry (serverUrl surface) pointing at the daemon URL."""
-    return {"mcpServers": {"cairn": _url_entry("serverUrl")}}
+    """Return an AGY MCP entry (serverUrl surface; no ``type`` field)."""
+    return {"mcpServers": {"cairn": _url_entry("serverUrl", include_type=False)}}
 
 
 def install_agy(workspace: str, force: bool, dry_run: bool,
                 scope: str = "workspace") -> InstallResult:
-    """Wire cairn into agy (global mcp_config.json)."""
+    """Wire cairn into agy (workspace or global mcp_config.json)."""
     res = InstallResult("agy")
-    cfg = agy_config_path()
+    cfg = agy_config_path() if scope == "global" else agy_workspace_config_path(workspace)
     _merge_json_file(cfg, agy_mcp_config_json(), force, res, dry_run=dry_run)
-    res.notes.append(f"Global MCP config: {cfg}")
-    if scope == "workspace":
-        res.notes.append(
-            "agy reads only a global MCP config; the global path was written "
-            "even though workspace scope was requested."
-        )
+    res.notes.append(f"MCP config: {cfg}")
     res.notes.append("Start or restart `agy` CLI to load the server.")
     return res
 
 
 def uninstall(ws: Path, res: InstallResult, scope: str = "workspace") -> None:
-    """Remove cairn from agy's single global MCP config."""
+    """Remove cairn from agy's workspace and global MCP configs."""
+    _strip_mcp(agy_workspace_config_path(str(ws)), res)
     _strip_mcp(agy_config_path(), res)

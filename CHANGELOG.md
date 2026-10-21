@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Flaky `flow_golden` rust test: TempStore scratch dirs named from wall-clock nanos collided under macOS parallel test threads; now named from a process-global counter.
+- `install-agents` client-schema conformance, verified against each agent's official docs: agy (Antigravity) workspace installs now write the documented `.agents/mcp_config.json` instead of ignoring workspace scope, its global path is `~/.gemini/config/` on every Unix (no XDG deviation), and its entry drops the undocumented `type` field; Cursor entries drop the `type` field (its remote schema documents `url`+`headers` only); the install probe and `cairn doctor` audit both new paths.
 
 ## [0.23.0] - 2026-10-20
 ### Added

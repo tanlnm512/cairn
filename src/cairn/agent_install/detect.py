@@ -204,9 +204,13 @@ def check_installed(workspace: str) -> dict[str, bool]:
         or _json_has_cairn(home / ".zcode" / "cli" / "config.json")
     )
 
-    # agy: the installer's own config path (honors APPDATA/XDG_CONFIG_HOME)
+    # agy: workspace .agents/mcp_config.json or the installer's global config path
     from .clients.agy import agy_config_path
-    result["agy"] = _json_has_cairn(agy_config_path())
+
+    result["agy"] = (
+        _json_has_cairn(ws / ".agents" / "mcp_config.json")
+        or _json_has_cairn(agy_config_path())
+    )
 
     # opencode: opencode.json has cairn MCP entry
     result["opencode"] = (
