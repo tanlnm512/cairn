@@ -102,12 +102,18 @@ def test_agy_generator_is_url_plus_key(pinned_api_key):
     assert agy_mcp_config_json() == {
         "mcpServers": {
             "cairn": {
-                "type": "http",
                 "serverUrl": DAEMON_URL,
                 "headers": _bearer(pinned_api_key),
             }
         }
     }
+
+
+def test_cursor_entry_omits_the_type_field(pinned_api_key):
+    from cairn.agent_install._common import mcp_config_json
+
+    entry = mcp_config_json(include_type=False)["mcpServers"]["cairn"]
+    assert entry == {"url": DAEMON_URL, "headers": _bearer(pinned_api_key)}
 
 
 def test_opencode_and_kilo_generators_are_url_plus_key(pinned_api_key):
@@ -144,13 +150,16 @@ def test_install_all_writes_url_key_for_every_supported_client(
     shared = {"type": "http", "url": DAEMON_URL, "headers": _bearer(pinned_api_key)}
     for client, path in {
         "claude": ws / ".mcp.json",
-        "cursor": ws / ".cursor" / "mcp.json",
         "droid": ws / ".factory" / "mcp.json",
         "omp": ws / ".omp" / "mcp.json",
     }.items():
         assert path.exists(), f"{client}: install must write {path}"
         entry = json.loads(path.read_text(encoding="utf-8"))["mcpServers"]["cairn"]
         assert entry == shared, f"{client}: URL+key entry expected"
+
+    # Cursor's remote schema has no `type` field.
+    cursor_entry = json.loads((ws / ".cursor" / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]["cairn"]
+    assert cursor_entry == {"url": DAEMON_URL, "headers": _bearer(pinned_api_key)}
 
     zc = json.loads((ws / ".zcode" / "config.json").read_text(encoding="utf-8"))
     assert zc["mcp"]["servers"]["cairn"] == shared
@@ -168,11 +177,10 @@ def test_install_all_writes_url_key_for_every_supported_client(
         entry = json.loads(path.read_text(encoding="utf-8"))["mcp"]["cairn"]
         assert entry == remote, f"{client}: remote URL+key entry expected"
 
-    from cairn.agent_install.clients.agy import agy_config_path
+    from cairn.agent_install.clients.agy import agy_workspace_config_path
 
-    agy = json.loads(agy_config_path().read_text(encoding="utf-8"))
+    agy = json.loads(agy_workspace_config_path(str(ws)).read_text(encoding="utf-8"))
     assert agy["mcpServers"]["cairn"] == {
-        "type": "http",
         "serverUrl": DAEMON_URL,
         "headers": _bearer(pinned_api_key),
     }
@@ -399,11 +407,11 @@ def test_opencode_reinstall_note_reports_no_change(tmp_path, pinned_api_key):
     assert any("already registered" in n for n in res.notes)
 
 
-def test_agy_workspace_scope_notes_global_only_surface(
+def test_agy_workspace_scope_writes_the_workspace_config(
     tmp_path, monkeypatch, pinned_api_key
 ):
-    """agy reads only a global MCP config; a workspace-scope install must say
-    so instead of silently writing the global path."""
+    """Workspace-scope agy installs write .agents/mcp_config.json (the documented
+    workspace surface), not the global config."""
     home = tmp_path / "fake_home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", lambda *a, **k: home)
@@ -415,4 +423,8 @@ def test_agy_workspace_scope_notes_global_only_surface(
         if r.client == "agy"
     )
 
-    assert any("workspace scope" in n for n in res.notes)
+    from cairn.agent_install.clients.agy import agy_config_path
+
+    assert (ws / ".agents" / "mcp_config.json").exists()
+    assert not agy_config_path().exists()
+    assert any("MCP config" in n and ".agents" in n for n in res.notes)

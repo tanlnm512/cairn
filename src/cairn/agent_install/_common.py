@@ -85,9 +85,11 @@ def auth_headers() -> dict:
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 
-def _url_entry(url_key: str = "url") -> dict:
-    """Return the shared URL+key registration entry; ``url_key`` names the client's URL field."""
-    entry: dict = {"type": "http", url_key: daemon_mcp_url()}
+def _url_entry(url_key: str = "url", include_type: bool = True) -> dict:
+    """Return the shared URL+key entry; ``url_key`` names the URL field, ``include_type`` False for clients whose remote schema has no ``type`` field."""
+    entry: dict = {url_key: daemon_mcp_url()}
+    if include_type:
+        entry["type"] = "http"
     if headers := auth_headers():
         entry["headers"] = headers
     return entry
@@ -101,9 +103,9 @@ def opencode_format_mcp_config_json() -> dict:
     return {"mcp": {"cairn": entry}}
 
 
-def mcp_config_json() -> dict:
+def mcp_config_json(include_type: bool = True) -> dict:
     """Return the shared mcpServers config: a URL+key entry for the daemon."""
-    return {"mcpServers": {"cairn": _url_entry()}}
+    return {"mcpServers": {"cairn": _url_entry(include_type=include_type)}}
 
 
 def _python_for_hooks() -> str:
