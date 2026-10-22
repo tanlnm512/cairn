@@ -447,8 +447,8 @@ def test_memory_validity_apply_idempotent(fresh_db):
 
 
 def test_legacy_dataflow_pk_rebuilt_to_symbol_repo(fresh_db):
-    """A pre-existing bare-symbol-PK dataflow table is rebuilt in place to the
-    composite (symbol, repo) primary key, carrying existing rows over."""
+    """A legacy bare-symbol-PK dataflow table is rebuilt to the composite
+    (symbol, repo) primary key even when the migration marker is already set."""
     fresh_db.executescript(
         """
         DROP TABLE dataflow;
@@ -462,11 +462,6 @@ def test_legacy_dataflow_pk_rebuilt_to_symbol_repo(fresh_db):
         INSERT INTO dataflow (symbol, repo, within_repo, cross_repo, updated)
             VALUES ('Shared', 'ra', '["x"]', '[]', 0);
         """
-    )
-    # fresh_db's initial _apply_schema already recorded the migration; reset
-    # it so this legacy table gets the rebuild treatment.
-    fresh_db.execute(
-        "DELETE FROM schema_meta WHERE key = 'dataflow.pk_symbol_repo'"
     )
     fresh_db.commit()
 

@@ -602,14 +602,18 @@ DATAFLOW_PK_MIGRATION = "dataflow.pk_symbol_repo"
 
 
 def _migrate_dataflow_pk(conn: sqlite3.Connection) -> None:
-    """Rebuild dataflow once with the composite (symbol, repo) primary key."""
+    """Rebuild dataflow whenever its shape lacks the (symbol, repo) PK or analysis_errors."""
     applied = conn.execute(
         "SELECT 1 FROM schema_meta WHERE key = ?", (DATAFLOW_PK_MIGRATION,)
     ).fetchone() is not None
-    if applied:
+    # Shape decides, not the marker: a stamped store may still hold a legacy table.
+    columns = list(conn.execute("PRAGMA table_info(dataflow)"))
+    pk = {row[1] for row in columns if row[5]}
+    has_errors_column = any(row[1] == "analysis_errors" for row in columns)
+    rebuild = pk != {"symbol", "repo"} or not has_errors_column
+    if applied and not rebuild:
         return
-    pk = {row[1] for row in conn.execute("PRAGMA table_info(dataflow)") if row[5]}
-    if pk != {"symbol", "repo"}:
+    if rebuild:
         # ALTER cannot change a PK: rebuild and carry the rows over.
         conn.execute("DROP TABLE IF EXISTS dataflow_new")
         conn.execute("""
