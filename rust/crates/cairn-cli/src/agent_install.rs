@@ -3019,6 +3019,7 @@ mod tests {
 
     #[test]
     fn zcode_merge_moves_the_server_under_mcp_dot_servers() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let existing = json!({
             "mcpServers": {"cairn": {"url": "stale"}},
             "mcp": {"servers": {"user": {"command": "u"}}},
@@ -3072,6 +3073,7 @@ mod tests {
 
     #[test]
     fn merge_json_file_backs_up_malformed_configs_instead_of_clobbering() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("malformed");
         let path = dir.join("mcp.json");
         std::fs::write(&path, b"{not json").expect("malformed seed");
@@ -3112,6 +3114,7 @@ mod tests {
 
     #[test]
     fn install_aborts_the_client_when_the_config_backup_fails() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         use std::os::unix::fs::PermissionsExt as _;
         let dir = tmp_dir("backup-fails");
         let path = dir.join("opencode.json");
@@ -3128,6 +3131,7 @@ mod tests {
 
     #[test]
     fn merge_json_file_is_idempotent_without_force() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("idempotent");
         let path = dir.join("mcp.json");
         let mut res = InstallResult::new("claude");
@@ -3161,6 +3165,7 @@ mod tests {
 
     #[test]
     fn install_claude_workspace_writes_the_full_asset_set() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("claude-ws");
         let report = install(
             &dir,
@@ -3279,22 +3284,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    static HOME_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// Swap HOME to a fresh dir for the detection/installed-state assertions
-    /// (serialized: process env is global).
+    /// Run with HOME pinned to a fresh dir (serialized: process env is global).
     fn with_fresh_home<T>(tag: &str, run: impl FnOnce(&Path) -> T) -> (PathBuf, T) {
-        let _guard = HOME_GUARD.lock().expect("home guard");
-        let dir = tmp_dir(tag);
-        let real_home = std::env::var("HOME").ok();
-        // SAFETY: single env writer under the guard; restored before returning.
-        unsafe { std::env::set_var("HOME", &dir) };
-        let outcome = run(&dir);
-        match real_home {
-            Some(home) => unsafe { std::env::set_var("HOME", home) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-        (dir, outcome)
+        let env = crate::test_env::EnvScope::new(tag);
+        let outcome = run(env.dir());
+        (env.dir().to_path_buf(), outcome)
     }
 
     #[test]
@@ -3351,6 +3345,7 @@ mod tests {
 
     #[test]
     fn omp_installs_flat_mcp_and_agents() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("omp");
         let report = install(
             &dir,
@@ -3380,6 +3375,7 @@ mod tests {
 
     #[test]
     fn cross_tool_tree_installs_and_uninstalls_by_template_bytes() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("cross");
         let report = install(
             &dir,
@@ -3403,6 +3399,7 @@ mod tests {
 
     #[test]
     fn git_hooks_render_with_the_marker_and_home_pin() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("hooks");
         let repo = dir.join("repo");
         std::fs::create_dir_all(repo.join(".git/hooks")).expect("repo");
