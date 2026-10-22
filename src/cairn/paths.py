@@ -323,17 +323,6 @@ def _load_config() -> dict:
     return values
 
 
-def _read_config_object() -> dict | None:
-    """Full CONFIG_FILE object ({} when absent); None when unreadable or not a JSON object."""
-    try:
-        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
 def get_config_value(key: str, default=None):
     """Value for ``key`` from CONFIG_FILE, or ``default`` when unset.
 
@@ -353,16 +342,33 @@ def get_config_value(key: str, default=None):
 
 def set_config_values(values: dict) -> bool:
     """Merge ``values`` into CONFIG_FILE atomically; False (file untouched) on an unparseable file or OSError."""
+    return set_config_values_with_reason(values)[0]
+
+
+def set_config_values_with_reason(values: dict) -> tuple[bool, str]:
+    """Merge ``values`` into CONFIG_FILE atomically; (False, reason) leaves the file untouched."""
     try:
         CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        existing = _read_config_object()
-        if existing is None:
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            data = {}
+        except ValueError as exc:
             _logger.warning(
-                "%s is not a readable JSON object; refusing to overwrite it",
-                CONFIG_FILE,
+                "%s is not valid JSON; refusing to overwrite it", CONFIG_FILE
             )
-            return False
-        merged = {**existing, **values}
+            return False, f"not valid JSON ({exc})"
+        except OSError as exc:
+            _logger.warning(
+                "%s is unreadable; refusing to overwrite it", CONFIG_FILE
+            )
+            return False, f"unreadable ({exc})"
+        if not isinstance(data, dict):
+            _logger.warning(
+                "%s is not a JSON object; refusing to overwrite it", CONFIG_FILE
+            )
+            return False, "top-level value is not a JSON object"
+        merged = {**data, **values}
         fd, tmp = tempfile.mkstemp(
             dir=str(CONFIG_FILE.parent), prefix=".config-", suffix=".tmp"
         )
@@ -383,13 +389,13 @@ def set_config_values(values: dict) -> bool:
             except OSError:
                 pass
             raise
-    except OSError:
+    except OSError as exc:
         _logger.warning(
             "could not write %s; configuration not saved", CONFIG_FILE
         )
-        return False
+        return False, f"write failed ({exc})"
     reset_config_cache()
-    return True
+    return True, ""
 
 
 # --------------------------------------------------------------------------

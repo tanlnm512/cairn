@@ -1762,16 +1762,12 @@ async fn settings_save(
             StatusCode::BAD_REQUEST,
         );
     }
-    if !settings::set_config_values(&values) {
+    if let Err(reason) = settings::set_config_values(&values) {
+        let error = format!("Could not write ~/.cairn/config.json: {reason}; nothing was saved.");
         return state.render(
             uri.path(),
             "settings.html",
-            settings::settings_context_full(
-                &store_key,
-                false,
-                "Could not write ~/.cairn/config.json; nothing was saved.",
-                None,
-            ),
+            settings::settings_context_full(&store_key, false, &error, None),
             &store_key,
             StatusCode::INTERNAL_SERVER_ERROR,
         );

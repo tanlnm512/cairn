@@ -300,14 +300,15 @@ async def _settings_save(
             ),
             status_code=400,
         )
-    if not paths.set_config_values(values):
+    ok, reason = paths.set_config_values_with_reason(values)
+    if not ok:
         return context.render(
             request,
             "settings.html",
             _settings_context(
                 store_key,
                 error=(
-                    f"Could not write {paths.CONFIG_FILE}; "
+                    f"Could not write {paths.CONFIG_FILE}: {reason}; "
                     "nothing was saved."
                 ),
             ),

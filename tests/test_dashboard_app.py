@@ -4003,21 +4003,46 @@ def test_settings_save_refused_in_read_only_mode(tmp_path, monkeypatch):
 def test_settings_save_write_failure_renders_error_and_keeps_config(
     tmp_path, monkeypatch
 ):
-    """A failed config write (set_config_values -> False) renders the 500
-    error page naming the file, and the stored config is untouched."""
+    """A failed config write (set_config_values_with_reason -> (False,
+    reason)) renders the 500 error page naming the file and the reason, and
+    the stored config is untouched."""
     from cairn import paths
 
     paths.set_config_values({"CAIRN_EMBED_SERVER_MODEL": "keep-me"})
     client = _settings_client(tmp_path)
-    monkeypatch.setattr(paths, "set_config_values", lambda values: False)
+    monkeypatch.setattr(
+        paths,
+        "set_config_values_with_reason",
+        lambda values: (False, "simulated write failure"),
+    )
 
     resp = client.post(
         "/settings/save", data={"CAIRN_EMBED_SERVER_MODEL": "new-value"}
     )
     assert resp.status_code == 500
     assert "Could not write" in resp.text
+    assert "simulated write failure" in resp.text
     assert "nothing was saved" in resp.text
     assert _saved_config()["CAIRN_EMBED_SERVER_MODEL"] == "keep-me"
+
+
+def test_settings_save_surfaces_the_config_parse_reason(tmp_path):
+    """A malformed config.json refuses the save with the parse error on the
+    page (not a bare write failure), and the file stays byte-identical."""
+    from cairn import paths
+
+    paths.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    paths.CONFIG_FILE.write_text("{not json", encoding="utf-8")
+    client = _settings_client(tmp_path)
+
+    resp = client.post(
+        "/settings/save", data={"CAIRN_EMBED_SERVER_MODEL": "new-value"}
+    )
+    assert resp.status_code == 500
+    assert "Could not write" in resp.text
+    assert "not valid JSON" in resp.text
+    assert "nothing was saved" in resp.text
+    assert paths.CONFIG_FILE.read_text(encoding="utf-8") == "{not json"
 
 
 def test_settings_blank_submit_keeps_stored_file_value(tmp_path):

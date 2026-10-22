@@ -665,3 +665,30 @@ async fn settings_routes_parity_and_cross_site_guard() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("parity"), "{body}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn settings_save_surfaces_the_config_parse_reason() {
+    let server = Serving::new("cfgparse");
+    let config = server.fixture.home.join("config.json");
+    std::fs::write(&config, "{not json").unwrap();
+
+    let (status, body) = server
+        .post(
+            "/settings/save",
+            &[
+                ("host", "127.0.0.1:8765"),
+                ("sec-fetch-site", "same-origin"),
+            ],
+            "CAIRN_EMBED_SERVER_MODEL=new-value",
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(body.contains("not valid JSON"), "{body}");
+    assert!(body.contains("nothing was saved"), "{body}");
+    assert_eq!(
+        std::fs::read_to_string(&config).unwrap(),
+        "{not json",
+        "the malformed file is never overwritten"
+    );
+}
