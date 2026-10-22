@@ -193,6 +193,11 @@ for table, header, rows in sections:
             r[idcol] = ordinal(
                 "@E|" + r[col(header, "source_id")] + "|" + r[col(header, "kind")]
                 + "|" + r[col(header, "line")] + "|" + r[col(header, "column")] + "|" + target
+                + "".join(
+                    "|" + r[col(header, c)]
+                    for c in ("receiver_type", "call_arity")
+                    if col(header, c) is not None
+                )
             )
         elif table == "imports":
             r = ref(table, header, r, "file_id")

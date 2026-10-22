@@ -237,8 +237,13 @@ fn normalize_dump(lines: &[String]) -> NormTables {
                         r[tname_i] = "<RESOLVED>".to_string();
                     }
                     let i = idcol.expect("id");
+                    let signals: String = ["receiver_type", "call_arity"]
+                        .iter()
+                        .filter_map(|c| col(header, c))
+                        .map(|c| format!("|{}", r[c]))
+                        .collect();
                     let key = format!(
-                        "@E|{}|{}|{}|{}|{}",
+                        "@E|{}|{}|{}|{}|{}{signals}",
                         r[src],
                         r[col(header, "kind").expect("kind")],
                         r[col(header, "line").expect("line")],
