@@ -75,6 +75,9 @@ test = [
 ]
 dev = [
     "pytest>=7.0",
+    # The full suite exercises the lazy [graph-analytics] import; pure-Python,
+    # so dev installs carry it while base installs stay networkx-free.
+    "networkx>=3.4",
     # Coverage reporting in CI (Layer 1 test job). Reporting-only, no threshold.
     "pytest-cov>=4.0",
     # Parallel suite execution (`pytest -n auto` in the CI test job); the
