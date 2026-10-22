@@ -397,6 +397,22 @@ fn repair_resolves_only_named_targets_with_rust_generic_tier() {
 }
 
 #[test]
+fn repair_accepts_name_sets_beyond_the_sqlite_variable_limit() {
+    let mut fx = fixture();
+    fx.file("f1", "r", "python")
+        .symbol("s_owner", "f1", "main", None, "function", None)
+        .symbol("s_target", "f1", "helper", None, "function", None)
+        .edge("e_ref", "s_owner", "helper", "references");
+    let mut names: Vec<String> = (0..20_000).map(|i| format!("n{i}")).collect();
+    names.push("helper".to_string());
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+
+    let stats = repair_incoming_edges(&mut fx.conn, &refs).expect("repair");
+
+    assert_eq!(stats.exact, 1);
+}
+
+#[test]
 fn contains_edges_outside_the_signal_set_are_untouched() {
     let mut fx = fixture();
     fx.file("f1", "r", "python")

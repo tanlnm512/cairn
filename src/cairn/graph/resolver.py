@@ -366,21 +366,27 @@ def repair_incoming_edges(
     if not changed_target_names:
         return stats
 
+    from .dataflow import _chunked
+
     # ref_name finds resolved edges; target_id IS NULL keeps structurally
     # pinned edges (contains) out of name re-resolution.
-    name_placeholders = ",".join("?" for _ in changed_target_names)
-    rows = conn.execute(
-        f"""SELECT e.id AS eid, e.kind AS kind,
-                   COALESCE(e.ref_name, e.target_name) AS tname,
-                   e.receiver_type AS receiver_type, e.call_arity AS call_arity,
-                   f.id AS file_id, f.repo_id AS repo, f.language AS language
-            FROM edges e
-            JOIN symbols s ON e.source_id = s.id
-            JOIN files f ON s.file_id = f.id
-            WHERE e.ref_name IN ({name_placeholders})
-               OR (e.target_id IS NULL AND e.target_name IN ({name_placeholders}))""",
-        (*changed_target_names, *changed_target_names),
-    ).fetchall()
+    rows_by_id: Dict[str, sqlite3.Row] = {}
+    for chunk in _chunked(changed_target_names):
+        name_placeholders = ",".join("?" for _ in chunk)
+        for row in conn.execute(
+            f"""SELECT e.id AS eid, e.kind AS kind,
+                       COALESCE(e.ref_name, e.target_name) AS tname,
+                       e.receiver_type AS receiver_type, e.call_arity AS call_arity,
+                       f.id AS file_id, f.repo_id AS repo, f.language AS language
+                FROM edges e
+                JOIN symbols s ON e.source_id = s.id
+                JOIN files f ON s.file_id = f.id
+                WHERE e.ref_name IN ({name_placeholders})
+                   OR (e.target_id IS NULL AND e.target_name IN ({name_placeholders}))""",
+            (*chunk, *chunk),
+        ):
+            rows_by_id[row["eid"]] = row
+    rows = list(rows_by_id.values())
     if not rows:
         return stats
 

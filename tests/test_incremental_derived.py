@@ -527,6 +527,27 @@ def _edge_rows(db_path: str) -> list[tuple]:
     return sorted(tuple("" if v is None else v for v in r) for r in rows)
 
 
+def test_repair_accepts_name_sets_beyond_the_sqlite_variable_limit(tmp_path):
+    """A branch-switch-sized changed-name set still repairs its edges."""
+    from cairn.graph.resolver import repair_incoming_edges
+
+    ws = tmp_path / "ws"
+    (ws / "one" / ".git").mkdir(parents=True)
+    _write(ws / "one" / "util.py", _RESOLVER_SOURCES["one/util.py"], time.time())
+    _write(ws / "one" / "user.py", "def use():\n    return helper()\n", time.time())
+    db = str(tmp_path / "limit.kg")
+    build_graph(workspace=str(ws), db_path=db)
+    names = [f"n{i}" for i in range(20_000)] + ["helper"]
+
+    conn = get_db(db)
+    try:
+        stats = repair_incoming_edges(conn, names)
+    finally:
+        conn.close()
+
+    assert stats["exact"] == 1
+
+
 @pytest.mark.parametrize(
     "rel, text",
     [

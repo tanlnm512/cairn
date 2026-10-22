@@ -7,6 +7,9 @@ use rusqlite::Connection;
 /// Languages whose `calls` edges stay name-based on the repair path.
 pub const GENERIC_TIER_LANGUAGES: &[&str] = &["rust"];
 
+/// Names bound per `IN (...)` list, matching the Python `_SQLITE_IN_CHUNK`.
+const SQLITE_IN_CHUNK: usize = 400;
+
 /// Symbol kinds that are members of a type (never types themselves).
 const MEMBER_KINDS: &[&str] = &[
     "method", "function", "property", "variable", "field", "constant",
@@ -613,30 +616,26 @@ pub fn repair_incoming_edges(
 
     // ref_name finds resolved edges; target_id IS NULL keeps structurally
     // pinned edges (contains) out of name re-resolution.
-    let placeholders = changed_target_names
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
-        "SELECT e.id AS eid, e.kind AS kind,
-                COALESCE(e.ref_name, e.target_name) AS tname,
-                e.receiver_type AS receiver_type, e.call_arity AS call_arity,
-                f.id AS file_id, f.repo_id AS repo, f.language AS language
-         FROM edges e
-         JOIN symbols s ON e.source_id = s.id
-         JOIN files f ON s.file_id = f.id
-         WHERE e.ref_name IN ({placeholders})
-            OR (e.target_id IS NULL AND e.target_name IN ({placeholders}))"
-    );
-    let params: Vec<&dyn rusqlite::ToSql> = changed_target_names
-        .iter()
-        .chain(changed_target_names.iter())
-        .map(|name| name as &dyn rusqlite::ToSql)
-        .collect();
-
     let mut rows: Vec<RepairRow> = Vec::new();
-    {
+    let mut seen: HashSet<String> = HashSet::new();
+    for chunk in changed_target_names.chunks(SQLITE_IN_CHUNK) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT e.id AS eid, e.kind AS kind,
+                    COALESCE(e.ref_name, e.target_name) AS tname,
+                    e.receiver_type AS receiver_type, e.call_arity AS call_arity,
+                    f.id AS file_id, f.repo_id AS repo, f.language AS language
+             FROM edges e
+             JOIN symbols s ON e.source_id = s.id
+             JOIN files f ON s.file_id = f.id
+             WHERE e.ref_name IN ({placeholders})
+                OR (e.target_id IS NULL AND e.target_name IN ({placeholders}))"
+        );
+        let params: Vec<&dyn rusqlite::ToSql> = chunk
+            .iter()
+            .chain(chunk.iter())
+            .map(|name| name as &dyn rusqlite::ToSql)
+            .collect();
         let mut stmt = conn.prepare(&sql)?;
         let mapped = stmt.query_map(params.as_slice(), |r| {
             Ok(RepairRow {
@@ -651,7 +650,10 @@ pub fn repair_incoming_edges(
             })
         })?;
         for row in mapped {
-            rows.push(row?);
+            let row = row?;
+            if seen.insert(row.edge_id.clone()) {
+                rows.push(row);
+            }
         }
     }
     if rows.is_empty() {
