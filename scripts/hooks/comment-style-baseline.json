@@ -689,13 +689,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:573e63a8020585c0e1473cb24e23a2da67a47f72c55bfea8268de42369877f65",
-      "paths": [
-        "src/cairn/compass/critic.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:5adc3b7b3d4f165bfa653a614e80a4eb07c453acc9d169a547060db7f043588b",
       "paths": [
         "src/cairn/llm/tasks.py"

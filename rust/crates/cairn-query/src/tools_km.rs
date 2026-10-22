@@ -811,7 +811,7 @@ pub struct Bundle {
 
 /// Resolve a path as Python's non-strict `Path.resolve()`: canonicalize the
 /// deepest existing ancestor and re-apply the remaining components.
-fn resolve_lenient(p: &Path) -> PathBuf {
+pub(crate) fn resolve_lenient(p: &Path) -> PathBuf {
     if let Ok(c) = p.canonicalize() {
         return c;
     }
@@ -971,19 +971,120 @@ impl Bundle {
         }
     }
 
-    /// Advisory cross-process lock guard. Single-process in 1b; the daemon
-    /// (1c) owns real cross-process locking.
-    pub fn lock(&self) -> BundleLockGuard<'_> {
-        BundleLockGuard(self)
+    /// Advisory cross-process lock over bundle mutations (okf/bundle.py port).
+    pub fn lock(&self) -> Result<BundleLockGuard<'_>, ToolError> {
+        BundleLockGuard::acquire(self)
     }
 }
 
-/// RAII marker for the bundle mutation lock (1b: same-process serialization only).
-pub struct BundleLockGuard<'a>(&'a Bundle);
+const BUNDLE_LOCK_TIMEOUT_S: f64 = 5.0;
+// Python renders the default timeout as str(5.0)
+const BUNDLE_LOCK_TIMEOUT_TEXT: &str = "5.0";
+
+thread_local! {
+    static LOCK_DEPTH: std::cell::RefCell<std::collections::HashMap<String, u32>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// RAII guard for the bundle mutation lock: flock on `.okf.lock`, reentrant
+/// per thread (a nested acquire is a no-op, matching the Python lock).
+pub struct BundleLockGuard<'a> {
+    bundle: &'a Bundle,
+    key: String,
+    file: Option<std::fs::File>,
+}
+
+#[cfg(unix)]
+fn flock_ex_nb(file: &std::fs::File) -> bool {
+    use std::os::unix::io::AsRawFd;
+    // flock(2) via the platform libc std already links; no libc crate needed.
+    unsafe extern "C" {
+        fn flock(fd: i32, operation: i32) -> i32;
+    }
+    const LOCK_EX: i32 = 2;
+    const LOCK_NB: i32 = 4;
+    // Any errno retries until the deadline; only contention is expected.
+    unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) == 0 }
+}
+
+impl<'a> BundleLockGuard<'a> {
+    fn acquire(bundle: &'a Bundle) -> Result<BundleLockGuard<'a>, ToolError> {
+        let _ = std::fs::create_dir_all(&bundle.root);
+        let key = resolve_lenient(&bundle.root).to_string_lossy().to_string();
+        let mut nested = false;
+        LOCK_DEPTH.with(|depth| {
+            let mut depth = depth.borrow_mut();
+            let entry = depth.entry(key.clone()).or_insert(0);
+            if *entry > 0 {
+                *entry += 1;
+                nested = true;
+            }
+        });
+        if nested {
+            return Ok(BundleLockGuard {
+                bundle,
+                key,
+                file: None,
+            });
+        }
+        let lock_path = bundle.root.join(".okf.lock");
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|e| ToolError(format!("{}: {e}", lock_path.display())))?;
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs_f64(BUNDLE_LOCK_TIMEOUT_S);
+        loop {
+            #[cfg(unix)]
+            let held = flock_ex_nb(&file);
+            #[cfg(not(unix))]
+            let held = true;
+            if held {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return err(format!(
+                    "Timed out after {BUNDLE_LOCK_TIMEOUT_TEXT}s waiting for the OKF \
+                     bundle lock at {} -- another process is mutating {key}.",
+                    lock_path.display()
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        // set only once the flock is held: a failed acquire must not read as
+        // nested later
+        LOCK_DEPTH.with(|depth| depth.borrow_mut().insert(key.clone(), 1));
+        Ok(BundleLockGuard {
+            bundle,
+            key,
+            file: Some(file),
+        })
+    }
+}
 
 impl Drop for BundleLockGuard<'_> {
     fn drop(&mut self) {
-        let _ = &self.0;
+        if let Some(file) = self.file.take() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::io::AsRawFd;
+                unsafe extern "C" {
+                    fn flock(fd: i32, operation: i32) -> i32;
+                }
+                const LOCK_UN: i32 = 8;
+                unsafe { flock(file.as_raw_fd(), LOCK_UN) };
+            }
+            LOCK_DEPTH.with(|depth| depth.borrow_mut().insert(self.key.clone(), 0));
+        } else {
+            LOCK_DEPTH.with(|depth| {
+                if let Some(entry) = depth.borrow_mut().get_mut(&self.key) {
+                    *entry = entry.saturating_sub(1);
+                }
+            });
+        }
+        let _ = self.bundle;
     }
 }
 
@@ -2140,7 +2241,7 @@ pub fn capture_memory(
 ) -> Result<CaptureResult, ToolError> {
     let body = strip_private_data(body);
     let title = strip_private_data(title);
-    let _lock = bundle.lock();
+    let _lock = bundle.lock()?;
     let superseded_id = find_supersession_candidate(conn, bundle, type_, &title)?;
 
     let mut supersedes_chain: Vec<String> = Vec::new();
@@ -2415,7 +2516,7 @@ pub fn add_document_with_slug(
         extensions,
         ..Default::default()
     };
-    let _lock = bundle.lock();
+    let _lock = bundle.lock()?;
     if get_document(bundle, &concept_id)?.is_some() {
         // Same title+type replaces the prior document in place.
     }
@@ -2462,7 +2563,7 @@ pub fn update_status(bundle: &Bundle, doc_id: &str, new_status: &str) -> Result<
     if !bundle.root.exists() {
         return Ok(false);
     }
-    let _lock = bundle.lock();
+    let _lock = bundle.lock()?;
     let concept = get_document(bundle, doc_id)?;
     refuse_out_of_namespace(bundle, doc_id, concept.as_ref())?;
     let Some(mut concept) = concept else {
@@ -2493,7 +2594,7 @@ pub fn delete_document(
     conn: Option<&Connection>,
     unlink: bool,
 ) -> Result<bool, ToolError> {
-    let _lock = bundle.lock();
+    let _lock = bundle.lock()?;
     let concept = get_document(bundle, doc_id)?;
     refuse_out_of_namespace(bundle, doc_id, concept.as_ref())?;
     let effective = concept
@@ -4178,6 +4279,18 @@ pub struct CriticResult {
 }
 
 pub fn critic_concept(concept: &Concept, conn: &Connection) -> Result<CriticResult, ToolError> {
+    critic_concept_opts(concept, conn, None, false)
+}
+
+/// `critic_concept` with the task-queue knobs: `section_vocab` replaces the
+/// scored headings; `include_notes` also checks the `## Notes` section (task
+/// results are promoted raw, unlike spliced regeneration bodies).
+pub fn critic_concept_opts(
+    concept: &Concept,
+    conn: &Connection,
+    section_vocab: Option<&[&str]>,
+    include_notes: bool,
+) -> Result<CriticResult, ToolError> {
     const SECTION_VOCAB: &[&str] = &[
         "# What Does This Module Do?",
         "# Subsystems",
@@ -4190,7 +4303,11 @@ pub fn critic_concept(concept: &Concept, conn: &Connection) -> Result<CriticResu
         "# Modules Spanned",
         "# Tribal Knowledge",
     ];
-    let body = without_notes(&concept.body);
+    let body = if include_notes {
+        concept.body.clone()
+    } else {
+        without_notes(&concept.body)
+    };
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
     let file_refs = extract_file_refs(&body);
@@ -4208,8 +4325,12 @@ pub fn critic_concept(concept: &Concept, conn: &Connection) -> Result<CriticResu
     if let Some(w) = prose_heavy_warning(&body, file_refs.len() + symbol_refs.len()) {
         warnings.push(w);
     }
-    let sections = SECTION_VOCAB.iter().filter(|h| body.contains(**h)).count();
-    let quality = (sections as f64 / 5.0).min(1.0);
+    let (vocab, total) = match section_vocab {
+        Some(vocab) => (vocab, vocab.len().max(1) as f64),
+        None => (SECTION_VOCAB, 5.0),
+    };
+    let sections = vocab.iter().filter(|h| body.contains(**h)).count();
+    let quality = (sections as f64 / total).min(1.0);
     let threshold = if warnings.is_empty() { 0.5 } else { 0.7 };
     Ok(CriticResult {
         passed: errors.is_empty() && quality >= threshold,
@@ -5238,7 +5359,7 @@ pub fn supersede_chain(
 }
 
 /// Bare concept ids of every parsable knowledge doc, sorted.
-fn knowledge_doc_ids(bundle: &Bundle) -> Vec<String> {
+pub(crate) fn knowledge_doc_ids(bundle: &Bundle) -> Vec<String> {
     bundle
         .list_concepts(Some("knowledge/"))
         .into_iter()
@@ -5449,7 +5570,7 @@ pub fn purge_archived(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let _lock = bundle.lock();
+    let _lock = bundle.lock()?;
     let mut purged = 0;
     for concept in list_memories(bundle, Some("archived"), None) {
         let Some(ts) = concept
@@ -5530,5 +5651,23 @@ mod tests {
         let out = strip_private_data("<private>hidden</private> api_key=abcdefghijklmnopqrst uvw");
         assert!(out.contains("[REDACTED]"));
         assert!(!out.contains("abcdefghijklmnopqrst"));
+    }
+
+    #[test]
+    fn lock_open_failure_does_not_defuse_later_locks() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        // root is a regular file: opening root/.okf.lock always fails
+        let root =
+            std::env::temp_dir().join(format!("cairn-lockfail-{}-{nanos}", std::process::id()));
+        std::fs::write(&root, "not a dir").expect("root file");
+        let bundle = Bundle::new(&root);
+        assert!(bundle.lock().is_err(), "first acquire must fail");
+        // a failed acquire must not read as nested later: the second call has
+        // to try the flock again (and fail again), never return a no-op guard
+        assert!(bundle.lock().is_err(), "second acquire must also fail");
+        std::fs::remove_file(&root).ok();
     }
 }

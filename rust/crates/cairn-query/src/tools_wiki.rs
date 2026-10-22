@@ -815,7 +815,7 @@ fn queue_pages(
     force: bool,
     diagrams: bool,
 ) -> Result<Vec<String>, ToolError> {
-    let _lock = bundle.lock();
+    let _lock = bundle.lock()?;
     let mut manifest = load_manifest(bundle).map_err(pipeline_tool_error)?;
     if manifest.get("pages").is_none() {
         manifest["pages"] = json!({});

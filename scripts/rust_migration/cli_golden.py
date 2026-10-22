@@ -60,6 +60,22 @@ COMMANDS = [
     ["memory", "list"],
     ["compass", "list"],
     ["wiki", "search", "golden capture"],
+    # Task-queue family: read-only cases share the seeded bundle; mutating
+    # cases re-seed their task before each leg via RESEED.
+    ["task", "list"],
+    ["task", "list", "--status", "pending"],
+    ["task", "list", "--status", "failed"],
+    ["task", "show", "golden-catalog"],
+    ["task", "show", "golden-done"],
+    ["task", "show", "no-such-task"],
+    ["task", "claim", "golden-claim"],
+    ["task", "claim", "golden-claim", "--as", "alice"],
+    ["task", "claim", "no-such-task"],
+    ["task", "complete", "golden-complete", "--result",
+     '[{"module": "src/cairn/llm", "title": "Task queue"}]'],
+    ["task", "complete", "golden-revise", "--result",
+     "See `no/such/file.py`."],
+    ["task", "drop", "golden-drop"],
 ]
 DIFF_PRINT_CHARS = 300
 
@@ -101,6 +117,63 @@ def cli_env(scratch: Path, workspace: Path, cargo_path: bool) -> dict:
 def prepare_store(scratch: Path) -> None:
     """Scratch materialization of the pinned self store (db, seeded bundle, corpus)."""
     parity.load_pinned_store("self", scratch)
+    _seed_task(scratch, "golden-catalog", "wiki-catalog", "cairn",
+               {"repo": "cairn"})
+    _seed_task(scratch, "golden-claim", "wiki-page", "cairn/overview",
+               {"repo": "cairn"})
+    _seed_task(scratch, "golden-complete", "wiki-catalog", "cairn",
+               {"repo": "cairn"}, status="in-progress")
+    _seed_task(scratch, "golden-revise", "compass-synthesize",
+               "src/cairn/llm", {"key_files": ["src/graph/queries.py"]},
+               status="in-progress")
+    _seed_task(scratch, "golden-drop", "doc-link", "cairn",
+               {"members": ["knowledge/a", "knowledge/b"]})
+    _seed_task(scratch, "golden-done", "compass-synthesize",
+               "src/cairn/llm", {"key_files": ["src/graph/queries.py"]},
+               status="done", result="Compass body for src/cairn/llm.\n")
+
+
+def _seed_task(scratch: Path, task_id: str, kind: str, resource: str,
+               facts: dict, status: str = "pending",
+               result: str | None = None) -> None:
+    """(Re)write a fixed-id Task concept (and drop its claim marker) so each
+    golden leg starts from the same queue state."""
+    from cairn.llm.tasks import Task, _task_to_concept
+    from cairn.okf.bundle import OKFBundle
+    from cairn.okf.concept import OKFConcept
+
+    bundle = OKFBundle(str(scratch / ".knowledge"))
+    bundle.write_concept(_task_to_concept(Task(
+        id=task_id, task_kind=kind, resource=resource, facts=facts,
+        status=status, attempt=1, created_at="2026-01-01T00:00:00Z",
+    )))
+    marker = scratch / ".knowledge" / "_tasks" / f"{task_id}.claim"
+    marker.unlink(missing_ok=True)
+    if result is not None:
+        bundle.write_concept(OKFConcept(
+            type="Task-Result", title=f"Result for {task_id}",
+            resource=resource, concept_id=f"_tasks/{task_id}.result",
+            body=result,
+        ))
+
+
+# Mutating task cases: the seeded task is restored before each leg.
+RESEED = {
+    ("task", "claim", "golden-claim"):
+        lambda s: _seed_task(s, "golden-claim", "wiki-page", "cairn/overview",
+                             {"repo": "cairn"}),
+    ("task", "complete", "golden-complete"):
+        lambda s: _seed_task(s, "golden-complete", "wiki-catalog", "cairn",
+                             {"repo": "cairn"}, status="in-progress"),
+    ("task", "complete", "golden-revise"):
+        lambda s: _seed_task(s, "golden-revise", "compass-synthesize",
+                             "src/cairn/llm",
+                             {"key_files": ["src/graph/queries.py"]},
+                             status="in-progress"),
+    ("task", "drop", "golden-drop"):
+        lambda s: _seed_task(s, "golden-drop", "doc-link", "cairn",
+                             {"members": ["knowledge/a", "knowledge/b"]}),
+}
 
 
 def ensure_rust_binary() -> Path:
@@ -170,7 +243,12 @@ def main(argv: list[str] | None = None) -> int:
 
         failures = []
         for cmd in COMMANDS:
+            hook = RESEED.get(tuple(cmd[:3]))
+            if hook is not None:
+                hook(scratch)
             py = run_side(parity.cairn_cli(), cmd, py_env)
+            if hook is not None:
+                hook(scratch)
             rs = run_side([str(rust_bin)], cmd, rust_env)
             diff = first_diff(cmd, py, rs, rules)
             label = " ".join(cmd)

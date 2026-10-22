@@ -8,6 +8,7 @@ use rusqlite::Connection;
 use serde_json::{Value, json};
 use yaml_rust2::Yaml;
 
+use cairn_query::tasks;
 use cairn_query::tools_km::{self, Bundle, Concept, KnowledgeHit, RelatedDoc, WorkflowStep};
 use cairn_store::{conn as store_conn, schema as store_schema};
 
@@ -634,15 +635,59 @@ pub enum SkillGroup {
 #[derive(Subcommand)]
 pub enum TaskGroup {
     /// List queued tasks.
-    List,
+    List {
+        /// pending|in-progress|done|failed|dropped
+        #[arg(long)]
+        status: Option<String>,
+        /// Filter by task kind.
+        #[arg(long)]
+        kind: Option<String>,
+        /// Filter by task kind prefix (e.g. wiki-page).
+        #[arg(long = "kind-prefix")]
+        kind_prefix: Option<String>,
+        /// Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge).
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
     /// Show one task.
-    Show,
+    Show {
+        task_id: String,
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
     /// Claim a task.
-    Claim,
+    Claim {
+        task_id: String,
+        /// Who/what is claiming this task.
+        #[arg(long = "as", default_value = "")]
+        assigned_to: String,
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
     /// Complete a claimed task with a result file.
-    Complete,
+    Complete {
+        task_id: String,
+        /// Result text (alternative to --result-file).
+        #[arg(long)]
+        result: Option<String>,
+        /// Read result from this file.
+        #[arg(long = "result-file")]
+        result_file: Option<String>,
+        /// Claimer identity; must match the task's --as at claim time.
+        #[arg(long = "as", default_value = "")]
+        claimer: String,
+        /// SQLite DB path (default: the resolved store).
+        #[arg(long)]
+        db: Option<String>,
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
     /// Drop a claimed task.
-    Drop,
+    Drop {
+        task_id: String,
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
 }
 
 /// Run a knowledge-layer command.
@@ -655,13 +700,7 @@ pub fn run(command: KnowledgeCommand) -> ExitCode {
         KnowledgeCommand::Skill { command } => not_ported(match command {
             SkillGroup::Generate => "skill generate",
         }),
-        KnowledgeCommand::Task { command } => not_ported(match command {
-            TaskGroup::List => "task list",
-            TaskGroup::Show => "task show",
-            TaskGroup::Claim => "task claim",
-            TaskGroup::Complete => "task complete",
-            TaskGroup::Drop => "task drop",
-        }),
+        KnowledgeCommand::Task { command } => run_task(command),
         other => not_ported(other.name()),
     }
 }
@@ -885,6 +924,252 @@ fn run_compass(group: CompassGroup) -> ExitCode {
         }
         other => not_ported(other.name()),
     }
+}
+
+fn run_task(group: TaskGroup) -> ExitCode {
+    match group {
+        TaskGroup::List {
+            status,
+            kind,
+            kind_prefix,
+            knowledge,
+        } => task_list(
+            status.as_deref(),
+            kind.as_deref(),
+            kind_prefix.as_deref(),
+            knowledge.as_deref(),
+        ),
+        TaskGroup::Show { task_id, knowledge } => task_show(&task_id, knowledge.as_deref()),
+        TaskGroup::Claim {
+            task_id,
+            assigned_to,
+            knowledge,
+        } => task_claim(&task_id, &assigned_to, knowledge.as_deref()),
+        TaskGroup::Complete {
+            task_id,
+            result,
+            result_file,
+            claimer,
+            db,
+            knowledge,
+        } => task_complete(
+            &task_id,
+            result.as_deref(),
+            result_file.as_deref(),
+            &claimer,
+            db.as_deref(),
+            knowledge.as_deref(),
+        ),
+        TaskGroup::Drop { task_id, knowledge } => task_drop(&task_id, knowledge.as_deref()),
+    }
+}
+
+// --- task queue (cli/task.py port) ------------------------------------------------
+
+/// The --knowledge default for the task group: the resolved store's bundle.
+fn task_bundle(knowledge: Option<&str>) -> Bundle {
+    resolve_bundle(&knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from))
+}
+
+fn task_list(
+    status: Option<&str>,
+    kind: Option<&str>,
+    kind_prefix: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let bundle = task_bundle(knowledge);
+    let tasks = match tasks::list_tasks(&bundle, status, kind, kind_prefix) {
+        Ok(tasks) => tasks,
+        Err(e) => return cli_err(&e.0),
+    };
+    if tasks.is_empty() {
+        println!("No tasks.");
+        return ExitCode::SUCCESS;
+    }
+    for t in tasks {
+        println!(
+            "  [{:<11}] {:<20} {}  {}",
+            t.status, t.task_kind, t.id, t.resource
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn task_show(task_id: &str, knowledge: Option<&str>) -> ExitCode {
+    let bundle = task_bundle(knowledge);
+    let task = match tasks::get_task(&bundle, task_id) {
+        Ok(task) => task,
+        Err(e) => return cli_err(&e.0),
+    };
+    let Some(t) = task else {
+        eprintln!("No task '{task_id}'.");
+        return ExitCode::FAILURE;
+    };
+    println!("# Task {}", t.id);
+    println!(
+        "kind: {}   status: {}   attempt: {}",
+        t.task_kind, t.status, t.attempt
+    );
+    println!("resource: {}", t.resource);
+    println!();
+    if !t.facts.is_empty() {
+        println!("## Facts");
+        for (key, val) in &t.facts {
+            println!("  {}: {}", tasks::py_display(key), tasks::py_display(val));
+        }
+    }
+    println!();
+    if t.status == "done" {
+        if let Some(result) = tasks::read_result(&bundle, task_id) {
+            println!("## Result");
+            println!("{result}");
+        }
+    } else {
+        println!("To process: `cairn task claim {task_id}`");
+    }
+    ExitCode::SUCCESS
+}
+
+fn task_claim(task_id: &str, assigned_to: &str, knowledge: Option<&str>) -> ExitCode {
+    let bundle = task_bundle(knowledge);
+    match tasks::claim_task(&bundle, task_id, assigned_to) {
+        Ok(Some(_)) => {
+            println!("Claimed {task_id}. Write your result, then:");
+            let mut hint = format!("  cairn task complete {task_id} --result-file <path>");
+            if !assigned_to.is_empty() {
+                hint.push_str(&format!(" --as {assigned_to}"));
+            }
+            println!("{hint}");
+            ExitCode::SUCCESS
+        }
+        Ok(None) => {
+            eprintln!("Could not claim '{task_id}' (not pending or not found).");
+            ExitCode::FAILURE
+        }
+        Err(e) => cli_err(&e.0),
+    }
+}
+
+fn task_complete(
+    task_id: &str,
+    result: Option<&str>,
+    result_file: Option<&str>,
+    claimer: &str,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let bundle = task_bundle(knowledge);
+    let result = if let Some(path) = result_file {
+        match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("Cannot read result file: {}", py_oserror_text(&e, path));
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        result.unwrap_or_default().to_string()
+    };
+    if result.is_empty() {
+        eprintln!("No result provided. Use --result or --result-file.");
+        return ExitCode::FAILURE;
+    }
+    let paths = resolve_store(None);
+    // get_db refuses a missing store parent; never fabricate one
+    let db_file = match require_db_dir(db) {
+        Ok(path) => path,
+        Err(code) => return code,
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let outcome = match tasks::complete_task(
+        &bundle,
+        task_id,
+        &result,
+        Some(&conn),
+        Some(claimer),
+        Some(&paths.workspace),
+    ) {
+        Ok(outcome) => outcome,
+        Err(e) => return cli_err(&e.0),
+    };
+    if outcome.refused {
+        let reasons = if outcome.errors.is_empty() {
+            "unknown".to_string()
+        } else {
+            outcome.errors.join("; ")
+        };
+        eprintln!("Task {task_id} was not completed: {reasons}.");
+        return ExitCode::FAILURE;
+    }
+    if outcome.dropped {
+        eprintln!(
+            "Task {task_id} dropped after {} failed attempts.",
+            tasks::MAX_REVISE_CYCLES
+        );
+        for err in &outcome.errors {
+            eprintln!("  Error: {err}");
+        }
+        return ExitCode::FAILURE;
+    }
+    if outcome.revised {
+        println!("Task {task_id} had errors. A revise task has been spawned.");
+        eprintln!("Errors:");
+        for err in &outcome.errors {
+            eprintln!("  - {err}");
+        }
+        println!("Quality score: {:.2}", outcome.quality);
+    } else if outcome.promoted {
+        println!("Task {task_id} completed and promoted.");
+    } else if !outcome.errors.is_empty() {
+        eprintln!(
+            "Task {task_id} was not completed; it remains in-progress and can be completed again."
+        );
+        for err in &outcome.errors {
+            eprintln!("  Error: {err}");
+        }
+        return ExitCode::FAILURE;
+    } else {
+        println!("Task {task_id} completed. Result stored.");
+        println!("Quality score: {:.2}", outcome.quality);
+    }
+    ExitCode::SUCCESS
+}
+
+/// Python OSError str(): "[Errno <n>] <message>: '<path>'".
+fn py_oserror_text(e: &std::io::Error, path: &str) -> String {
+    let message = e
+        .to_string()
+        .trim_end_matches(&format!(
+            " (os error {})",
+            e.raw_os_error().unwrap_or_default()
+        ))
+        .to_string();
+    match e.raw_os_error() {
+        Some(code) => format!("[Errno {code}] {message}: '{path}'"),
+        None => format!("{message}: '{path}'"),
+    }
+}
+
+fn task_drop(task_id: &str, knowledge: Option<&str>) -> ExitCode {
+    let bundle = task_bundle(knowledge);
+    let outcome = match tasks::drop_task(&bundle, task_id) {
+        Ok(outcome) => outcome,
+        Err(e) => return cli_err(&e.0),
+    };
+    if !outcome.dropped {
+        let joined = outcome.errors.join("; ");
+        let reasons = if joined.is_empty() {
+            "not droppable".to_string()
+        } else {
+            joined
+        };
+        eprintln!("Could not drop '{task_id}': {reasons}");
+        return ExitCode::FAILURE;
+    }
+    println!("Dropped {task_id}.");
+    ExitCode::SUCCESS
 }
 
 // --- shared output/store helpers -------------------------------------------------
@@ -2688,5 +2973,26 @@ mod tests {
             unique_slug("release-notes", "cairn", &mut seen),
             "release-notes-cairn-2"
         );
+    }
+
+    #[test]
+    fn task_complete_refuses_a_missing_store_without_fabricating_one() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let parent =
+            std::env::temp_dir().join(format!("cairn-task-nostore-{}-{nanos}", std::process::id()));
+        let db = parent.join("store.kg");
+        let code = task_complete(
+            "sometask",
+            Some("result"),
+            None,
+            "",
+            Some(&db.to_string_lossy()),
+            None,
+        );
+        assert_eq!(code, std::process::ExitCode::FAILURE);
+        assert!(!parent.exists(), "no store directory may be fabricated");
     }
 }

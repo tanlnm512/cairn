@@ -114,16 +114,16 @@ def critic_concept(
     conn: sqlite3.Connection,
     llm_judge=None,
     section_vocab: Optional[Sequence[str]] = None,
+    include_notes: bool = False,
 ) -> CriticResult:
-    """Run critic checks on a concept against the graph.
-
-    ``section_vocab`` replaces the recognized section headings the quality
-    heuristic scores (default: the compass headings above).
-    """
+    """Run critic checks on a concept; ``section_vocab`` overrides the scored
+    headings and ``include_notes`` also checks ``## Notes``."""
     errors = []
     warnings = []
 
-    body = without_notes(concept.body or "")
+    body = concept.body or ""
+    if not include_notes:
+        body = without_notes(body)
 
     # 1. Extract backtick-quoted file references and check existence.
     file_refs = _extract_file_refs(body)

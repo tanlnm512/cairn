@@ -1,6 +1,7 @@
 //! Query engine: FTS5 search, definition lookup, callers/callees, impact, explore, trace.
 
 pub mod graph;
+pub mod tasks;
 pub mod tools_federation;
 pub mod tools_flow;
 pub mod tools_km;

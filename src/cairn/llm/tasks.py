@@ -448,10 +448,13 @@ def complete_task(
                 )
             elif wiki_page:
                 critic_result = critic_concept(
-                    result_concept, conn, section_vocab=("## Sources",)
+                    result_concept, conn, section_vocab=("## Sources",),
+                    include_notes=True,
                 )
             else:
-                critic_result = critic_concept(result_concept, conn)
+                critic_result = critic_concept(
+                    result_concept, conn, include_notes=True
+                )
 
             # Footer entries may ride inline links the backtick critic never
             # sees, so they are resolved here; an unresolved entry fails the

@@ -162,6 +162,35 @@ class TestCompleteTaskCriticIntegration:
         result_concept = bundle.read_concept(task.result_concept_id)
         assert result_concept.extensions.get("critic_status") == "failed"
 
+    def test_critic_checks_notes_section_of_task_results(self, fresh_db, tmp_path):
+        """A hallucinated ref inside the result's `## Notes` fails the gate
+        (the queue promotes the raw body, unlike spliced regeneration)."""
+        conn = _conn_with_fixture(fresh_db)
+        bundle = _create_bundle(tmp_path)
+
+        task = create_task(
+            bundle,
+            task_kind="compass-synthesize",
+            resource="test",
+            facts={"key_files": ["src/graph/queries.py"]},
+        )
+        claim_task(bundle, task.id, "test-agent")
+
+        passing = (
+            "# What Does This Module Do?\nSee `src/graph/queries.py`.\n"
+            "# Common Modification Patterns\n...\n"
+            "# Build-Failure Patterns\n...\n"
+            "# Cross-Module Dependencies\n...\n"
+            "# Tribal Knowledge\n...\n"
+        )
+        result = passing + "\n## Notes\n- see `src/DoesNotExist.kt`\n"
+
+        outcome = complete_task(bundle, task.id, result, conn=conn)
+
+        assert outcome["revised"] is True
+        assert any("src/DoesNotExist.kt" in e for e in outcome["errors"])
+        assert outcome["promoted"] is False
+
     def test_critic_fail_drops_when_at_or_above_max_cycles(
         self, fresh_db, tmp_path
     ):
