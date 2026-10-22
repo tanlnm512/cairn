@@ -596,16 +596,24 @@ fn enclosing_owner(
     owners: &[OwnerCandidate],
     line: usize,
     exclude: Option<&str>,
+    decorator: bool,
 ) -> Option<String> {
-    owners
-        .iter()
-        .filter(|(id, _)| Some(id.as_str()) != exclude)
-        .filter_map(|(id, span)| {
-            span.filter(|(start, end)| (*start..=*end).contains(&line))
-                .map(|(start, end)| (end - start, id))
+    let candidates = || {
+        owners
+            .iter()
+            .filter(move |(id, _)| Some(id.as_str()) != exclude)
+            .filter_map(|(id, span)| span.map(|span| (id, span)))
+    };
+    candidates()
+        .filter(|(_, (start, end))| (*start..=*end).contains(&line))
+        .min_by_key(|(_, (start, end))| end - start)
+        // A decorator line sits just above its definition's span.
+        .or_else(|| {
+            candidates()
+                .filter(|(_, (start, _))| decorator && *start >= line)
+                .min_by_key(|(_, (start, _))| *start)
         })
-        .min_by_key(|(width, _)| *width)
-        .map(|(_, id)| id)
+        .map(|(id, _)| id)
         // No span holds the line: keep declaration-order first-wins.
         .or_else(|| owners.first().map(|(id, _)| id))
         .cloned()
@@ -678,7 +686,7 @@ pub(crate) fn insert_parsed_file(
 
     // Symbol ids in declaration order drive contains edges and rationale spans.
     let mut sym_ids: Vec<String> = Vec::with_capacity(pf.symbols.len());
-    let mut qname_ids: HashMap<String, String> = HashMap::new();
+    let mut qname_ids: HashMap<String, Vec<OwnerCandidate>> = HashMap::new();
     let mut in_file: HashMap<String, Vec<OwnerCandidate>> = HashMap::new();
     for sym in &mut pf.symbols {
         let sym_id = ids.next_id();
@@ -694,7 +702,8 @@ pub(crate) fn insert_parsed_file(
         if let Some(qname) = &sym.qualified_name {
             qname_ids
                 .entry(qname.clone())
-                .or_insert_with(|| sym_id.clone());
+                .or_default()
+                .push((sym_id.clone(), Some((sym.line_start, sym.line_end))));
         }
         in_file
             .entry(sym.name.clone())
@@ -806,15 +815,18 @@ pub(crate) fn insert_parsed_file(
         // Contains edges: parent is the qualified scope, else the file module.
         for (sym_id, sym) in sym_ids.iter().zip(&pf.symbols) {
             let parent_id = match &sym.parent_scope {
-                Some(scope) => qname_ids.get(scope).cloned().or_else(|| {
-                    let last = scope
-                        .rsplit_once('.')
-                        .map(|(_, last)| last)
-                        .unwrap_or(scope);
-                    in_file
-                        .get(last)
-                        .and_then(|owners| enclosing_owner(owners, sym.line_start, Some(sym_id)))
-                }),
+                Some(scope) => qname_ids
+                    .get(scope)
+                    .and_then(|owners| enclosing_owner(owners, sym.line_start, Some(sym_id), false))
+                    .or_else(|| {
+                        let last = scope
+                            .rsplit_once('.')
+                            .map(|(_, last)| last)
+                            .unwrap_or(scope);
+                        in_file.get(last).and_then(|owners| {
+                            enclosing_owner(owners, sym.line_start, Some(sym_id), false)
+                        })
+                    }),
                 None => Some(module_id.clone()),
             };
             let Some(parent_id) = parent_id else { continue };
@@ -850,7 +862,7 @@ pub(crate) fn insert_parsed_file(
 
         for edge in &pf.edges {
             let source_id = match in_file.get(&edge.source_name) {
-                Some(owners) => enclosing_owner(owners, edge.line, None),
+                Some(owners) => enclosing_owner(owners, edge.line, None, edge.kind == "decorates"),
                 None => {
                     if edge.source_name.is_empty() {
                         Some(module_id.clone())

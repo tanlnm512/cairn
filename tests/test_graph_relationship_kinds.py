@@ -294,20 +294,41 @@ class TestBuilderModuleAndContains:
             "class B:\n"
             "    def run(self):\n"
             "        bar()\n"
+            "\n"
+            "try:\n"
+            "    class Impl:\n"
+            "        @property\n"
+            "        def value(self):\n"
+            "            one()\n"
+            "\n"
+            "        @value.setter\n"
+            "        def value(self, v):\n"
+            "            two()\n"
+            "except ImportError:\n"
+            "    class Impl:\n"
+            "        def run(self):\n"
+            "            baz()\n"
         )
         db_path = str(tmp_path / "owner.db")
         build_graph(workspace=str(workspace), db_path=db_path, verbose=False)
         conn = sqlite3.connect(db_path)
         try:
-            owners = dict(conn.execute(
-                """SELECT e.target_name, src.qualified_name FROM edges e
-                   JOIN symbols src ON e.source_id = src.id
-                   WHERE e.kind = 'calls'"""
-            ).fetchall())
+            owner_lines = {
+                (kind, target): src_line
+                for kind, target, src_line in conn.execute(
+                    """SELECT e.kind, COALESCE(tgt.line_start, e.target_name), src.line_start
+                       FROM edges e JOIN symbols src ON e.source_id = src.id
+                       LEFT JOIN symbols tgt ON e.kind = 'contains' AND e.target_id = tgt.id
+                       WHERE e.kind IN ('calls', 'decorates', 'contains')"""
+                ).fetchall()
+            }
         finally:
             conn.close()
-        assert owners["foo"].endswith("A.run")
-        assert owners["bar"].endswith("B.run")
+        assert {t: owner_lines[("calls", t)] for t in ("foo", "bar", "one", "two", "baz")} == {
+            "foo": 2, "bar": 6, "one": 12, "two": 16, "baz": 20,
+        }
+        assert owner_lines[("contains", 20)] == 19
+        assert owner_lines[("decorates", "setter")] == 16
 
 
 class TestBuilderImportsEdges:
