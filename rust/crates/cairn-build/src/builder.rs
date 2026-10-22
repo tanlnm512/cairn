@@ -273,6 +273,9 @@ fn populate(
         .map_err(rusqlite_err)?;
     }
 
+    // Continue past the rows about to be cleared: unkeyed symbol-id tables
+    // (closure, communities) must never resolve to a rebuilt row.
+    let mut ids = IdGen::continuing(&tx)?;
     if let Some(repo) = repo_filter {
         // The marker flags an interrupted rebuild until the last write lands.
         tx.execute(
@@ -324,7 +327,6 @@ fn populate(
 
     // Second pass: insert into SQLite.
     let t = Instant::now();
-    let mut ids = IdGen::continuing(&tx)?;
     let mut summary = BuildSummary {
         skipped: skip_count,
         ..BuildSummary::default()

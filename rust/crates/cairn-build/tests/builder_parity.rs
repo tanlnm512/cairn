@@ -232,3 +232,40 @@ fn repo_rebuild_replaces_only_that_repo_in_place() {
     assert_eq!(count(&db, "SELECT COUNT(*) FROM repo_build_state"), 0);
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn repo_rebuild_never_reuses_ids_of_the_rows_it_replaced() {
+    let dir = two_repo_workspace("repo-ids");
+    let ws = dir.to_str().expect("ws");
+    let db = dir.join("store.kg");
+    let db_str = db.to_str().expect("db");
+    build_graph(ws, db_str, None, Some(1)).expect("full build");
+    let top_beta_symbol: String = {
+        let conn = cairn_store::schema::open_initialized(&db).expect("open");
+        let id: String = conn
+            .query_row(
+                "SELECT MAX(s.id) FROM symbols s JOIN files f ON s.file_id = f.id \
+                 WHERE f.repo_id = 'beta'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("top beta symbol");
+        conn.execute(
+            "INSERT INTO transitive_edges (source_id, target_name, distance) VALUES (?, 'x', 1)",
+            [&id],
+        )
+        .expect("seed closure row");
+        id
+    };
+
+    build_graph(ws, db_str, Some("beta"), Some(1)).expect("repo rebuild");
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM transitive_edges t JOIN symbols s ON s.id = t.source_id"
+        ),
+        0,
+        "stale closure row for {top_beta_symbol} resolves to a live symbol"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
