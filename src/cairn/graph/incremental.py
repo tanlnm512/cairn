@@ -43,6 +43,9 @@ def reindex_paths(
     repo_edges_by_file: dict[str, dict[str, list]] = {}
     # Deleted and recreated names seed incoming-edge repair.
     changed_target_names: set[str] = set()
+    # Consumer repos whose imports edges the delete-leg backfill nulls; they
+    # need a materialize pass even with no file of their own reindexed.
+    imports_repos: set[str] = set()
 
     for abs_path in paths:
         abs_path = str(abs_path)
@@ -70,6 +73,20 @@ def reindex_paths(
         try:
             conn.execute("BEGIN")
             if file_id:
+                # Must run before the backfill nulls target_id: it decides
+                # which consumer repos join the imports refresh below.
+                imports_repos.update(
+                    r[0]
+                    for r in cur.execute(
+                        """SELECT DISTINCT f.repo_id FROM edges e
+                           JOIN symbols s ON e.source_id = s.id
+                           JOIN files f ON f.id = s.file_id
+                           WHERE e.kind = 'imports'
+                             AND e.target_id IN (
+                                 SELECT id FROM symbols WHERE file_id = ?)""",
+                        (file_id,),
+                    )
+                )
                 cur.execute(
                     "DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file_id = ?)",
                     (file_id,),
@@ -291,11 +308,14 @@ def reindex_paths(
         except Exception as e:
             errors.append(f"repair: {e}")
 
-    # Imports-edge refresh: the reindexed files' module symbols and their
-    # import rows changed, so recompute the repo's kind='imports' edges
+    # Imports-edge refresh: recompute kind='imports' edges for every repo
+    # that had a file reindexed or an edge nulled by the store-wide backfill
     # (delete+reinsert per materialize_import_edges' idempotence contract).
     from .builder import materialize_import_edges
-    for repo_name in repo_edges_by_file:
+    imports_refresh = list(repo_edges_by_file) + sorted(
+        imports_repos - repo_edges_by_file.keys()
+    )
+    for repo_name in imports_refresh:
         try:
             materialize_import_edges(conn, repo=repo_name)
             conn.commit()

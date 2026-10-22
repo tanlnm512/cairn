@@ -65,19 +65,20 @@ repos:
         always_run: true
 
   # --- Rust gates: local mirror of the Rust CI leg. GATE-only like ruff
-  # above (fmt runs with --check, never rewrites). Requires the rustup
-  # toolchain on PATH; runs only when rust/ files are staged.
+  # above (fmt runs with --check, never rewrites). The standard rustup bin
+  # dir is prepended to PATH so non-interactive shells find the toolchain;
+  # runs only when rust/ files are staged.
   - repo: local
     hooks:
       - id: cargo-fmt
         name: cargo fmt --check (rust workspace)
-        entry: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+        entry: bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; exec cargo fmt --manifest-path rust/Cargo.toml --all -- --check'
         language: system
         pass_filenames: false
         files: ^rust/.*\.rs$
       - id: cargo-clippy
         name: cargo clippy -D warnings (rust workspace)
-        entry: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+        entry: bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; exec cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings'
         language: system
         pass_filenames: false
         files: ^rust/(.*\.(rs|toml)|Cargo\.lock)$

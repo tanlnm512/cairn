@@ -427,6 +427,50 @@ class TestBuilderImportsEdges:
         finally:
             conn.close()
 
+    def test_reindexed_provider_keeps_cross_repo_import_edge(self, tmp_path):
+        # The delete-leg backfill nulls imports edges store-wide; consumer
+        # repos with no file reindexed must still get them re-materialized.
+        from cairn.graph.builder import build_graph
+        from cairn.graph.incremental import reindex_paths
+        from cairn.graph.schema import get_db
+
+        workspace = tmp_path / "ws_reindex"
+        alpha = workspace / "alpha"
+        (alpha / ".git").mkdir(parents=True)
+        (alpha / "app.py").write_text("import beta.util\n")
+        beta = workspace / "beta"
+        (beta / ".git").mkdir(parents=True)
+        (beta / "util.py").write_text("X = 1\n")
+        db_path = str(tmp_path / "reindex.kg")
+        build_graph(workspace=str(workspace), db_path=db_path, verbose=False)
+        conn = get_db(db_path)
+        try:
+            def resolved_edge():
+                return conn.execute(
+                    """SELECT e.id FROM edges e
+                       JOIN symbols src ON e.source_id = src.id
+                       JOIN files sf ON sf.id = src.file_id
+                       JOIN symbols tgt ON e.target_id = tgt.id
+                       JOIN files tf ON tf.id = tgt.file_id
+                       WHERE e.kind = 'imports' AND e.resolution = 'exact'
+                         AND src.name = 'app' AND sf.repo_id = 'alpha'
+                         AND tgt.name = 'util' AND tf.repo_id = 'beta'"""
+                ).fetchone()
+
+            assert resolved_edge(), "full build resolves the cross-repo import"
+
+            (beta / "util.py").write_text("X = 2\n")
+            result = reindex_paths(
+                conn, str(workspace), [str(beta / "util.py")]
+            )
+            assert result["errors"] == []
+            assert resolved_edge(), (
+                "reindexing the provider must keep the consumer repo's "
+                "imports edge resolved"
+            )
+        finally:
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Resolver + traversal semantics

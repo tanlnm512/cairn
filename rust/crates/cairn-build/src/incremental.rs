@@ -44,6 +44,9 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
     // count changed for incoming-edge repair.
     let mut repo_edges: RepoEdges = Vec::new();
     let mut changed_target_names: BTreeSet<String> = BTreeSet::new();
+    // Consumer repos whose imports edges the delete-leg backfill nulls; they
+    // need a materialize pass even with no file of their own reindexed.
+    let mut imports_refresh_repos: Vec<String> = Vec::new();
 
     for abs_path in paths {
         let Some((repo, rel_to_repo)) = repo_relative_path(workspace, abs_path) else {
@@ -79,6 +82,22 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
         // Keep each file replacement atomic: the whole delete leg plus the
         // re-parse insert commit together or roll back together.
         if let Some(fid) = &file_id {
+            // Must run before the backfill nulls target_id: it decides which
+            // consumer repos join the imports refresh below.
+            if let Ok(mut stmt) = tx.prepare(
+                "SELECT DISTINCT f.repo_id FROM edges e \
+                 JOIN symbols s ON s.id = e.source_id \
+                 JOIN files f ON f.id = s.file_id \
+                 WHERE e.kind = 'imports' \
+                   AND e.target_id IN (SELECT id FROM symbols WHERE file_id = ?)",
+            ) && let Ok(rows) = stmt.query_map([fid], |r| r.get::<_, String>(0))
+            {
+                for repo in rows.flatten() {
+                    if !imports_refresh_repos.contains(&repo) {
+                        imports_refresh_repos.push(repo);
+                    }
+                }
+            }
             let legs: [(&str, &str); 4] = [
                 (
                     "DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file_id = ?)",
@@ -263,9 +282,15 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
         }
     }
 
-    // Imports-edge refresh: recompute each touched repo's kind='imports'
-    // edges (delete+reinsert is materialize's idempotence contract).
-    let repos: Vec<String> = repo_edges.iter().map(|(r, _)| r.clone()).collect();
+    // Imports-edge refresh: recompute kind='imports' edges for every repo
+    // that had a file reindexed or an imports edge nulled by the backfill
+    // (delete+reinsert is materialize's idempotence contract).
+    let mut repos: Vec<String> = repo_edges.iter().map(|(r, _)| r.clone()).collect();
+    for repo in imports_refresh_repos {
+        if !repos.contains(&repo) {
+            repos.push(repo);
+        }
+    }
     for repo in repos {
         if let Err(e) = crate::builder::materialize_import_edges(conn, &mut ids, Some(&repo)) {
             result.errors.push(format!("imports-edges/{repo}: {e}"));

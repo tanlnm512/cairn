@@ -498,6 +498,25 @@ fn append_tweak(rel: &'static str) -> impl FnOnce(&Path) {
     }
 }
 
+/// Reindexing a provider file must re-materialize the imports edges of
+/// consumer repos that had no file reindexed (the delete-leg backfill nulls
+/// them store-wide).
+#[test]
+fn graft_rematerializes_cross_repo_imports_edges() {
+    graft_and_compare_on(
+        "xrepo-imports",
+        |dir| {
+            write(
+                dir,
+                "beta/app.py",
+                "from util import add\n\n\ndef go():\n    return add(1, 2)\n",
+            );
+        },
+        append_tweak("alpha/util.py"),
+        &["alpha/util.py"],
+    );
+}
+
 #[test]
 fn graft_keeps_signal_resolved_edges_equal_to_rebuild() {
     for (tag, rel) in [
