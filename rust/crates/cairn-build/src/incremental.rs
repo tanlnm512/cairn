@@ -418,6 +418,7 @@ pub fn incremental_update(
         }
     }
 
+    let _lock = cairn_store::swap::build_lock(Path::new(db_path))?;
     let result = reindex_paths(&mut conn, workspace, &all_paths);
     Ok(UpdateSummary {
         repos_scanned: repos.len(),

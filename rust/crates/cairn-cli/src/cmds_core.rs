@@ -856,31 +856,52 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
     }
     let db = args.db.clone().unwrap_or_else(default_db);
     let workspace = args.workspace.clone().unwrap_or_else(|| ".".to_string());
-    let target_db = if args.staging {
-        format!("{db}.tmp")
-    } else {
-        db.clone()
-    };
     let started = Instant::now();
+    let checkpoint = |path: &Path| {
+        if let Ok(conn) = Connection::open(path) {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+    };
+    let closure = |path: &Path| -> Result<i64, String> {
+        Connection::open(path)
+            .map_err(|e| e.to_string())
+            .and_then(|mut conn| {
+                cairn_build::closure::build_transitive_closure(&mut conn, 4)
+                    .map(|outcome| outcome.rows as i64)
+            })
+            .map_err(|message| format!("closure build failed: {message}"))
+    };
+    let empty_refusal = format!(
+        "no source files found under {workspace} — refusing to swap an empty build over {db}"
+    );
+    let mut staged_closure_rows: Option<i64> = None;
 
     let mut rail = Rail::new("Building graph");
     rail.start("Scanning files");
-    match cairn_build::builder::build_graph(&workspace, &target_db, args.repo.as_deref(), None) {
-        Err(message) => {
-            if args.staging {
-                let _ = std::fs::remove_file(&target_db);
+    let built = if args.staging {
+        // Closure and checkpoint land in the staged store, under the lock, before the swap.
+        cairn_build::builder::build_graph_with(&workspace, &db, None, None, |staged, summary| {
+            if summary.files == 0 {
+                return Err(empty_refusal.clone());
             }
+            if args.with_closure {
+                staged_closure_rows = Some(closure(staged)?);
+            }
+            checkpoint(staged);
+            Ok(())
+        })
+    } else {
+        cairn_build::builder::build_graph(&workspace, &db, args.repo.as_deref(), None)
+    };
+    match built {
+        Err(message) => {
             rail.fail_close();
             command_error(&message)
         }
         Ok((summary, _timings)) => {
             if args.staging && summary.files == 0 {
-                let _ = std::fs::remove_file(&target_db);
                 rail.fail_close();
-                return command_error(&format!(
-                    "no source files found under {workspace} — refusing to swap \
-                     an empty build over {db}"
-                ));
+                return command_error(&empty_refusal);
             }
             rail.tick(&format!("{} found", fmt_int(summary.files as i64)));
             rail.finish(&format!("{} found", fmt_int(summary.files as i64)));
@@ -893,21 +914,20 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
 
             if args.with_closure {
                 rail.start("Transitive closure");
-                match Connection::open(&target_db)
-                    .map_err(|e| e.to_string())
-                    .and_then(|mut conn| {
-                        cairn_build::closure::build_transitive_closure(&mut conn, 4)
-                            .map(|outcome| outcome.rows as i64)
-                    }) {
+                let rows = match staged_closure_rows {
+                    Some(rows) => Ok(rows),
+                    None => closure(Path::new(&db)),
+                };
+                match rows {
                     Ok(rows) => rail.finish(&format!("{} edges", fmt_int(rows))),
                     Err(message) => {
                         rail.fail_close();
-                        return command_error(&format!("closure build failed: {message}"));
+                        return command_error(&message);
                     }
                 }
             }
-            if let Ok(conn) = Connection::open(&target_db) {
-                let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+            if !args.staging {
+                checkpoint(Path::new(&db));
             }
 
             let mut kv_pairs: Vec<(String, String)> = vec![
@@ -2404,4 +2424,53 @@ pub struct TaintArgs {
     /// Maximum printed paths.
     #[arg(long = "limit", default_value_t = DEFAULT_PATH_LIMIT)]
     pub limit: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staging_build_swaps_the_temp_db_over_the_store() {
+        let dir = std::env::temp_dir().join(format!(
+            "cairn-staging-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join(".git")).expect("repo marker");
+        std::fs::write(dir.join("mod.py"), "def f():\n    return 1\n").expect("source");
+        let db = dir.join("store.kg");
+        let db_str = db.to_string_lossy().to_string();
+        {
+            let conn = cairn_store::schema::open_initialized(&db).expect("seed store");
+            conn.execute(
+                "INSERT INTO build_runs (kind, started_at) VALUES ('build', 1.0)",
+                [],
+            )
+            .expect("seed telemetry");
+        }
+
+        let code = build(BuildArgs {
+            repo: None,
+            workspace: Some(dir.to_string_lossy().to_string()),
+            db: Some(db_str.clone()),
+            verbose: false,
+            staging: true,
+            lsp: None,
+            with_closure: false,
+        });
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(!Path::new(&format!("{db_str}.tmp")).exists());
+        assert!(!Path::new(&format!("{db_str}.tmp.build.lock")).exists());
+        let conn = Connection::open(&db).expect("open store");
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).expect("count") };
+        assert_eq!(count("SELECT COUNT(*) FROM files"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM build_runs"), 1);
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -5,6 +5,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use cairn_parse::model::ParsedFile;
+use cairn_store::swap;
 use rayon::prelude::*;
 use rusqlite::Connection;
 use serde_json::Value;
@@ -122,12 +123,26 @@ fn sequence_id_value(id: &str) -> Option<u64> {
 pub(crate) type RepoEdges = Vec<(String, Vec<(String, Vec<EdgeSignal>)>)>;
 
 /// Build or rebuild the graph for `workspace` into the store at `db_path`.
-/// `workers` pins the parse pool size; None honors CAIRN_WORKERS then cpu count.
+/// A full build atomically replaces the store; `repo_filter` replaces only that
+/// repo in place. `workers` pins the parse pool size; None honors CAIRN_WORKERS
+/// then cpu count.
 pub fn build_graph(
     workspace: &str,
     db_path: &str,
     repo_filter: Option<&str>,
     workers: Option<usize>,
+) -> Result<(BuildSummary, StageTimings), String> {
+    build_graph_with(workspace, db_path, repo_filter, workers, |_, _| Ok(()))
+}
+
+/// `build_graph` that runs `before_swap` on a full build's staged store, under
+/// the build lock and ahead of the swap; an Err aborts the swap.
+pub fn build_graph_with(
+    workspace: &str,
+    db_path: &str,
+    repo_filter: Option<&str>,
+    workers: Option<usize>,
+    before_swap: impl FnOnce(&Path, &BuildSummary) -> Result<(), String>,
 ) -> Result<(BuildSummary, StageTimings), String> {
     let started = Instant::now();
     let mut timings = StageTimings::default();
@@ -136,34 +151,99 @@ pub fn build_graph(
     let (files, skips) = scanner::scan_workspace(workspace, repo_filter)?;
     timings.scan_ms = elapsed_ms(t);
 
-    let mut conn = cairn_store::schema::open_initialized(Path::new(db_path))
-        .map_err(|e| format!("open store {db_path}: {e}"))?;
+    let db = Path::new(db_path);
+    let _lock = swap::build_lock(db)?;
+    let summary = match repo_filter {
+        Some(_) => {
+            let mut conn = open_store(db)?;
+            populate(
+                &mut conn,
+                workspace,
+                &files,
+                &skips,
+                repo_filter,
+                workers,
+                &mut timings,
+            )?
+        }
+        None => {
+            let staged = swap::staging_path(db);
+            swap::discard(&staged);
+            let result = build_staged(
+                &staged,
+                db,
+                files.is_empty(),
+                |conn| populate(conn, workspace, &files, &skips, None, workers, &mut timings),
+                before_swap,
+            );
+            swap::discard(&staged);
+            result?
+        }
+    };
+    timings.total_ms = elapsed_ms(started);
+    Ok((summary, timings))
+}
+
+/// Full build into a fresh `staged` store, swapped over `db` unless the scan found nothing.
+fn build_staged(
+    staged: &Path,
+    db: &Path,
+    scanned_nothing: bool,
+    fill: impl FnOnce(&mut Connection) -> Result<BuildSummary, String>,
+    before_swap: impl FnOnce(&Path, &BuildSummary) -> Result<(), String>,
+) -> Result<BuildSummary, String> {
+    let summary = {
+        let mut conn = open_store(staged)?;
+        fill(&mut conn)?
+    };
+    if scanned_nothing {
+        if summary.skipped == 0 {
+            return Ok(summary);
+        }
+        if store_file_holds_graph(db) {
+            return Err(format!(
+                "scan found no indexable files ({} skipped) but {} already holds a \
+                 graph — refusing to replace it; check the workspace path and skip \
+                 configuration",
+                summary.skipped,
+                db.display()
+            ));
+        }
+    }
+    before_swap(staged, &summary)?;
+    swap::install_staged(staged, db)?;
+    Ok(summary)
+}
+
+fn open_store(db: &Path) -> Result<Connection, String> {
+    cairn_store::schema::open_initialized(db)
+        .map_err(|e| format!("open store {}: {e}", db.display()))
+}
+
+fn populate(
+    conn: &mut Connection,
+    workspace: &str,
+    files: &[scanner::FileInfo],
+    skips: &[scanner::SkipInfo],
+    repo_filter: Option<&str>,
+    workers: Option<usize>,
+    timings: &mut StageTimings,
+) -> Result<BuildSummary, String> {
     let tx = conn.transaction().map_err(rusqlite_err)?;
 
     if files.is_empty() {
-        let skip_count = record_skips(&tx, &skips)?;
+        let skip_count = record_skips(&tx, skips)?;
         tx.commit().map_err(rusqlite_err)?;
-        if repo_filter.is_none() && skip_count > 0 && store_holds_graph(&conn)? {
-            return Err(format!(
-                "scan found no indexable files ({skip_count} skipped) but {db_path} \
-                 already holds a graph — refusing to replace it; check the workspace \
-                 path and skip configuration"
-            ));
-        }
-        timings.total_ms = elapsed_ms(started);
-        return Ok((
-            BuildSummary {
-                skipped: skip_count,
-                ..BuildSummary::default()
-            },
-            timings,
-        ));
+        return Ok(BuildSummary {
+            skipped: skip_count,
+            ..BuildSummary::default()
+        });
     }
 
     // Repos upsert: workspace-relative paths keep the store portable.
     let ws_root = std::fs::canonicalize(workspace).map_err(|e| e.to_string())?;
     let mut repos_seen: Vec<(String, String)> = Vec::new(); // (repo, repo_path)
-    for f in &files {
+    for f in files {
         if !repos_seen.iter().any(|(repo, _)| repo == &f.repo) {
             repos_seen.push((f.repo.clone(), f.repo_path.clone()));
         }
@@ -202,7 +282,23 @@ pub fn build_graph(
         .map_err(rusqlite_err)?;
     }
 
-    let skip_count = record_skips(&tx, &skips)?;
+    // Continue past the rows about to be cleared: unkeyed symbol-id tables
+    // (closure, communities) must never resolve to a rebuilt row.
+    let mut ids = IdGen::continuing(&tx)?;
+    if let Some(repo) = repo_filter {
+        // The marker flags an interrupted rebuild until the last write lands.
+        tx.execute(
+            "INSERT INTO repo_build_state (repo_id, state, started_at)
+             VALUES (?, 'building', ?)
+             ON CONFLICT(repo_id) DO UPDATE SET
+               state='building', started_at=excluded.started_at",
+            rusqlite::params![repo, now_iso()],
+        )
+        .map_err(rusqlite_err)?;
+        clear_repo(&tx, repo)?;
+    }
+
+    let skip_count = record_skips(&tx, skips)?;
 
     // First pass: parse all files on the rayon pool.
     let t = Instant::now();
@@ -240,7 +336,6 @@ pub fn build_graph(
 
     // Second pass: insert into SQLite.
     let t = Instant::now();
-    let mut ids = IdGen(0);
     let mut summary = BuildSummary {
         skipped: skip_count,
         ..BuildSummary::default()
@@ -295,8 +390,8 @@ pub fn build_graph(
     // Third pass: resolve queued edge targets per repository.
     let t = Instant::now();
     for (repo, edges_by_file) in &repo_edges {
-        let stats = crate::resolver::resolve_repo_edges(&mut conn, repo, edges_by_file)
-            .map_err(rusqlite_err)?;
+        let stats =
+            crate::resolver::resolve_repo_edges(conn, repo, edges_by_file).map_err(rusqlite_err)?;
         summary.resolution.exact += stats.exact;
         summary.resolution.ambiguous += stats.ambiguous;
         summary.resolution.unresolved += stats.unresolved;
@@ -313,8 +408,11 @@ pub fn build_graph(
         let _ = import_edges;
     }
 
-    timings.total_ms = elapsed_ms(started);
-    Ok((summary, timings))
+    if let Some(repo) = repo_filter {
+        conn.execute("DELETE FROM repo_build_state WHERE repo_id = ?", [repo])
+            .map_err(rusqlite_err)?;
+    }
+    Ok(summary)
 }
 
 fn elapsed_ms(t: Instant) -> f64 {
@@ -337,15 +435,71 @@ fn configured_workers() -> usize {
         })
 }
 
-fn store_holds_graph(conn: &Connection) -> Result<bool, String> {
-    let count: i64 = conn
-        .query_row(
-            "SELECT (SELECT COUNT(*) FROM files) + (SELECT COUNT(*) FROM symbols)",
-            [],
-            |r| r.get(0),
-        )
-        .map_err(rusqlite_err)?;
-    Ok(count > 0)
+fn store_file_holds_graph(db: &Path) -> bool {
+    db.exists()
+        && cairn_store::conn::open_read_only(db)
+            .and_then(|conn| {
+                conn.query_row(
+                    "SELECT (SELECT COUNT(*) FROM files) + (SELECT COUNT(*) FROM symbols)",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )
+            })
+            .is_ok_and(|count| count > 0)
+}
+
+/// Delete one repo's graph rows, demoting incoming edges to unresolved names.
+fn clear_repo(conn: &Connection, repo: &str) -> Result<(), String> {
+    const REPO_SYMBOLS: &str =
+        "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.repo_id = ?1";
+    const REPO_FILES: &str = "SELECT id FROM files WHERE repo_id = ?1";
+
+    let doomed_vec_rows: Vec<(String, i64)> = {
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT model, rowid FROM embeddings WHERE symbol_id IN ({REPO_SYMBOLS})"
+            ))
+            .map_err(rusqlite_err)?;
+        stmt.query_map([repo], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(rusqlite_err)?
+            .collect::<Result<_, _>>()
+            .map_err(rusqlite_err)?
+    };
+
+    let statements = [
+        "DELETE FROM parse_errors WHERE repo_id = ?1".to_string(),
+        "DELETE FROM skipped_files WHERE repo_id = ?1".to_string(),
+        format!(
+            "UPDATE edges SET target_name = COALESCE(target_name, \
+               (SELECT name FROM symbols WHERE id = edges.target_id)), \
+             target_id = NULL, resolution = 'unresolved' \
+             WHERE target_id IN ({REPO_SYMBOLS})"
+        ),
+        format!("DELETE FROM edges WHERE source_id IN ({REPO_SYMBOLS})"),
+        format!(
+            "UPDATE imports SET resolved_symbol_id = NULL \
+             WHERE resolved_symbol_id IN ({REPO_SYMBOLS})"
+        ),
+        format!("DELETE FROM imports WHERE file_id IN ({REPO_FILES})"),
+        format!("DELETE FROM rationale WHERE file_id IN ({REPO_FILES})"),
+        format!("DELETE FROM embeddings WHERE symbol_id IN ({REPO_SYMBOLS})"),
+        format!("DELETE FROM embeddings_mv WHERE symbol_id IN ({REPO_SYMBOLS})"),
+        format!("DELETE FROM symbols WHERE file_id IN ({REPO_FILES})"),
+        "DELETE FROM files WHERE repo_id = ?1".to_string(),
+    ];
+    for sql in &statements {
+        conn.execute(sql, [repo]).map_err(rusqlite_err)?;
+    }
+
+    // Stale vec0 rows would pair a reused embeddings rowid with an unrelated vector.
+    let mut by_model: HashMap<&str, Vec<i64>> = HashMap::new();
+    for (model, rowid) in &doomed_vec_rows {
+        by_model.entry(model).or_default().push(*rowid);
+    }
+    for (model, rowids) in by_model {
+        cairn_store::vec0::delete_index_rows(conn, model, &rowids).map_err(rusqlite_err)?;
+    }
+    Ok(())
 }
 
 /// Skips are content-keyed so the same scan yields the same row ids.
