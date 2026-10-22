@@ -318,6 +318,40 @@ def test_unique_definition_upgrades_only_that_ambiguous_edge(
     assert transport.closed
 
 
+def test_lsp_upgraded_edge_survives_incremental_name_repair(
+    tmp_path: Path, hash_backend
+) -> None:
+    """A later namesake never sends a language-server upgrade back through
+    heuristic repair: the edge stays exact like a fresh build's."""
+    from cairn.graph.incremental import incremental_update
+
+    workspace, implementation = _workspace(tmp_path, "lsp_repair")
+    transport = FakeJsonRpcTransport(
+        {
+            "uri": implementation.as_uri(),
+            "range": {"start": {"line": 1, "character": 0}},
+        },
+        [],
+    )
+    db_path = tmp_path / "lsp_repair.db"
+    _, conn = _build(workspace, db_path, transport)
+    conn.close()
+    extra = Path(workspace) / "demo" / "resolved_extra.py"
+    extra.write_text("def resolved_target():\n    return 6\n")
+
+    result = incremental_update(workspace=workspace, db_path=str(db_path))
+
+    assert result["errors"] == []
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        edge = _edge(conn, "resolved_target")
+        assert edge["resolution"] == "exact"
+        assert edge["target_file"] == "implementation.py"
+    finally:
+        conn.close()
+
+
 @pytest.mark.parametrize(
     "transport",
     [None, FailingJsonRpcTransport()],
