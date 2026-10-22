@@ -49,7 +49,7 @@ impl ToolCtx {
         if self.read_only {
             cairn_store::conn::open_read_only(&self.db_path)
         } else {
-            Connection::open(&self.db_path)
+            cairn_store::conn::open_writable(&self.db_path)
         }
         .map_err(|e| format!("store open failed: {e}"))
     }
@@ -782,5 +782,34 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.0))
         }
         other => Err(ToolFailure(format!("Unknown tool: {other}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writable_conn_carries_the_store_pragmas() {
+        let dir = std::env::temp_dir().join(format!(
+            "cairn-daemon-tools-conn-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let ctx = ToolCtx::new(&dir.join("t.kg"), &dir, &dir.join(".knowledge"), false);
+        let conn = ctx.conn().expect("writable conn");
+        let journal: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .expect("journal_mode");
+        let mmap: i64 = conn
+            .query_row("PRAGMA mmap_size", [], |r| r.get(0))
+            .expect("mmap_size");
+        assert_eq!((journal.as_str(), mmap), ("wal", 268_435_456));
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
