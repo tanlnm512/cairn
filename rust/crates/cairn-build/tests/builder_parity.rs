@@ -282,6 +282,8 @@ fn edge_source_is_the_enclosing_same_named_owner() {
             "try:\n    class Impl:\n        @property\n        def value(self):\n            one()\n\n",
             "        @value.setter\n        def value(self, v):\n            two()\n",
             "except ImportError:\n    class Impl:\n        def run(self):\n            baz()\n",
+            "\ndef combo():\n    @cache\n    def combo():\n        pass\n    return combo\n",
+            "\ndef m():\n    @route\n    class C:\n        def m(self):\n            pass\n",
         ),
     );
     let db = dir.join("store.kg");
@@ -310,6 +312,22 @@ fn edge_source_is_the_enclosing_same_named_owner() {
     assert_eq!(calls, vec![2, 6, 12, 16, 20]);
     assert_eq!(owner_line("contains", "20"), 19);
     assert_eq!(owner_line("decorates", "setter"), 16);
+    // A decorated definition nested in a same-named outer one owns its
+    // decorator, not the outer.
+    assert_eq!(owner_line("decorates", "cache"), 25);
+    // A decorator above a differently named definition binds to the
+    // same-named definition that appears later, not the enclosing one.
+    let route = conn
+        .prepare(
+            "SELECT src.line_start FROM edges e JOIN symbols src ON e.source_id = src.id
+             WHERE e.kind = 'decorates' AND e.target_name = 'route' ORDER BY src.line_start",
+        )
+        .expect("route stmt")
+        .query_map([], |r| r.get(0))
+        .expect("route rows")
+        .collect::<Result<Vec<i64>, _>>()
+        .expect("route ids");
+    assert_eq!(route, vec![31, 32]);
     drop(conn);
     let _ = fs::remove_dir_all(&dir);
 }

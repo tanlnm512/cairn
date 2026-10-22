@@ -604,16 +604,22 @@ fn enclosing_owner(
             .filter(move |(id, _)| Some(id.as_str()) != exclude)
             .filter_map(|(id, span)| span.map(|span| (id, span)))
     };
-    candidates()
-        .filter(|(_, (start, end))| (*start..=*end).contains(&line))
-        .min_by_key(|(_, (start, end))| end - start)
-        // A decorator line sits just above its definition's span.
+    // A decorator line sits above its definition's span, so the nearest
+    // following definition owns it — never an enclosing same-named one.
+    decorator
+        .then(|| {
+            candidates()
+                .filter(|(_, (start, _))| *start >= line)
+                .min_by_key(|(_, (start, _))| *start)
+                .map(|(id, _)| id)
+        })
+        .flatten()
         .or_else(|| {
             candidates()
-                .filter(|(_, (start, _))| decorator && *start >= line)
-                .min_by_key(|(_, (start, _))| *start)
+                .filter(|(_, (start, end))| (*start..=*end).contains(&line))
+                .min_by_key(|(_, (start, end))| end - start)
+                .map(|(id, _)| id)
         })
-        .map(|(id, _)| id)
         // No span holds the line: keep declaration-order first-wins.
         .or_else(|| owners.first().map(|(id, _)| id))
         .cloned()

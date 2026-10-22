@@ -990,16 +990,16 @@ def _enclosing_owner(
     decorator: bool = False,
 ) -> Optional[str]:
     spanned = [(owner_id, span) for owner_id, span in owners if owner_id != exclude and span]
+    if decorator:
+        # A decorator line sits above its definition's span, so the nearest
+        # following definition owns it — never an enclosing same-named one.
+        following = [(start, owner_id) for owner_id, (start, _end) in spanned if start >= line]
+        if following:
+            return min(following)[1]
     best_id, best_width = None, None
     for owner_id, (start, end) in spanned:
         if start <= line <= end and (best_width is None or end - start < best_width):
             best_id, best_width = owner_id, end - start
-    if best_id is None and decorator:
-        # A decorator line sits just above its definition's span.
-        best_start = None
-        for owner_id, (start, _) in spanned:
-            if start >= line and (best_start is None or start < best_start):
-                best_id, best_start = owner_id, start
     if best_id is None and owners:
         # No span holds the line: keep declaration-order first-wins.
         return owners[0][0]

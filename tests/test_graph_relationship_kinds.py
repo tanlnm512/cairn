@@ -308,6 +308,16 @@ class TestBuilderModuleAndContains:
             "    class Impl:\n"
             "        def run(self):\n"
             "            baz()\n"
+            "\ndef combo():\n"
+            "    @cache\n"
+            "    def combo():\n"
+            "        pass\n"
+            "    return combo\n"
+            "\ndef m():\n"
+            "    @route\n"
+            "    class C:\n"
+            "        def m(self):\n"
+            "            pass\n"
         )
         db_path = str(tmp_path / "owner.db")
         build_graph(workspace=str(workspace), db_path=db_path, verbose=False)
@@ -322,6 +332,14 @@ class TestBuilderModuleAndContains:
                        WHERE e.kind IN ('calls', 'decorates', 'contains')"""
                 ).fetchall()
             }
+            route_lines = sorted(
+                row[0]
+                for row in conn.execute(
+                    """SELECT src.line_start FROM edges e
+                       JOIN symbols src ON e.source_id = src.id
+                       WHERE e.kind = 'decorates' AND e.target_name = 'route'"""
+                )
+            )
         finally:
             conn.close()
         assert {t: owner_lines[("calls", t)] for t in ("foo", "bar", "one", "two", "baz")} == {
@@ -329,6 +347,12 @@ class TestBuilderModuleAndContains:
         }
         assert owner_lines[("contains", 20)] == 19
         assert owner_lines[("decorates", "setter")] == 16
+        # A decorated definition nested in a same-named outer one owns its
+        # decorator, not the outer.
+        assert owner_lines[("decorates", "cache")] == 25
+        # A decorator above a differently named definition binds to the
+        # same-named definition that appears later, not the enclosing one.
+        assert route_lines == [31, 32]
 
 
 class TestBuilderImportsEdges:
