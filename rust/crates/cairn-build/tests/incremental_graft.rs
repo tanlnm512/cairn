@@ -422,3 +422,18 @@ fn graft_of_one_edited_rust_file_matches_full_rebuild() {
         &["beta/lib.rs"],
     );
 }
+
+#[test]
+fn incremental_update_defers_while_a_build_holds_the_lock() {
+    let dir = corpus("locked");
+    let ws = dir.to_str().expect("ws");
+    let db = dir.join("store.kg");
+    let db_str = db.to_str().expect("db");
+    build_graph(ws, db_str, None, Some(1)).expect("full build");
+
+    let _held = cairn_store::swap::build_lock(&db).expect("hold build lock");
+    let err = cairn_build::incremental::incremental_update(ws, db_str, None, None)
+        .expect_err("update must not write under a held build lock");
+    assert!(err.contains("Cannot acquire build lock"), "{err}");
+    let _ = fs::remove_dir_all(&dir);
+}

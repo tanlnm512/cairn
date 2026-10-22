@@ -360,6 +360,13 @@ fn update_pass(workspace: &str, db_path: &str, raw_paths: &[PathBuf]) -> bool {
             eprintln!("cairn: watcher update failed: store unreachable");
             return false;
         };
+        let _lock = match cairn_store::swap::build_lock(Path::new(db_path)) {
+            Ok(lock) => lock,
+            Err(e) => {
+                eprintln!("cairn: watcher update deferred (writer lock busy): {e}");
+                return false;
+            }
+        };
         let result = incremental::reindex_paths(&mut conn, workspace, &missing);
         if !result.errors.is_empty() {
             eprintln!("cairn: watcher update failed: {}", result.errors.join("; "));
