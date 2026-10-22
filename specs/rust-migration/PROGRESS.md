@@ -140,3 +140,38 @@ Gate verdicts:
 |---|---|---|
 | W — wheel smoke | PASS (round 0) | round 0: `scripts/rust_migration/wheel_smoke.sh` exit 0 end-to-end — all three installed-product probes green (`cairn --version`; `config --json` C-4 keys; `daemon_impl=rust` resolving to the wheel's `site-packages/_bin/cairn`, which executes) |
 | T — workspace tests | PASS (round 1) | round 0: `cargo test` exit 101, `pytest` exit 0 (flow_golden temp-dir collision, fixed by gate-repair T r1); round 1: `cargo test` exit 0, `pytest` exit 0 |
+
+## Phase 4 — Leftovers (plan §15)
+
+Wave 1 covered 4a and 4b-1–4b-10. Each branch went through implement,
+independent review and fix rounds, then all were merged locally onto `main`
+and gated together. Branches are pushed; none is merged yet. The edge-source
+and resolver branches are stacked on the staging/rebuild branch because they
+share its test files.
+
+| Workstream | State | Summary | Branch @ head |
+|---|---|---|---|
+| 4a | done, unmerged | `rust-parity.yml`: parity replay, `cli_golden.py`, G2 and wheel smoke as independent jobs (cheap subset per PR, full set nightly); `g2_check.sh` gains validated `G2_LEGS` with `rebuild` and `staging` legs; `wheel_smoke.sh` builds isolated | `ci/rust-parity-gates` @ 9701369 |
+| 4b-1, 4b-2 | done, unmerged | staged builds swap in under the shared build lock; full rebuilds replace the store, `--repo` replaces one repo without id reuse; rust incremental writers and the watcher take the lock | `fix/rust-build-staging-rebuild` @ 7ed6097 |
+| 4b-3, 4b-9 | done, unmerged | dataflow PK rebuilt from the table's shape in both engines (repairs 0.23.0-stamped stores), atomically; daemon writable connections use the store factory. The healthz half of 4b-9 was withdrawn (not a defect) | `fix/rust-store-daemon-health` @ 00448e7 |
+| 4b-4, 4b-8 | done, unmerged | edge, contains and decorator sources attributed to the enclosing same-named owner; `trace_flow` nodes and cycles at shortest depth; yarl `trace_flow` golden refreshed from Python over the unchanged pinned store | `fix/edge-source-trace-depth` @ b1309c5 |
+| 4b-5, 4b-6, 4b-7 | done, unmerged | change detection since last index, NUL-separated git paths, git errors surfaced; repair with stored receiver/arity signals across repos via nullable `edges.ref_name`/`receiver_type`/`call_arity`, chunked, LSP edges excluded, closure/dataflow kept in sync; import scoring fixed | `fix/incremental-resolver-repair` @ 0f6630f |
+| 4b-10 | done, unmerged | config never overwritten when unreadable or not backed up (rust `install-agents` aborts the client; dashboard settings refuse and keep non-scalar keys); HOME-dependent cairn-cli tests serialized (flake 4/10 → 0/20) | `fix/config-overwrite-guard` @ 2910ac6 |
+
+Combined gate on the local integration merge:
+
+| Check | Outcome |
+|---|---|
+| `cargo fmt --check`, `cargo clippy -D warnings` | clean |
+| `cargo test --workspace --no-fail-fast` | 360 passed, 1 failed (`daemon_check_reports_the_serving_impl`, live developer daemon) |
+| full pytest | 4768 passed, 3 failed (SCIP tests needing the `[scip]` runtime, identical on `main`) |
+| `g2_check.sh` base / rebuild / staging | PASS / PASS / PASS (rebuild and staging fail on `main`) |
+| `parity.py` self / yarl / attrs | 26/26 each |
+| `cli_golden.py` | 19/19 |
+| `resolver_parity.py` self / yarl / attrs | PASS |
+| `pre-commit run --all-files`, every branch | green |
+
+Remaining for Phase 4: open and merge the wave-1 PRs (staging/rebuild before
+the two stacked branches; drop `continue-on-error` from the `g2-legs` job once
+it merges); follow-ups 4b-11–4b-19; 4c–4e per the implementation detail in
+plan §15.
