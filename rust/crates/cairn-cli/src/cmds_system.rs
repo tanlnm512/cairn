@@ -143,9 +143,17 @@ pub enum SystemCommand {
 #[derive(Subcommand)]
 pub enum HooksGroup {
     /// Install git hooks.
-    Install,
+    Install {
+        /// Workspace root (default: resolved workspace).
+        #[arg(long)]
+        workspace: Option<String>,
+    },
     /// Uninstall git hooks.
-    Uninstall,
+    Uninstall {
+        /// Workspace root (default: resolved workspace).
+        #[arg(long)]
+        workspace: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -328,10 +336,10 @@ pub fn run(command: SystemCommand) -> ExitCode {
                 }
             }
         }
-        SystemCommand::Hooks { command } => not_ported(match command {
-            HooksGroup::Install => "hooks install",
-            HooksGroup::Uninstall => "hooks uninstall",
-        }),
+        SystemCommand::Hooks { command } => match command {
+            HooksGroup::Install { workspace } => run_hooks_install(workspace),
+            HooksGroup::Uninstall { workspace } => run_hooks_uninstall(workspace),
+        },
         other => not_ported(other.name()),
     }
 }
@@ -341,6 +349,51 @@ fn not_ported(name: &str) -> ExitCode {
         "cairn {name} is not implemented in the Rust CLI yet"
     ));
     ExitCode::FAILURE
+}
+
+/// click.ClickException rendering: "Error: <msg>" on stderr, exit 1.
+fn cli_err(msg: &str) -> ExitCode {
+    eprintln!("Error: {msg}");
+    ExitCode::FAILURE
+}
+
+fn hook_workspace(arg: Option<&str>) -> std::path::PathBuf {
+    crate::store_paths::resolve_workspace(arg.map(std::path::Path::new))
+}
+
+fn run_hooks_install(workspace: Option<String>) -> ExitCode {
+    let ws = hook_workspace(workspace.as_deref());
+    let repos = crate::agent_install::discover_hook_repos(&ws);
+    if repos.is_empty() {
+        return cli_err(crate::agent_install::NO_GIT_REPOS_GUIDANCE);
+    }
+    match crate::agent_install::install_git_hooks(&repos) {
+        Ok(installed) if installed.is_empty() => {
+            println!("No hooks installed; existing non-cairn hooks were left untouched");
+            ExitCode::SUCCESS
+        }
+        Ok(installed) => {
+            println!(
+                "Installed post-commit and post-checkout hooks in {} repos: {}",
+                installed.len(),
+                installed.join(", ")
+            );
+            ExitCode::SUCCESS
+        }
+        Err(msg) => cli_err(&msg),
+    }
+}
+
+fn run_hooks_uninstall(workspace: Option<String>) -> ExitCode {
+    let ws = hook_workspace(workspace.as_deref());
+    let repos = crate::agent_install::discover_hook_repos(&ws);
+    let removed = crate::agent_install::uninstall_git_hooks(&repos);
+    println!(
+        "Removed hooks from {} repos: {}",
+        removed.len(),
+        removed.join(", ")
+    );
+    ExitCode::SUCCESS
 }
 
 impl SystemCommand {
@@ -386,5 +439,49 @@ mod tests {
     #[test]
     fn stub_exit_is_failure_with_diagnostic() {
         assert_eq!(run(SystemCommand::Status), ExitCode::FAILURE);
+    }
+
+    #[test]
+    fn hooks_install_and_uninstall_manage_repo_hooks() {
+        let _env = crate::test_env::EnvScope::new("hooks-cli");
+        let dir = std::env::temp_dir().join(format!(
+            "cairn-hooks-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let ws = dir.join("ws");
+        let repo = ws.join("repo");
+        std::fs::create_dir_all(repo.join(".git/hooks")).expect("repo");
+        std::fs::create_dir_all(dir.join("empty")).expect("empty dir");
+        let ws_arg = ws.to_string_lossy().to_string();
+
+        let code = run(SystemCommand::Hooks {
+            command: HooksGroup::Install {
+                workspace: Some(ws_arg.clone()),
+            },
+        });
+        assert_eq!(code, ExitCode::SUCCESS);
+        let post_commit = repo.join(".git/hooks/post-commit");
+        let post_checkout = repo.join(".git/hooks/post-checkout");
+        assert!(post_commit.exists() && post_checkout.exists());
+
+        let code = run(SystemCommand::Hooks {
+            command: HooksGroup::Uninstall {
+                workspace: Some(ws_arg),
+            },
+        });
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(!post_commit.exists() && !post_checkout.exists());
+
+        let code = run(SystemCommand::Hooks {
+            command: HooksGroup::Install {
+                workspace: Some(dir.join("empty").to_string_lossy().to_string()),
+            },
+        });
+        assert_eq!(code, ExitCode::FAILURE, "no-repos guidance is an error");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

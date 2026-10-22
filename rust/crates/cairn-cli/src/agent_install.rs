@@ -2685,6 +2685,9 @@ fn is_cairn_managed_hook(hook_path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Guidance shown when `hooks install` finds no git repositories.
+pub const NO_GIT_REPOS_GUIDANCE: &str = "No git repositories found in this workspace — cairn git hooks install into .git/hooks, so run `git init` in your repository root first.";
+
 /// Install post-commit/post-checkout hooks; Err carries the guard reason.
 pub fn install_git_hooks(repos: &[(String, PathBuf)]) -> Result<Vec<String>, String> {
     for (repo, _) in repos {
@@ -2739,6 +2742,27 @@ pub fn install_git_hooks(repos: &[(String, PathBuf)]) -> Result<Vec<String>, Str
         }
     }
     Ok(installed)
+}
+
+/// Remove cairn-managed post-commit/post-checkout hooks; user hooks stay.
+pub fn uninstall_git_hooks(repos: &[(String, PathBuf)]) -> Vec<String> {
+    let mut removed = Vec::new();
+    for (repo, root) in repos {
+        let Some(hooks_dir) = repo_hooks_dir(root) else {
+            continue;
+        };
+        let mut touched = false;
+        for hook_name in ["post-commit", "post-checkout"] {
+            let hook_path = hooks_dir.join(hook_name);
+            if is_cairn_managed_hook(&hook_path) && std::fs::remove_file(&hook_path).is_ok() {
+                touched = true;
+            }
+        }
+        if touched {
+            removed.push(repo.clone());
+        }
+    }
+    removed
 }
 
 // --- orchestration ---------------------------------------------------------------------
@@ -3423,6 +3447,17 @@ mod tests {
             std::fs::read(&user_hook).expect("user hook bytes"),
             b"#!/bin/sh\necho user\n",
             "a user-owned post-checkout must be left in place"
+        );
+        let removed = uninstall_git_hooks(&repos);
+        assert_eq!(removed, vec!["repo".to_string()]);
+        assert!(
+            !repo.join(".git/hooks/post-commit").exists(),
+            "cairn-managed hook must be removed"
+        );
+        assert_eq!(
+            std::fs::read(&user_hook).expect("user hook bytes"),
+            b"#!/bin/sh\necho user\n",
+            "a user-owned post-checkout must survive uninstall"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

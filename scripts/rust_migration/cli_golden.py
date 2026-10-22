@@ -211,6 +211,32 @@ def _seed_wiki(scratch: Path) -> None:
     )
 
 
+def prepare_hooks_workspace(scratch: Path) -> Path:
+    """Scratch workspace for the hooks legs: repo alpha (clean), repo beta
+    (foreign post-commit), and an empty dir for the no-repos guidance path."""
+    ws = scratch / "hooks-ws"
+    for repo in ("alpha", "beta"):
+        (ws / repo / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
+    (ws / "beta" / ".git" / "hooks" / "post-commit").write_text(
+        "#!/bin/sh\necho user\n", encoding="utf-8")
+    (ws / "empty").mkdir(parents=True, exist_ok=True)
+    return ws
+
+
+def _reset_hooks_workspace(scratch: Path, installed: bool) -> None:
+    """Restore the hooks workspace to its pre-install or post-install state."""
+    from cairn.hooks.git_hooks import install_hooks
+
+    ws = scratch / "hooks-ws"
+    for repo in ("alpha", "beta"):
+        for name in ("post-commit", "post-checkout"):
+            (ws / repo / ".git" / "hooks" / name).unlink(missing_ok=True)
+    (ws / "beta" / ".git" / "hooks" / "post-commit").write_text(
+        "#!/bin/sh\necho user\n", encoding="utf-8")
+    if installed:
+        install_hooks(["alpha", "beta"], str(ws))
+
+
 def _seed_task(scratch: Path, task_id: str, kind: str, resource: str,
                facts: dict, status: str = "pending",
                result: str | None = None,
@@ -257,6 +283,10 @@ RESEED = {
     ("wiki", "generate", "--llm"): _seed_wiki,
     ("wiki", "retry"): _seed_wiki,
     ("wiki", "enrich", "--all"): _seed_wiki,
+    ("hooks", "install", "--workspace"):
+        lambda s: _reset_hooks_workspace(s, installed=False),
+    ("hooks", "uninstall", "--workspace"):
+        lambda s: _reset_hooks_workspace(s, installed=True),
 }
 
 
@@ -326,8 +356,13 @@ def main(argv: list[str] | None = None) -> int:
         _note(f"rust binary: {rust_bin}")
 
         export_dir = scratch / "export"
-        commands = COMMANDS + [["wiki", "export", "--dir", str(export_dir),
-                                "--force"]]
+        hooks_ws = prepare_hooks_workspace(scratch)
+        commands = COMMANDS + [
+            ["hooks", "install", "--workspace", str(hooks_ws)],
+            ["hooks", "uninstall", "--workspace", str(hooks_ws)],
+            ["hooks", "install", "--workspace", str(hooks_ws / "empty")],
+            ["wiki", "export", "--dir", str(export_dir), "--force"],
+        ]
         failures = []
         for cmd in commands:
             hook = RESEED.get(tuple(cmd[:3]))
