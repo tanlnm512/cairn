@@ -283,7 +283,7 @@ def _import_aware_candidates(
                 # in qsegs; score by how much of the import path corroborates.
                 for i in range(len(qsegs) - len(tail) + 1):
                     if qsegs[i:i + len(tail)] == tail:
-                        prefix_len = len(tail) + i
+                        prefix_len = len(tail)
                         break
                 # Fallback: match just the last segment of the import tail
                 # against qsegs[0] for type-scoped qnames with package-qualified

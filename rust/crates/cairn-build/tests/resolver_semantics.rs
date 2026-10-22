@@ -233,6 +233,22 @@ fn import_specificity_scores_longest_match() {
 }
 
 #[test]
+fn import_match_offset_never_outscores_the_anchored_match() {
+    let mut fx = fixture();
+    fx.file("f1", "r", "python")
+        .file("f2", "r", "python")
+        .file("f3", "r", "python")
+        .import("i1", "f1", "a.Foo", None)
+        .symbol("s_anchored", "f2", "run", Some("a.Foo.run"), "method", None)
+        .symbol("s_deep", "f3", "run", Some("x.y.a.Foo.run"), "method", None);
+    let ix = ResolverIndexes::build(&fx.conn, Some("r")).expect("indexes");
+    // Both hold the [a, Foo] window, so both score the import length (2).
+    use cairn_build::resolver::Label;
+    let (id, label) = resolve_edge("run", "f1", "r", &ix, None, None);
+    assert_eq!((id, label), (None, Label::Ambiguous));
+}
+
+#[test]
 fn import_multi_match_is_ambiguous_and_miss_falls_through() {
     let mut fx = fixture();
     fx.file("f1", "r", "python")

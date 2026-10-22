@@ -395,13 +395,8 @@ fn import_aware_candidates<'a>(
             let suffix_len = common_suffix_len(&qsegs, tail);
             let mut prefix_len = 0usize;
             if !qsegs.is_empty() {
-                if qsegs.len() >= tail.len() {
-                    for i in 0..=(qsegs.len() - tail.len()) {
-                        if &qsegs[i..i + tail.len()] == tail.as_slice() {
-                            prefix_len = tail.len() + i;
-                            break;
-                        }
-                    }
+                if qsegs.windows(tail.len()).any(|w| w == tail.as_slice()) {
+                    prefix_len = tail.len();
                 }
                 if prefix_len == 0 && tail[tail.len() - 1] == qsegs[0] {
                     prefix_len = 1;
