@@ -453,6 +453,27 @@ fn incremental_update_defers_while_a_build_holds_the_lock() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A store opened before the lock is taken survives a full-build swap and
+/// sends the pass's writes to the replaced file; the deferral must happen
+/// before the store is ever touched.
+#[test]
+fn incremental_update_never_opens_the_store_before_the_build_lock() {
+    let dir = corpus("open-under-lock");
+    let ws = dir.to_str().expect("ws");
+    let db = dir.join("store.kg");
+
+    let _held = cairn_store::swap::build_lock(&db).expect("hold build lock");
+    let err =
+        cairn_build::incremental::incremental_update(ws, db.to_str().expect("db"), None, None)
+            .expect_err("update must defer under a held build lock");
+    assert!(err.contains("Cannot acquire build lock"), "{err}");
+    assert!(
+        !db.exists(),
+        "store was opened (created/initialized) before the build lock was acquired"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Edges that resolve exact through receiver dispatch, the ancestor walk,
 /// call arity, the global tier from another repo, or a unique namesake.
 fn seed_resolver_signals(dir: &Path) {

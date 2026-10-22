@@ -340,29 +340,31 @@ def incremental_update(
 ) -> dict:
     """Reindex changed files and refresh overlays and derived indexes."""
     started = time.time()
-    conn = get_db(db_path, busy_timeout_ms=20000)
-    try:
-        repos = (
-            [repo]
-            if repo
-            else [
-                scanner_mod.repository_id(r)
-                for r in scanner_mod.discover_repos(workspace)
-            ]
-        )
-        all_paths: list[str] = []
-        detect_errors: list[str] = []
-        for r in repos:
-            repo_path = scanner_mod.resolve_repo_path(workspace, r)
-            try:
-                changed = _changed_source_files(repo_path, conn=conn, diff_ref=diff_ref)
-            except RuntimeError as e:
-                detect_errors.append(f"detect/{r}: {e}")
-                continue
-            for f in changed:
-                all_paths.append(str(repo_path / f))
+    # The connection must be opened under the lock: one opened earlier keeps
+    # writing to the replaced file across a full-build swap.
+    with build_lock(db_path or str(_resolve_store().db)):
+        conn = get_db(db_path, busy_timeout_ms=20000)
+        try:
+            repos = (
+                [repo]
+                if repo
+                else [
+                    scanner_mod.repository_id(r)
+                    for r in scanner_mod.discover_repos(workspace)
+                ]
+            )
+            all_paths: list[str] = []
+            detect_errors: list[str] = []
+            for r in repos:
+                repo_path = scanner_mod.resolve_repo_path(workspace, r)
+                try:
+                    changed = _changed_source_files(repo_path, conn=conn, diff_ref=diff_ref)
+                except RuntimeError as e:
+                    detect_errors.append(f"detect/{r}: {e}")
+                    continue
+                for f in changed:
+                    all_paths.append(str(repo_path / f))
 
-        with build_lock(db_path or str(_resolve_store().db)):
             # Old derived-index inputs disappear after reindex.
             pre = _capture_derived_prestate(conn, workspace, all_paths)
 
@@ -392,8 +394,8 @@ def incremental_update(
                     derived_errors = _maintain_derived_indexes(conn, workspace, all_paths, pre)
                 else:
                     derived_errors = _rebuild_derived_indexes(conn, pre["closure_built"])
-    finally:
-        conn.close()
+        finally:
+            conn.close()
 
     builder.record_build_run(
         db_path,

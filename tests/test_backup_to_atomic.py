@@ -224,3 +224,30 @@ def test_failed_acquire_never_unlinks_winners_lock_file(tmp_path):
     finally:
         _fcntl.flock(winner_fd, _fcntl.LOCK_UN)
         os.close(winner_fd)
+
+
+def test_incremental_update_never_opens_store_before_build_lock(tmp_path):
+    """incremental_update defers on a held build lock before opening the store.
+
+    A connection opened before the lock is taken survives a full-build swap in
+    that window and sends the pass's writes to the replaced file."""
+    from cairn.graph.incremental import incremental_update
+
+    ws = tmp_path / "ws"
+    repo = ws / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    db_path = str(tmp_path / "store.kg")
+    lock_fd = os.open(db_path + ".build.lock", os.O_CREAT | os.O_WRONLY, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError) as exc_info:
+            incremental_update(workspace=str(ws), db_path=db_path)
+        assert "build lock" in str(exc_info.value).lower()
+        assert not os.path.exists(db_path), (
+            "store was opened (created/migrated) before the build lock was acquired"
+        )
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)

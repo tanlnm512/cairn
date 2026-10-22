@@ -418,6 +418,9 @@ pub fn incremental_update(
             .map(|r| r.repo_id)
             .collect(),
     };
+    // The connection must be opened under the lock: one opened earlier keeps
+    // writing to the replaced file across a full-build swap.
+    let _lock = cairn_store::swap::build_lock(Path::new(db_path))?;
     let mut conn = cairn_store::schema::open_initialized(Path::new(db_path))
         .map_err(|e| format!("open store {db_path}: {e}"))?;
     let mut all_paths: Vec<String> = Vec::new();
@@ -434,7 +437,6 @@ pub fn incremental_update(
         }
     }
 
-    let _lock = cairn_store::swap::build_lock(Path::new(db_path))?;
     let result = reindex_paths(&mut conn, workspace, &all_paths);
     detect_errors.extend(result.errors);
     Ok(UpdateSummary {
