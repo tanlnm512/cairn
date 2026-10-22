@@ -1,0 +1,68 @@
+name: Rust parity gates
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "rust/**"
+      - "scripts/rust_migration/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CAIRN_TELEMETRY: "off"
+
+jobs:
+  # --- Manual parity oracles (replay / differential) -----------------------
+  # PRs run only the cheap oracles; the wheel build and the larger pinned
+  # stores run on schedule and dispatch.
+  parity:
+    name: parity oracles
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Install (with dev extras)
+        run: uv sync --extra dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build rust cairn (release)
+        run: cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+
+      - name: parity replay (self)
+        run: uv run --no-sync python scripts/rust_migration/parity.py --store self
+      - name: cli golden
+        run: uv run --no-sync python scripts/rust_migration/cli_golden.py
+      - name: G2 (base leg)
+        run: bash scripts/rust_migration/g2_check.sh
+
+      - name: parity replay (yarl)
+        if: github.event_name != 'pull_request'
+        run: uv run --no-sync python scripts/rust_migration/parity.py --store yarl
+      - name: parity replay (attrs)
+        if: github.event_name != 'pull_request'
+        run: uv run --no-sync python scripts/rust_migration/parity.py --store attrs
+      # Expected red until plan items 4b-1 (staging rename) and 4b-2 (rebuild ids) land.
+      - name: G2 (rebuild + staging legs)
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          G2_LEGS: rebuild,staging
+        run: bash scripts/rust_migration/g2_check.sh
+      - name: wheel smoke
+        if: github.event_name != 'pull_request'
+        run: bash scripts/rust_migration/wheel_smoke.sh

@@ -34,7 +34,7 @@ cargo build --release --manifest-path "$REPO_ROOT/rust/Cargo.toml" -p cairn-cli 
 # --- inject as package data + build the wheel ---------------------------------
 mkdir -p "$BIN_DIR"
 cp "$RS_BIN" "$BIN_DST"
-"$PY" -m build --wheel --no-isolation --outdir "$WORK/dist" "$REPO_ROOT" \
+"$PY" -m build --wheel --outdir "$WORK/dist" "$REPO_ROOT" \
   || fail "wheel build"
 WHEEL="$(ls -t "$WORK"/dist/cairn_intel-*.whl 2>/dev/null | head -n1)"
 [ -n "$WHEEL" ] || fail "no wheel built into $WORK/dist"
