@@ -27,7 +27,6 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CORPUS="${1:-$REPO_ROOT}"
-LEGS="${G2_LEGS:-base}"
 WORKERS="${CAIRN_WORKERS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
 PY="$REPO_ROOT/.venv/bin/python"
 KG_DUMP="$REPO_ROOT/scripts/rust_migration/kg_dump.py"
@@ -39,6 +38,23 @@ trap 'rm -rf "$WORK"' EXIT
 fail() { echo "G2: FAIL — $*"; exit 1; }
 leg_on() { [[ ",$LEGS," == *",$1,"* ]]; }
 
+parse_legs() {
+  local token
+  local -a requested selected=()
+  IFS=',' read -ra requested <<< "${G2_LEGS:-base}"
+  for token in "${requested[@]}"; do
+    token="${token//[[:space:]]/}"
+    [ -n "$token" ] || continue
+    case " base rebuild staging " in
+      *" $token "*) selected+=("$token") ;;
+      *) echo "G2: FAIL — unknown leg '$token' (known: base rebuild staging)"; return 1 ;;
+    esac
+  done
+  [ "${#selected[@]}" -gt 0 ] || { echo "G2: FAIL — no legs selected in G2_LEGS='${G2_LEGS}'"; return 1; }
+  LEGS=",$(IFS=,; echo "${selected[*]}"),"
+}
+
+parse_legs || exit 1
 [ -x "$PY" ] || fail "repo venv python not found at $PY"
 [ -d "$CORPUS" ] || fail "corpus not a directory: $CORPUS"
 
@@ -203,10 +219,10 @@ leg_base() {
   CAIRN_WORKERS="$WORKERS" "$PY" -m cairn.cli build \
     --workspace "$CORPUS" --db "$WORK/py.kg" --no-lsp \
     > "$WORK/py.build.log" 2>&1 \
-    || { tail -20 "$WORK/py.build.log"; fail "python cairn build failed"; }
+    || { tail -20 "$WORK/py.build.log"; echo "G2 base: FAIL — python cairn build failed"; return 1; }
   t1=$(date +%s.%N)
   PY_WALL=$("$PY" -c "print(f'{$t1 - $t0:.3f}')")
-  "$PY" - "$WORK/py.kg" <<'PY' > "$WORK/py.phases.json" || fail "phase-timing read failed"
+  "$PY" - "$WORK/py.kg" <<'PY' > "$WORK/py.phases.json" || { echo "G2 base: FAIL — phase-timing read failed"; return 1; }
 import json, sqlite3, sys
 conn = sqlite3.connect(sys.argv[1])
 row = conn.execute(
@@ -225,7 +241,7 @@ PY
   CAIRN_WORKERS="$WORKERS" "$RS_CAIRN" build-graph \
     --workspace "$CORPUS" --db "$WORK/rs.kg" \
     > "$WORK/rs.build.log" 2>&1 \
-    || { tail -20 "$WORK/rs.build.log"; fail "rust build-graph failed"; }
+    || { tail -20 "$WORK/rs.build.log"; echo "G2 base: FAIL — rust build-graph failed"; return 1; }
   t1=$(date +%s.%N)
   RS_WALL=$("$PY" -c "print(f'{$t1 - $t0:.3f}')")
   RS_TIMINGS=$(grep "^timings:" "$WORK/rs.build.log" | tail -1)
@@ -234,16 +250,16 @@ PY
   echo "  $RS_TIMINGS"
 
   # --- canonical dumps + the gate --------------------------------------------
-  dump_normalized "$WORK/py.kg" py || fail "kg_dump / normalization (python store)"
-  dump_normalized "$WORK/rs.kg" rs || fail "kg_dump / normalization (rust store)"
+  dump_normalized "$WORK/py.kg" py || { echo "G2 base: FAIL — kg_dump / normalization (python store)"; return 1; }
+  dump_normalized "$WORK/rs.kg" rs || { echo "G2 base: FAIL — kg_dump / normalization (rust store)"; return 1; }
   "$PY" "$KG_DIFF" "$WORK/py.norm" "$WORK/rs.norm"
   local diff=$?
   echo ""
   if [ "$diff" -eq 0 ]; then
-    echo "G2: PASS — python-built and rust-built dumps content-equal (corpus: $CORPUS)"
+    echo "G2 base: PASS — python-built and rust-built dumps content-equal (corpus: $CORPUS)"
     return 0
   fi
-  echo "G2: FAIL — canonical dumps differ (kg_diff exit $diff)"
+  echo "G2 base: FAIL — canonical dumps differ (kg_diff exit $diff)"
   return 1
 }
 
@@ -252,8 +268,8 @@ fresh_baseline() {
   [ -f "$WORK/fresh.norm" ] && return 0
   "$RS_CAIRN" build --workspace "$CORPUS" --db "$WORK/fresh.kg" \
     > "$WORK/fresh.build.log" 2>&1 \
-    || { tail -20 "$WORK/fresh.build.log"; echo "fresh build failed"; return 1; }
-  dump_normalized "$WORK/fresh.kg" fresh
+    || { tail -20 "$WORK/fresh.build.log"; echo "G2 fresh baseline: FAIL — build failed"; return 1; }
+  dump_normalized "$WORK/fresh.kg" fresh || { echo "G2 fresh baseline: FAIL — dump/normalization"; return 1; }
 }
 
 compare_to_fresh() {
