@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PyPI wheels bundle the rust engine binary (spec D-011, exec-shim binding): the daemon defaults to rust when the bundled binary is present (`CAIRN_RUST_BIN` env > bundled package path > PATH; the python fallback and `CAIRN_DAEMON_IMPL` precedence are unchanged), the release pipeline injects the per-platform binary into the wheel builds while the sdist stays binary-free, and `scripts/rust_migration/wheel_smoke.sh` proves the installed product end to end (fresh venv, C-4 machine contracts, binary discovery).
 
 ### Fixed
+- Config files are never overwritten when they cannot be read or backed up: rust `install-agents` aborts a client whose existing config cannot be backed up (matching python), and saving dashboard settings refuses to replace an unparseable `config.json` and keeps its non-scalar keys (rust and python).
 - Flaky `flow_golden` rust test: TempStore scratch dirs named from wall-clock nanos collided under macOS parallel test threads; now named from a process-global counter.
 - `install-agents` client-schema conformance, verified against each agent's official docs: agy (Antigravity) workspace installs now write the documented `.agents/mcp_config.json` instead of ignoring workspace scope, its global path is `~/.gemini/config/` on every Unix (no XDG deviation), and its entry drops the undocumented `type` field; Cursor entries drop the `type` field (its remote schema documents `url`+`headers` only); the install probe and `cairn doctor` audit both new paths.
 
