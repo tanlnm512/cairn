@@ -13,7 +13,10 @@ check-in cap:
 - `manifest.json` — cap, file counts, store counts, env pins.
 
 `parity.py --record` rebuilds a store in scratch, checks these bytes in, and
-captures the goldens over them; replay copies the same bytes to scratch for
+captures the goldens over them; it always builds over the checked-in `corpus/`
+bytes (the live source corpus is read only when no pinned store exists yet, so
+a drifted source can never re-pin it — delete the store directory to re-pin
+deliberately). Replay copies the same bytes to scratch for
 both sides and reads every tool's arguments from the fixture `replay` blocks.
 Each fixture's `replay_store` / `replay_workspace` keys point readers at the
 serving artifacts.

@@ -137,24 +137,43 @@ def _git_marker_file(corpus: Path) -> None:
     marker.write_text("gitdir: pinned-parity-corpus\n", encoding="utf-8")
 
 
+def reproduce_pinned_corpus(store: str, scratch: Path) -> Path | None:
+    """Stage the workspace from the checked-in pinned corpus, byte-exact."""
+    pinned = PINNED_STORES / store
+    corpus = pinned / "corpus"
+    if pinned.exists() and not corpus.is_dir():
+        raise SystemExit(
+            f"REFUSING record: {pinned} has no corpus/ to reproduce; delete "
+            f"the directory to re-pin from the live source deliberately"
+        )
+    if not corpus.is_dir():
+        return None
+    staged = scratch / "corpus"
+    shutil.copytree(corpus, staged)
+    _note(f"reproducing pinned corpus from {corpus}")
+    return staged
+
+
 def build_pinned_store(store: str, scratch: Path, cfg: dict) -> dict:
     """Build one store's pinned bytes into scratch and check them in.
 
     Fixed layout: <scratch>/store.kg + <scratch>/.knowledge + <scratch>/corpus.
     """
-    import spike_golden  # reuse: the shared subset-cap corpus stager
-
     (scratch / "home").mkdir(parents=True, exist_ok=True)
     db = scratch / DB_NAME
     knowledge = scratch / ".knowledge"
-    source = Path(cfg["workspace"]) if store == "self" else CORPORA[store]
-    if spike_golden.indexable_rel_paths(source):
-        workspace = spike_golden.stage_subset_corpus(source, scratch,
-                                                     cap=PIN_SUBSET_FILE_CAP)
-    else:
-        # Marker-less corpus: repo discovery needs the staged .git marker, and
-        # these corpora sit far under the file cap whole.
-        workspace = baseline.stage_corpus(source, scratch)
+    workspace = reproduce_pinned_corpus(store, scratch)
+    if workspace is None:
+        import spike_golden  # reuse: the shared subset-cap corpus stager
+
+        source = Path(cfg["workspace"]) if store == "self" else CORPORA[store]
+        if spike_golden.indexable_rel_paths(source):
+            workspace = spike_golden.stage_subset_corpus(
+                source, scratch, cap=PIN_SUBSET_FILE_CAP)
+        else:
+            # Marker-less corpus: repo discovery needs the staged .git marker,
+            # and these corpora sit far under the file cap whole.
+            workspace = baseline.stage_corpus(source, scratch)
     _git_marker_file(workspace)
     with build_env(scratch, workspace):
         _note(f"building {store} pinned corpus ({workspace}) ...")
