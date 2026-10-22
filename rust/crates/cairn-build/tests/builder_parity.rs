@@ -269,3 +269,47 @@ fn repo_rebuild_never_reuses_ids_of_the_rows_it_replaced() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn edge_source_is_the_enclosing_same_named_owner() {
+    let dir = temp_dir("owner");
+    write(
+        &dir,
+        "src/jobs.py",
+        concat!(
+            "class A:\n    def run(self):\n        foo()\n\n",
+            "class B:\n    def run(self):\n        bar()\n\n",
+            "try:\n    class Impl:\n        @property\n        def value(self):\n            one()\n\n",
+            "        @value.setter\n        def value(self, v):\n            two()\n",
+            "except ImportError:\n    class Impl:\n        def run(self):\n            baz()\n",
+        ),
+    );
+    let db = dir.join("store.kg");
+    build_graph(
+        dir.to_str().expect("ws"),
+        db.to_str().expect("db"),
+        None,
+        None,
+    )
+    .expect("build");
+    let conn = cairn_store::conn::open_read_only(&db).expect("open store");
+    let owner_line = |kind: &str, target: &str| -> i64 {
+        conn.query_row(
+            "SELECT src.line_start FROM edges e JOIN symbols src ON e.source_id = src.id
+             LEFT JOIN symbols tgt ON e.kind = 'contains' AND e.target_id = tgt.id
+             WHERE e.kind = ?1 AND COALESCE(CAST(tgt.line_start AS TEXT), e.target_name) = ?2",
+            [kind, target],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|e| panic!("{kind} {target}: {e}"))
+    };
+    let calls: Vec<i64> = ["foo", "bar", "one", "two", "baz"]
+        .iter()
+        .map(|t| owner_line("calls", t))
+        .collect();
+    assert_eq!(calls, vec![2, 6, 12, 16, 20]);
+    assert_eq!(owner_line("contains", "20"), 19);
+    assert_eq!(owner_line("decorates", "setter"), 16);
+    drop(conn);
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -795,7 +795,9 @@ mod trace {
         branches: Vec<(String, Vec<String>)>,
         leaves: Vec<String>,
         cycles: Vec<(String, i64)>,
-        cycles_seen: HashSet<String>,
+        /// Index into `cycles` per id, kept at the shallowest re-entry.
+        cycle_at: HashMap<String, usize>,
+        branched: HashSet<String>,
         truncated: bool,
         callees_memo: HashMap<String, Vec<CalleeRow>>,
         defn_memo: HashMap<String, Option<super::SymbolRow>>,
@@ -835,8 +837,12 @@ mod trace {
                 return;
             }
             if self.on_path.contains(sym_id) {
-                if self.cycles_seen.insert(sym_id.to_string()) {
-                    self.cycles.push((sym_name.to_string(), depth));
+                match self.cycle_at.get(sym_id) {
+                    Some(&i) => self.cycles[i].1 = self.cycles[i].1.min(depth),
+                    None => {
+                        self.cycle_at.insert(sym_id.to_string(), self.cycles.len());
+                        self.cycles.push((sym_name.to_string(), depth));
+                    }
                 }
                 return;
             }
@@ -896,11 +902,19 @@ mod trace {
                     self.walk(&cid, &cname, depth + 1, max_depth);
                 } else if self.on_path.contains(&cid) {
                     // Back-edge into the active DFS path: re-entering walk()
-                    // records the cycle; fully-explored ids are never re-walked.
+                    // records the cycle.
+                    self.walk(&cid, &cname, depth + 1, max_depth);
+                } else if let Some(node) = self.visited.get_mut(&cid)
+                    && depth + 1 < node.depth
+                {
+                    // Shorter route to an explored id: re-walk so its subtree
+                    // gets the full max_depth budget from its shortest depth.
+                    node.depth = depth + 1;
+                    node.parent = Some(sym_name.to_string());
                     self.walk(&cid, &cname, depth + 1, max_depth);
                 }
             }
-            if outgoing.len() > 1 {
+            if outgoing.len() > 1 && self.branched.insert(sym_id.to_string()) {
                 self.branches.push((sym_name.to_string(), outgoing));
             }
             self.on_path.remove(sym_id);
@@ -935,7 +949,8 @@ mod trace {
             branches: Vec::new(),
             leaves: Vec::new(),
             cycles: Vec::new(),
-            cycles_seen: HashSet::new(),
+            cycle_at: HashMap::new(),
+            branched: HashSet::new(),
             truncated: false,
             callees_memo: HashMap::new(),
             defn_memo: HashMap::new(),

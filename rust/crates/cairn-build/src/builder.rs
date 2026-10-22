@@ -589,6 +589,36 @@ fn git_remote_url(repo_path: &str) -> Option<String> {
     if text.is_empty() { None } else { Some(text) }
 }
 
+/// Same-named owner id and its declared line span; the module symbol has none.
+type OwnerCandidate = (String, Option<(usize, usize)>);
+
+fn enclosing_owner(
+    owners: &[OwnerCandidate],
+    line: usize,
+    exclude: Option<&str>,
+    decorator: bool,
+) -> Option<String> {
+    let candidates = || {
+        owners
+            .iter()
+            .filter(move |(id, _)| Some(id.as_str()) != exclude)
+            .filter_map(|(id, span)| span.map(|span| (id, span)))
+    };
+    candidates()
+        .filter(|(_, (start, end))| (*start..=*end).contains(&line))
+        .min_by_key(|(_, (start, end))| end - start)
+        // A decorator line sits just above its definition's span.
+        .or_else(|| {
+            candidates()
+                .filter(|(_, (start, _))| decorator && *start >= line)
+                .min_by_key(|(_, (start, _))| *start)
+        })
+        .map(|(id, _)| id)
+        // No span holds the line: keep declaration-order first-wins.
+        .or_else(|| owners.first().map(|(id, _)| id))
+        .cloned()
+}
+
 /// Insert one parsed file and return symbol, edge, and import counts.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn insert_parsed_file(
@@ -656,8 +686,8 @@ pub(crate) fn insert_parsed_file(
 
     // Symbol ids in declaration order drive contains edges and rationale spans.
     let mut sym_ids: Vec<String> = Vec::with_capacity(pf.symbols.len());
-    let mut qname_ids: HashMap<String, String> = HashMap::new();
-    let mut in_file: HashMap<String, Vec<String>> = HashMap::new();
+    let mut qname_ids: HashMap<String, Vec<OwnerCandidate>> = HashMap::new();
+    let mut in_file: HashMap<String, Vec<OwnerCandidate>> = HashMap::new();
     for sym in &mut pf.symbols {
         let sym_id = ids.next_id();
         if sym.parent_scope.is_none()
@@ -672,12 +702,13 @@ pub(crate) fn insert_parsed_file(
         if let Some(qname) = &sym.qualified_name {
             qname_ids
                 .entry(qname.clone())
-                .or_insert_with(|| sym_id.clone());
+                .or_default()
+                .push((sym_id.clone(), Some((sym.line_start, sym.line_end))));
         }
         in_file
             .entry(sym.name.clone())
             .or_default()
-            .push(sym_id.clone());
+            .push((sym_id.clone(), Some((sym.line_start, sym.line_end))));
         sym_ids.push(sym_id);
     }
 
@@ -691,7 +722,7 @@ pub(crate) fn insert_parsed_file(
     in_file
         .entry(module_name.clone())
         .or_default()
-        .push(module_id.clone());
+        .push((module_id.clone(), None));
 
     // The module symbol lands after declared symbols (python insert order).
     {
@@ -784,15 +815,18 @@ pub(crate) fn insert_parsed_file(
         // Contains edges: parent is the qualified scope, else the file module.
         for (sym_id, sym) in sym_ids.iter().zip(&pf.symbols) {
             let parent_id = match &sym.parent_scope {
-                Some(scope) => qname_ids.get(scope).cloned().or_else(|| {
-                    let last = scope
-                        .rsplit_once('.')
-                        .map(|(_, last)| last)
-                        .unwrap_or(scope);
-                    in_file
-                        .get(last)
-                        .and_then(|owner_ids| owner_ids.first().cloned())
-                }),
+                Some(scope) => qname_ids
+                    .get(scope)
+                    .and_then(|owners| enclosing_owner(owners, sym.line_start, Some(sym_id), false))
+                    .or_else(|| {
+                        let last = scope
+                            .rsplit_once('.')
+                            .map(|(_, last)| last)
+                            .unwrap_or(scope);
+                        in_file.get(last).and_then(|owners| {
+                            enclosing_owner(owners, sym.line_start, Some(sym_id), false)
+                        })
+                    }),
                 None => Some(module_id.clone()),
             };
             let Some(parent_id) = parent_id else { continue };
@@ -828,7 +862,7 @@ pub(crate) fn insert_parsed_file(
 
         for edge in &pf.edges {
             let source_id = match in_file.get(&edge.source_name) {
-                Some(owner_ids) => owner_ids.first().cloned(),
+                Some(owners) => enclosing_owner(owners, edge.line, None, edge.kind == "decorates"),
                 None => {
                     if edge.source_name.is_empty() {
                         Some(module_id.clone())

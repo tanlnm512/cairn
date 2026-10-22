@@ -9,7 +9,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional
+from typing import Dict, List, Mapping, Optional, Tuple
 
 from ..parsers.base import ParsedFile
 from ..parsers.factory import get_parser
@@ -848,7 +848,7 @@ def insert_parsed_file(
         imp.imported_path for imp in pf.imports[:20]
     ) or None  # file-level summary, identical for every symbol in this file
     # qualified_name -> symbol id, for contains-edge parent resolution.
-    qname_ids: Dict[str, str] = {}
+    qname_ids: Dict[str, List[_OwnerCandidate]] = {}
     for sym in pf.symbols:
         sym_id = _new_id()
         # Enclosing scope is everything before the last "." of the qualified
@@ -859,7 +859,9 @@ def insert_parsed_file(
         if sym.imports_summary is None:
             sym.imports_summary = file_imports_summary
         if sym.qualified_name:
-            qname_ids.setdefault(sym.qualified_name, sym_id)
+            qname_ids.setdefault(sym.qualified_name, []).append(
+                (sym_id, (sym.line_start, sym.line_end))
+            )
         sym_rows.append((
             sym_id,
             file_id,
@@ -913,21 +915,25 @@ def insert_parsed_file(
         imp_rows.append((_new_id(), file_id, imp.imported_path, None, imp.line, imp.local_alias))
 
         # Keep lookup file-local to avoid quadratic global symbol scans.
-    in_file: Dict[str, List[str]] = {}
+    in_file: Dict[str, List[_OwnerCandidate]] = {}
     for sym, row in zip(pf.symbols, sym_rows):
-        in_file.setdefault(sym.name, []).append(row[0])
+        in_file.setdefault(sym.name, []).append((row[0], (sym.line_start, sym.line_end)))
     # The module symbol's entry lands last: a code symbol with the same name
     # keeps first-wins ownership of that name's edges.
-    in_file.setdefault(module_name, []).append(module_id)
+    in_file.setdefault(module_name, []).append((module_id, None))
 
     for sym, row in zip(pf.symbols, sym_rows):
         child_id = row[0]
         if sym.parent_scope:
-            parent_id = qname_ids.get(sym.parent_scope)
+            parent_id = _enclosing_owner(
+                qname_ids.get(sym.parent_scope, []), sym.line_start, exclude=child_id
+            )
             if parent_id is None:
-                parent_id = in_file.get(
-                    sym.parent_scope.rsplit(".", 1)[-1], [None]
-                )[0]
+                parent_id = _enclosing_owner(
+                    in_file.get(sym.parent_scope.rsplit(".", 1)[-1], []),
+                    sym.line_start,
+                    exclude=child_id,
+                )
         else:
             parent_id = module_id
         if parent_id:
@@ -939,8 +945,10 @@ def insert_parsed_file(
     # --- edges: source resolved now; target left NULL for the resolver -----
     file_edges = repo_edges_by_file.setdefault(repo, {}).setdefault(file_id, [])
     for edge in pf.edges:
-        source_ids = in_file.get(edge.source_name, [])
-        source_id = source_ids[0] if source_ids else None
+        source_id = _enclosing_owner(
+            in_file.get(edge.source_name, []), edge.line,
+            decorator=edge.kind == "decorates",
+        )
         if source_id is None:
             if not edge.source_name:
                 # Module-level code: attach to the file's module symbol.
@@ -970,6 +978,32 @@ def insert_parsed_file(
         repository.insert_rationale(cur, _rationale_rows(pf, file_id, sym_rows))
 
     return len(sym_rows), len(edge_rows), len(imp_rows)
+
+
+_OwnerCandidate = Tuple[str, Optional[Tuple[int, int]]]
+
+
+def _enclosing_owner(
+    owners: List[_OwnerCandidate],
+    line: int,
+    exclude: Optional[str] = None,
+    decorator: bool = False,
+) -> Optional[str]:
+    spanned = [(owner_id, span) for owner_id, span in owners if owner_id != exclude and span]
+    best_id, best_width = None, None
+    for owner_id, (start, end) in spanned:
+        if start <= line <= end and (best_width is None or end - start < best_width):
+            best_id, best_width = owner_id, end - start
+    if best_id is None and decorator:
+        # A decorator line sits just above its definition's span.
+        best_start = None
+        for owner_id, (start, _) in spanned:
+            if start >= line and (best_start is None or start < best_start):
+                best_id, best_start = owner_id, start
+    if best_id is None and owners:
+        # No span holds the line: keep declaration-order first-wins.
+        return owners[0][0]
+    return best_id
 
 
 # Symbol kinds a rationale record can be attributed to: innermost containing
