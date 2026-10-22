@@ -1081,23 +1081,55 @@ def test_flag_absent_update_keeps_worktree_and_untracked_detection(tmp_path):
     assert "e.py" in _indexed_paths(db)
 
 
-def test_range_mode_git_failure_returns_empty_not_stat_fallback(tmp_path):
-    """A failed range diff returns [] rather than falling through to the stat
-    fallback: off-range worktree noise must not widen the span."""
-    from cairn.graph.incremental import _changed_source_files
+def test_flag_absent_update_detects_changes_committed_since_last_index(tmp_path):
+    """No diff_ref: an edit committed after the last index (commit/pull) is
+    reindexed even though the worktree is clean against HEAD."""
+    repo = _committed_repo(tmp_path)
+    db = str(tmp_path / "committed.kg")
+    build_graph(workspace=str(repo), db_path=db)
 
+    (repo / "a.py").write_text("def alpha_two():\n    return 2\n", encoding="utf-8")
+    _git(["commit", "-qam", "second"], repo)
+
+    res = incremental_update(workspace=str(repo), db_path=db)
+
+    assert res["errors"] == [], res["errors"]
+    assert res["files_reindexed"] == 1, res
+    conn = get_db(db)
+    try:
+        assert conn.execute("SELECT 1 FROM symbols WHERE name = 'alpha_two'").fetchone()
+    finally:
+        conn.close()
+
+
+def test_range_update_reindexes_non_ascii_paths(tmp_path):
+    """Range detection reads NUL-separated paths, so a non-ASCII file name is
+    reindexed rather than dropped as a quoted, octal-escaped string."""
+    repo = _committed_repo(tmp_path)
+    db = str(tmp_path / "unicode.kg")
+    build_graph(workspace=str(repo), db_path=db)
+    (repo / "café.py").write_text("def gamma():\n    return 3\n", encoding="utf-8")
+    _git(["add", "."], repo)
+    _git(["commit", "-qm", "unicode"], repo)
+
+    res = incremental_update(workspace=str(repo), db_path=db, diff_ref="HEAD~1..HEAD")
+
+    assert res["errors"] == [], res["errors"]
+    assert res["files_reindexed"] == 1, res
+
+
+def test_range_mode_git_failure_surfaces_error_without_stat_fallback(tmp_path):
+    """A failed range diff is reported as an error and reindexes nothing:
+    off-range worktree noise must not widen the span."""
     repo = _committed_repo(tmp_path)
     db = str(tmp_path / "badrange.kg")
     build_graph(workspace=str(repo), db_path=db)
     (repo / "a.py").write_text("def alpha():\n    return 33\n", encoding="utf-8")
 
-    conn = get_db(db)
-    try:
-        changed = _changed_source_files(repo, conn=conn, diff_ref="no-such-ref..HEAD")
-    finally:
-        conn.close()
+    res = incremental_update(workspace=str(repo), db_path=db, diff_ref="no-such-ref..HEAD")
 
-    assert changed == []
+    assert res["files_reindexed"] == 0, res
+    assert any("no-such-ref" in e for e in res["errors"]), res["errors"]
 
 
 def test_cli_update_rejects_unresolvable_diff_ref_endpoint(tmp_path):

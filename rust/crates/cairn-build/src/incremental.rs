@@ -1,5 +1,5 @@
 //! Incremental graft: per-file delete+reinsert with resolver repair, plus
-//! change detection (git diff, stat fallback) and boot catch-up. Embedding
+//! change detection (git listings unioned with stat drift) and boot catch-up. Embedding
 //! backends land with the 2f workstream; this module only purges stale rows.
 
 use std::collections::{BTreeSet, HashSet};
@@ -396,80 +396,97 @@ pub fn incremental_update(
     let mut conn = cairn_store::schema::open_initialized(Path::new(db_path))
         .map_err(|e| format!("open store {db_path}: {e}"))?;
     let mut all_paths: Vec<String> = Vec::new();
+    let mut detect_errors: Vec<String> = Vec::new();
     for r in &repos {
         let repo_path = scanner::resolve_repo_path(workspace, r)?;
-        for rel in changed_source_files(workspace, &repo_path, Some(&conn), diff_ref) {
-            all_paths.push(repo_path.join(rel).to_string_lossy().into_owned());
+        match changed_source_files(workspace, &repo_path, Some(&conn), diff_ref) {
+            Ok(changed) => all_paths.extend(
+                changed
+                    .into_iter()
+                    .map(|rel| repo_path.join(rel).to_string_lossy().into_owned()),
+            ),
+            Err(e) => detect_errors.push(format!("detect/{r}: {e}")),
         }
     }
 
     let _lock = cairn_store::swap::build_lock(Path::new(db_path))?;
     let result = reindex_paths(&mut conn, workspace, &all_paths);
+    detect_errors.extend(result.errors);
     Ok(UpdateSummary {
         repos_scanned: repos.len(),
         files_reindexed: result.reindexed,
         files_deleted: result.deleted,
-        errors: result.errors,
+        errors: detect_errors,
     })
 }
 
-/// Changed source paths using git diff, or the stat fallback without git.
+/// The `diff_ref` range's paths (Err on git failure), else worktree diff,
+/// untracked files, and files-table stat drift.
 pub(crate) fn changed_source_files(
     workspace: &str,
     repo_path: &Path,
     conn: Option<&Connection>,
     diff_ref: Option<&str>,
-) -> Vec<String> {
+) -> Result<Vec<String>, String> {
     if let Some(diff_ref) = diff_ref {
-        return match run_git(&["diff", "--name-only", diff_ref], repo_path) {
-            None => Vec::new(),
-            Some(out) => filter_source_paths(out.lines()),
-        };
+        let paths = git_paths(&["diff", "-z", "--name-only", diff_ref], repo_path)?;
+        return Ok(filter_source_paths(paths));
     }
 
-    if let Some(out) = run_git(&["diff", "--name-only", "HEAD"], repo_path) {
-        // git diff never lists untracked files; ask for those separately.
-        let untracked = run_git(&["ls-files", "--others", "--exclude-standard"], repo_path)
-            .filter(|u| !u.is_empty());
-        let mut lines: Vec<&str> = out.lines().collect();
-        if let Some(untracked) = &untracked {
-            lines.extend(untracked.lines());
-        }
-        return filter_source_paths(lines.into_iter());
+    let mut paths: Vec<String> = Vec::new();
+    let listed = git_paths(&["diff", "-z", "--name-only", "HEAD"], repo_path).and_then(|diff| {
+        paths.extend(diff);
+        git_paths(
+            &["ls-files", "-z", "--others", "--exclude-standard"],
+            repo_path,
+        )
+    });
+    if let Ok(untracked) = listed {
+        paths.extend(untracked);
     }
-
-    match conn {
-        Some(conn) => changed_via_stat(workspace, repo_path, conn),
-        None => Vec::new(),
+    if let Some(conn) = conn {
+        paths.extend(changed_via_stat(workspace, repo_path, conn));
     }
+    Ok(filter_source_paths(paths))
 }
 
-fn filter_source_paths<'a, I: Iterator<Item = &'a str>>(lines: I) -> Vec<String> {
-    let mut changed: Vec<String> = Vec::new();
-    for line in lines {
-        let line = line.trim();
-        let mapped = Path::new(line)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| format!(".{e}"))
-            .and_then(|s| scanner::extension_language(&s));
-        if !line.is_empty() && mapped.is_some() && !changed.iter().any(|c| c == line) {
-            changed.push(line.to_string());
-        }
-    }
-    changed
+fn filter_source_paths(paths: Vec<String>) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    paths
+        .into_iter()
+        .filter(|path| {
+            let mapped = Path::new(path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .and_then(|s| scanner::extension_language(&s));
+            !path.is_empty() && mapped.is_some() && seen.insert(path.clone())
+        })
+        .collect()
 }
 
-fn run_git(args: &[&str], cwd: &Path) -> Option<String> {
+/// A NUL-separated git path listing; Err carries git's stderr.
+fn git_paths(args: &[&str], cwd: &Path) -> Result<Vec<String>, String> {
     let output = std::process::Command::new("git")
         .args(args)
         .current_dir(cwd)
         .output()
-        .ok()?;
+        .map_err(|e| format!("git {}: {e}", args.join(" ")))?;
     if !output.status.success() {
-        return None;
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("exit {}", output.status)
+        } else {
+            stderr
+        };
+        return Err(format!("git {}: {detail}", args.join(" ")));
     }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(output
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .map(|p| String::from_utf8_lossy(p).into_owned())
+        .collect())
 }
 
 /// Size/mtime comparison against the files table (the `cairn sync` signal).

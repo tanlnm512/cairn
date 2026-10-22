@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import List, Optional
 
 from ..paths import resolve_store as _resolve_store
-from ..utils.git import _run_git
 from . import builder
 from . import scanner as scanner_mod
 from .schema import get_db, note_contention, build_lock
@@ -332,10 +331,13 @@ def incremental_update(
             ]
         )
         all_paths: list[str] = []
+        detect_errors: list[str] = []
         for r in repos:
             repo_path = scanner_mod.resolve_repo_path(workspace, r)
-            changed = _changed_source_files(repo_path, conn=conn, diff_ref=diff_ref)
-            if not changed:
+            try:
+                changed = _changed_source_files(repo_path, conn=conn, diff_ref=diff_ref)
+            except RuntimeError as e:
+                detect_errors.append(f"detect/{r}: {e}")
                 continue
             for f in changed:
                 all_paths.append(str(repo_path / f))
@@ -385,7 +387,7 @@ def incremental_update(
         "repos_scanned": len(repos),
         "files_reindexed": result["reindexed"],
         "files_deleted": result["deleted"],
-        "errors": result["errors"] + scip_errors + derived_errors,
+        "errors": detect_errors + result["errors"] + scip_errors + derived_errors,
         "deferred_embeds": result["deferred_embeds"],
     }
 
@@ -681,51 +683,51 @@ def _maintain_derived_indexes(
     return errors
 
 
-def _filter_source_paths(lines) -> List[str]:
-    """Keep non-blank lines whose suffix is a mapped source extension, deduped
-    in first-seen order."""
-    changed = []
-    for line in lines:
-        line = line.strip()
-        if (
-            line
-            and Path(line).suffix in scanner_mod.EXTENSION_MAP
-            and line not in changed
-        ):
-            changed.append(line)
+def _filter_source_paths(paths) -> List[str]:
+    """Keep non-empty paths with a mapped source extension, deduped in first-seen order."""
+    changed: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        if path and Path(path).suffix in scanner_mod.EXTENSION_MAP and path not in seen:
+            seen.add(path)
+            changed.append(path)
     return changed
 
 
-def _changed_source_files(repo_path: Path, conn=None, diff_ref: Optional[str] = None) -> List[str]:
-    """Return changed source paths using git or stat fallback."""
-    if diff_ref is not None:
-        out = _run_git(["diff", "--name-only", diff_ref], str(repo_path))
-        if out is None:
-            logger.warning(
-                "git diff failed for range %r in %s; reindexing nothing for it",
-                diff_ref, repo_path,
-            )
-            return []
-        return _filter_source_paths(out.splitlines())
+def _git_paths(args: list[str], repo_path: Path) -> list[str]:
+    """Run a NUL-separated git path listing; raise RuntimeError with git's stderr on failure."""
+    import subprocess
 
-    out = _run_git(["diff", "--name-only", "HEAD"], str(repo_path))
-    if out is not None:
-        # git ran (may still be empty if truly nothing changed). git diff never
-        # lists untracked files, so ask for those separately or newly created
-        # source files would never be indexed.
-        lines = list(out.splitlines())
-        untracked = _run_git(
-            ["ls-files", "--others", "--exclude-standard"], str(repo_path)
+    try:
+        out = subprocess.run(
+            ["git", *args], cwd=str(repo_path), capture_output=True, timeout=30,
         )
-        if untracked:
-            lines.extend(untracked.splitlines())
-        return _filter_source_paths(lines)
+    except (subprocess.SubprocessError, OSError) as e:
+        raise RuntimeError(f"git {' '.join(args)}: {e}") from e
+    if out.returncode != 0:
+        detail = os.fsdecode(out.stderr).strip() or f"exit {out.returncode}"
+        raise RuntimeError(f"git {' '.join(args)}: {detail}")
+    return [os.fsdecode(p) for p in out.stdout.split(b"\0") if p]
 
-    # git diff failed (no git, no HEAD, not a repo). Fall back to size/mtime
-    # comparison against the files table — the same signal `cairn sync` uses.
-    if conn is None:
-        return []
-    return _changed_via_stat(repo_path, conn)
+
+def _changed_source_files(repo_path: Path, conn=None, diff_ref: Optional[str] = None) -> List[str]:
+    """Return the ``diff_ref`` range's paths (RuntimeError on git failure), else worktree diff, untracked files, and files-table stat drift."""
+    if diff_ref is not None:
+        return _filter_source_paths(
+            _git_paths(["diff", "-z", "--name-only", diff_ref], repo_path)
+        )
+
+    paths: list[str] = []
+    try:
+        paths += _git_paths(["diff", "-z", "--name-only", "HEAD"], repo_path)
+        paths += _git_paths(
+            ["ls-files", "-z", "--others", "--exclude-standard"], repo_path
+        )
+    except RuntimeError:
+        logger.debug("git change listing unavailable in %s", repo_path, exc_info=True)
+    if conn is not None:
+        paths += _changed_via_stat(repo_path, conn)
+    return _filter_source_paths(paths)
 
 
 def _changed_via_stat(repo_path: Path, conn) -> List[str]:
