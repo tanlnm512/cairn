@@ -312,7 +312,7 @@ PyPI-CLI commands.
 | Command | Purpose |
 |---|---|
 | `cairn status` | build state, parse errors, resource health |
-| `cairn doctor` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). 11 checks: the 10 store-internal ones — including `memory_staleness` (WARN when tribal memories older than 30d have zero `memory_refs` in that window — write-only memory) — plus `environment` — store existence, client-registration consistency (FAIL on a provable wrong-store or unreachable daemon endpoint; cairn-owned stdio/SSE registrations are flagged and, under `--fix`, repointed to the URL+key form), platform supportability, binary coherence. Emitted last, also on the db-unavailable degraded path. |
+| `cairn doctor` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). 12 checks: the 11 store-internal ones — including `memory_staleness` (WARN when tribal memories older than 30d have zero `memory_refs` in that window — write-only memory) and `edge_signals` (WARN when reference edges predate the `edges` signal columns `ref_name`/`receiver_type`/`call_arity` — repair runs name-only until the store is rebuilt; run `cairn build`) — plus `environment` — store existence, client-registration consistency (FAIL on a provable wrong-store or unreachable daemon endpoint; cairn-owned stdio/SSE registrations are flagged and, under `--fix`, repointed to the URL+key form), platform supportability, binary coherence. Emitted last, also on the db-unavailable degraded path. |
 | `cairn metrics` / `report` | tool-metrics and health reports |
 | `cairn validate` / `validate-paths` / `verify` | store integrity checks |
 | `cairn bench` | performance suites |

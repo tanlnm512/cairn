@@ -46,6 +46,7 @@ HEALTH_CHECKS: tuple[HealthCheck, ...] = (
     HealthCheck("embed_server", lambda _db, conn: _check_embed_server(conn)),
     HealthCheck("freshness", lambda _db, conn: [_check_freshness(conn)]),
     HealthCheck("parse_errors", lambda _db, conn: [_check_parse_errors(conn)]),
+    HealthCheck("edge_signals", lambda _db, conn: [_check_edge_signals(conn)]),
     HealthCheck("concurrency", lambda _db, conn: [_check_concurrency(conn)]),
     HealthCheck("tool_health", lambda _db, conn: [_check_tool_health(conn)]),
     HealthCheck(
@@ -111,7 +112,7 @@ def _latest_event_reason(conn, name: str) -> str | None:
         return None
 
 
-# --- the 11 checks ---------------------------------------------------------
+# --- the checks -------------------------------------------------------------
 # Each takes the live connection and returns a result dict; DB reads are
 # bounded and defensive — degrade to WARN with the reason, never raise.
 
@@ -466,6 +467,60 @@ def _check_parse_errors(conn) -> dict:
         detail += "; newest: " + " | ".join(samples)
     return _result(
         "parse_errors", _WARN, detail, hint="run `cairn status` for the full list"
+    )
+
+
+_EDGE_SIGNALS_HINT = (
+    "run `cairn build` to rebuild the store and populate the edge signals"
+)
+
+# contains/imports edges are structural (never resolved); scip-authored rows
+# and language-server-upgraded exact edges legitimately carry no ref_name.
+_EDGE_SIGNALS_COUNT_SQL = """
+    SELECT COUNT(*) FROM edges
+     WHERE ref_name IS NULL
+       AND resolution IN ('ambiguous', 'unresolved')
+       AND kind NOT IN ('contains', 'imports')
+       AND COALESCE(source, 'tree_sitter') != 'scip'
+"""
+
+
+def _check_edge_signals(conn) -> dict:
+    """Edge signals: WARN when reference edges predate the signal columns; a rebuild restores signal-aware repair."""
+    try:
+        cols = {
+            r[0]
+            for r in conn.execute("SELECT name FROM pragma_table_info('edges')")
+        }
+    except Exception as e:
+        return _result("edge_signals", _WARN, f"cannot read edge signals: {e}")
+    if not cols:
+        return _result(
+            "edge_signals", _WARN, "edges table unavailable (see schema)"
+        )
+    if not {"ref_name", "receiver_type", "call_arity"} <= cols:
+        return _result(
+            "edge_signals",
+            _WARN,
+            "edges signal columns missing (store predates "
+            "ref_name/receiver_type/call_arity) -- repair runs name-only until "
+            "the store is rebuilt",
+            hint=_EDGE_SIGNALS_HINT,
+        )
+    try:
+        n = conn.execute(_EDGE_SIGNALS_COUNT_SQL).fetchone()[0]
+    except Exception as e:
+        return _result("edge_signals", _WARN, f"cannot read edge signals: {e}")
+    if n:
+        return _result(
+            "edge_signals",
+            _WARN,
+            f"{n} reference edge(s) without resolver signals -- incremental "
+            "repair runs name-only for them until the store is rebuilt",
+            hint=_EDGE_SIGNALS_HINT,
+        )
+    return _result(
+        "edge_signals", _PASS, "reference edges carry resolver signals"
     )
 
 
@@ -843,6 +898,7 @@ def _db_unavailable_results(error: Exception | None) -> list[dict]:
         _result("embed_server", _WARN, "database unavailable (see schema)"),
         _result("freshness", _WARN, "database unavailable (see schema)"),
         _result("parse_errors", _WARN, "database unavailable (see schema)"),
+        _result("edge_signals", _WARN, "database unavailable (see schema)"),
         _result("concurrency", _WARN, "database unavailable (see schema)"),
         _result("tool_health", _WARN, "database unavailable (see schema)"),
         _result("memory_staleness", _WARN, "database unavailable (see schema)"),
@@ -852,7 +908,7 @@ def _db_unavailable_results(error: Exception | None) -> list[dict]:
 
 
 def _run_doctor(db: str) -> list[dict]:
-    """Execute the 11 checks against ``db``; never raises and never creates a missing store."""
+    """Execute HEALTH_CHECKS against ``db``; never raises and never creates a missing store."""
     conn = None
     db_error: Exception | None = None
     if not Path(db).exists():

@@ -82,6 +82,7 @@ _JSON_CHECK_NAMES = [
     "embed_server",
     "freshness",
     "parse_errors",
+    "edge_signals",
     "concurrency",
     "tool_health",
     "memory_staleness",
@@ -587,6 +588,79 @@ def test_parse_errors_pass_when_empty(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Edge signals -- stores built before the edges signal columns keep name-only
+# repair until rebuilt; doctor is the surface that recommends the rebuild.
+# ---------------------------------------------------------------------------
+
+
+def _seed_edge(conn, edge_id, *, kind="calls", resolution="unresolved",
+               source="tree_sitter", ref_name=None, target_id=None):
+    """One reference edge row (FK enforcement is off in the fixture conn)."""
+    conn.execute(
+        "INSERT INTO edges (id, source_id, target_id, target_name, kind, line, "
+        "column, resolution, source, ref_name) "
+        "VALUES (?, 's1', ?, 'gone', ?, 1, 0, ?, ?, ?)",
+        (edge_id, target_id, kind, resolution, source, ref_name),
+    )
+
+
+def test_edge_signals_warn_on_pre_signal_column_edges(tmp_path):
+    """A tree-sitter reference edge the resolver left without ``ref_name``
+    predates the signal columns -> edge_signals WARN naming the count with
+    the rebuild hint; advice only, so the exit code stays 0."""
+    db = tmp_path / "graph.db"
+    _make_db(db, setup=lambda conn: _seed_edge(conn, "e1"))
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "edge_signals")
+    assert row["status"] == "WARN"
+    assert "1 reference edge" in row["detail"]
+    assert "cairn build" in (row.get("hint") or "")
+
+
+def test_edge_signals_pass_on_signal_bearing_and_signal_less_by_design_edges(tmp_path):
+    """Edges that legitimately carry no ``ref_name`` on a current store must
+    not trip the check: a signal-bearing unresolved edge, a SCIP-authored
+    unresolved edge, a materialized imports edge, and a language-server
+    upgraded exact edge -> PASS."""
+    db = tmp_path / "graph.db"
+
+    def setup(conn):
+        _seed_edge(conn, "e1", ref_name="gone")
+        _seed_edge(conn, "e2", source="scip")
+        _seed_edge(conn, "e3", kind="imports", resolution="exact", target_id="s2")
+        _seed_edge(conn, "e4", resolution="exact", target_id="s2")
+
+    _make_db(db, setup=setup)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "edge_signals")
+    assert row["status"] == "PASS", row["detail"]
+
+
+def test_edge_signals_warn_when_columns_absent(tmp_path):
+    """A store never opened by signal-aware code has no signal columns at all
+    (doctor opens read-only, so no migration adds them) -> WARN naming the
+    missing columns with the same rebuild hint."""
+    db = tmp_path / "graph.db"
+
+    def setup(conn):
+        for col in ("ref_name", "receiver_type", "call_arity"):
+            conn.execute(f"ALTER TABLE edges DROP COLUMN {col}")
+
+    _make_db(db, setup=setup)
+
+    result = _run(db, "--json")
+    assert result.exit_code == 0, result.output
+    row = _by_name(json.loads(result.stdout), "edge_signals")
+    assert row["status"] == "WARN"
+    assert "signal columns missing" in row["detail"]
+    assert "cairn build" in (row.get("hint") or "")
+
+
+# ---------------------------------------------------------------------------
 # Concurrency -- WARN on lock_contention; stray_swept alone stays PASS
 # ---------------------------------------------------------------------------
 
@@ -964,6 +1038,7 @@ def test_embed_server_informational_when_disabled(tmp_path, monkeypatch):
         "embed_server",
         "freshness",
         "parse_errors",
+        "edge_signals",
         "concurrency",
         "tool_health",
         "memory_staleness",

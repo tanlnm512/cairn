@@ -152,6 +152,7 @@ fn run_doctor(db: &str) -> Vec<CheckResult> {
     results.extend(check_embed_server(&conn));
     results.push(check_freshness(&conn));
     results.push(check_parse_errors(&conn));
+    results.push(check_edge_signals(&conn));
     results.push(check_concurrency(&conn));
     results.push(check_tool_health(&conn));
     results.push(check_memory_staleness(&conn, db));
@@ -189,6 +190,12 @@ fn db_unavailable_results(error: &str) -> Vec<CheckResult> {
         result("freshness", WARN, "database unavailable (see schema)", None),
         result(
             "parse_errors",
+            WARN,
+            "database unavailable (see schema)",
+            None,
+        ),
+        result(
+            "edge_signals",
             WARN,
             "database unavailable (see schema)",
             None,
@@ -923,6 +930,76 @@ fn check_parse_errors(conn: &Connection) -> CheckResult {
         detail,
         Some("run `cairn status` for the full list".to_string()),
     )
+}
+
+// --- 6b. edge signals (stores predating the signal columns) --------------------------
+
+const EDGE_SIGNAL_COLUMNS: [&str; 3] = ["ref_name", "receiver_type", "call_arity"];
+const EDGE_SIGNALS_HINT: &str =
+    "run `cairn build` to rebuild the store and populate the edge signals";
+
+// contains/imports edges are structural (never resolved); scip-authored rows
+// and language-server-upgraded exact edges legitimately carry no ref_name.
+fn check_edge_signals(conn: &Connection) -> CheckResult {
+    let cols: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info('edges')")
+        .and_then(|mut stmt| {
+            let mapped = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            mapped.collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap_or_default();
+    if cols.is_empty() {
+        return result(
+            "edge_signals",
+            WARN,
+            "edges table unavailable (see schema)",
+            None,
+        );
+    }
+    if !EDGE_SIGNAL_COLUMNS
+        .iter()
+        .all(|c| cols.iter().any(|col| col == c))
+    {
+        return result(
+            "edge_signals",
+            WARN,
+            "edges signal columns missing (store predates \
+             ref_name/receiver_type/call_arity) -- repair runs name-only until \
+             the store is rebuilt",
+            Some(EDGE_SIGNALS_HINT.to_string()),
+        );
+    }
+    match conn.query_row(
+        "SELECT COUNT(*) FROM edges
+          WHERE ref_name IS NULL
+            AND resolution IN ('ambiguous', 'unresolved')
+            AND kind NOT IN ('contains', 'imports')
+            AND COALESCE(source, 'tree_sitter') != 'scip'",
+        [],
+        |row| row.get::<_, i64>(0),
+    ) {
+        Ok(0) => result(
+            "edge_signals",
+            PASS,
+            "reference edges carry resolver signals",
+            None,
+        ),
+        Ok(n) => result(
+            "edge_signals",
+            WARN,
+            format!(
+                "{n} reference edge(s) without resolver signals -- incremental \
+                 repair runs name-only for them until the store is rebuilt"
+            ),
+            Some(EDGE_SIGNALS_HINT.to_string()),
+        ),
+        Err(e) => result(
+            "edge_signals",
+            WARN,
+            format!("cannot read edge signals: {e}"),
+            None,
+        ),
+    }
 }
 
 // --- 7. concurrency -----------------------------------------------------------------------
@@ -1807,6 +1884,7 @@ mod tests {
             "ann",
             "freshness",
             "parse_errors",
+            "edge_signals",
             "concurrency",
             "tool_health",
             "memory_staleness",
@@ -1833,6 +1911,94 @@ mod tests {
             "fresh store must not fail the schema check: {failures:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn edge_signals_store(dir_tag: &str, edge_rows: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "cairn-doctor-edgesig-{dir_tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let db_path = dir.join("store.kg");
+        {
+            let conn = cairn_store::conn::open_writable(&db_path).expect("create store");
+            cairn_store::schema::apply_schema(&conn).expect("schema");
+            conn.execute_batch(&format!(
+                "INSERT INTO repos (id, name, path, language) VALUES ('r1', 'r1', '.', 'python');
+                 INSERT INTO files (id, repo_id, path, language) \
+                     VALUES ('f1', 'r1', 'a.py', 'python');
+                 INSERT INTO symbols (id, file_id, name, kind) \
+                     VALUES ('s1', 'f1', 'caller', 'function');
+                 {edge_rows}"
+            ))
+            .expect("seed");
+        }
+        db_path
+    }
+
+    #[test]
+    fn edge_signals_warns_on_pre_signal_column_edges() {
+        let db_path = edge_signals_store(
+            "legacy",
+            "INSERT INTO edges (id, source_id, target_id, target_name, kind, line, \"column\",
+                                    resolution, source)
+             VALUES ('e1', 's1', NULL, 'gone', 'calls', 1, 0, 'unresolved', 'tree_sitter');",
+        );
+        let results = run_doctor(db_path.to_str().expect("utf8 db path"));
+        let row = results
+            .iter()
+            .find(|r| r.name == "edge_signals")
+            .expect("edge_signals check emitted");
+        assert_eq!(row.status, WARN);
+        assert!(row.detail.contains("1 reference edge"), "{}", row.detail);
+        let hint = row.hint.as_deref().unwrap_or_default();
+        assert!(hint.contains("cairn build"), "{hint}");
+        let _ = std::fs::remove_dir_all(db_path.parent().expect("parent"));
+    }
+
+    #[test]
+    fn edge_signals_passes_when_reference_edges_carry_signals() {
+        let db_path = edge_signals_store(
+            "current",
+            "INSERT INTO edges (id, source_id, target_id, target_name, kind, line, \"column\",
+                                    resolution, source, ref_name)
+             VALUES ('e1', 's1', NULL, 'gone', 'calls', 1, 0, 'unresolved', 'tree_sitter', 'gone');",
+        );
+        let results = run_doctor(db_path.to_str().expect("utf8 db path"));
+        let row = results
+            .iter()
+            .find(|r| r.name == "edge_signals")
+            .expect("edge_signals check emitted");
+        assert_eq!(row.status, PASS, "{}", row.detail);
+        let _ = std::fs::remove_dir_all(db_path.parent().expect("parent"));
+    }
+
+    #[test]
+    fn edge_signals_warns_when_columns_are_absent() {
+        let db_path = edge_signals_store("pre-migration", "");
+        {
+            let conn = cairn_store::conn::open_writable(&db_path).expect("reopen");
+            for col in ["ref_name", "receiver_type", "call_arity"] {
+                conn.execute_batch(&format!("ALTER TABLE edges DROP COLUMN {col}"))
+                    .expect("drop");
+            }
+        }
+        let results = run_doctor(db_path.to_str().expect("utf8 db path"));
+        let row = results
+            .iter()
+            .find(|r| r.name == "edge_signals")
+            .expect("edge_signals check emitted");
+        assert_eq!(row.status, WARN);
+        assert!(
+            row.detail.contains("signal columns missing"),
+            "{}",
+            row.detail
+        );
+        let _ = std::fs::remove_dir_all(db_path.parent().expect("parent"));
     }
 
     #[test]
