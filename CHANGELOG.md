@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Rust store migration rebuilds a legacy `dataflow` table to its `(symbol, repo)` key whenever its shape requires it, even when the migration marker is already recorded (repairs stores opened by 0.23.0 binaries), inside one transaction; the Rust daemon's writable tool connections apply the store pragmas (WAL, mmap, sqlite-vec).
+- Config files are never overwritten when they cannot be read or backed up: rust `install-agents` aborts a client whose existing config cannot be backed up (matching python), and saving dashboard settings refuses to replace an unparseable `config.json` and keeps its non-scalar keys (rust and python).
 - Flaky `flow_golden` rust test: TempStore scratch dirs named from wall-clock nanos collided under macOS parallel test threads; now named from a process-global counter.
 - `install-agents` client-schema conformance, verified against each agent's official docs: agy (Antigravity) workspace installs now write the documented `.agents/mcp_config.json` instead of ignoring workspace scope, its global path is `~/.gemini/config/` on every Unix (no XDG deviation), and its entry drops the undocumented `type` field; Cursor entries drop the `type` field (its remote schema documents `url`+`headers` only); the install probe and `cairn doctor` audit both new paths.
 

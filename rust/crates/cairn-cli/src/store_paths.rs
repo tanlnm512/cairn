@@ -224,10 +224,10 @@ mod tests {
 
     #[test]
     fn registry_round_trips_sorted() {
-        let dir = std::env::temp_dir().join(format!("cairn-registry-{}", std::process::id()));
+        let env = crate::test_env::EnvScope::new("registry");
+        let dir = env.dir().join(".cairn");
         std::fs::create_dir_all(&dir).expect("dir");
-        // SAFETY of the process-local env: tests never run concurrently with
-        // other tests reading CAIRN_HOME in this binary; serde comparisons below.
+        // SAFETY: EnvScope holds the env lock and restores CAIRN_HOME on drop.
         unsafe { std::env::set_var("CAIRN_HOME", &dir) };
         let mut reg = load_registry();
         reg.insert("/b".into(), "k2".into());
@@ -236,6 +236,5 @@ mod tests {
         let loaded = load_registry();
         let keys: Vec<&String> = loaded.keys().collect();
         assert_eq!(keys, ["/a", "/b"]);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

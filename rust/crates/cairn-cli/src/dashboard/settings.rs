@@ -110,13 +110,19 @@ pub fn set_config_values(values: &[(String, String)]) -> bool {
 
 fn set_config_values_at(home: &std::path::Path, values: &[(String, String)]) -> bool {
     let config = home.join("config.json");
-    let mut merged = match std::fs::read_to_string(&config)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-        .filter(Value::is_object)
-    {
-        Some(Value::Object(map)) => map,
-        _ => serde_json::Map::new(),
+    let existing = match std::fs::read_to_string(&config) {
+        Ok(raw) => serde_json::from_str::<Value>(&raw).ok(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Some(Value::Object(serde_json::Map::new()))
+        }
+        Err(_) => None,
+    };
+    let Some(Value::Object(mut merged)) = existing else {
+        eprintln!(
+            "cairn: {} is not a readable JSON object; refusing to overwrite it",
+            config.display()
+        );
+        return false;
     };
     for (key, value) in values {
         merged.insert(key.clone(), Value::from(value.clone()));
@@ -456,6 +462,24 @@ mod tests {
             file_value_at(&home, "CAIRN_EMBED_SERVER_MODEL").as_deref(),
             Some("m1")
         );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn config_writes_refuse_to_replace_an_unparseable_config() {
+        let home = std::env::temp_dir().join(format!("cairn-cfg-bad-{}", std::process::id()));
+        for seed in ["{not json", "[1, 2]"] {
+            let _ = std::fs::remove_dir_all(&home);
+            std::fs::create_dir_all(&home).unwrap();
+            std::fs::write(home.join("config.json"), seed).unwrap();
+            let ok =
+                set_config_values_at(&home, &[("CAIRN_EMBED_SERVER_MODEL".into(), "m1".into())]);
+            assert!(!ok, "{seed}");
+            assert_eq!(
+                std::fs::read_to_string(home.join("config.json")).unwrap(),
+                seed
+            );
+        }
         let _ = std::fs::remove_dir_all(&home);
     }
 

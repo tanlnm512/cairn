@@ -1528,11 +1528,7 @@ fn apply_doctor_fixes() -> Vec<Value> {
                 "{}.bak",
                 path.file_name().unwrap_or_default().to_string_lossy()
             ));
-            let backed_up = std::fs::read(&path)
-                .ok()
-                .and_then(|bytes| std::fs::write(&backup, bytes).ok())
-                .is_some();
-            if !backed_up {
+            if !crate::agent_install::copy_to_backup(&path, &backup) {
                 actions.push(action(WRITE_FAILED));
                 continue;
             }
@@ -1843,23 +1839,10 @@ mod tests {
     fn missing_store_degrades_without_failures_outside_schema() {
         // The environment audit reads the real client configs under HOME; a
         // developer machine carries live registrations, so isolate it.
-        let guard_dir = std::env::temp_dir().join(format!(
-            "cairn-doctor-home-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&guard_dir).expect("home dir");
-        let real_home = std::env::var("HOME").ok();
-        // SAFETY: serialized single-threaded test process env isolation.
-        unsafe { std::env::set_var("HOME", &guard_dir) };
-        let results = run_doctor("/nonexistent/cairn-doctor/store.kg");
-        match real_home {
-            Some(home) => unsafe { std::env::set_var("HOME", home) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-        let _ = std::fs::remove_dir_all(&guard_dir);
+        let results = {
+            let _env = crate::test_env::EnvScope::new("doctor-home");
+            run_doctor("/nonexistent/cairn-doctor/store.kg")
+        };
         let schema = results.iter().find(|r| r.name == "schema").expect("schema");
         assert_eq!(schema.status, FAIL);
         let failures: Vec<&CheckResult> = results.iter().filter(|r| r.status == FAIL).collect();

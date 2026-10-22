@@ -575,7 +575,14 @@ fn write_tree(dest_dir: &Path, force: bool, res: &mut InstallResult, dry_run: bo
     }
 }
 
-fn backup_to_bak(path: &Path, reason: &str, res: &mut InstallResult, dry_run: bool) -> Value {
+pub(crate) fn copy_to_backup(path: &Path, backup: &Path) -> bool {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| std::fs::write(backup, bytes).ok())
+        .is_some()
+}
+
+fn backup_to_bak(path: &Path, reason: &str, res: &mut InstallResult, dry_run: bool) -> bool {
     let mut backup = path.with_file_name(format!(
         "{}.bak",
         path.file_name().unwrap_or_default().to_string_lossy()
@@ -599,24 +606,23 @@ fn backup_to_bak(path: &Path, reason: &str, res: &mut InstallResult, dry_run: bo
             path.display(),
             backup.display()
         ));
-        return json!({});
+        return true;
     }
-    match std::fs::read(path)
-        .ok()
-        .and_then(|bytes| std::fs::write(&backup, bytes).ok())
-    {
-        Some(()) => res.written.push(format!(
+    if copy_to_backup(path, &backup) {
+        res.written.push(format!(
             "backed up {reason} {} -> {}",
             path.display(),
             backup.display()
-        )),
-        None => res.notes.push(format!(
-            "refusing to overwrite {reason} config {}: could not back it up. \
-             Fix or remove the file and re-run.",
+        ));
+        true
+    } else {
+        res.notes.push(format!(
+            "install failed: refusing to overwrite {reason} config {}: could not back it up; \
+             fix or remove the file and re-run. Other clients continued.",
             path.display()
-        )),
+        ));
+        false
     }
-    json!({})
 }
 
 fn merge_keys_non_object(existing: &Map<String, Value>, merger: &Map<String, Value>) -> bool {
@@ -632,28 +638,28 @@ fn merge_json_file(
     res: &mut InstallResult,
     config_key: &str,
     dry_run: bool,
-) {
+) -> bool {
     let mut existing = Map::new();
     if path.exists() {
         match load_json_or_none(path) {
             None => {
-                existing = backup_to_bak(path, "malformed", res, dry_run)
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default();
+                if !backup_to_bak(path, "malformed", res, dry_run) {
+                    return false;
+                }
             }
             Some(loaded @ Value::Object(_)) => {
                 let obj = loaded.as_object().expect("object");
-                if merge_keys_non_object(obj, merger.as_object().unwrap_or(obj)) {
-                    backup_to_bak(path, "non-object", res, dry_run);
+                if merge_keys_non_object(obj, merger.as_object().unwrap_or(obj))
+                    && !backup_to_bak(path, "non-object", res, dry_run)
+                {
+                    return false;
                 }
                 existing = obj.clone();
             }
             Some(_) => {
-                existing = backup_to_bak(path, "non-object", res, dry_run)
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default();
+                if !backup_to_bak(path, "non-object", res, dry_run) {
+                    return false;
+                }
             }
         }
     }
@@ -661,13 +667,13 @@ fn merge_json_file(
     let merger_obj = merger.as_object().cloned().unwrap_or_default();
     if already_installed(&existing, &merger_obj, config_key) && !force {
         res.add(path, true);
-        return;
+        return true;
     }
 
     if dry_run {
         res.written
             .push(format!("would merge into {}", path.display()));
-        return;
+        return true;
     }
 
     let merged = deep_merge(existing, merger_obj, config_key);
@@ -675,6 +681,7 @@ fn merge_json_file(
     if atomic_write_text(path, &body).is_ok() {
         res.add(path, false);
     }
+    true
 }
 
 fn note_mcp_merge(res: &mut InstallResult, path: &Path, detail: &str) {
@@ -1607,14 +1614,16 @@ fn install_claude(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
     };
 
     if scope == "workspace" {
-        merge_json_file(
+        if !merge_json_file(
             &base.join(".mcp.json"),
             &mcp_config_json(),
             force,
             &mut res,
             "mcpServers",
             dry_run,
-        );
+        ) {
+            return res;
+        }
     } else if dry_run {
         res.notes.push(
             "[dry-run] Would register MCP globally via `claude mcp add --scope user`.".into(),
@@ -1705,14 +1714,16 @@ fn install_claude(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
         &mut res,
         dry_run,
     );
-    merge_json_file(
+    if !merge_json_file(
         &base.join(".claude").join("settings.json"),
         &json!({ "hooks": claude_hooks_block() }),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
 
     if scope == "workspace" {
         let claude_md = workspace.join("CLAUDE.md");
@@ -1811,14 +1822,16 @@ fn install_cursor(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
     } else {
         workspace.to_path_buf()
     };
-    merge_json_file(
+    if !merge_json_file(
         &base.join(".cursor").join("mcp.json"),
         &mcp_config_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     write_file(
         &base.join(".cursor").join("rules").join("cairn.mdc"),
         &template("cursor/cairn.mdc"),
@@ -1846,14 +1859,16 @@ fn install_cursor(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
         &mut res,
         dry_run,
     );
-    merge_json_file(
+    if !merge_json_file(
         &base.join(".cursor").join("hooks.json"),
         &cursor_hooks_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     res.notes
         .push("Restart Cursor (or reload the window) to load the new MCP server.".into());
     res
@@ -1941,14 +1956,16 @@ fn install_droid(workspace: &Path, force: bool, dry_run: bool, _scope: &str) -> 
                     .push(format!("WARNING: `droid mcp add` failed ({e}).")),
             }
             if !registered {
-                merge_json_file(
+                if !merge_json_file(
                     &workspace.join(".factory").join("mcp.json"),
                     &mcp_config_json(),
                     force,
                     &mut res,
                     "mcpServers",
                     false,
-                );
+                ) {
+                    return res;
+                }
                 res.notes.push(
                     "Wrote .factory/mcp.json so the registration is present on \
                      the next droid run."
@@ -1957,14 +1974,16 @@ fn install_droid(workspace: &Path, force: bool, dry_run: bool, _scope: &str) -> 
             }
         }
     } else {
-        merge_json_file(
+        if !merge_json_file(
             &workspace.join(".factory").join("mcp.json"),
             &mcp_config_json(),
             force,
             &mut res,
             "mcpServers",
             dry_run,
-        );
+        ) {
+            return res;
+        }
         res.notes.push(
             "droid CLI not found; wrote .factory/mcp.json (registers on next \
              droid run)."
@@ -1989,14 +2008,16 @@ fn install_zcode(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> I
     } else {
         base.join(".zcode").join("config.json")
     };
-    merge_json_file(
+    if !merge_json_file(
         &mcp_path,
         &zcode_mcp_config_json(),
         force,
         &mut res,
         "zcode",
         dry_run,
-    );
+    ) {
+        return res;
+    }
 
     write_tree(
         &base.join(".zcode").join("skills").join("cairn"),
@@ -2049,14 +2070,16 @@ fn install_zcode(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> I
 fn install_agy(_workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("agy");
     let cfg = agy_config_path();
-    merge_json_file(
+    if !merge_json_file(
         &cfg,
         &agy_mcp_config_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     res.notes
         .push(format!("Global MCP config: {}", cfg.display()));
     if scope == "workspace" {
@@ -2085,14 +2108,16 @@ fn opencode_config_path(workspace: &Path, scope: &str) -> PathBuf {
 fn install_opencode(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("opencode");
     let p = opencode_config_path(workspace, scope);
-    merge_json_file(
+    if !merge_json_file(
         &p,
         &opencode_format_mcp_config_json(),
         force,
         &mut res,
         "opencode",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     note_mcp_merge(&mut res, &p, "under the `mcp` key (opencode's schema).");
     res.notes.push(
         "Skill (golden rules + tool-behaviors) reaches opencode via the \
@@ -2113,14 +2138,16 @@ fn kilo_config_path(workspace: &Path, scope: &str) -> PathBuf {
 fn install_kilo(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("kilo");
     let p = kilo_config_path(workspace, scope);
-    merge_json_file(
+    if !merge_json_file(
         &p,
         &opencode_format_mcp_config_json(),
         force,
         &mut res,
         "kilo",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     note_mcp_merge(&mut res, &p, "under the `mcp` key (kilo's schema).");
     res.notes.push(
         "Skill (golden rules + tool-behaviors) may reach kilo via the \
@@ -2149,14 +2176,16 @@ fn omp_agents_dir(workspace: &Path, scope: &str) -> PathBuf {
 fn install_omp(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("omp");
     let mcp_path = omp_mcp_path(workspace, scope);
-    merge_json_file(
+    if !merge_json_file(
         &mcp_path,
         &mcp_config_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     note_mcp_merge(&mut res, &mcp_path, "under the `mcpServers` key.");
     let agents_dir = omp_agents_dir(workspace, scope);
     write_file(
@@ -2990,6 +3019,7 @@ mod tests {
 
     #[test]
     fn zcode_merge_moves_the_server_under_mcp_dot_servers() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let existing = json!({
             "mcpServers": {"cairn": {"url": "stale"}},
             "mcp": {"servers": {"user": {"command": "u"}}},
@@ -3043,6 +3073,7 @@ mod tests {
 
     #[test]
     fn merge_json_file_backs_up_malformed_configs_instead_of_clobbering() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("malformed");
         let path = dir.join("mcp.json");
         std::fs::write(&path, b"{not json").expect("malformed seed");
@@ -3082,7 +3113,25 @@ mod tests {
     }
 
     #[test]
+    fn install_aborts_the_client_when_the_config_backup_fails() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tmp_dir("backup-fails");
+        let path = dir.join("opencode.json");
+        std::fs::write(&path, b"{not json").expect("seed");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        let res = install_opencode(&dir, false, false, "workspace");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        assert_eq!(std::fs::read(&path).expect("bytes"), b"{not json");
+        assert_eq!(res.notes.len(), 1, "{:?}", res.notes);
+        assert!(res.notes[0].starts_with("install failed: refusing to overwrite"));
+        assert!(res.written.is_empty() && res.skipped.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn merge_json_file_is_idempotent_without_force() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("idempotent");
         let path = dir.join("mcp.json");
         let mut res = InstallResult::new("claude");
@@ -3116,6 +3165,7 @@ mod tests {
 
     #[test]
     fn install_claude_workspace_writes_the_full_asset_set() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("claude-ws");
         let report = install(
             &dir,
@@ -3234,22 +3284,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    static HOME_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// Swap HOME to a fresh dir for the detection/installed-state assertions
-    /// (serialized: process env is global).
+    /// Run with HOME pinned to a fresh dir (serialized: process env is global).
     fn with_fresh_home<T>(tag: &str, run: impl FnOnce(&Path) -> T) -> (PathBuf, T) {
-        let _guard = HOME_GUARD.lock().expect("home guard");
-        let dir = tmp_dir(tag);
-        let real_home = std::env::var("HOME").ok();
-        // SAFETY: single env writer under the guard; restored before returning.
-        unsafe { std::env::set_var("HOME", &dir) };
-        let outcome = run(&dir);
-        match real_home {
-            Some(home) => unsafe { std::env::set_var("HOME", home) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-        (dir, outcome)
+        let env = crate::test_env::EnvScope::new(tag);
+        let outcome = run(env.dir());
+        (env.dir().to_path_buf(), outcome)
     }
 
     #[test]
@@ -3306,6 +3345,7 @@ mod tests {
 
     #[test]
     fn omp_installs_flat_mcp_and_agents() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("omp");
         let report = install(
             &dir,
@@ -3335,6 +3375,7 @@ mod tests {
 
     #[test]
     fn cross_tool_tree_installs_and_uninstalls_by_template_bytes() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("cross");
         let report = install(
             &dir,
@@ -3358,6 +3399,7 @@ mod tests {
 
     #[test]
     fn git_hooks_render_with_the_marker_and_home_pin() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("hooks");
         let repo = dir.join("repo");
         std::fs::create_dir_all(repo.join(".git/hooks")).expect("repo");

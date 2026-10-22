@@ -228,6 +228,21 @@ class TestSetConfigValues:
         }
         assert list(config_file.parent.glob("*.tmp")) == []
 
+    @pytest.mark.parametrize("seed", ["{not json", "[1, 2]"])
+    def test_refuses_to_replace_unparseable_config(self, config_file, seed):
+        config_file.write_text(seed, encoding="utf-8")
+        assert paths.set_config_values({"K": "v"}) is False
+        assert config_file.read_text(encoding="utf-8") == seed
+
+    def test_preserves_non_scalar_keys(self, config_file):
+        _write(config_file, {"A": "1", "nested": {"k": ["x"]}})
+        assert paths.set_config_values({"B": "2"}) is True
+        assert json.loads(config_file.read_text(encoding="utf-8")) == {
+            "A": "1",
+            "B": "2",
+            "nested": {"k": ["x"]},
+        }
+
     def test_creates_missing_parent_dir(self, tmp_path, monkeypatch):
         path = tmp_path / "deep" / "nest" / "config.json"
         monkeypatch.setattr(paths, "CONFIG_FILE", path)
