@@ -856,45 +856,52 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
     }
     let db = args.db.clone().unwrap_or_else(default_db);
     let workspace = args.workspace.clone().unwrap_or_else(|| ".".to_string());
-    let target_db = if args.staging {
-        cairn_store::swap::staging_path(Path::new(&db))
-            .to_string_lossy()
-            .into_owned()
-    } else {
-        db.clone()
-    };
-    let discard_staged = || {
-        if args.staging {
-            cairn_store::swap::discard(Path::new(&target_db));
-        }
-    };
-    // Staging serializes against every other writer of the live store until the swap.
-    let _lock = if args.staging {
-        match cairn_store::swap::build_lock(Path::new(&db)) {
-            Ok(lock) => Some(lock),
-            Err(message) => return command_error(&message),
-        }
-    } else {
-        None
-    };
     let started = Instant::now();
+    let checkpoint = |path: &Path| {
+        if let Ok(conn) = Connection::open(path) {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+    };
+    let closure = |path: &Path| -> Result<i64, String> {
+        Connection::open(path)
+            .map_err(|e| e.to_string())
+            .and_then(|mut conn| {
+                cairn_build::closure::build_transitive_closure(&mut conn, 4)
+                    .map(|outcome| outcome.rows as i64)
+            })
+            .map_err(|message| format!("closure build failed: {message}"))
+    };
+    let empty_refusal = format!(
+        "no source files found under {workspace} — refusing to swap an empty build over {db}"
+    );
+    let mut staged_closure_rows: Option<i64> = None;
 
     let mut rail = Rail::new("Building graph");
     rail.start("Scanning files");
-    match cairn_build::builder::build_graph(&workspace, &target_db, args.repo.as_deref(), None) {
+    let built = if args.staging {
+        // Closure and checkpoint land in the staged store, under the lock, before the swap.
+        cairn_build::builder::build_graph_with(&workspace, &db, None, None, |staged, summary| {
+            if summary.files == 0 {
+                return Err(empty_refusal.clone());
+            }
+            if args.with_closure {
+                staged_closure_rows = Some(closure(staged)?);
+            }
+            checkpoint(staged);
+            Ok(())
+        })
+    } else {
+        cairn_build::builder::build_graph(&workspace, &db, args.repo.as_deref(), None)
+    };
+    match built {
         Err(message) => {
-            discard_staged();
             rail.fail_close();
             command_error(&message)
         }
         Ok((summary, _timings)) => {
             if args.staging && summary.files == 0 {
-                discard_staged();
                 rail.fail_close();
-                return command_error(&format!(
-                    "no source files found under {workspace} — refusing to swap \
-                     an empty build over {db}"
-                ));
+                return command_error(&empty_refusal);
             }
             rail.tick(&format!("{} found", fmt_int(summary.files as i64)));
             rail.finish(&format!("{} found", fmt_int(summary.files as i64)));
@@ -907,30 +914,20 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
 
             if args.with_closure {
                 rail.start("Transitive closure");
-                match Connection::open(&target_db)
-                    .map_err(|e| e.to_string())
-                    .and_then(|mut conn| {
-                        cairn_build::closure::build_transitive_closure(&mut conn, 4)
-                            .map(|outcome| outcome.rows as i64)
-                    }) {
+                let rows = match staged_closure_rows {
+                    Some(rows) => Ok(rows),
+                    None => closure(Path::new(&db)),
+                };
+                match rows {
                     Ok(rows) => rail.finish(&format!("{} edges", fmt_int(rows))),
                     Err(message) => {
-                        discard_staged();
                         rail.fail_close();
-                        return command_error(&format!("closure build failed: {message}"));
+                        return command_error(&message);
                     }
                 }
             }
-            if let Ok(conn) = Connection::open(&target_db) {
-                let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-            }
-            if args.staging
-                && let Err(message) =
-                    cairn_store::swap::install_staged(Path::new(&target_db), Path::new(&db))
-            {
-                discard_staged();
-                rail.fail_close();
-                return command_error(&message);
+            if !args.staging {
+                checkpoint(Path::new(&db));
             }
 
             let mut kv_pairs: Vec<(String, String)> = vec![
@@ -2468,6 +2465,7 @@ mod tests {
 
         assert_eq!(code, ExitCode::SUCCESS);
         assert!(!Path::new(&format!("{db_str}.tmp")).exists());
+        assert!(!Path::new(&format!("{db_str}.tmp.build.lock")).exists());
         let conn = Connection::open(&db).expect("open store");
         let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).expect("count") };
         assert_eq!(count("SELECT COUNT(*) FROM files"), 1);

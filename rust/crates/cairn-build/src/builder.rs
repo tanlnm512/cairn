@@ -132,6 +132,18 @@ pub fn build_graph(
     repo_filter: Option<&str>,
     workers: Option<usize>,
 ) -> Result<(BuildSummary, StageTimings), String> {
+    build_graph_with(workspace, db_path, repo_filter, workers, |_, _| Ok(()))
+}
+
+/// `build_graph` that runs `before_swap` on a full build's staged store, under
+/// the build lock and ahead of the swap; an Err aborts the swap.
+pub fn build_graph_with(
+    workspace: &str,
+    db_path: &str,
+    repo_filter: Option<&str>,
+    workers: Option<usize>,
+    before_swap: impl FnOnce(&Path, &BuildSummary) -> Result<(), String>,
+) -> Result<(BuildSummary, StageTimings), String> {
     let started = Instant::now();
     let mut timings = StageTimings::default();
 
@@ -160,11 +172,9 @@ pub fn build_graph(
             let result = build_staged(
                 &staged,
                 db,
-                workspace,
-                &files,
-                &skips,
-                workers,
-                &mut timings,
+                files.is_empty(),
+                |conn| populate(conn, workspace, &files, &skips, None, workers, &mut timings),
+                before_swap,
             );
             swap::discard(&staged);
             result?
@@ -178,17 +188,15 @@ pub fn build_graph(
 fn build_staged(
     staged: &Path,
     db: &Path,
-    workspace: &str,
-    files: &[scanner::FileInfo],
-    skips: &[scanner::SkipInfo],
-    workers: Option<usize>,
-    timings: &mut StageTimings,
+    scanned_nothing: bool,
+    fill: impl FnOnce(&mut Connection) -> Result<BuildSummary, String>,
+    before_swap: impl FnOnce(&Path, &BuildSummary) -> Result<(), String>,
 ) -> Result<BuildSummary, String> {
     let summary = {
         let mut conn = open_store(staged)?;
-        populate(&mut conn, workspace, files, skips, None, workers, timings)?
+        fill(&mut conn)?
     };
-    if files.is_empty() {
+    if scanned_nothing {
         if summary.skipped == 0 {
             return Ok(summary);
         }
@@ -202,6 +210,7 @@ fn build_staged(
             ));
         }
     }
+    before_swap(staged, &summary)?;
     swap::install_staged(staged, db)?;
     Ok(summary)
 }
