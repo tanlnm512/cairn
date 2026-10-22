@@ -857,9 +857,25 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
     let db = args.db.clone().unwrap_or_else(default_db);
     let workspace = args.workspace.clone().unwrap_or_else(|| ".".to_string());
     let target_db = if args.staging {
-        format!("{db}.tmp")
+        cairn_store::swap::staging_path(Path::new(&db))
+            .to_string_lossy()
+            .into_owned()
     } else {
         db.clone()
+    };
+    let discard_staged = || {
+        if args.staging {
+            cairn_store::swap::discard(Path::new(&target_db));
+        }
+    };
+    // Staging serializes against every other writer of the live store until the swap.
+    let _lock = if args.staging {
+        match cairn_store::swap::build_lock(Path::new(&db)) {
+            Ok(lock) => Some(lock),
+            Err(message) => return command_error(&message),
+        }
+    } else {
+        None
     };
     let started = Instant::now();
 
@@ -867,15 +883,13 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
     rail.start("Scanning files");
     match cairn_build::builder::build_graph(&workspace, &target_db, args.repo.as_deref(), None) {
         Err(message) => {
-            if args.staging {
-                let _ = std::fs::remove_file(&target_db);
-            }
+            discard_staged();
             rail.fail_close();
             command_error(&message)
         }
         Ok((summary, _timings)) => {
             if args.staging && summary.files == 0 {
-                let _ = std::fs::remove_file(&target_db);
+                discard_staged();
                 rail.fail_close();
                 return command_error(&format!(
                     "no source files found under {workspace} — refusing to swap \
@@ -901,6 +915,7 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
                     }) {
                     Ok(rows) => rail.finish(&format!("{} edges", fmt_int(rows))),
                     Err(message) => {
+                        discard_staged();
                         rail.fail_close();
                         return command_error(&format!("closure build failed: {message}"));
                     }
@@ -908,6 +923,14 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
             }
             if let Ok(conn) = Connection::open(&target_db) {
                 let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+            }
+            if args.staging
+                && let Err(message) =
+                    cairn_store::swap::install_staged(Path::new(&target_db), Path::new(&db))
+            {
+                discard_staged();
+                rail.fail_close();
+                return command_error(&message);
             }
 
             let mut kv_pairs: Vec<(String, String)> = vec![
@@ -2404,4 +2427,52 @@ pub struct TaintArgs {
     /// Maximum printed paths.
     #[arg(long = "limit", default_value_t = DEFAULT_PATH_LIMIT)]
     pub limit: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staging_build_swaps_the_temp_db_over_the_store() {
+        let dir = std::env::temp_dir().join(format!(
+            "cairn-staging-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join(".git")).expect("repo marker");
+        std::fs::write(dir.join("mod.py"), "def f():\n    return 1\n").expect("source");
+        let db = dir.join("store.kg");
+        let db_str = db.to_string_lossy().to_string();
+        {
+            let conn = cairn_store::schema::open_initialized(&db).expect("seed store");
+            conn.execute(
+                "INSERT INTO build_runs (kind, started_at) VALUES ('build', 1.0)",
+                [],
+            )
+            .expect("seed telemetry");
+        }
+
+        let code = build(BuildArgs {
+            repo: None,
+            workspace: Some(dir.to_string_lossy().to_string()),
+            db: Some(db_str.clone()),
+            verbose: false,
+            staging: true,
+            lsp: None,
+            with_closure: false,
+        });
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(!Path::new(&format!("{db_str}.tmp")).exists());
+        let conn = Connection::open(&db).expect("open store");
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).expect("count") };
+        assert_eq!(count("SELECT COUNT(*) FROM files"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM build_runs"), 1);
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

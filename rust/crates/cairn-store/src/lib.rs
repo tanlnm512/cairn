@@ -1,8 +1,9 @@
-//! Store layer: `.kg` connection factory, vec0 helpers, canonical dump.
+//! Store layer: `.kg` connection factory, vec0 helpers, canonical dump, atomic swap.
 
 pub mod conn;
 pub mod dump;
 pub mod schema;
+pub mod swap;
 pub mod vec0;
 
 /// Returns the crate name; skeleton smoke contract.
