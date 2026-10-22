@@ -756,12 +756,35 @@ def _changed_source_files(repo_path: Path, conn=None, diff_ref: Optional[str] = 
     return _filter_source_paths(paths)
 
 
+def _stat_drift_unchanged(conn, row, p: Path, st: os.stat_result) -> bool:
+    """Size-equal mtime drift only: True, with the stored stat refreshed,
+    when files.hash still matches the on-disk content."""
+    stored = row["hash"] or ""
+    if not stored:
+        return False
+    try:
+        if scanner_mod.file_sha256(p) != stored:
+            return False
+    except OSError:
+        return False
+    try:
+        # Commit so no open transaction blocks the caller's next BEGIN.
+        conn.execute(
+            "UPDATE files SET size = ?, mtime = ? WHERE id = ?",
+            (st.st_size, st.st_mtime, row["id"]),
+        )
+        conn.commit()
+    except sqlite3.Error:
+        logger.debug("files stat refresh failed", exc_info=True)
+    return True
+
+
 def _changed_via_stat(repo_path: Path, conn) -> List[str]:
     """Return changed paths by size, mtime, deletion, or new appearance."""
     repo_name = scanner_mod.repository_id(repo_path)
     try:
         file_rows = conn.execute(
-            "SELECT path, size, mtime FROM files WHERE repo_id = ?",
+            "SELECT id, path, size, mtime, hash FROM files WHERE repo_id = ?",
             (repo_name,),
         ).fetchall()
     except Exception:
@@ -780,7 +803,9 @@ def _changed_via_stat(repo_path: Path, conn) -> List[str]:
             st = p.stat()
             if st.st_size != (row["size"] or 0):
                 changed.append(stored_path)
-            elif abs(st.st_mtime - (row["mtime"] or 0.0)) > 0.5:
+            elif abs(
+                st.st_mtime - (row["mtime"] or 0.0)
+            ) > 0.5 and not _stat_drift_unchanged(conn, row, p, st):
                 changed.append(stored_path)
         except OSError:
             continue

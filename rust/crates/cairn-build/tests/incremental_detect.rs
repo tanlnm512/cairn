@@ -95,3 +95,42 @@ fn range_git_failure_surfaces_an_error_and_reindexes_nothing() {
         summary.errors
     );
 }
+
+/// Age every stored mtime to the epoch: content-identical stat drift.
+fn age_stored_mtimes(db: &str) {
+    let conn = Connection::open(db).expect("open store");
+    conn.execute("UPDATE files SET mtime = 0.0", [])
+        .expect("age mtimes");
+}
+
+#[test]
+fn mtime_only_drift_skips_reindex_when_hash_matches() {
+    let (repo, db) = committed_repo("touchonly");
+    age_stored_mtimes(&db);
+
+    let summary = incremental_update(repo.to_str().expect("ws"), &db, None, None).expect("update");
+
+    assert!(summary.errors.is_empty(), "{:?}", summary.errors);
+    assert_eq!(summary.files_reindexed, 0);
+}
+
+#[test]
+fn mtime_only_drift_does_not_trigger_freshness_repair() {
+    let (repo, db) = committed_repo("freshprobe");
+    let ws = repo.to_str().expect("ws").to_string();
+    age_stored_mtimes(&db);
+
+    let conn = Connection::open(&db).expect("open store");
+    let drifted = cairn_build::incremental::detect_changed(&conn, &ws);
+    assert!(drifted.is_empty(), "{drifted:?}");
+
+    let stored: f64 = conn
+        .query_row("SELECT mtime FROM files WHERE path = 'a.py'", [], |r| {
+            r.get(0)
+        })
+        .expect("stored mtime");
+    assert!(
+        stored > 0.0,
+        "stored mtime must converge to disk after a hash match"
+    );
+}

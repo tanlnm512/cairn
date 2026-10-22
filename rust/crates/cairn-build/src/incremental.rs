@@ -514,40 +514,84 @@ fn git_paths(args: &[&str], cwd: &Path) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// Size-equal mtime drift only: content-unchanged (and the stored stat
+/// refreshed so the drift does not re-flag every pass) when the hash matches.
+fn unchanged_by_hash(
+    conn: &Connection,
+    file_id: &str,
+    path: &Path,
+    stored_hash: Option<&str>,
+    st: &std::fs::Metadata,
+) -> bool {
+    let Some(stored) = stored_hash.filter(|h| !h.is_empty()) else {
+        return false;
+    };
+    match scanner::file_sha256(path) {
+        Ok(current) if current == stored => {
+            let _ = conn.execute(
+                "UPDATE files SET size = ?, mtime = ? WHERE id = ?",
+                params![st.len() as i64, mtime_f64(st).unwrap_or(0.0), file_id],
+            );
+            true
+        }
+        _ => false,
+    }
+}
+
+/// One files-table stat row for drift detection.
+struct FileStatRow {
+    id: String,
+    path: String,
+    size: Option<i64>,
+    mtime: Option<f64>,
+    hash: Option<String>,
+}
+
+fn file_stat_rows(conn: &Connection, repo_id: &str) -> Option<Vec<FileStatRow>> {
+    let mut stmt = conn
+        .prepare("SELECT id, path, size, mtime, hash FROM files WHERE repo_id = ?")
+        .ok()?;
+    let rows = stmt
+        .query_map([repo_id], |r| {
+            Ok(FileStatRow {
+                id: r.get(0)?,
+                path: r.get(1)?,
+                size: r.get(2)?,
+                mtime: r.get(3)?,
+                hash: r.get(4)?,
+            })
+        })
+        .ok()?;
+    Some(rows.collect::<Result<Vec<_>, _>>().unwrap_or_default())
+}
+
 /// Size/mtime comparison against the files table (the `cairn sync` signal).
 fn changed_via_stat(workspace: &str, repo_path: &Path, conn: &Connection) -> Vec<String> {
     let repo_name = scanner::repository_id_for_path(workspace, repo_path);
-    let file_rows: Vec<(String, Option<i64>, Option<f64>)> = {
-        let mut stmt = match conn.prepare("SELECT path, size, mtime FROM files WHERE repo_id = ?") {
-            Ok(stmt) => stmt,
-            Err(_) => return Vec::new(),
-        };
-        match stmt.query_map([&repo_name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))) {
-            Ok(rows) => rows.collect::<Result<Vec<_>, _>>().unwrap_or_default(),
-            Err(_) => return Vec::new(),
-        }
+    let file_rows = match file_stat_rows(conn, &repo_name) {
+        Some(rows) => rows,
+        None => return Vec::new(),
     };
 
     let mut changed: Vec<String> = Vec::new();
     let mut existing_rel: HashSet<String> = HashSet::new();
-    for (stored_path, size, mtime) in file_rows {
-        existing_rel.insert(stored_path.clone());
-        let p = if Path::new(&stored_path).is_absolute() {
-            PathBuf::from(&stored_path)
+    for row in file_rows {
+        existing_rel.insert(row.path.clone());
+        let p = if Path::new(&row.path).is_absolute() {
+            PathBuf::from(&row.path)
         } else {
-            repo_path.join(&stored_path)
+            repo_path.join(&row.path)
         };
         let Ok(st) = std::fs::metadata(&p) else {
-            changed.push(stored_path); // deleted since last index
+            changed.push(row.path); // deleted since last index
             continue;
         };
-        if st.len() as i64 != size.unwrap_or(0) {
-            changed.push(stored_path);
-        } else {
-            let stored_mtime = mtime_f64(&st).unwrap_or(0.0);
-            if (stored_mtime - mtime.unwrap_or(0.0)).abs() > 0.5 {
-                changed.push(stored_path);
-            }
+        let size_changed = st.len() as i64 != row.size.unwrap_or(0);
+        let mtime_drifted = (mtime_f64(&st).unwrap_or(0.0) - row.mtime.unwrap_or(0.0)).abs() > 0.5;
+        if size_changed
+            || (mtime_drifted && !unchanged_by_hash(conn, &row.id, &p, row.hash.as_deref(), &st))
+        {
+            changed.push(row.path);
         }
     }
 
@@ -570,40 +614,33 @@ pub fn detect_changed(conn: &Connection, workspace: &str) -> Vec<String> {
     };
     for record in records {
         let repo_name = record.repo_id.as_str();
-        let file_rows: Vec<(String, Option<i64>, Option<f64>)> = {
-            let mut stmt =
-                match conn.prepare("SELECT path, size, mtime FROM files WHERE repo_id = ?") {
-                    Ok(stmt) => stmt,
-                    Err(_) => continue,
-                };
-            match stmt.query_map([repo_name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))) {
-                Ok(rows) => rows.collect::<Result<Vec<_>, _>>().unwrap_or_default(),
-                Err(_) => continue,
-            }
+        let Some(file_rows) = file_stat_rows(conn, repo_name) else {
+            continue;
         };
         // An unknown repo scope never falls back to every repo's rows.
         if file_rows.is_empty() {
             continue;
         }
 
-        for (stored_path, size, mtime) in &file_rows {
-            let p = scanner::resolve_file_path(workspace, repo_name, stored_path);
+        for row in &file_rows {
+            let p = scanner::resolve_file_path(workspace, repo_name, &row.path);
             let Ok(st) = std::fs::metadata(&p) else {
                 changed.push(p.to_string_lossy().into_owned()); // deleted/moved
                 continue;
             };
-            if st.len() as i64 != size.unwrap_or(0) {
+            let size_changed = st.len() as i64 != row.size.unwrap_or(0);
+            let mtime_drifted =
+                (mtime_f64(&st).unwrap_or(0.0) - row.mtime.unwrap_or(0.0)).abs() > 0.5;
+            if size_changed
+                || (mtime_drifted
+                    && !unchanged_by_hash(conn, &row.id, &p, row.hash.as_deref(), &st))
+            {
                 changed.push(p.to_string_lossy().into_owned());
-            } else {
-                let disk_mtime = mtime_f64(&st).unwrap_or(0.0);
-                if (disk_mtime - mtime.unwrap_or(0.0)).abs() > 0.5 {
-                    changed.push(p.to_string_lossy().into_owned());
-                }
             }
         }
 
         // New source files not yet in the DB; compare on both stored forms.
-        let existing: HashSet<&str> = file_rows.iter().map(|(p, ..)| p.as_str()).collect();
+        let existing: HashSet<&str> = file_rows.iter().map(|r| r.path.as_str()).collect();
         if let Ok((files, _)) = scanner::iter_files_and_skips(repo_name, &record.path) {
             for f in files {
                 if !existing.contains(f.rel_path.as_str()) && !existing.contains(f.path.as_str()) {

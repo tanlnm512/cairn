@@ -12,11 +12,12 @@ from ..main import DEFAULT_DB_PATH, get_db, main, scanner_mod
 def _repo_file_changes(conn, workspace, repo_path):
     """Return files in one repository whose stored path, size, or mtime changed."""
     from ...graph import scanner as scanner_mod
+    from ...graph.incremental import _stat_drift_unchanged
 
     repo_name = scanner_mod.repository_id(repo_path)
     try:
         file_rows = conn.execute(
-            "SELECT path, size, mtime FROM files WHERE repo_id = ?",
+            "SELECT id, path, size, mtime, hash FROM files WHERE repo_id = ?",
             (repo_name,),
         ).fetchall()
     except sqlite3.Error as e:
@@ -38,7 +39,9 @@ def _repo_file_changes(conn, workspace, repo_path):
             continue
         if stat_result.st_size != (row["size"] or 0):
             changed.append(str(path))
-        elif abs(stat_result.st_mtime - (row["mtime"] or 0.0)) > 0.5:
+        elif abs(
+            stat_result.st_mtime - (row["mtime"] or 0.0)
+        ) > 0.5 and not _stat_drift_unchanged(conn, row, path, stat_result):
             changed.append(str(path))
 
     # Detect new source files. Storage is repo-relative; the scanner

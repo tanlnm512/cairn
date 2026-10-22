@@ -124,13 +124,15 @@ def _repair_changed(
 
 def _detect_changed(conn, workspace: str) -> list[str]:
     """Compare files table (size, mtime) against disk. Return changed paths."""
+    from .incremental import _stat_drift_unchanged
+
     changed: list[str] = []
 
     for repo_path in scanner_mod.discover_repos(workspace):
         repo_name = scanner_mod.repository_id(repo_path)
         try:
             file_rows = conn.execute(
-                "SELECT path, size, mtime FROM files WHERE repo_id = ?",
+                "SELECT id, path, size, mtime, hash FROM files WHERE repo_id = ?",
                 (repo_name,),
             ).fetchall()
         except Exception:
@@ -152,9 +154,10 @@ def _detect_changed(conn, workspace: str) -> list[str]:
             if st.st_size != (row["size"] or 0):
                 # Size changed — definitely different content.
                 changed.append(str(p))
-            elif abs(st.st_mtime - (row["mtime"] or 0.0)) > 0.5:
-                # mtime changed but size same — could be touch-only or
-                # real edit with same byte count. Re-index to be safe.
+            elif abs(
+                st.st_mtime - (row["mtime"] or 0.0)
+            ) > 0.5 and not _stat_drift_unchanged(conn, row, p, st):
+                # mtime drifted with equal size: the content hash decides.
                 changed.append(str(p))
 
         # Detect NEW source files not yet in the DB. Storage is repo-relative;

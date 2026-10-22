@@ -612,6 +612,65 @@ def test_parser_unavailable_modified_tracked_file_drops_not_raises(
         conn.close()
 
 
+def _mtime_drift_corpus(tmp_path):
+    """One indexed python file whose stored mtime is aged to the epoch."""
+    from cairn.graph.builder import build_graph
+    from cairn.graph.schema import get_db
+
+    workspace = tmp_path / "workspace"
+    repo = workspace / "demo"
+    repo.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / "code.py").write_text("def existing():\n    return 1\n")
+    db_path = str(tmp_path / "graph.db")
+    build_graph(workspace=str(workspace), db_path=db_path, verbose=False)
+
+    conn = get_db(db_path)
+    conn.execute("UPDATE files SET mtime = 0.0")
+    conn.commit()
+    return workspace, repo, db_path, conn
+
+
+def test_mtime_only_drift_with_matching_hash_skips_repair(tmp_path):
+    """A touched-but-unchanged file triggers neither drift nor repair."""
+    from cairn.graph.watcher import refresh_for_query
+
+    workspace, repo, _, conn = _mtime_drift_corpus(tmp_path)
+    try:
+        report = refresh_for_query(conn, str(workspace))
+
+        assert report.drifted_paths == ()
+        assert report.repaired is False
+        stored = conn.execute("SELECT mtime FROM files").fetchone()["mtime"]
+        assert abs(stored - (repo / "code.py").stat().st_mtime) <= 0.5
+    finally:
+        conn.close()
+
+
+def test_mtime_only_drift_with_matching_hash_skips_incremental_reindex(tmp_path):
+    """incremental_update reindexes nothing when only the mtime moved."""
+    from cairn.graph.incremental import incremental_update
+    from cairn.graph.schema import get_db
+
+    workspace, _, db_path, conn = _mtime_drift_corpus(tmp_path)
+    try:
+        stored = conn.execute("SELECT mtime FROM files").fetchone()["mtime"]
+        assert stored == 0.0
+    finally:
+        conn.close()
+
+    summary = incremental_update(workspace=str(workspace), db_path=db_path)
+
+    assert summary["errors"] == [], summary["errors"]
+    assert summary["files_reindexed"] == 0
+    conn = get_db(db_path)
+    try:
+        stored = conn.execute("SELECT mtime FROM files").fetchone()["mtime"]
+        assert stored > 0.0
+    finally:
+        conn.close()
+
+
 def test_reindex_counts_parser_unavailable_new_file_as_handled(
     tmp_path, monkeypatch
 ):

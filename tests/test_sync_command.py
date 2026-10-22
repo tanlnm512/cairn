@@ -121,6 +121,39 @@ def test_repo_file_changes_raises_when_files_table_unreadable():
         conn.close()
 
 
+def test_repo_file_changes_skips_mtime_only_drift_with_matching_hash(tmp_path):
+    """A touched-but-unchanged file is not a sync change; its stored stat converges."""
+    from cairn.graph import scanner as scanner_mod
+
+    workspace = tmp_path / "ws"
+    repo = workspace / "demo"
+    repo.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (repo / "code.py").write_text("def existing():\n    return 1\n")
+
+    conn = _conn(tmp_path)
+    try:
+        st = (repo / "code.py").stat()
+        conn.execute(
+            "INSERT INTO repos (id, name, path) VALUES ('demo', 'demo', ?)",
+            (str(repo),),
+        )
+        conn.execute(
+            "INSERT INTO files (id, repo_id, path, language, hash, size, mtime) "
+            "VALUES ('f1', 'demo', 'code.py', 'python', ?, ?, 0.0)",
+            (scanner_mod.file_sha256(repo / "code.py"), st.st_size),
+        )
+        conn.commit()
+
+        changed = sync_mod._repo_file_changes(conn, str(workspace), repo)
+
+        assert changed == []
+        stored = conn.execute("SELECT mtime FROM files").fetchone()["mtime"]
+        assert abs(stored - st.st_mtime) <= 0.5
+    finally:
+        conn.close()
+
+
 def test_run_sync_holds_build_lock_across_the_write_sequence(tmp_path, monkeypatch):
     """Prestate, reindex, derived refresh, and telemetry all run under build_lock."""
     calls: list[str] = []
