@@ -43,7 +43,7 @@ def reindex_paths(
     # Group paths by repo for batched resolver re-run.
     repo_edges_by_file: dict[str, dict[str, list]] = {}
     # Deleted and recreated names seed incoming-edge repair.
-    repo_changed_target_names: dict[str, set[str]] = {}
+    changed_target_names: set[str] = set()
 
     for abs_path in paths:
         abs_path = str(abs_path)
@@ -130,7 +130,7 @@ def reindex_paths(
                     deleted += 1
                     # Deleted names still need resolver repair.
                     if deleted_names:
-                        repo_changed_target_names.setdefault(stored_repo, set()).update(deleted_names)
+                        changed_target_names.update(deleted_names)
                 # Also remove from pending_sync if tracking.
                 try:
                     conn.execute(
@@ -177,10 +177,8 @@ def reindex_paths(
                     logger.debug("pending_sync table missing", exc_info=True)
                 conn.execute("COMMIT")
                 deleted += 1
-                if file_id is not None and deleted_names:
-                    repo_changed_target_names.setdefault(
-                        stored_repo, set()
-                    ).update(deleted_names)
+                if file_id is not None:
+                    changed_target_names.update(deleted_names)
                 continue
 
             file_hash = file_sha256(Path(abs_path))
@@ -260,9 +258,7 @@ def reindex_paths(
                 else:
                     deferred_embeds += len(new_ids)
             # Repair only names whose global candidate count changed.
-            changed_names = set(deleted_names) | set(name_to_symbol_ids.keys())
-            if changed_names:
-                repo_changed_target_names.setdefault(stored_repo, set()).update(changed_names)
+            changed_target_names.update(deleted_names, name_to_symbol_ids.keys())
         except Exception:
             logger.debug("post-commit embed leg failed; deferring", exc_info=True)
             deferred_embeds += sum(
@@ -288,15 +284,13 @@ def reindex_paths(
     # Repair pass: re-resolve INCOMING edges from other files whose target was
     # a symbol that got deleted+recreated with a new id. Without this, precise
     # callers of an edited symbol silently drop after an incremental update.
-    for repo_name, names in repo_changed_target_names.items():
-        if not names:
-            continue
+    if changed_target_names:
         try:
             from . import resolver as resolver_mod
-            resolver_mod.repair_incoming_edges(conn, repo_name, sorted(names))
+            resolver_mod.repair_incoming_edges(conn, sorted(changed_target_names))
             conn.commit()
         except Exception as e:
-            errors.append(f"repair/{repo_name}: {e}")
+            errors.append(f"repair: {e}")
 
     # Imports-edge refresh: the reindexed files' module symbols and their
     # import rows changed, so recompute the repo's kind='imports' edges

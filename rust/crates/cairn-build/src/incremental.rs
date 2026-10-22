@@ -39,23 +39,11 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
             return result;
         }
     };
-    // Group queued signals by repo for the batched resolver re-run, and the
-    // names whose global candidate count changed for incoming-edge repair.
-    // Both stay insertion-ordered like the Python dicts.
+    // Queued signals grouped by repo (insertion-ordered like the Python dict)
+    // for the batched resolver re-run, plus the names whose global candidate
+    // count changed for incoming-edge repair.
     let mut repo_edges: RepoEdges = Vec::new();
-    let mut repo_changed_target_names: Vec<(String, BTreeSet<String>)> = Vec::new();
-    let mut seed_changed_names = |repo: &str, names: HashSet<String>| {
-        if names.is_empty() {
-            return;
-        }
-        match repo_changed_target_names
-            .iter_mut()
-            .find(|(r, _)| r == repo)
-        {
-            Some((_, set)) => set.extend(names),
-            None => repo_changed_target_names.push((repo.to_string(), names.into_iter().collect())),
-        }
-    };
+    let mut changed_target_names: BTreeSet<String> = BTreeSet::new();
 
     for abs_path in paths {
         let Some((repo, rel_to_repo)) = repo_relative_path(workspace, abs_path) else {
@@ -168,7 +156,7 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
             // DB is a no-op.
             if file_id.is_some() {
                 result.deleted += 1;
-                seed_changed_names(&stored_repo, deleted_names);
+                changed_target_names.extend(deleted_names);
             }
             let _ = tx.execute(
                 "DELETE FROM pending_sync WHERE path IN (?, ?)",
@@ -202,7 +190,7 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
             let committed = tx.commit();
             result.deleted += 1;
             if file_id.is_some() {
-                seed_changed_names(&stored_repo, deleted_names);
+                changed_target_names.extend(deleted_names);
             }
             if let Err(e) = committed {
                 result.errors.push(format!("{abs_path}: {e}"));
@@ -239,7 +227,7 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
                     }
                 }
                 let committed = tx.commit();
-                seed_changed_names(&stored_repo, changed_names);
+                changed_target_names.extend(changed_names);
                 if let Err(e) = committed {
                     result.errors.push(format!("{abs_path}: {e}"));
                 }
@@ -268,13 +256,10 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
 
     // Repair pass: incoming edges whose target symbol was deleted+recreated
     // with a new id would otherwise silently drop after an update.
-    for (repo, names) in &repo_changed_target_names {
-        if names.is_empty() {
-            continue;
-        }
-        let sorted: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-        if let Err(e) = crate::resolver::repair_incoming_edges(conn, repo, &sorted) {
-            result.errors.push(format!("repair/{repo}: {e}"));
+    if !changed_target_names.is_empty() {
+        let sorted: Vec<&str> = changed_target_names.iter().map(|s| s.as_str()).collect();
+        if let Err(e) = crate::resolver::repair_incoming_edges(conn, &sorted) {
+            result.errors.push(format!("repair: {e}"));
         }
     }
 

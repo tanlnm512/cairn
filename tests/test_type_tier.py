@@ -179,27 +179,22 @@ def test_receiver_type_none_is_abstain_safe():
 
 
 def test_build_members_index_and_ancestor_index_shapes(tmp_path):
-    # build_ancestor_index reads edges.target_name directly (the bare parent
-    # name), by design BEFORE the resolver's UPDATE clears it on a resolved
-    # inheritance edge (see resolve_repo_edges). So this is a unit test over
-    # freshly inserted rows, not a full build_graph() pipeline run -- once the
-    # pipeline resolves the `implements Base` edge, target_name is nulled and
-    # a *later* call to build_ancestor_index would (correctly, by convention)
-    # see nothing, which is exactly why resolve_repo_edges builds this index
-    # up front, before any UPDATE is flushed.
+    # Unit test over freshly inserted (unresolved) rows; resolved inheritance
+    # edges keep the parent name in edges.ref_name.
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.executescript(
         """
         CREATE TABLE symbols (id TEXT, file_id TEXT, name TEXT, qualified_name TEXT, kind TEXT);
-        CREATE TABLE edges (id TEXT, source_id TEXT, target_id TEXT, target_name TEXT, kind TEXT);
+        CREATE TABLE edges (id TEXT, source_id TEXT, target_id TEXT, target_name TEXT, kind TEXT,
+                            ref_name TEXT);
         INSERT INTO symbols VALUES ('sid_base', 'f1', 'Base', 'Base', 'class');
         INSERT INTO symbols VALUES ('sid_greet', 'f1', 'greet', 'Base.greet', 'method');
         INSERT INTO symbols VALUES ('sid_derived', 'f2', 'Derived', 'Derived', 'class');
         -- top-level function in package `pkg`: must NOT be indexed as a member
         -- of `pkg` (spurious ('pkg','helper') key). Guards the type-name filter.
         INSERT INTO symbols VALUES ('sid_helper', 'f3', 'helper', 'pkg.helper', 'function');
-        INSERT INTO edges VALUES ('e1', 'sid_derived', NULL, 'Base', 'implements');
+        INSERT INTO edges VALUES ('e1', 'sid_derived', NULL, 'Base', 'implements', NULL);
         """
     )
 

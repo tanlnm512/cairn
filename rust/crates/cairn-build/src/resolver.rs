@@ -12,8 +12,11 @@ const MEMBER_KINDS: &[&str] = &[
     "method", "function", "property", "variable", "field", "constant",
 ];
 
-const UPDATE_SQL: &str =
+const REPAIR_SQL: &str =
     "UPDATE edges SET target_id = ?, target_name = ?, resolution = ? WHERE id = ?";
+
+const RESOLVE_SQL: &str = "UPDATE edges SET target_id = ?, target_name = ?, resolution = ?, \
+     ref_name = ?, receiver_type = ?, call_arity = ? WHERE id = ?";
 
 /// Resolution label stored in `edges.resolution`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,22 +272,22 @@ pub fn build_ancestor_index(
     let mut rows: Vec<(Option<String>, Option<String>)> = match repo_id {
         Some(repo) => {
             let mut stmt = conn.prepare(
-                "SELECT src.name AS child, e.target_name AS parent
+                "SELECT src.name AS child, COALESCE(e.target_name, e.ref_name) AS parent
                  FROM edges e JOIN symbols src ON e.source_id = src.id
                  JOIN files f ON src.file_id = f.id
                  WHERE f.repo_id = ?
                    AND e.kind IN ('extends', 'implements', 'embeds')
-                   AND e.target_name IS NOT NULL",
+                   AND COALESCE(e.target_name, e.ref_name) IS NOT NULL",
             )?;
             stmt.query_map([repo], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<Vec<_>>>()?
         }
         None => {
             let mut stmt = conn.prepare(
-                "SELECT src.name AS child, e.target_name AS parent
+                "SELECT src.name AS child, COALESCE(e.target_name, e.ref_name) AS parent
                  FROM edges e JOIN symbols src ON e.source_id = src.id
                  WHERE e.kind IN ('extends', 'implements', 'embeds')
-                   AND e.target_name IS NOT NULL",
+                   AND COALESCE(e.target_name, e.ref_name) IS NOT NULL",
             )?;
             stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<Vec<_>>>()?
@@ -564,7 +567,7 @@ pub fn resolve_repo_edges(
     let mut stats = Stats::default();
     let tx = conn.transaction()?;
     {
-        let mut stmt = tx.prepare(UPDATE_SQL)?;
+        let mut stmt = tx.prepare(RESOLVE_SQL)?;
         for (file_id, edges) in edges_by_file {
             for edge in edges {
                 let (target_id, label) = if edge.generic_tier {
@@ -590,6 +593,9 @@ pub fn resolve_repo_edges(
                     target_id,
                     stored_name,
                     label.as_str(),
+                    edge.target_name,
+                    edge.receiver_type,
+                    edge.call_arity,
                     edge.edge_id
                 ])?;
                 stats.record(label);
@@ -600,89 +606,133 @@ pub fn resolve_repo_edges(
     Ok(stats)
 }
 
-/// Re-resolve edges in `repo` that may point at freshly re-created symbols.
+/// Re-resolve edges in every repo whose target name is in `changed_target_names`.
 pub fn repair_incoming_edges(
     conn: &mut Connection,
-    repo: &str,
     changed_target_names: &[&str],
 ) -> rusqlite::Result<Stats> {
+    let mut stats = Stats::default();
     if changed_target_names.is_empty() {
-        return Ok(Stats::default());
+        return Ok(stats);
     }
 
-    // The symbol index is deliberately global so the same-repo and global tiers
-    // see the full workspace set, mirroring resolve_repo_edges.
-    let ix = ResolverIndexes::build(conn, Some(repo))?;
-
+    // ref_name finds resolved edges; target_id IS NULL keeps structurally
+    // pinned edges (contains) out of name re-resolution.
     let placeholders = changed_target_names
         .iter()
         .map(|_| "?")
         .collect::<Vec<_>>()
         .join(",");
     let sql = format!(
-        "SELECT e.id AS eid, e.kind AS kind, e.target_name AS tname,
-                e.line AS line, e.column AS col, f.id AS file_id,
-                f.repo_id AS repo, f.language AS language
+        "SELECT e.id AS eid, e.kind AS kind,
+                COALESCE(e.ref_name, e.target_name) AS tname,
+                e.receiver_type AS receiver_type, e.call_arity AS call_arity,
+                f.id AS file_id, f.repo_id AS repo, f.language AS language
          FROM edges e
          JOIN symbols s ON e.source_id = s.id
          JOIN files f ON s.file_id = f.id
-         WHERE f.repo_id = ?
-           AND e.target_name IN ({placeholders})"
+         WHERE e.ref_name IN ({placeholders})
+            OR (e.target_id IS NULL AND e.target_name IN ({placeholders}))"
     );
-    let mut params: Vec<&dyn rusqlite::ToSql> = vec![&repo];
-    for name in changed_target_names {
-        params.push(name);
-    }
+    let params: Vec<&dyn rusqlite::ToSql> = changed_target_names
+        .iter()
+        .chain(changed_target_names.iter())
+        .map(|name| name as &dyn rusqlite::ToSql)
+        .collect();
 
-    let mut rows: Vec<(String, String, Option<String>, String, String)> = Vec::new();
+    let mut rows: Vec<RepairRow> = Vec::new();
     {
         let mut stmt = conn.prepare(&sql)?;
         let mapped = stmt.query_map(params.as_slice(), |r| {
-            Ok((
-                r.get::<_, String>("eid")?,
-                r.get::<_, String>("kind")?,
-                r.get::<_, Option<String>>("tname")?,
-                r.get::<_, String>("file_id")?,
-                r.get::<_, String>("language")?,
-            ))
+            Ok(RepairRow {
+                edge_id: r.get("eid")?,
+                kind: r.get("kind")?,
+                target_name: r.get("tname")?,
+                receiver_type: r.get("receiver_type")?,
+                call_arity: r.get("call_arity")?,
+                file_id: r.get("file_id")?,
+                repo: r.get("repo")?,
+                language: r.get("language")?,
+            })
         })?;
         for row in mapped {
             rows.push(row?);
         }
     }
-
-    let mut stats = Stats::default();
     if rows.is_empty() {
         return Ok(stats);
     }
 
-    let tx = conn.transaction()?;
-    {
-        let mut stmt = tx.prepare(UPDATE_SQL)?;
-        for (eid, kind, tname, file_id, language) in &rows {
-            let Some(target_name) = tname.as_deref().filter(|t| !t.is_empty()) else {
+    // Symbols and imports are keyed globally; members and ancestors stay
+    // scoped to the source repo, mirroring resolve_repo_edges.
+    let mut ix = ResolverIndexes {
+        symbols_by_name: build_symbol_index(conn)?,
+        ..ResolverIndexes::default()
+    };
+    (ix.imports_by_file, ix.aliases_by_file) = build_import_index(conn, None)?;
+    let mut repos: Vec<&str> = Vec::new();
+    for row in &rows {
+        if !repos.contains(&row.repo.as_str()) {
+            repos.push(&row.repo);
+        }
+    }
+
+    // Every verdict is computed before the first write, so the type indexes
+    // see the pre-repair edge state.
+    let mut updates: Vec<(Option<String>, Option<&str>, Label, &str)> = Vec::new();
+    for repo in repos {
+        ix.members_by_type = build_members_index(conn, Some(repo))?;
+        ix.ancestors = build_ancestor_index(conn, Some(repo))?;
+        for row in rows.iter().filter(|r| r.repo == repo) {
+            let Some(target_name) = row.target_name.as_deref().filter(|t| !t.is_empty()) else {
                 continue;
             };
             let (target_id, label) =
-                if kind == "calls" && GENERIC_TIER_LANGUAGES.contains(&language.as_str()) {
+                if row.kind == "calls" && GENERIC_TIER_LANGUAGES.contains(&row.language.as_str()) {
                     (None, Label::Unresolved)
                 } else {
-                    resolve_edge(target_name, file_id, repo, &ix, None, None)
+                    resolve_edge(
+                        target_name,
+                        &row.file_id,
+                        repo,
+                        &ix,
+                        row.receiver_type.as_deref(),
+                        row.call_arity,
+                    )
                 };
             let stored_name = if target_id.is_some() {
                 None
             } else {
                 Some(target_name)
             };
+            updates.push((target_id, stored_name, label, &row.edge_id));
+            stats.record(label);
+        }
+    }
+
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare(REPAIR_SQL)?;
+        for (target_id, stored_name, label, edge_id) in &updates {
             stmt.execute(rusqlite::params![
                 target_id,
                 stored_name,
                 label.as_str(),
-                eid
+                edge_id
             ])?;
-            stats.record(label);
         }
     }
     tx.commit()?;
     Ok(stats)
+}
+
+struct RepairRow {
+    edge_id: String,
+    kind: String,
+    target_name: Option<String>,
+    receiver_type: Option<String>,
+    call_arity: Option<i64>,
+    file_id: String,
+    repo: String,
+    language: String,
 }

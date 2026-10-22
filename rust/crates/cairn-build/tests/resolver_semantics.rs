@@ -18,7 +18,8 @@ fn fixture() -> Fixture {
          CREATE TABLE imports (id TEXT PRIMARY KEY, file_id TEXT NOT NULL,
            imported_path TEXT, local_alias TEXT);
          CREATE TABLE edges (id TEXT PRIMARY KEY, source_id TEXT, target_id TEXT,
-           target_name TEXT, kind TEXT, line INTEGER, column INTEGER, resolution TEXT);",
+           target_name TEXT, kind TEXT, line INTEGER, column INTEGER, resolution TEXT,
+           ref_name TEXT, receiver_type TEXT, call_arity INTEGER);",
     )
     .expect("fixture schema");
     Fixture { conn }
@@ -360,7 +361,7 @@ fn repair_resolves_only_named_targets_with_rust_generic_tier() {
         .edge("e_ref", "s_owner", "helper", "references");
 
     // Rust calls edges keep their generic tier; references resolve normally.
-    let stats = repair_incoming_edges(&mut fx.conn, "r", &["helper"]).expect("repair");
+    let stats = repair_incoming_edges(&mut fx.conn, &["helper"]).expect("repair");
     assert_eq!(
         fx.row("e_call"),
         (None, Some("helper".into()), Some("unresolved".into()))
@@ -373,9 +374,9 @@ fn repair_resolves_only_named_targets_with_rust_generic_tier() {
     assert_eq!(stats.exact, 1);
 
     // Empty name list and unknown names are zero-work no-ops.
-    let empty = repair_incoming_edges(&mut fx.conn, "r", &[]).expect("repair");
+    let empty = repair_incoming_edges(&mut fx.conn, &[]).expect("repair");
     assert_eq!(empty, Stats::default());
-    let missed = repair_incoming_edges(&mut fx.conn, "r", &["nope"]).expect("repair");
+    let missed = repair_incoming_edges(&mut fx.conn, &["nope"]).expect("repair");
     assert_eq!(missed, Stats::default());
 }
 

@@ -408,6 +408,18 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "ALTER TABLE symbols ADD COLUMN arity INTEGER",
     ),
     ("edges.source", "ALTER TABLE edges ADD COLUMN source TEXT"),
+    (
+        "edges.ref_name",
+        "ALTER TABLE edges ADD COLUMN ref_name TEXT",
+    ),
+    (
+        "edges.receiver_type",
+        "ALTER TABLE edges ADD COLUMN receiver_type TEXT",
+    ),
+    (
+        "edges.call_arity",
+        "ALTER TABLE edges ADD COLUMN call_arity INTEGER",
+    ),
 ];
 
 const DATAFLOW_PK_MIGRATION: &str = "dataflow.pk_symbol_repo";
@@ -540,6 +552,9 @@ mod tests {
                 "column",
                 "resolution",
                 "source",
+                "ref_name",
+                "receiver_type",
+                "call_arity",
             ]
         );
         assert_eq!(

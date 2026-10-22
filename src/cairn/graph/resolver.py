@@ -105,20 +105,20 @@ def build_ancestor_index(
     anc: Dict[str, List[str]] = {}
     if repo_id is not None:
         rows = conn.execute(
-            """SELECT src.name AS child, e.target_name AS parent
+            """SELECT src.name AS child, COALESCE(e.target_name, e.ref_name) AS parent
                FROM edges e JOIN symbols src ON e.source_id = src.id
                JOIN files f ON src.file_id = f.id
                WHERE f.repo_id = ?
                  AND e.kind IN ('extends', 'implements', 'embeds')
-                 AND e.target_name IS NOT NULL""",
+                 AND COALESCE(e.target_name, e.ref_name) IS NOT NULL""",
             (repo_id,),
         ).fetchall()
     else:
         rows = conn.execute(
-            """SELECT src.name AS child, e.target_name AS parent
+            """SELECT src.name AS child, COALESCE(e.target_name, e.ref_name) AS parent
                FROM edges e JOIN symbols src ON e.source_id = src.id
                WHERE e.kind IN ('extends', 'implements', 'embeds')
-                 AND e.target_name IS NOT NULL"""
+                 AND COALESCE(e.target_name, e.ref_name) IS NOT NULL"""
         ).fetchall()
     for r in rows:
         if r["child"] and r["parent"]:
@@ -325,7 +325,7 @@ def resolve_repo_edges(
     ancestors = build_ancestor_index(conn, repo_id=repo)
 
     stats = {"exact": 0, "ambiguous": 0, "unresolved": 0}
-    updates: List[Tuple[Optional[str], Optional[str], str, str]] = []
+    updates: List[tuple] = []
     for source_file_id, edges in edges_by_file.items():
         for edge_tuple in edges:
             edge_id, _source_sid, target_name = edge_tuple[0], edge_tuple[1], edge_tuple[2]
@@ -343,11 +343,15 @@ def resolve_repo_edges(
             # Resolved edges drop the bare name (queries join via target_id);
             # unresolved/ambiguous keep it so --fuzzy can still match by name.
             stored_name = None if target_id else target_name
-            updates.append((target_id, stored_name, label, edge_id))
+            updates.append((
+                target_id, stored_name, label, target_name, receiver_type,
+                call_arity, edge_id,
+            ))
             stats[label] += 1
 
     conn.executemany(
-        "UPDATE edges SET target_id = ?, target_name = ?, resolution = ? WHERE id = ?",
+        "UPDATE edges SET target_id = ?, target_name = ?, resolution = ?, "
+        "ref_name = ?, receiver_type = ?, call_arity = ? WHERE id = ?",
         updates,
     )
     return stats
@@ -355,63 +359,63 @@ def resolve_repo_edges(
 
 def repair_incoming_edges(
     conn: sqlite3.Connection,
-    repo: str,
     changed_target_names: List[str],
 ) -> Dict[str, int]:
-    """Re-resolve edges in ``repo`` that may point at freshly re-created symbols."""
+    """Re-resolve edges in every repo whose target name is in ``changed_target_names``."""
+    stats = {"exact": 0, "ambiguous": 0, "unresolved": 0}
     if not changed_target_names:
-        return {"exact": 0, "ambiguous": 0, "unresolved": 0}
+        return stats
 
-    # Build indexes scoped to the repo. The symbol index is deliberately global
-    # so the same-repo and global tiers see the full workspace set, mirroring
-    # resolve_repo_edges.
-    symbols_by_name = build_symbol_index(conn)
-    imports_by_file, aliases_by_file = build_import_index(conn, repo_id=repo)
-    members_by_type = build_members_index(conn, repo_id=repo)
-    ancestors = build_ancestor_index(conn, repo_id=repo)
-
-    # Repair only this repo's edges naming recreated symbols.
+    # ref_name finds resolved edges; target_id IS NULL keeps structurally
+    # pinned edges (contains) out of name re-resolution.
     name_placeholders = ",".join("?" for _ in changed_target_names)
     rows = conn.execute(
-        f"""SELECT e.id AS eid, e.kind AS kind, e.target_name AS tname,
-                   e.line AS line, e.column AS col, f.id AS file_id,
-                   f.repo_id AS repo, f.language AS language
+        f"""SELECT e.id AS eid, e.kind AS kind,
+                   COALESCE(e.ref_name, e.target_name) AS tname,
+                   e.receiver_type AS receiver_type, e.call_arity AS call_arity,
+                   f.id AS file_id, f.repo_id AS repo, f.language AS language
             FROM edges e
             JOIN symbols s ON e.source_id = s.id
             JOIN files f ON s.file_id = f.id
-            WHERE f.repo_id = ?
-              AND e.target_name IN ({name_placeholders})""",
-        (repo, *changed_target_names),
+            WHERE e.ref_name IN ({name_placeholders})
+               OR (e.target_id IS NULL AND e.target_name IN ({name_placeholders}))""",
+        (*changed_target_names, *changed_target_names),
     ).fetchall()
-
     if not rows:
-        return {"exact": 0, "ambiguous": 0, "unresolved": 0}
+        return stats
 
-    stats = {"exact": 0, "ambiguous": 0, "unresolved": 0}
+    # Symbols and imports are keyed globally; members and ancestors stay
+    # scoped to the source repo, mirroring resolve_repo_edges.
+    symbols_by_name = build_symbol_index(conn)
+    imports_by_file, aliases_by_file = build_import_index(conn)
+    type_indexes: Dict[str, tuple] = {}
+
     updates: List[Tuple[Optional[str], Optional[str], str, str]] = []
     for r in rows:
         target_name = r["tname"]
         if not target_name:
             continue
-        generic_tier = (
-            r["kind"] == "calls"
-            and r["language"] in GENERIC_TIER_LANGUAGES
-        )
-        if generic_tier:
+        repo = r["repo"]
+        if r["kind"] == "calls" and r["language"] in GENERIC_TIER_LANGUAGES:
             target_id, label = None, "unresolved"
         else:
+            if repo not in type_indexes:
+                type_indexes[repo] = (
+                    build_members_index(conn, repo_id=repo),
+                    build_ancestor_index(conn, repo_id=repo),
+                )
+            members_by_type, ancestors = type_indexes[repo]
             target_id, label = resolve_edge(
                 target_name, r["file_id"], repo, symbols_by_name,
-                imports_by_file, None, members_by_type, ancestors,
-                aliases_by_file,
+                imports_by_file, r["receiver_type"], members_by_type, ancestors,
+                aliases_by_file, r["call_arity"],
             )
         stored_name = None if target_id else target_name
         updates.append((target_id, stored_name, label, r["eid"]))
         stats[label] += 1
 
-    if updates:
-        conn.executemany(
-            "UPDATE edges SET target_id = ?, target_name = ?, resolution = ? WHERE id = ?",
-            updates,
-        )
+    conn.executemany(
+        "UPDATE edges SET target_id = ?, target_name = ?, resolution = ? WHERE id = ?",
+        updates,
+    )
     return stats

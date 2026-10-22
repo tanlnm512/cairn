@@ -328,7 +328,17 @@ fn assert_norm_equal(tag: &str, a: &NormTables, b: &NormTables) {
 }
 
 fn graft_and_compare(tag: &str, mutate: impl FnOnce(&Path), reindex: &[&str]) {
+    graft_and_compare_on(tag, |_| {}, mutate, reindex);
+}
+
+fn graft_and_compare_on(
+    tag: &str,
+    seed: impl FnOnce(&Path),
+    mutate: impl FnOnce(&Path),
+    reindex: &[&str],
+) {
     let dir = corpus(tag);
+    seed(&dir);
     let ws = dir.to_str().expect("ws");
     let base_db = dir.join("base.kg");
 
@@ -436,4 +446,55 @@ fn incremental_update_defers_while_a_build_holds_the_lock() {
         .expect_err("update must not write under a held build lock");
     assert!(err.contains("Cannot acquire build lock"), "{err}");
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// Edges that resolve exact through receiver dispatch, the ancestor walk,
+/// call arity, the global tier from another repo, or a unique namesake.
+fn seed_resolver_signals(dir: &Path) {
+    for (rel, src) in [
+        (
+            "alpha/models.py",
+            "class A:\n    def run(self):\n        return 1\n\n\nclass B:\n    def run(self):\n        return 2\n",
+        ),
+        (
+            "alpha/child.py",
+            "from models import A\n\n\nclass C(A):\n    pass\n",
+        ),
+        ("alpha/lib1.py", "def f(a):\n    return a\n"),
+        ("alpha/lib2.py", "def f(a, b):\n    return a\n"),
+        (
+            "alpha/main.py",
+            "def go():\n    a = A()\n    a.run()\n    c = C()\n    c.run()\n    f(1)\n    return helper()\n",
+        ),
+        ("alpha/helpers.py", "def helper():\n    return 0\n"),
+        ("alpha/user.py", "def use():\n    return shared_fn()\n"),
+        ("beta/shared.py", "def shared_fn():\n    return 1\n"),
+    ] {
+        write(dir, rel, src);
+    }
+}
+
+fn append_tweak(rel: &'static str) -> impl FnOnce(&Path) {
+    move |dir: &Path| {
+        let src = fs::read_to_string(dir.join(rel)).expect("read fixture");
+        write(dir, rel, &format!("{src}\n# tweak\n"));
+    }
+}
+
+#[test]
+fn graft_keeps_signal_resolved_edges_equal_to_rebuild() {
+    for (tag, rel) in [
+        ("sig-receiver", "alpha/models.py"),
+        ("sig-arity", "alpha/lib1.py"),
+        ("sig-ancestor", "alpha/main.py"),
+        ("sig-cross-repo", "beta/shared.py"),
+    ] {
+        graft_and_compare_on(tag, seed_resolver_signals, append_tweak(rel), &[rel]);
+    }
+    graft_and_compare_on(
+        "sig-new-namesake",
+        seed_resolver_signals,
+        |dir| write(dir, "alpha/helpers2.py", "def helper():\n    return 9\n"),
+        &["alpha/helpers2.py"],
+    );
 }

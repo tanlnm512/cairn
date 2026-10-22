@@ -5,9 +5,8 @@ must match a fresh ``build_graph`` + full derived build on the final tree --
 exactly for the closure, and for dataflow modulo the DFS depth-frontier zone
 (where either enumeration order is a valid builder output, since first-visit
 depth depends on edge insertion order and a maintained DB's rowids legitimately
-differ from a fresh rebuild's). The corpus is handcrafted and receiver-free:
-incoming-edge repair resolves by bare name without receiver info, so
-incremental parity of the edges table itself holds only for that shape.
+differ from a fresh rebuild's). Edges-table parity under resolver signals
+(receiver, arity, ancestors, cross-repo) has its own scenario table.
 """
 from __future__ import annotations
 
@@ -475,6 +474,83 @@ def test_symbol_added_to_existing_file_parity(tmp_path):
         return tick + 2
 
     _scenario(tmp_path, mutate, "spawn-in-file")
+
+
+# ---------------------------------------------------------------------------
+# Edges-table parity: resolution signals survive incoming-edge repair
+# ---------------------------------------------------------------------------
+
+
+# Two repos; every edge below resolves exact in a fresh build through a tier
+# that needs a stored signal: receiver dispatch, ancestor walk, call arity,
+# the global tier from another repo, or a unique namesake.
+_RESOLVER_SOURCES: dict[str, str] = {
+    "one/models.py": (
+        "class A:\n    def run(self):\n        return 1\n\n\n"
+        "class B:\n    def run(self):\n        return 2\n"
+    ),
+    "one/child.py": "from models import A\n\n\nclass C(A):\n    pass\n",
+    "one/lib1.py": "def f(a):\n    return a\n",
+    "one/lib2.py": "def f(a, b):\n    return a\n",
+    "one/main.py": (
+        "def go():\n    a = A()\n    a.run()\n    c = C()\n    c.run()\n"
+        "    f(1)\n    return helper()\n"
+    ),
+    "one/util.py": "def helper():\n    return 0\n",
+    "one/user.py": "def use():\n    return shared_fn()\n",
+    "two/lib.py": "def shared_fn():\n    return 1\n",
+}
+
+
+def _edge_rows(db_path: str) -> list[tuple]:
+    conn = get_db(db_path)
+    try:
+        rows = conn.execute(
+            """SELECT sf.repo_id, sf.path, s.qualified_name, e.kind, e.line,
+                      e.column, tf.repo_id, tf.path, t.qualified_name,
+                      e.target_name, e.resolution
+               FROM edges e
+               JOIN symbols s ON e.source_id = s.id
+               JOIN files sf ON s.file_id = sf.id
+               LEFT JOIN symbols t ON e.target_id = t.id
+               LEFT JOIN files tf ON t.file_id = tf.id
+               WHERE e.kind != 'imports'"""
+        ).fetchall()
+    finally:
+        conn.close()
+    return sorted(tuple("" if v is None else v for v in r) for r in rows)
+
+
+@pytest.mark.parametrize(
+    "rel, text",
+    [
+        ("one/models.py", _RESOLVER_SOURCES["one/models.py"] + "\n# tweak\n"),
+        ("one/lib1.py", _RESOLVER_SOURCES["one/lib1.py"] + "\n# tweak\n"),
+        ("one/main.py", _RESOLVER_SOURCES["one/main.py"] + "\n# tweak\n"),
+        ("one/util2.py", "def helper():\n    return 9\n"),
+        ("two/lib.py", _RESOLVER_SOURCES["two/lib.py"] + "\n# tweak\n"),
+    ],
+    ids=["receiver", "arity", "ancestor", "new-namesake", "cross-repo"],
+)
+def test_incremental_edges_match_fresh_build(tmp_path, rel, text):
+    """One edit through incremental_update leaves every edge's target and
+    resolution label equal to a fresh build of the final tree."""
+    ws = tmp_path / "ws"
+    for repo in ("one", "two"):
+        (ws / repo / ".git").mkdir(parents=True)
+    tick = time.time() + 86400
+    for name, src in _RESOLVER_SOURCES.items():
+        _write(ws / name, src, tick)
+    db = str(tmp_path / "main.kg")
+    build_graph(workspace=str(ws), db_path=db)
+
+    _write(ws / rel, text, tick + 2)
+    res = _run_update(ws, db, rel)
+    assert res["files_reindexed"] >= 1, res
+
+    fresh_db = str(tmp_path / "fresh.kg")
+    build_graph(workspace=str(ws), db_path=fresh_db)
+    assert _edge_rows(db) == _edge_rows(fresh_db)
 
 
 # ---------------------------------------------------------------------------
