@@ -76,6 +76,17 @@ COMMANDS = [
     ["task", "complete", "golden-revise", "--result",
      "See `no/such/file.py`."],
     ["task", "drop", "golden-drop"],
+    # Wiki family: read-only cases share the seeded manifest/pages; the
+    # mutating cases (generate, generate --llm, retry, enrich) re-seed via
+    # RESEED, keyed by each command's first three argv words.
+    ["wiki", "generate"],
+    ["wiki", "generate", "--dry-run"],
+    ["wiki", "generate", "--llm"],
+    ["wiki", "generate", "--llm", "--dry-run"],
+    ["wiki", "status"],
+    ["wiki", "status", "--repo", "cairn"],
+    ["wiki", "retry"],
+    ["wiki", "enrich", "--all"],
 ]
 DIFF_PRINT_CHARS = 300
 
@@ -131,11 +142,79 @@ def prepare_store(scratch: Path) -> None:
     _seed_task(scratch, "golden-done", "compass-synthesize",
                "src/cairn/llm", {"key_files": ["src/graph/queries.py"]},
                status="done", result="Compass body for src/cairn/llm.\n")
+    _seed_wiki(scratch)
+
+
+def _seed_wiki(scratch: Path) -> None:
+    """Reset leg-created wiki state, then seed one promoted, one failed, one
+    dropped wiki page (manifest + tasks + promoted content) plus a
+    Notes-bearing report the deterministic generator must splice."""
+    import json
+
+    from cairn.okf.bundle import OKFBundle
+    from cairn.okf.concept import OKFConcept
+
+    knowledge = scratch / ".knowledge"
+    shutil.rmtree(knowledge / "reports", ignore_errors=True)
+    tasks_dir = knowledge / "_tasks"
+    if tasks_dir.is_dir():
+        for entry in tasks_dir.iterdir():
+            if not entry.name.startswith("golden"):
+                entry.unlink(missing_ok=True)
+    _seed_task(scratch, "golden-page", "wiki-page", "cairn/overview",
+               {"repo": "cairn"}, status="done", result="Overview body.\n",
+               critic="passed")
+    _seed_task(scratch, "golden-failed", "wiki-page", "cairn/failed-page",
+               {"repo": "cairn"}, status="done", result="Rejected body.\n")
+    _seed_task(scratch, "golden-wdrop", "wiki-page", "cairn/dropped-page",
+               {"repo": "cairn"}, status="dropped")
+    bundle = OKFBundle(str(knowledge))
+    bundle.write_concept(OKFConcept(
+        type="Wiki-Article", title="Wiki: overview",
+        description="Wiki article for cairn/overview", resource="overview",
+        tags=["cairn", "wiki"],
+        concept_id="wiki/pages/cairn/overview", body="Promoted overview.\n",
+    ))
+    bundle.write_concept(OKFConcept(
+        type="Architecture-Report", title="corpus Architecture",
+        description="Graph-derived architectural overview of corpus",
+        resource="corpus", tags=["corpus", "architecture"],
+        concept_id="reports/architecture/corpus",
+        body="Stale body.\n\n## Notes\nkept note\n",
+    ))
+
+    def row(page_id: str, task_id: str) -> dict:
+        return {
+            "page_id": page_id,
+            "title": page_id,
+            "description": f"Page {page_id}.",
+            "module": "src/cairn/llm",
+            "source": "code",
+            "seeds": {"files": [], "symbols": [], "docs": []},
+            "input_hash": f"seeded-{page_id}",
+            "task_id": task_id,
+            "queue_attempts": 1,
+        }
+
+    manifest = {
+        "schema": "cairn-wiki-manifest-3",
+        "pages": {
+            "cairn/overview": row("overview", "golden-page"),
+            "cairn/failed-page": row("failed-page", "golden-failed"),
+            "cairn/dropped-page": row("dropped-page", "golden-wdrop"),
+        },
+    }
+    manifest_dir = knowledge / "_wiki"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _seed_task(scratch: Path, task_id: str, kind: str, resource: str,
                facts: dict, status: str = "pending",
-               result: str | None = None) -> None:
+               result: str | None = None,
+               critic: str | None = None) -> None:
     """(Re)write a fixed-id Task concept (and drop its claim marker) so each
     golden leg starts from the same queue state."""
     from cairn.llm.tasks import Task, _task_to_concept
@@ -150,10 +229,11 @@ def _seed_task(scratch: Path, task_id: str, kind: str, resource: str,
     marker = scratch / ".knowledge" / "_tasks" / f"{task_id}.claim"
     marker.unlink(missing_ok=True)
     if result is not None:
+        extensions = {"critic_status": critic} if critic else {}
         bundle.write_concept(OKFConcept(
             type="Task-Result", title=f"Result for {task_id}",
             resource=resource, concept_id=f"_tasks/{task_id}.result",
-            body=result,
+            body=result, extensions=extensions,
         ))
 
 
@@ -173,6 +253,10 @@ RESEED = {
     ("task", "drop", "golden-drop"):
         lambda s: _seed_task(s, "golden-drop", "doc-link", "cairn",
                              {"members": ["knowledge/a", "knowledge/b"]}),
+    ("wiki", "generate"): _seed_wiki,
+    ("wiki", "generate", "--llm"): _seed_wiki,
+    ("wiki", "retry"): _seed_wiki,
+    ("wiki", "enrich", "--all"): _seed_wiki,
 }
 
 
@@ -241,8 +325,11 @@ def main(argv: list[str] | None = None) -> int:
         rust_env = cli_env(scratch, workspace, cargo_path=True)
         _note(f"rust binary: {rust_bin}")
 
+        export_dir = scratch / "export"
+        commands = COMMANDS + [["wiki", "export", "--dir", str(export_dir),
+                                "--force"]]
         failures = []
-        for cmd in COMMANDS:
+        for cmd in commands:
             hook = RESEED.get(tuple(cmd[:3]))
             if hook is not None:
                 hook(scratch)
@@ -257,7 +344,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"FAIL {label}: {_shrink(diff)}")
             else:
                 print(f"PASS {label}")
-        total = len(COMMANDS)
+        total = len(commands)
         print(f"{total - len(failures)}/{total} commands golden-equal")
         return 0 if not failures else 1
     finally:

@@ -611,18 +611,26 @@ fn derive_title(module_path: &str) -> String {
 }
 
 /// The named repo's HEAD commit hash under the workspace, or None. The repo
-/// root comes from the store's repos table (the recorded discovery roots);
-/// absent a row, the workspace/repo-name and single-repo fallbacks apply.
-fn repo_head(conn: &Connection, workspace: Option<&Path>, repo: &str) -> Option<String> {
+/// root comes from the store's repos table (the recorded discovery roots)
+/// when a connection is given; absent a row, the workspace/repo-name and
+/// single-repo fallbacks apply.
+pub fn repo_head(
+    conn: Option<&Connection>,
+    workspace: Option<&Path>,
+    repo: &str,
+) -> Option<String> {
     let ws = workspace?;
     let mut repo_path = ws.join(repo);
     let row: Option<String> = conn
-        .query_row(
-            "SELECT path FROM repos WHERE name = ? OR id = ? LIMIT 1",
-            rusqlite::params![repo, repo],
-            |r| r.get(0),
-        )
-        .ok();
+        .and_then(|conn| {
+            conn.query_row(
+                "SELECT path FROM repos WHERE name = ? OR id = ? LIMIT 1",
+                rusqlite::params![repo, repo],
+                |r| r.get(0),
+            )
+            .ok()
+        })
+        .flatten();
     if let Some(root) = row {
         repo_path = if root == "." {
             ws.to_path_buf()
@@ -1019,7 +1027,7 @@ fn complete_with_critic(
                 None => task.resource.clone(),
             };
             let page_id = raw_page_id.replace(['.', '#'], "-");
-            let commit_sha = repo_head(conn, workspace, &repo);
+            let commit_sha = repo_head(Some(conn), workspace, &repo);
             let mut wiki_concept = if task.task_kind.starts_with("wiki-page-enrich") {
                 enriched_article(
                     bundle,

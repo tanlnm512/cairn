@@ -4244,31 +4244,89 @@ fn layer_nonempty(v: &Yaml) -> bool {
 
 // --- deterministic critic (compass/critic.py port) ---------------------------------
 
+/// `^#{1,2}([ \t]+.*)?[ \t\r]*$` — the same-or-higher heading that ends a section.
+fn same_or_higher_heading(line: &str) -> bool {
+    let Some(rest) = line
+        .strip_prefix('#')
+        .map(|r| r.strip_prefix('#').unwrap_or(r))
+    else {
+        return false;
+    };
+    if rest.trim_end_matches([' ', '\t', '\r']).is_empty() {
+        return true;
+    }
+    rest.starts_with([' ', '\t'])
+}
+
+/// Offset of the first same-or-higher heading at/after `start` that sits
+/// outside fenced code blocks; `body.len()` when none.
+fn section_end(body: &str, start: usize) -> usize {
+    let mut fence: Option<char> = None;
+    let mut offset = start;
+    for line in body[start..].split_inclusive('\n') {
+        let stripped = line.trim_start_matches([' ', '\t']);
+        let bare = stripped.strip_suffix('\n').unwrap_or(stripped);
+        match fence {
+            Some(f) if bare.starts_with(&f.to_string().repeat(3)) => fence = None,
+            Some(_) => {}
+            None if bare.starts_with("```") => fence = Some('`'),
+            None if bare.starts_with("~~~") => fence = Some('~'),
+            None if same_or_higher_heading(line.strip_suffix('\n').unwrap_or(line)) => {
+                return offset;
+            }
+            None => {}
+        }
+        offset += line.len();
+    }
+    body.len()
+}
+
+/// `(Notes section, body without Notes)` with bytes intact.
+pub fn split_notes(body: &str) -> (String, String) {
+    let mut offset = 0usize;
+    let mut heading: Option<usize> = None;
+    for line in body.split_inclusive('\n') {
+        let bare = line.strip_suffix('\n').unwrap_or(line);
+        if bare.trim_end_matches([' ', '\t', '\r']) == "## Notes" {
+            heading = Some(offset);
+            break;
+        }
+        offset += line.len();
+    }
+    let Some(start) = heading else {
+        return (String::new(), body.to_string());
+    };
+    let end = section_end(body, offset + "## Notes".len());
+    (
+        body[start..end].to_string(),
+        format!("{}{}", &body[..start], &body[end..]),
+    )
+}
+
 /// Body with its `## Notes` section removed (bytes intact elsewhere).
 fn without_notes(body: &str) -> String {
-    let mut offset = 0usize;
-    let mut heading_start: Option<usize> = None;
-    for line in body.lines() {
-        if line.trim_end_matches([' ', '\t', '\r']) == "## Notes" {
-            heading_start = Some(offset);
-            break;
-        }
-        offset += line.len() + 1;
+    split_notes(body).1
+}
+
+/// Splice the existing Notes section verbatim into generated content.
+pub fn splice_notes(existing_body: &str, generated_body: &str) -> String {
+    let (notes, _) = split_notes(existing_body);
+    if notes.is_empty() {
+        return generated_body.to_string();
     }
-    let Some(start) = heading_start else {
-        return body.to_string();
-    };
-    let after = &body[start..];
-    let mut end = after.len();
-    let mut consumed = 0usize;
-    for line in after.lines().skip(1) {
-        if line.starts_with("# ") || line.starts_with("## ") {
-            end = consumed;
-            break;
-        }
-        consumed += line.len() + 1;
+    let mut content = without_notes(generated_body);
+    if !content.is_empty() && !content.ends_with(['\n', '\r']) {
+        content.push('\n');
     }
-    format!("{}{}", &body[..start], &after[end..])
+    format!("{content}{notes}")
+}
+
+/// Read an existing concept and splice its Notes into generated content.
+pub fn preserved_concept_notes(bundle: &Bundle, concept_id: &str, generated_body: &str) -> String {
+    match bundle.read_concept(concept_id) {
+        Ok(existing) => splice_notes(&existing.body, generated_body),
+        Err(_) => generated_body.to_string(),
+    }
 }
 
 pub struct CriticResult {
@@ -5644,6 +5702,48 @@ mod tests {
             "see `src/main.py` and `helper()` plus `pkg.Mod.fn` not `./gradlew` or `cairn embed`";
         assert_eq!(extract_file_refs(body), vec!["src/main.py"]);
         assert_eq!(extract_symbol_refs(body), vec!["helper()", "pkg.Mod.fn"]);
+    }
+
+    #[test]
+    fn critic_excludes_fence_aware_notes_section() {
+        let conn = Connection::open_in_memory().expect("mem db");
+        conn.execute_batch(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY, repo_id TEXT, path TEXT);
+             INSERT INTO files VALUES (1, 'r1', 'src/graph/queries.py');",
+        )
+        .expect("schema");
+        let body = "# Title\n\n## Overview\nprose\n\n## Notes\nkept note\n\n\
+                    ~~~sh\n# a shell comment, not a heading\n`no/such/file.py`\n~~~\n";
+        let concept = Concept {
+            type_: "Wiki-Article".into(),
+            concept_id: "wiki/pages/r1/p".into(),
+            body: body.into(),
+            ..Default::default()
+        };
+        let result =
+            critic_concept_opts(&concept, &conn, Some(&["## Sources"]), false).expect("critic");
+        assert!(
+            result.errors.is_empty(),
+            "the Notes section (fence included) must be excluded from the critic: {:?}",
+            result.errors
+        );
+        let (notes, rest) = split_notes(body);
+        assert_eq!(
+            notes,
+            "## Notes\nkept note\n\n~~~sh\n# a shell comment, not a heading\n`no/such/file.py`\n~~~\n"
+        );
+        assert_eq!(rest, "# Title\n\n## Overview\nprose\n\n");
+        assert_eq!(
+            splice_notes("# Old\n\n## Notes\nold note\n", "# Fresh\n\nbody line"),
+            "# Fresh\n\nbody line\n## Notes\nold note\n"
+        );
+        assert_eq!(
+            splice_notes(
+                "# Old\n\n## Notes\nold note\n",
+                "# Fresh\n\nbody line\n\n## Notes\nnew note\n"
+            ),
+            "# Fresh\n\nbody line\n\n## Notes\nold note\n"
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! (wiki/catalog.py + pipeline.py + manifest.py + lifecycle.py port).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use rusqlite::Connection;
@@ -9,7 +10,10 @@ use serde_json::{Value, json};
 use yaml_rust2::Yaml;
 use yaml_rust2::yaml::Hash;
 
-use crate::tools_km::{Bundle, Concept, ToolError, iso_utc_now, path_match_params};
+use crate::tools_km::{
+    Bundle, Concept, CriticResult, ToolError, critic_concept_opts, iso_utc_now, path_match_params,
+    preserved_concept_notes,
+};
 
 const SEED_LIMIT: usize = 10;
 const CATALOG_KIND: &str = "wiki-catalog";
@@ -17,6 +21,7 @@ const MANIFEST_SCHEMA: &str = "cairn-wiki-manifest-3";
 const TEST_SEGMENTS: [&str; 4] = ["test", "tests", "spec", "specs"];
 
 /// Why a wiki_generate run produced nothing.
+#[derive(Debug)]
 pub enum PipelineError {
     /// The plan could not be built (nothing indexed).
     Planner(String),
@@ -40,11 +45,13 @@ pub struct PageEntry {
 
 impl PageEntry {
     /// The plan-entry seeds: files + symbols + the empty docs list.
+    /// Key order is the canonicalization contract: Python hashes with
+    /// sort_keys, and serde_json (preserve_order) serializes insertion order.
     fn seeds_value(&self) -> Value {
         json!({
+            "docs": [],
             "files": self.seeds_files,
             "symbols": self.seeds_symbols,
-            "docs": [],
         })
     }
 
@@ -493,7 +500,7 @@ fn manifest_path(bundle: &Bundle) -> std::path::PathBuf {
 }
 
 /// Load the manifest; malformed shapes surface as the ValueError tool branch.
-fn load_manifest(bundle: &Bundle) -> Result<Value, PipelineError> {
+pub fn load_manifest(bundle: &Bundle) -> Result<Value, PipelineError> {
     let path = manifest_path(bundle);
     if !path.is_file() {
         return Ok(json!({"schema": MANIFEST_SCHEMA, "pages": {}}));
@@ -591,15 +598,15 @@ fn save_manifest(bundle: &Bundle, manifest: &Value) -> Result<bool, ToolError> {
 
 /// One listed task record (only the fields the pipeline consumes).
 #[derive(Clone, Debug)]
-struct TaskRec {
-    id: String,
-    task_kind: String,
-    resource: String,
-    facts_input_hash: String,
-    facts_repo: String,
-    status: String,
-    created_at: String,
-    attempt: i64,
+pub struct TaskRec {
+    pub id: String,
+    pub task_kind: String,
+    pub resource: String,
+    pub facts_input_hash: String,
+    pub facts_repo: String,
+    pub status: String,
+    pub created_at: String,
+    pub attempt: i64,
 }
 
 fn yaml_str(v: Option<&Yaml>) -> String {
@@ -674,6 +681,14 @@ fn live_generation_tasks(bundle: &Bundle) -> HashMap<String, Vec<TaskRec>> {
         live.entry(chain_key(&task)).or_default().push(task);
     }
     live
+}
+
+/// Ids of every live (pending/in-progress) write-chain task.
+pub fn live_generation_task_ids(bundle: &Bundle) -> BTreeSet<String> {
+    live_generation_tasks(bundle)
+        .into_values()
+        .flat_map(|tasks| tasks.into_iter().map(|t| t.id))
+        .collect()
 }
 
 static TASK_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -1113,4 +1128,578 @@ pub fn wiki_generate_text(
         );
     }
     Ok(out.join("\n"))
+}
+
+// --- lifecycle read model (wiki/lifecycle.py port) ----------------------------
+
+/// The lifecycle vocabulary every read model exposes, derived at read time.
+pub const DERIVED_STATES: [&str; 6] = [
+    "planned",
+    "queued",
+    "in-progress",
+    "promoted",
+    "failed",
+    "dropped",
+];
+
+/// A manifest key `"{repo}/{page_id}"` -> `(repo, page_id)`.
+pub fn split_page_key(key: &str) -> (String, String) {
+    match key.split_once('/') {
+        Some((repo, page_id)) => (repo.to_string(), page_id.to_string()),
+        None => (String::new(), key.to_string()),
+    }
+}
+
+/// The promoted `Wiki-Article` concept for a page, or None (never fatal).
+pub fn read_page_concept(bundle: &Bundle, repo: &str, page_id: &str) -> Option<Concept> {
+    bundle
+        .read_concept(&format!("wiki/pages/{repo}/{page_id}"))
+        .ok()
+        .filter(|c| c.type_ == "Wiki-Article")
+}
+
+/// Composite key `{repo}/{resource}` -> the page's write-chain tasks.
+pub fn page_chains(bundle: &Bundle) -> HashMap<String, Vec<TaskRec>> {
+    let mut chains: HashMap<String, Vec<TaskRec>> = HashMap::new();
+    for task in list_tasks(bundle) {
+        if !is_write_kind(&task.task_kind) {
+            continue;
+        }
+        chains.entry(chain_key(&task)).or_default().push(task);
+    }
+    chains
+}
+
+/// The page's lifecycle state, derived at read time — never stored.
+pub fn derived_state(bundle: &Bundle, repo: &str, page_id: &str, chain: &[TaskRec]) -> String {
+    if read_page_concept(bundle, repo, page_id).is_some() {
+        return "promoted".into();
+    }
+    if chain.iter().any(|t| t.status == "in-progress") {
+        return "in-progress".into();
+    }
+    if chain.iter().any(|t| t.status == "pending") {
+        return "queued".into();
+    }
+    if chain.iter().any(|t| t.status == "dropped") {
+        return "dropped".into();
+    }
+    // Python max() keeps the first maximal element on (created_at, attempt) ties.
+    let mut latest: Option<&TaskRec> = None;
+    for task in chain.iter().filter(|t| t.status == "done") {
+        if latest.is_none_or(|l| (&task.created_at, task.attempt) > (&l.created_at, l.attempt)) {
+            latest = Some(task);
+        }
+    }
+    if let Some(latest) = latest
+        && result_critic_status(bundle, &latest.id) != "passed"
+    {
+        return "failed".into();
+    }
+    "planned".into()
+}
+
+/// The page content's provenance sha (concept extension), or None.
+pub fn recorded_sha(bundle: &Bundle, repo: &str, page_id: &str) -> Option<String> {
+    read_page_concept(bundle, repo, page_id)?
+        .ext_str("commit_sha")
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// fresh: recorded sha equals HEAD; stale: both present and differing; else unknown.
+pub fn staleness(recorded: Option<&str>, head: Option<&str>) -> &'static str {
+    match (
+        recorded.filter(|s| !s.is_empty()),
+        head.filter(|s| !s.is_empty()),
+    ) {
+        (Some(recorded), Some(head)) if recorded == head => "fresh",
+        (Some(_), Some(_)) => "stale",
+        _ => "unknown",
+    }
+}
+
+// --- retry + enrich (wiki/cli + pipeline.py port) -------------------------------
+
+/// One re-queued page: (task id, manifest key, new queue_attempts).
+pub struct RequeuedPage {
+    pub task_id: String,
+    pub key: String,
+    pub attempt: i64,
+}
+
+pub struct RetryOutcome {
+    pub no_pages: bool,
+    pub requeued: Vec<RequeuedPage>,
+    pub write_failed: bool,
+}
+
+/// The work-order projection of a manifest row (plan_facts over JSON).
+pub fn plan_facts_row(row: &Value, repo: &str, diagrams: bool) -> Value {
+    let str_field = |key: &str| row.get(key).and_then(Value::as_str).unwrap_or("");
+    let mut facts = json!({
+        "title": str_field("title"),
+        "description": str_field("description"),
+        "module": str_field("module"),
+        "seeds": row.get("seeds").cloned().unwrap_or(json!({})),
+        "input_hash": str_field("input_hash"),
+        "repo": repo,
+    });
+    if diagrams {
+        facts["diagrams"] = json!(true);
+    }
+    facts
+}
+
+/// Re-queue derived-failed pages as fresh task chains; promoted pages untouched.
+pub fn retry_failed_pages(
+    bundle: &Bundle,
+    repo: Option<&str>,
+) -> Result<RetryOutcome, PipelineError> {
+    let _lock = bundle.lock().map_err(|e| PipelineError::Manifest(e.0))?;
+    let mut manifest = load_manifest(bundle)?;
+    let pages: BTreeMap<String, Value> = manifest
+        .get("pages")
+        .and_then(Value::as_object)
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    if pages.is_empty() {
+        return Ok(RetryOutcome {
+            no_pages: true,
+            requeued: Vec::new(),
+            write_failed: false,
+        });
+    }
+    let chains = page_chains(bundle);
+    let mut requeued = Vec::new();
+    for (key, row) in &pages {
+        let (page_repo, page_id) = split_page_key(key);
+        if repo.is_some_and(|r| page_repo != r) {
+            continue;
+        }
+        if derived_state(
+            bundle,
+            &page_repo,
+            &page_id,
+            chains.get(key).map(Vec::as_slice).unwrap_or(&[]),
+        ) != "failed"
+        {
+            continue;
+        }
+        let diagrams = row.get("diagrams").and_then(Value::as_bool) == Some(true);
+        let facts = plan_facts_row(row, &page_repo, diagrams);
+        let task_id = create_task(bundle, "wiki-page", key, &facts)
+            .map_err(|e| PipelineError::Manifest(e.0))?;
+        let attempt = row
+            .get("queue_attempts")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            + 1;
+        requeued.push(RequeuedPage {
+            task_id,
+            key: key.clone(),
+            attempt,
+        });
+    }
+    if requeued.is_empty() {
+        return Ok(RetryOutcome {
+            no_pages: false,
+            requeued,
+            write_failed: false,
+        });
+    }
+    let mut updated = pages.clone();
+    for page in &requeued {
+        if let Some(row) = updated.get_mut(&page.key) {
+            row["task_id"] = json!(page.task_id);
+            row["queue_attempts"] = json!(page.attempt);
+        }
+    }
+    manifest["pages"] = Value::Object(updated.into_iter().collect());
+    let write_failed = !save_manifest(bundle, &manifest).unwrap_or(false);
+    Ok(RetryOutcome {
+        no_pages: false,
+        requeued,
+        write_failed,
+    })
+}
+
+/// One queued enrichment: (task id, resource, repo fact).
+pub struct EnrichTask {
+    pub task_id: String,
+    pub resource: String,
+    pub repo: String,
+}
+
+/// Queue one `wiki-page-enrich` task per promoted manifest page with readable
+/// content and no live enrich or write task.
+pub fn queue_enrich_tasks(
+    bundle: &Bundle,
+    repo: Option<&str>,
+    page_id: Option<&str>,
+) -> Result<Vec<EnrichTask>, ToolError> {
+    let manifest = load_manifest(bundle).map_err(pipeline_tool_error)?;
+    let live_enrich: BTreeSet<String> = list_tasks(bundle)
+        .into_iter()
+        .filter(|t| {
+            t.task_kind.starts_with("wiki-page-enrich")
+                && matches!(t.status.as_str(), "pending" | "in-progress")
+        })
+        .map(|t| t.resource)
+        .collect();
+    let live_writes = live_generation_tasks(bundle);
+    let mut queued = Vec::new();
+    let mut keys: Vec<&String> = manifest
+        .get("pages")
+        .and_then(Value::as_object)
+        .map(|m| m.keys().collect())
+        .unwrap_or_default();
+    keys.sort();
+    for key in keys {
+        let row = &manifest["pages"][key];
+        let (row_repo, row_page) = split_page_key(key);
+        if repo.is_some_and(|r| row_repo != r) {
+            continue;
+        }
+        if page_id.is_some_and(|p| row_page != p) {
+            continue;
+        }
+        if live_enrich.contains(key) || live_writes.contains_key(key) {
+            continue;
+        }
+        if read_page_concept(bundle, &row_repo, &row_page).is_none() {
+            continue;
+        }
+        let diagrams = row.get("diagrams").and_then(Value::as_bool) == Some(true);
+        let facts = plan_facts_row(row, &row_repo, diagrams);
+        let task_id = create_task(bundle, "wiki-page-enrich", key, &facts)?;
+        queued.push(EnrichTask {
+            task_id,
+            resource: key.clone(),
+            repo: row_repo,
+        });
+    }
+    Ok(queued)
+}
+
+// --- deterministic generator (wiki/generator.py port) ---------------------------
+
+const REPORT_SECTION_VOCAB: [&str; 5] = [
+    "## Overview",
+    "## Symbol Distribution",
+    "## Core Abstractions (most-referenced classes)",
+    "## Cross-Repo Dependencies",
+    "## Dependents",
+];
+
+/// One generated architecture report with its critic verdict.
+pub struct WikiReport {
+    pub concept: Concept,
+    pub critic: CriticResult,
+}
+
+/// The graph-derived architecture wiki for one repo, Notes spliced, critic run.
+pub fn generate_wiki_with_critic(
+    conn: &Connection,
+    bundle: &Bundle,
+    repo: &str,
+    workspace: &Path,
+) -> Result<Vec<WikiReport>, ToolError> {
+    let report = graph_derived_wiki(conn, bundle, repo, workspace)?;
+    let critic = critic_concept_opts(&report, conn, Some(&REPORT_SECTION_VOCAB), false)?;
+    Ok(vec![WikiReport {
+        concept: report,
+        critic,
+    }])
+}
+
+fn graph_derived_wiki(
+    conn: &Connection,
+    bundle: &Bundle,
+    repo: &str,
+    workspace: &Path,
+) -> Result<Concept, ToolError> {
+    let symbols_in_repo: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM symbols s JOIN files f ON s.file_id = f.id \
+             WHERE f.repo_id = ?1",
+            [repo],
+            |r| r.get(0),
+        )
+        .map_err(|e| ToolError(e.to_string()))?;
+    let file_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM files WHERE repo_id = ?1",
+            [repo],
+            |r| r.get(0),
+        )
+        .map_err(|e| ToolError(e.to_string()))?;
+    let by_kind: Vec<(String, i64)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.kind, COUNT(*) AS c FROM symbols s JOIN files f ON s.file_id = f.id \
+                 WHERE f.repo_id = ?1 GROUP BY s.kind ORDER BY c DESC",
+            )
+            .map_err(|e| ToolError(e.to_string()))?;
+        let rows = stmt
+            .query_map([repo], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
+            .map_err(|e| ToolError(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| ToolError(e.to_string()))?
+    };
+    let top_classes: Vec<(String, i64)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.name, COUNT(e.id) AS incoming \
+                 FROM symbols s LEFT JOIN edges e ON e.target_id = s.id \
+                 JOIN files f ON s.file_id = f.id \
+                 WHERE f.repo_id = ?1 AND s.kind IN ('class','interface') \
+                 GROUP BY s.id ORDER BY incoming DESC LIMIT 10",
+            )
+            .map_err(|e| ToolError(e.to_string()))?;
+        let rows = stmt
+            .query_map([repo], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
+            .map_err(|e| ToolError(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| ToolError(e.to_string()))?
+    };
+    let namespaces = crate::graph::resolve_namespaces(
+        workspace,
+        std::env::var("CAIRN_REPO_NAMESPACES").ok().as_deref(),
+    );
+    let deps = crate::graph::cross_repo_deps(conn, repo, &namespaces)
+        .map_err(|e| ToolError(e.to_string()))?;
+
+    let mut parts = vec![
+        format!("# {repo} Architecture\n"),
+        "## Overview\n".to_string(),
+        format!("{repo} contains {symbols_in_repo} symbols across {file_count} files.\n"),
+        "\n## Symbol Distribution\n".to_string(),
+    ];
+    for (kind, count) in &by_kind {
+        parts.push(format!("- {kind}: {count}"));
+    }
+    parts.push("\n## Core Abstractions (most-referenced classes)\n".to_string());
+    for (name, incoming) in &top_classes {
+        parts.push(format!("- `{name}` ({incoming} incoming references)"));
+    }
+    parts.push("\n## Cross-Repo Dependencies\n".to_string());
+    if deps.dependencies.is_empty() {
+        parts.push("(no cross-repo dependencies detected)".to_string());
+    } else {
+        parts.push("Depends on:".to_string());
+        for d in &deps.dependencies {
+            parts.push(format!("- {} ({}, x{})", d.repo, d.evidence, d.count));
+        }
+    }
+    parts.push("\n## Dependents\n".to_string());
+    if deps.dependents.is_empty() {
+        parts.push("(none)".to_string());
+    } else {
+        for d in &deps.dependents {
+            parts.push(format!("- {} (x{})", d.repo, d.count));
+        }
+    }
+    let body = format!("{}\n", parts.join("\n"));
+    let concept_id = format!("reports/architecture/{repo}");
+    let spliced = preserved_concept_notes(bundle, &concept_id, &body);
+    Ok(Concept {
+        type_: "Architecture-Report".into(),
+        title: Some(format!("{repo} Architecture")),
+        description: Some(format!("Graph-derived architectural overview of {repo}")),
+        resource: Some(repo.to_string()),
+        tags: vec![repo.to_string(), "architecture".into()],
+        timestamp: Some(iso_utc_now()),
+        generated_by: None,
+        status: None,
+        stale_after: None,
+        concept_id,
+        body: spliced,
+        extensions: Vec::new(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_bundle(tag: &str) -> Bundle {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("cairn-wiki-{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("bundle dir");
+        Bundle::new(dir)
+    }
+
+    fn manifest_row(page_id: &str, task_id: &str, attempts: i64) -> Value {
+        json!({
+            "page_id": page_id,
+            "title": page_id,
+            "description": "",
+            "module": "src/cairn/llm",
+            "seeds": {"files": [], "symbols": [], "docs": []},
+            "input_hash": format!("hash-{page_id}"),
+            "task_id": task_id,
+            "queue_attempts": attempts,
+        })
+    }
+
+    /// A fixed-id wiki-page task concept with the shape list_tasks consumes.
+    fn seed_task(bundle: &Bundle, id: &str, resource: &str, status: &str, critic: Option<&str>) {
+        let mut concept = Concept {
+            type_: "Task".into(),
+            title: Some(format!("wiki-page: {resource}")),
+            resource: Some(resource.into()),
+            tags: vec!["wiki-page".into()],
+            status: Some(status.into()),
+            concept_id: format!("_tasks/{id}"),
+            body: "# Task".into(),
+            ..Default::default()
+        };
+        concept.extensions = vec![
+            ("task_kind".into(), Yaml::String("wiki-page".into())),
+            ("status".into(), Yaml::String(status.into())),
+            ("attempt".into(), Yaml::Integer(1)),
+            (
+                "facts".into(),
+                json_to_yaml(&json!({"repo": "cairn", "input_hash": "h"})),
+            ),
+        ];
+        bundle.write_concept(&mut concept).expect("task write");
+        if let Some(critic) = critic {
+            let mut result = Concept {
+                type_: "Task-Result".into(),
+                title: Some(format!("Result for {id}")),
+                concept_id: format!("_tasks/{id}.result"),
+                body: "body".into(),
+                ..Default::default()
+            };
+            result
+                .extensions
+                .push(("critic_status".into(), Yaml::String(critic.into())));
+            bundle.write_concept(&mut result).expect("result");
+        }
+    }
+
+    fn write_manifest(bundle: &Bundle, pages: Value) {
+        let manifest = json!({"schema": MANIFEST_SCHEMA, "pages": pages});
+        save_manifest(bundle, &manifest).expect("manifest write");
+    }
+
+    #[test]
+    fn derived_state_precedence_matches_lifecycle() {
+        let bundle = scratch_bundle("state");
+        let chain: Vec<TaskRec> = Vec::new();
+        assert_eq!(
+            derived_state(&bundle, "cairn", "p", &chain),
+            "planned",
+            "no chain and no content is planned"
+        );
+        seed_task(&bundle, "t-done", "cairn/x", "done", Some("failed"));
+        let chain: Vec<TaskRec> = list_tasks(&bundle);
+        assert_eq!(
+            derived_state(&bundle, "cairn", "x", &chain),
+            "failed",
+            "done chain without a passing critic verdict is failed"
+        );
+        let mut promoted = Concept {
+            type_: "Wiki-Article".into(),
+            title: Some("p".into()),
+            concept_id: "wiki/pages/cairn/x".into(),
+            body: "content".into(),
+            ..Default::default()
+        };
+        bundle.write_concept(&mut promoted).expect("promoted");
+        assert_eq!(
+            derived_state(&bundle, "cairn", "x", &chain),
+            "promoted",
+            "readable content beats the failed chain"
+        );
+    }
+
+    #[test]
+    fn retry_requeues_only_failed_pages_and_bumps_attempts() {
+        let bundle = scratch_bundle("retry");
+        seed_task(
+            &bundle,
+            "t-failed",
+            "cairn/failedpage",
+            "done",
+            Some("failed"),
+        );
+        seed_task(&bundle, "t-pending", "cairn/livepage", "pending", None);
+        write_manifest(
+            &bundle,
+            json!({
+                "cairn/failedpage": manifest_row("failedpage", "t-failed", 1),
+                "cairn/livepage": manifest_row("livepage", "t-pending", 1),
+            }),
+        );
+        let outcome = retry_failed_pages(&bundle, None).expect("retry");
+        assert!(!outcome.no_pages);
+        assert!(!outcome.write_failed);
+        assert_eq!(outcome.requeued.len(), 1);
+        let page = &outcome.requeued[0];
+        assert_eq!(page.key, "cairn/failedpage");
+        assert_eq!(page.attempt, 2);
+        let manifest = load_manifest(&bundle).expect("reload");
+        assert_eq!(
+            manifest["pages"]["cairn/failedpage"]["queue_attempts"],
+            json!(2)
+        );
+        let task = list_tasks(&bundle);
+        assert!(
+            task.iter()
+                .any(|t| t.id == page.task_id && t.status == "pending")
+        );
+    }
+
+    #[test]
+    fn enrich_queues_only_promoted_pages_without_live_work() {
+        let bundle = scratch_bundle("enrich");
+        seed_task(&bundle, "t-live", "cairn/livepage", "pending", None);
+        let mut promoted = Concept {
+            type_: "Wiki-Article".into(),
+            title: Some("p".into()),
+            concept_id: "wiki/pages/cairn/promoted".into(),
+            body: "content".into(),
+            ..Default::default()
+        };
+        bundle.write_concept(&mut promoted).expect("promoted");
+        write_manifest(
+            &bundle,
+            json!({
+                "cairn/promoted": manifest_row("promoted", "t-done", 1),
+                "cairn/livepage": manifest_row("livepage", "t-live", 1),
+                "cairn/nocontent": manifest_row("nocontent", "t-none", 1),
+            }),
+        );
+        let queued = queue_enrich_tasks(&bundle, None, None).expect("enrich");
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].resource, "cairn/promoted");
+        assert_eq!(queued[0].repo, "cairn");
+    }
+    #[test]
+    fn page_input_hash_matches_python_canonicalization() {
+        let entry = PageEntry {
+            page_id: "overview".into(),
+            title: "corpus architecture overview".into(),
+            description: "Architecture overview of corpus across 2 modules.".into(),
+            module: "".into(),
+            seeds_files: vec!["src/graph/queries.py".into()],
+            seeds_symbols: vec!["resolve_store".into()],
+            input_hash: String::new(),
+        };
+        assert_eq!(
+            page_input_hash(&entry),
+            "51473a7d87151e26460a67cf973bb3f08182a77d3db66da4791dfe87803e9c88"
+        );
+    }
 }

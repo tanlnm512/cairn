@@ -10,6 +10,7 @@ use yaml_rust2::Yaml;
 
 use cairn_query::tasks;
 use cairn_query::tools_km::{self, Bundle, Concept, KnowledgeHit, RelatedDoc, WorkflowStep};
+use cairn_query::tools_wiki::{self, PipelineError};
 use cairn_store::{conn as store_conn, schema as store_schema};
 
 use crate::display;
@@ -17,6 +18,7 @@ use crate::py_json;
 use crate::store_paths::resolve_store;
 
 const IMPORT_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+const WRITE_FAILED_MSG: &str = "failed to write the wiki manifest; queued tasks are not recorded";
 const MEMORY_TYPES: &[&str] = &["decision", "pattern", "mistake", "workaround"];
 
 #[derive(Subcommand)]
@@ -493,7 +495,36 @@ pub enum MemoryGroup {
 #[derive(Subcommand)]
 pub enum WikiGroup {
     /// Plan the wiki and queue page-writing tasks.
-    Generate,
+    Generate {
+        /// Repo name (all repos if omitted).
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long, default_value = None)]
+        db: Option<String>,
+        #[arg(long, default_value = None)]
+        knowledge: Option<String>,
+        /// Run generation + the critic and print each verdict; write nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Print the critic errors/warnings for each generated concept.
+        #[arg(long = "show-rejections")]
+        show_rejections: bool,
+        /// Queue one wiki-page task per planned page for agent-decoupled writing.
+        #[arg(long = "llm")]
+        llm: bool,
+        /// With --llm, max pages to plan, overview included.
+        #[arg(long, default_value_t = 10)]
+        pages: i64,
+        /// With --llm, instruct writers to include Mermaid diagrams.
+        #[arg(long)]
+        diagrams: bool,
+        /// With --llm, queue a wiki-catalog refinement task first.
+        #[arg(long = "refine-catalog")]
+        refine_catalog: bool,
+        /// With --llm, re-queue every planned page even when unchanged and promoted.
+        #[arg(long)]
+        force: bool,
+    },
     /// Search promoted wiki pages.
     Search {
         /// Query text.
@@ -911,8 +942,48 @@ fn run_memory(group: MemoryGroup) -> ExitCode {
 
 fn run_wiki(group: WikiGroup) -> ExitCode {
     match group {
+        WikiGroup::Generate {
+            repo,
+            db,
+            knowledge,
+            dry_run,
+            show_rejections,
+            llm,
+            pages,
+            diagrams,
+            refine_catalog,
+            force,
+        } => wiki_generate(
+            repo.as_deref(),
+            db.as_deref(),
+            knowledge.as_deref(),
+            dry_run,
+            show_rejections,
+            llm,
+            pages,
+            diagrams,
+            refine_catalog,
+            force,
+        ),
         WikiGroup::Search { query, knowledge } => wiki_search(&query, knowledge.as_deref()),
-        other => not_ported(other.name()),
+        WikiGroup::Status { repo, knowledge } => wiki_status(repo.as_deref(), knowledge.as_deref()),
+        WikiGroup::Retry { repo, knowledge } => wiki_retry(repo.as_deref(), knowledge.as_deref()),
+        WikiGroup::Export {
+            out_dir,
+            force,
+            knowledge,
+        } => wiki_export(&out_dir, force, knowledge.as_deref()),
+        WikiGroup::Enrich {
+            page_id,
+            repo,
+            all,
+            knowledge,
+        } => wiki_enrich(
+            page_id.as_deref(),
+            repo.as_deref(),
+            all,
+            knowledge.as_deref(),
+        ),
     }
 }
 
@@ -2799,7 +2870,7 @@ fn compass_validate(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
 // --- wiki group --------------------------------------------------------------
 
 fn wiki_search(query: &str, knowledge: Option<&str>) -> ExitCode {
-    let knowledge_path = knowledge.map_or_else(knowledge_default, PathBuf::from);
+    let knowledge_path = knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from);
     let bundle = resolve_bundle(&knowledge_path);
     let Ok(results) = bundle.search(query, None) else {
         println!("No wiki matching '{query}'.");
@@ -2828,6 +2899,479 @@ fn wiki_search(query: &str, knowledge: Option<&str>) -> ExitCode {
             println!("      {desc}");
         }
     }
+    ExitCode::SUCCESS
+}
+
+/// Python str() of a bool.
+fn py_bool(b: bool) -> &'static str {
+    if b { "True" } else { "False" }
+}
+
+fn manifest_error_exit(msg: &str) -> ExitCode {
+    eprintln!("Wiki manifest error: {msg}");
+    ExitCode::FAILURE
+}
+
+#[allow(clippy::too_many_arguments)]
+fn wiki_generate(
+    repo: Option<&str>,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+    dry_run: bool,
+    show_rejections: bool,
+    llm: bool,
+    pages: i64,
+    diagrams: bool,
+    refine_catalog: bool,
+    force: bool,
+) -> ExitCode {
+    let paths = resolve_store(None);
+    let knowledge_path = knowledge.map_or_else(|| paths.knowledge.clone(), PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let repos: Vec<String> = match repo {
+        Some(repo) => vec![repo.to_string()],
+        None => {
+            let Ok(rows) = conn.prepare("SELECT id FROM repos").and_then(|mut stmt| {
+                stmt.query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()
+            }) else {
+                return cli_err("failed to list repos");
+            };
+            rows
+        }
+    };
+    if llm {
+        if repos.is_empty() {
+            eprintln!("No repos indexed; run 'cairn build' first.");
+            return ExitCode::FAILURE;
+        }
+        let mut plans = Vec::new();
+        for r in &repos {
+            match tools_wiki::build_page_plan(&conn, r, pages.max(0) as usize) {
+                Ok(plan) => plans.push((r.clone(), plan)),
+                Err(PipelineError::Planner(msg)) => {
+                    eprintln!("Cannot plan wiki pages: {msg}");
+                    return ExitCode::FAILURE;
+                }
+                Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+                Err(PipelineError::Write) => {
+                    return manifest_error_exit(WRITE_FAILED_MSG);
+                }
+            }
+        }
+        if dry_run {
+            for (r, plan) in &plans {
+                println!("--- {r} (dry-run; nothing queued) ---");
+                for page in plan {
+                    println!(
+                        "  {}: {} [module {}]",
+                        page.page_id, page.title, page.module
+                    );
+                }
+            }
+            println!(
+                "Dry-run: planned {} wiki page(s); queued nothing.",
+                plans.iter().map(|(_, p)| p.len()).sum::<usize>()
+            );
+            return ExitCode::SUCCESS;
+        }
+        let live_ids = tools_wiki::live_generation_task_ids(&bundle);
+        let mut queued_total = 0usize;
+        let mut skipped_total = 0usize;
+        let mut adopted_total = 0usize;
+        let mut catalog_total = 0usize;
+        for r in &repos {
+            let result = match tools_wiki::run_wiki_generate(
+                &conn,
+                &bundle,
+                r,
+                pages.max(0) as usize,
+                force,
+                diagrams,
+                refine_catalog,
+            ) {
+                Ok(result) => result,
+                Err(PipelineError::Planner(msg)) => {
+                    eprintln!("Cannot plan wiki pages: {msg}");
+                    return ExitCode::FAILURE;
+                }
+                Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+                Err(PipelineError::Write) => return manifest_error_exit(WRITE_FAILED_MSG),
+            };
+            if let Some(catalog_id) = &result.catalog_task_id {
+                catalog_total += 1;
+                if result.catalog_pending {
+                    println!(
+                        "wiki-catalog task {catalog_id} still pending ({r}); the page tasks queue once it completes:"
+                    );
+                } else {
+                    println!(
+                        "Queued wiki-catalog task {catalog_id}: refine the wiki outline ({r})"
+                    );
+                    println!("Any agent with the cairn skill can process it:");
+                }
+                println!("  cairn task show {catalog_id}        # view the task + facts");
+                println!("  cairn task claim {catalog_id}       # claim it");
+                println!(
+                    "  cairn task complete {catalog_id} --result-file <path>   # submit result"
+                );
+                continue;
+            }
+            let queued_ids: std::collections::HashSet<&String> =
+                result.queued_task_ids.iter().collect();
+            let rows = match tools_wiki::load_manifest(&bundle) {
+                Ok(manifest) => manifest.get("pages").cloned().unwrap_or(json!({})),
+                Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+                Err(_) => return manifest_error_exit(WRITE_FAILED_MSG),
+            };
+            for page in &result.plan {
+                let key = format!("{}/{}", r, page.page_id);
+                let task_id = rows
+                    .get(&key)
+                    .and_then(|row| row.get("task_id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                if task_id.as_ref().is_some_and(|id| queued_ids.contains(id)) {
+                    queued_total += 1;
+                    println!(
+                        "Queued wiki-page task {}: {} ({r})",
+                        task_id.as_deref().unwrap_or_default(),
+                        page.title
+                    );
+                } else if task_id.as_ref().is_some_and(|id| live_ids.contains(id))
+                    && tools_wiki::read_page_concept(&bundle, r, &page.page_id).is_none()
+                {
+                    adopted_total += 1;
+                    println!(
+                        "Adopted live wiki-page task {}: {} ({r})",
+                        task_id.as_deref().unwrap_or_default(),
+                        page.title
+                    );
+                } else {
+                    skipped_total += 1;
+                    println!("Up to date, skipped: {} ({r})", page.title);
+                }
+            }
+        }
+        if catalog_total > 0 {
+            println!(
+                "Re-run 'cairn wiki generate --llm --refine-catalog' after the catalog task completes to queue the page tasks."
+            );
+            return ExitCode::SUCCESS;
+        }
+        let mut summary = format!("Queued {queued_total} new wiki-page task(s); ");
+        if adopted_total > 0 {
+            summary.push_str(&format!("{adopted_total} already in flight; "));
+        }
+        summary.push_str(&format!("{skipped_total} page(s) already up to date. "));
+        println!("{summary}Any agent with the cairn skill can process them:");
+        println!("  cairn task list --kind wiki-page --status pending");
+        println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
+        return ExitCode::SUCCESS;
+    }
+    let mut total = 0usize;
+    let mut seen = 0usize;
+    for r in &repos {
+        let reports =
+            match tools_wiki::generate_wiki_with_critic(&conn, &bundle, r, &paths.workspace) {
+                Ok(reports) => reports,
+                Err(e) => return cli_err(&e.0),
+            };
+        for report in reports {
+            seen += 1;
+            let result = &report.critic;
+            let concept = &report.concept;
+            if dry_run {
+                println!("--- {} (dry-run; not written) ---", concept.concept_id);
+                println!(
+                    "  passed: {}  quality: {:.2}  errors: {}  warnings: {}",
+                    py_bool(result.passed),
+                    result.quality_score,
+                    result.errors.len(),
+                    result.warnings.len()
+                );
+                for e in &result.errors {
+                    println!("    ERROR: {e}");
+                }
+                for w in &result.warnings {
+                    println!("    warn: {w}");
+                }
+                continue;
+            }
+            let mut concept = concept.clone();
+            if show_rejections || !result.passed {
+                println!(
+                    "  generated wiki: {} (quality={:.2}, errors={}, warnings={})",
+                    concept.concept_id,
+                    result.quality_score,
+                    result.errors.len(),
+                    result.warnings.len()
+                );
+                if !result.passed {
+                    for e in &result.errors {
+                        println!("    ERROR: {e}");
+                    }
+                    for w in &result.warnings {
+                        println!("    warn: {w}");
+                    }
+                }
+                if let Err(e) = bundle.write_concept(&mut concept) {
+                    return cli_err(&e.0);
+                }
+                total += 1;
+            } else {
+                if let Err(e) = bundle.write_concept(&mut concept) {
+                    return cli_err(&e.0);
+                }
+                total += 1;
+                println!("  generated wiki: {}", concept.concept_id);
+            }
+        }
+    }
+    if dry_run {
+        println!("Dry-run: examined {seen} wiki concept(s); wrote nothing.");
+    } else {
+        println!("Generated {total} wiki concepts.");
+    }
+    ExitCode::SUCCESS
+}
+
+fn wiki_status(repo: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let paths = resolve_store(None);
+    let knowledge_path = knowledge.map_or_else(|| paths.knowledge.clone(), PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    let manifest = match tools_wiki::load_manifest(&bundle) {
+        Ok(manifest) => manifest,
+        Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+        Err(_) => return manifest_error_exit(WRITE_FAILED_MSG),
+    };
+    let pages = manifest.get("pages").cloned().unwrap_or(json!({}));
+    if pages.as_object().is_none_or(|m| m.is_empty()) {
+        println!("No wiki pages planned; run 'cairn wiki generate --llm' first.");
+        return ExitCode::SUCCESS;
+    }
+    let chains = tools_wiki::page_chains(&bundle);
+    let conn = open_db_read_only(&paths.db).ok();
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    let mut staleness_counts = std::collections::BTreeMap::<&str, usize>::new();
+    let mut heads: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    let mut shown = 0usize;
+    let mut keys: Vec<&String> = pages
+        .as_object()
+        .map(|m| m.keys().collect())
+        .unwrap_or_default();
+    keys.sort();
+    for key in keys {
+        let (page_repo, page_id) = tools_wiki::split_page_key(key);
+        if repo.is_some_and(|r| page_repo != r) {
+            continue;
+        }
+        let row = &pages[key];
+        let chain = chains.get(key).map(Vec::as_slice).unwrap_or(&[]);
+        let state = tools_wiki::derived_state(&bundle, &page_repo, &page_id, chain);
+        let head = match heads.get(&page_repo) {
+            Some(head) => head.clone(),
+            None => {
+                let head = tasks::repo_head(conn.as_ref(), Some(&paths.workspace), &page_repo);
+                heads.insert(page_repo.clone(), head.clone());
+                head
+            }
+        };
+        let page_staleness = tools_wiki::staleness(
+            tools_wiki::recorded_sha(&bundle, &page_repo, &page_id).as_deref(),
+            head.as_deref(),
+        );
+        shown += 1;
+        *counts.entry(state.clone()).or_default() += 1;
+        *staleness_counts.entry(page_staleness).or_default() += 1;
+        println!(
+            "  {:<36} {:<12} {:<8} queue_attempts={}",
+            key,
+            state,
+            page_staleness,
+            row.get("queue_attempts")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+        );
+    }
+    let totals = tools_wiki::DERIVED_STATES
+        .iter()
+        .map(|state| format!("{state}={}", counts.get(*state).copied().unwrap_or(0)))
+        .collect::<Vec<_>>()
+        .join("  ");
+    let freshness = ["fresh", "stale", "unknown"]
+        .iter()
+        .map(|s| format!("{s}={}", staleness_counts.get(s).copied().unwrap_or(0)))
+        .collect::<Vec<_>>()
+        .join("  ");
+    println!("Wiki pages: {shown}  {totals}  {freshness}");
+    ExitCode::SUCCESS
+}
+
+fn wiki_retry(repo: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let knowledge_path = knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    let outcome = match tools_wiki::retry_failed_pages(&bundle, repo) {
+        Ok(outcome) => outcome,
+        Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+        Err(PipelineError::Planner(msg)) => return manifest_error_exit(&msg),
+        Err(PipelineError::Write) => return manifest_error_exit(WRITE_FAILED_MSG),
+    };
+    if outcome.no_pages {
+        println!("No wiki pages planned; run 'cairn wiki generate --llm' first.");
+        return ExitCode::SUCCESS;
+    }
+    if outcome.requeued.is_empty() {
+        println!("Nothing to retry: no failed wiki pages.");
+        return ExitCode::SUCCESS;
+    }
+    for page in &outcome.requeued {
+        println!(
+            "Re-queued wiki-page task {}: {} (attempt {})",
+            page.task_id, page.key, page.attempt
+        );
+    }
+    if outcome.write_failed {
+        eprintln!(
+            "Failed to write the wiki manifest; the {} re-queued task(s) above are already live in the task queue — inspect them with 'cairn task list --kind wiki-page --status pending'.",
+            outcome.requeued.len()
+        );
+        return ExitCode::FAILURE;
+    }
+    println!(
+        "Re-queued {} failed wiki page(s). Any agent with the cairn skill can process them:",
+        outcome.requeued.len()
+    );
+    println!("  cairn task list --kind wiki-page --status pending");
+    println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
+    ExitCode::SUCCESS
+}
+
+/// Python non-strict `Path.resolve()`.
+fn resolve_lenient(path: &Path) -> PathBuf {
+    if let Ok(c) = path.canonicalize() {
+        return c;
+    }
+    let mut ancestor = path.parent();
+    while let Some(a) = ancestor {
+        if let Ok(base) = a.canonicalize() {
+            let mut resolved = base;
+            if let Ok(tail) = path.strip_prefix(a) {
+                resolved.extend(tail.components());
+            }
+            return resolved;
+        }
+        ancestor = a.parent();
+    }
+    path.to_path_buf()
+}
+
+fn wiki_export(out_dir: &str, force: bool, knowledge: Option<&str>) -> ExitCode {
+    let out_dir = Path::new(out_dir);
+    if out_dir.exists() && !out_dir.is_dir() {
+        eprintln!("Export target {} is not a directory.", out_dir.display());
+        return ExitCode::FAILURE;
+    }
+    if out_dir.is_dir()
+        && out_dir
+            .read_dir()
+            .is_ok_and(|mut entries| entries.next().is_some())
+        && !force
+    {
+        eprintln!(
+            "Refusing to export into non-empty directory {}; pass --force to overwrite.",
+            out_dir.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    let knowledge_path = knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    let manifest = match tools_wiki::load_manifest(&bundle) {
+        Ok(manifest) => manifest,
+        Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+        Err(_) => return manifest_error_exit(WRITE_FAILED_MSG),
+    };
+    let out_root = resolve_lenient(out_dir);
+    let mut exported = 0usize;
+    let pages = manifest.get("pages").cloned().unwrap_or(json!({}));
+    let mut keys: Vec<&String> = pages
+        .as_object()
+        .map(|m| m.keys().collect())
+        .unwrap_or_default();
+    keys.sort();
+    for key in keys {
+        let (page_repo, page_id) = tools_wiki::split_page_key(key);
+        let Some(concept) = tools_wiki::read_page_concept(&bundle, &page_repo, &page_id) else {
+            continue;
+        };
+        let target = resolve_lenient(&out_dir.join(&page_repo).join(format!("{page_id}.md")));
+        if !target.starts_with(&out_root) {
+            eprintln!("Skipped {key}: page key escapes the export directory.");
+            continue;
+        }
+        if let Err(e) = concept.to_file(&target) {
+            return cli_err(&format!("concept write failed: {e}"));
+        }
+        exported += 1;
+    }
+    println!("Exported {exported} page(s) to {}", out_dir.display());
+    ExitCode::SUCCESS
+}
+
+fn wiki_enrich(
+    page_id: Option<&str>,
+    repo: Option<&str>,
+    enrich_all: bool,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    if page_id.is_some() && enrich_all {
+        eprintln!("Enrich one PAGE_ID or --all, not both.");
+        return ExitCode::FAILURE;
+    }
+    if page_id.is_none() && !enrich_all {
+        eprintln!("Enrich one PAGE_ID or --all.");
+        return ExitCode::FAILURE;
+    }
+    let knowledge_path = knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    if let Err(PipelineError::Manifest(msg)) = tools_wiki::load_manifest(&bundle) {
+        return manifest_error_exit(&msg);
+    }
+    let queued = match tools_wiki::queue_enrich_tasks(&bundle, repo, page_id) {
+        Ok(queued) => queued,
+        Err(e) => return cli_err(&e.0),
+    };
+    let scope = repo.map_or_else(String::new, |r| format!(" in repo '{r}'"));
+    if queued.is_empty() && !enrich_all {
+        eprintln!(
+            "Cannot enrich '{}': no wiki page to enrich for it{scope}.",
+            page_id.unwrap_or_default()
+        );
+        return ExitCode::FAILURE;
+    }
+    for task in &queued {
+        println!(
+            "Queued wiki-page-enrich task {}: {} ({})",
+            task.task_id, task.resource, task.repo
+        );
+    }
+    if queued.is_empty() {
+        println!("Nothing to enrich: no wiki pages to enrich{scope}.");
+        return ExitCode::SUCCESS;
+    }
+    println!(
+        "Queued {} wiki-page-enrich task(s). Any agent with the cairn skill can process them:",
+        queued.len()
+    );
+    println!("  cairn task list --kind wiki-page-enrich --status pending");
+    println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
     ExitCode::SUCCESS
 }
 
@@ -2894,20 +3438,6 @@ impl KnowledgeGroup {
             Self::Status { .. } => "knowledge status",
             Self::Export { .. } => "knowledge export",
             Self::Workflow { .. } => "knowledge workflow",
-        }
-    }
-}
-
-impl WikiGroup {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Generate => "wiki generate",
-            Self::Search { .. } => "wiki search",
-            Self::Status { .. } => "wiki status",
-            Self::Retry { .. } => "wiki retry",
-            Self::Export { .. } => "wiki export",
-            Self::Enrich { .. } => "wiki enrich",
         }
     }
 }
