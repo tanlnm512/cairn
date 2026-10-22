@@ -356,3 +356,40 @@ fn renderers_keep_the_python_fstring_line_formats() {
     null_line.rows[0].edge_line = None;
     assert!(render_callers(&null_line).contains("src/app.py:None"));
 }
+
+#[test]
+fn trace_flow_rewalks_a_node_from_its_shortest_route() {
+    let conn = Connection::open_in_memory().expect("in-memory db");
+    conn.execute_batch(SCHEMA).expect("schema");
+    conn.execute_batch(
+        r#"
+        INSERT INTO repos VALUES ('r', 'r', '/ws/r', 'python', NULL, NULL);
+        INSERT INTO files VALUES ('f', 'r', 'main.py', 'python', NULL, 10, NULL);
+        INSERT INTO symbols VALUES
+            ('s1', 'f', 'entry', 'm.entry', 'function', 1, 10, NULL, NULL, NULL, NULL),
+            ('s2', 'f', 'left', 'm.left', 'function', 1, 10, NULL, NULL, NULL, NULL),
+            ('s3', 'f', 'mid', 'm.mid', 'function', 1, 10, NULL, NULL, NULL, NULL),
+            ('s4', 'f', 'deep', 'm.deep', 'function', 1, 10, NULL, NULL, NULL, NULL),
+            ('s5', 'f', 'tail', 'm.tail', 'function', 1, 10, NULL, NULL, NULL, NULL);
+        INSERT INTO edges VALUES
+            ('e1', 's1', 's2', 'left', 'call', 5, 0, 'exact'),
+            ('e2', 's1', 's3', 'mid', 'call', 6, 0, 'exact'),
+            ('e3', 's2', 's3', 'mid', 'call', 5, 0, 'exact'),
+            ('e4', 's3', 's4', 'deep', 'call', 5, 0, 'exact'),
+            ('e5', 's4', 's5', 'tail', 'call', 5, 0, 'exact');
+        "#,
+    )
+    .expect("fixture rows");
+    let flow = crate::graph::trace_flow(&conn, "entry", 3);
+    let node = |name: &str| {
+        flow.chain
+            .iter()
+            .find(|n| n.symbol == name)
+            .map(|n| (n.depth, n.parent.clone().unwrap_or_default()))
+    };
+    assert_eq!(node("mid"), Some((1, "entry".to_string())));
+    assert_eq!(node("deep"), Some((2, "mid".to_string())));
+    assert_eq!(node("tail"), Some((3, "deep".to_string())));
+    let branch_owners: Vec<&str> = flow.branches.iter().map(|(s, _)| s.as_str()).collect();
+    assert_eq!(branch_owners, vec!["entry"]);
+}

@@ -308,12 +308,13 @@ def trace_flow(
 ) -> dict:
     """Downward callee traversal from an entry symbol — the flow it executes."""
     allowed = None if include_service_edges else STRUCTURAL_EDGE_KINDS
-    visited: dict[str, dict] = {}   # id -> chain entry (first-seen wins)
+    visited: dict[str, dict] = {}   # id -> chain entry at its shortest depth
     on_path: set[str] = set()       # current DFS path symbol ids — cycle detection
     branches: list[dict] = []
     leaves: list[str] = []
     cycles: list[dict] = []
     cycles_seen: set[str] = set()
+    branched: set[str] = set()
     truncated = False
     # Per-call lookup memos keyed by node id ("name:<n>" for unresolved
     # callees) so same-named symbols never merge into one flow.
@@ -413,10 +414,17 @@ def trace_flow(
                 walk(cid, cname, depth + 1)
             elif cid in on_path:
                 # Back-edge into the active DFS path: re-entering walk() is
-                # what records the cycle; fully-explored ids are never re-walked.
+                # what records the cycle.
+                walk(cid, cname, depth + 1)
+            elif depth + 1 < visited[cid]["depth"]:
+                # Shorter route to an explored id: re-walk so its subtree gets
+                # the full max_depth budget from its shortest depth.
+                visited[cid]["depth"] = depth + 1
+                visited[cid]["parent"] = sym_name
                 walk(cid, cname, depth + 1)
 
-        if len(outgoing) > 1:
+        if len(outgoing) > 1 and sym_id not in branched:
+            branched.add(sym_id)
             branches.append({"symbol": sym_name, "callees": outgoing})
 
         on_path.discard(sym_id)

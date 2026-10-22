@@ -169,6 +169,26 @@ class TestTraceFlow:
         join = [n for n in result["chain"] if n["symbol"] == "join"][0]
         assert join["depth"] == 2  # via left (first DFS path), not 2 via right
 
+    def test_shortcut_gets_shortest_depth_and_full_subtree(self, fresh_db):
+        """A node first reached deep is re-walked from its shorter route, not cut at max_depth."""
+        conn = fresh_db
+        conn.execute("INSERT INTO repos (id, name, path) VALUES ('r1', 'app', '/repo')")
+        _row(conn, "files", id="f1", repo_id="r1", path="/repo/main.py", language="python")
+        for sid, name in (("s1", "entry"), ("s2", "left"), ("s3", "mid"), ("s4", "deep"), ("s5", "tail")):
+            _row(conn, "symbols", id=sid, file_id="f1", name=name, qualified_name=f"m.{name}", kind="function", line_start=1, line_end=10)
+        for eid, src, tgt, name, line in (
+            ("e1", "s1", "s2", "left", 5), ("e2", "s1", "s3", "mid", 6),
+            ("e3", "s2", "s3", "mid", 5), ("e4", "s3", "s4", "deep", 5), ("e5", "s4", "s5", "tail", 5),
+        ):
+            _row(conn, "edges", id=eid, source_id=src, target_id=tgt, target_name=name, kind="call", line=line, column=0, resolution="exact")
+        conn.commit()
+        result = trace_flow(conn, "entry", max_depth=3)
+        nodes = {n["symbol"]: (n["depth"], n["parent"]) for n in result["chain"]}
+        assert nodes["mid"] == (1, "entry")
+        assert nodes["deep"] == (2, "mid")
+        assert nodes["tail"] == (3, "deep")
+        assert [b["symbol"] for b in result["branches"]] == ["entry"]
+
     def test_no_outgoing_calls(self, fresh_db):
         """An entry with no callees returns just itself."""
         conn = fresh_db
