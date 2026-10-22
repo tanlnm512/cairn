@@ -366,30 +366,50 @@ fn trace_flow_rewalks_a_node_from_its_shortest_route() {
         INSERT INTO repos VALUES ('r', 'r', '/ws/r', 'python', NULL, NULL);
         INSERT INTO files VALUES ('f', 'r', 'main.py', 'python', NULL, 10, NULL);
         INSERT INTO symbols VALUES
-            ('s1', 'f', 'entry', 'm.entry', 'function', 1, 10, NULL, NULL, NULL, NULL),
-            ('s2', 'f', 'left', 'm.left', 'function', 1, 10, NULL, NULL, NULL, NULL),
-            ('s3', 'f', 'mid', 'm.mid', 'function', 1, 10, NULL, NULL, NULL, NULL),
-            ('s4', 'f', 'deep', 'm.deep', 'function', 1, 10, NULL, NULL, NULL, NULL),
-            ('s5', 'f', 'tail', 'm.tail', 'function', 1, 10, NULL, NULL, NULL, NULL);
+            ('entry', 'f', 'entry', 'm.entry', 'function', 1, 10, NULL, NULL, NULL, NULL),
+            ('left', 'f', 'left', 'm.left', 'function', 1, 10, NULL, NULL, NULL, NULL),
+            ('mid', 'f', 'mid', 'm.mid', 'function', 1, 10, NULL, NULL, NULL, NULL),
+            ('deep', 'f', 'deep', 'm.deep', 'function', 1, 10, NULL, NULL, NULL, NULL),
+            ('tail', 'f', 'tail', 'm.tail', 'function', 1, 10, NULL, NULL, NULL, NULL),
+            ('end', 'f', 'end', 'm.end', 'function', 1, 10, NULL, NULL, NULL, NULL),
+            ('last', 'f', 'last', 'm.last', 'function', 1, 10, NULL, NULL, NULL, NULL),
+            ('other', 'f', 'other', 'm.other', 'function', 1, 10, NULL, NULL, NULL, NULL);
         INSERT INTO edges VALUES
-            ('e1', 's1', 's2', 'left', 'call', 5, 0, 'exact'),
-            ('e2', 's1', 's3', 'mid', 'call', 6, 0, 'exact'),
-            ('e3', 's2', 's3', 'mid', 'call', 5, 0, 'exact'),
-            ('e4', 's3', 's4', 'deep', 'call', 5, 0, 'exact'),
-            ('e5', 's4', 's5', 'tail', 'call', 5, 0, 'exact');
+            ('e0', 'entry', 'left', 'left', 'call', 5, 0, 'exact'),
+            ('e1', 'entry', 'mid', 'mid', 'call', 6, 0, 'exact'),
+            ('e2', 'left', 'mid', 'mid', 'call', 5, 0, 'exact'),
+            ('e3', 'mid', 'deep', 'deep', 'call', 5, 0, 'exact'),
+            ('e4', 'mid', 'other', 'other', 'call', 6, 0, 'exact'),
+            ('e5', 'deep', 'tail', 'tail', 'call', 5, 0, 'exact'),
+            ('e6', 'deep', 'mid', 'mid', 'call', 6, 0, 'exact'),
+            ('e7', 'tail', 'end', 'end', 'call', 5, 0, 'exact'),
+            ('e8', 'end', 'last', 'last', 'call', 5, 0, 'exact');
         "#,
     )
     .expect("fixture rows");
-    let flow = crate::graph::trace_flow(&conn, "entry", 3);
-    let node = |name: &str| {
-        flow.chain
-            .iter()
-            .find(|n| n.symbol == name)
-            .map(|n| (n.depth, n.parent.clone().unwrap_or_default()))
-    };
-    assert_eq!(node("mid"), Some((1, "entry".to_string())));
-    assert_eq!(node("deep"), Some((2, "mid".to_string())));
-    assert_eq!(node("tail"), Some((3, "deep".to_string())));
+    let flow = crate::graph::trace_flow(&conn, "entry", 5);
+    let nodes: Vec<(String, i64, String)> = ["mid", "deep", "tail", "end", "last", "other"]
+        .iter()
+        .filter_map(|name| flow.chain.iter().find(|n| n.symbol == *name))
+        .map(|n| {
+            (
+                n.symbol.clone(),
+                n.depth,
+                n.parent.clone().unwrap_or_default(),
+            )
+        })
+        .collect();
+    let expected = [
+        ("mid", 1, "entry"),
+        ("deep", 2, "mid"),
+        ("tail", 3, "deep"),
+        ("end", 4, "tail"),
+        ("last", 5, "end"),
+        ("other", 2, "mid"),
+    ]
+    .map(|(s, d, p)| (s.to_string(), d, p.to_string()));
+    assert_eq!(nodes, expected);
+    assert_eq!(flow.cycles, vec![("mid".to_string(), 3)]);
     let branch_owners: Vec<&str> = flow.branches.iter().map(|(s, _)| s.as_str()).collect();
-    assert_eq!(branch_owners, vec!["entry"]);
+    assert_eq!(branch_owners, vec!["deep", "mid", "entry"]);
 }

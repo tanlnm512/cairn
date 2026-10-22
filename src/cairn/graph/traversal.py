@@ -313,7 +313,7 @@ def trace_flow(
     branches: list[dict] = []
     leaves: list[str] = []
     cycles: list[dict] = []
-    cycles_seen: set[str] = set()
+    cycle_at: dict[str, dict] = {}  # id -> its cycle entry, kept at the shallowest re-entry
     branched: set[str] = set()
     truncated = False
     # Per-call lookup memos keyed by node id ("name:<n>" for unresolved
@@ -356,9 +356,11 @@ def trace_flow(
         if truncated or depth >= max_depth:
             return
         if sym_id in on_path:
-            if sym_id not in cycles_seen:
-                cycles_seen.add(sym_id)
-                cycles.append({"symbol": sym_name, "depth": depth})
+            if sym_id not in cycle_at:
+                cycle_at[sym_id] = {"symbol": sym_name, "depth": depth}
+                cycles.append(cycle_at[sym_id])
+            else:
+                cycle_at[sym_id]["depth"] = min(cycle_at[sym_id]["depth"], depth)
             return
 
         on_path.add(sym_id)

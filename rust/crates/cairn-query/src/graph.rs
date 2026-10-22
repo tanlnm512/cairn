@@ -795,7 +795,8 @@ mod trace {
         branches: Vec<(String, Vec<String>)>,
         leaves: Vec<String>,
         cycles: Vec<(String, i64)>,
-        cycles_seen: HashSet<String>,
+        /// Index into `cycles` per id, kept at the shallowest re-entry.
+        cycle_at: HashMap<String, usize>,
         branched: HashSet<String>,
         truncated: bool,
         callees_memo: HashMap<String, Vec<CalleeRow>>,
@@ -836,8 +837,12 @@ mod trace {
                 return;
             }
             if self.on_path.contains(sym_id) {
-                if self.cycles_seen.insert(sym_id.to_string()) {
-                    self.cycles.push((sym_name.to_string(), depth));
+                match self.cycle_at.get(sym_id) {
+                    Some(&i) => self.cycles[i].1 = self.cycles[i].1.min(depth),
+                    None => {
+                        self.cycle_at.insert(sym_id.to_string(), self.cycles.len());
+                        self.cycles.push((sym_name.to_string(), depth));
+                    }
                 }
                 return;
             }
@@ -944,7 +949,7 @@ mod trace {
             branches: Vec::new(),
             leaves: Vec::new(),
             cycles: Vec::new(),
-            cycles_seen: HashSet::new(),
+            cycle_at: HashMap::new(),
             branched: HashSet::new(),
             truncated: false,
             callees_memo: HashMap::new(),
