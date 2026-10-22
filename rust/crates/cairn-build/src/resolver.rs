@@ -272,22 +272,22 @@ pub fn build_ancestor_index(
     let mut rows: Vec<(Option<String>, Option<String>)> = match repo_id {
         Some(repo) => {
             let mut stmt = conn.prepare(
-                "SELECT src.name AS child, COALESCE(e.target_name, e.ref_name) AS parent
+                "SELECT src.name AS child, COALESCE(e.ref_name, e.target_name) AS parent
                  FROM edges e JOIN symbols src ON e.source_id = src.id
                  JOIN files f ON src.file_id = f.id
                  WHERE f.repo_id = ?
                    AND e.kind IN ('extends', 'implements', 'embeds')
-                   AND COALESCE(e.target_name, e.ref_name) IS NOT NULL",
+                   AND COALESCE(e.ref_name, e.target_name) IS NOT NULL",
             )?;
             stmt.query_map([repo], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<Vec<_>>>()?
         }
         None => {
             let mut stmt = conn.prepare(
-                "SELECT src.name AS child, COALESCE(e.target_name, e.ref_name) AS parent
+                "SELECT src.name AS child, COALESCE(e.ref_name, e.target_name) AS parent
                  FROM edges e JOIN symbols src ON e.source_id = src.id
                  WHERE e.kind IN ('extends', 'implements', 'embeds')
-                   AND COALESCE(e.target_name, e.ref_name) IS NOT NULL",
+                   AND COALESCE(e.ref_name, e.target_name) IS NOT NULL",
             )?;
             stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<Vec<_>>>()?

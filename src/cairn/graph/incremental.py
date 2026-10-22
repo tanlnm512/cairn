@@ -486,13 +486,18 @@ def _capture_derived_prestate(
         ):
             repair_edge_ids.add(r[0])
             repair_sources.add(r[1])
-    for chunk in _chunked(old_names):
-        ph = ",".join("?" for _ in chunk)
-        for r in cur.execute(
-            f"SELECT id, source_id FROM edges WHERE target_name IN ({ph})", chunk
-        ):
-            repair_edge_ids.add(r[0])
-            repair_sources.add(r[1])
+    repair_old_targets: set[str] = set()
+    for column in ("target_name", "ref_name"):
+        for chunk in _chunked(old_names):
+            ph = ",".join("?" for _ in chunk)
+            for r in cur.execute(
+                f"SELECT id, source_id, target_id FROM edges WHERE {column} IN ({ph})",
+                chunk,
+            ):
+                repair_edge_ids.add(r[0])
+                repair_sources.add(r[1])
+                if r[2]:
+                    repair_old_targets.add(r[2])
 
     ancestor_targets = old_ids | repair_sources
     ancestor_ids: set[str] = set()
@@ -506,7 +511,7 @@ def _capture_derived_prestate(
             )
         )
 
-    old_targets: set[str] = set()
+    old_targets: set[str] = set(repair_old_targets)
     for chunk in _chunked(old_ids):
         ph = ",".join("?" for _ in chunk)
         old_targets.update(
@@ -613,15 +618,16 @@ def _maintain_derived_indexes(
     # Sources of edges pointing (by bare name) at names this edit introduced:
     # candidates for resolution flips and Case-2 uniqueness flips.
     name_repair_sources: set[str] = set()
-    for chunk in _chunked(new_names - pre["old_names"]):
-        ph = ",".join("?" for _ in chunk)
-        name_repair_sources.update(
-            r[0]
-            for r in cur.execute(
-                f"SELECT DISTINCT source_id FROM edges WHERE target_name IN ({ph})",
-                chunk,
+    for column in ("target_name", "ref_name"):
+        for chunk in _chunked(new_names - pre["old_names"]):
+            ph = ",".join("?" for _ in chunk)
+            name_repair_sources.update(
+                r[0]
+                for r in cur.execute(
+                    f"SELECT DISTINCT source_id FROM edges WHERE {column} IN ({ph})",
+                    chunk,
+                )
             )
-        )
 
     changed_sources = pre["old_ids"] | pre["repair_sources"] | name_repair_sources
     # Ancestors of the post-captured sources, read from the pre-edit closure

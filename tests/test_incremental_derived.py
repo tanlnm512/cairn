@@ -481,9 +481,9 @@ def test_symbol_added_to_existing_file_parity(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-# Two repos; every edge below resolves exact in a fresh build through a tier
-# that needs a stored signal: receiver dispatch, ancestor walk, call arity,
-# the global tier from another repo, or a unique namesake.
+# Two repos; edges resolve through tiers that need a stored signal: receiver
+# dispatch, ancestor walk (also through an aliased base), call arity, the
+# global tier from another repo, or a unique namesake.
 _RESOLVER_SOURCES: dict[str, str] = {
     "one/models.py": (
         "class A:\n    def run(self):\n        return 1\n\n\n"
@@ -498,6 +498,12 @@ _RESOLVER_SOURCES: dict[str, str] = {
     ),
     "one/util.py": "def helper():\n    return 0\n",
     "one/user.py": "def use():\n    return shared_fn()\n",
+    "one/shapes.py": (
+        "class Base:\n    def spin(self):\n        return 1\n\n\n"
+        "class Other:\n    def spin(self):\n        return 2\n"
+    ),
+    "one/child2.py": "from shapes import Base as BB\n\n\nclass D(BB):\n    pass\n",
+    "one/main2.py": "def go2():\n    d = D()\n    return d.spin()\n",
     "two/lib.py": "def shared_fn():\n    return 1\n",
 }
 
@@ -529,12 +535,17 @@ def _edge_rows(db_path: str) -> list[tuple]:
         ("one/main.py", _RESOLVER_SOURCES["one/main.py"] + "\n# tweak\n"),
         ("one/util2.py", "def helper():\n    return 9\n"),
         ("two/lib.py", _RESOLVER_SOURCES["two/lib.py"] + "\n# tweak\n"),
+        ("one/lib2.py", "def f(a):\n    return a\n"),
+        ("one/shapes.py", _RESOLVER_SOURCES["one/shapes.py"] + "\n# tweak\n"),
     ],
-    ids=["receiver", "arity", "ancestor", "new-namesake", "cross-repo"],
+    ids=[
+        "receiver", "arity", "ancestor", "new-namesake", "cross-repo",
+        "arity-flip", "aliased-base",
+    ],
 )
 def test_incremental_edges_match_fresh_build(tmp_path, rel, text):
     """One edit through incremental_update leaves every edge's target and
-    resolution label equal to a fresh build of the final tree."""
+    resolution label, and the transitive closure, equal to a fresh build."""
     ws = tmp_path / "ws"
     for repo in ("one", "two"):
         (ws / repo / ".git").mkdir(parents=True)
@@ -542,15 +553,21 @@ def test_incremental_edges_match_fresh_build(tmp_path, rel, text):
     for name, src in _RESOLVER_SOURCES.items():
         _write(ws / name, src, tick)
     db = str(tmp_path / "main.kg")
-    build_graph(workspace=str(ws), db_path=db)
+    _build_full(ws, db)
 
     _write(ws / rel, text, tick + 2)
     res = _run_update(ws, db, rel)
     assert res["files_reindexed"] >= 1, res
 
     fresh_db = str(tmp_path / "fresh.kg")
-    build_graph(workspace=str(ws), db_path=fresh_db)
+    _build_full(ws, fresh_db)
     assert _edge_rows(db) == _edge_rows(fresh_db)
+    maintained, fresh = get_db(db), get_db(fresh_db)
+    try:
+        assert _closure_rows(maintained) == _closure_rows(fresh)
+    finally:
+        maintained.close()
+        fresh.close()
 
 
 # ---------------------------------------------------------------------------

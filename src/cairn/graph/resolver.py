@@ -105,20 +105,20 @@ def build_ancestor_index(
     anc: Dict[str, List[str]] = {}
     if repo_id is not None:
         rows = conn.execute(
-            """SELECT src.name AS child, COALESCE(e.target_name, e.ref_name) AS parent
+            """SELECT src.name AS child, COALESCE(e.ref_name, e.target_name) AS parent
                FROM edges e JOIN symbols src ON e.source_id = src.id
                JOIN files f ON src.file_id = f.id
                WHERE f.repo_id = ?
                  AND e.kind IN ('extends', 'implements', 'embeds')
-                 AND COALESCE(e.target_name, e.ref_name) IS NOT NULL""",
+                 AND COALESCE(e.ref_name, e.target_name) IS NOT NULL""",
             (repo_id,),
         ).fetchall()
     else:
         rows = conn.execute(
-            """SELECT src.name AS child, COALESCE(e.target_name, e.ref_name) AS parent
+            """SELECT src.name AS child, COALESCE(e.ref_name, e.target_name) AS parent
                FROM edges e JOIN symbols src ON e.source_id = src.id
                WHERE e.kind IN ('extends', 'implements', 'embeds')
-                 AND COALESCE(e.target_name, e.ref_name) IS NOT NULL"""
+                 AND COALESCE(e.ref_name, e.target_name) IS NOT NULL"""
         ).fetchall()
     for r in rows:
         if r["child"] and r["parent"]:

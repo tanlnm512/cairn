@@ -474,6 +474,18 @@ fn seed_resolver_signals(dir: &Path) {
         ("alpha/helpers.py", "def helper():\n    return 0\n"),
         ("alpha/user.py", "def use():\n    return shared_fn()\n"),
         ("beta/shared.py", "def shared_fn():\n    return 1\n"),
+        (
+            "alpha/shapes.py",
+            "class Base:\n    def spin(self):\n        return 1\n\n\nclass Other:\n    def spin(self):\n        return 2\n",
+        ),
+        (
+            "alpha/child2.py",
+            "from shapes import Base as BB\n\n\nclass D(BB):\n    pass\n",
+        ),
+        (
+            "alpha/main2.py",
+            "def go2():\n    d = D()\n    return d.spin()\n",
+        ),
     ] {
         write(dir, rel, src);
     }
@@ -493,6 +505,7 @@ fn graft_keeps_signal_resolved_edges_equal_to_rebuild() {
         ("sig-arity", "alpha/lib1.py"),
         ("sig-ancestor", "alpha/main.py"),
         ("sig-cross-repo", "beta/shared.py"),
+        ("sig-aliased-base", "alpha/shapes.py"),
     ] {
         graft_and_compare_on(tag, seed_resolver_signals, append_tweak(rel), &[rel]);
     }
