@@ -617,8 +617,8 @@ fn backup_to_bak(path: &Path, reason: &str, res: &mut InstallResult, dry_run: bo
         true
     } else {
         res.notes.push(format!(
-            "refusing to overwrite {reason} config {}: could not back it up. \
-             Fix or remove the file and re-run.",
+            "install failed: refusing to overwrite {reason} config {}: could not back it up; \
+             fix or remove the file and re-run. Other clients continued.",
             path.display()
         ));
         false
@@ -638,13 +638,13 @@ fn merge_json_file(
     res: &mut InstallResult,
     config_key: &str,
     dry_run: bool,
-) {
+) -> bool {
     let mut existing = Map::new();
     if path.exists() {
         match load_json_or_none(path) {
             None => {
                 if !backup_to_bak(path, "malformed", res, dry_run) {
-                    return;
+                    return false;
                 }
             }
             Some(loaded @ Value::Object(_)) => {
@@ -652,13 +652,13 @@ fn merge_json_file(
                 if merge_keys_non_object(obj, merger.as_object().unwrap_or(obj))
                     && !backup_to_bak(path, "non-object", res, dry_run)
                 {
-                    return;
+                    return false;
                 }
                 existing = obj.clone();
             }
             Some(_) => {
                 if !backup_to_bak(path, "non-object", res, dry_run) {
-                    return;
+                    return false;
                 }
             }
         }
@@ -667,13 +667,13 @@ fn merge_json_file(
     let merger_obj = merger.as_object().cloned().unwrap_or_default();
     if already_installed(&existing, &merger_obj, config_key) && !force {
         res.add(path, true);
-        return;
+        return true;
     }
 
     if dry_run {
         res.written
             .push(format!("would merge into {}", path.display()));
-        return;
+        return true;
     }
 
     let merged = deep_merge(existing, merger_obj, config_key);
@@ -681,6 +681,7 @@ fn merge_json_file(
     if atomic_write_text(path, &body).is_ok() {
         res.add(path, false);
     }
+    true
 }
 
 fn note_mcp_merge(res: &mut InstallResult, path: &Path, detail: &str) {
@@ -1613,14 +1614,16 @@ fn install_claude(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
     };
 
     if scope == "workspace" {
-        merge_json_file(
+        if !merge_json_file(
             &base.join(".mcp.json"),
             &mcp_config_json(),
             force,
             &mut res,
             "mcpServers",
             dry_run,
-        );
+        ) {
+            return res;
+        }
     } else if dry_run {
         res.notes.push(
             "[dry-run] Would register MCP globally via `claude mcp add --scope user`.".into(),
@@ -1711,14 +1714,16 @@ fn install_claude(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
         &mut res,
         dry_run,
     );
-    merge_json_file(
+    if !merge_json_file(
         &base.join(".claude").join("settings.json"),
         &json!({ "hooks": claude_hooks_block() }),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
 
     if scope == "workspace" {
         let claude_md = workspace.join("CLAUDE.md");
@@ -1817,14 +1822,16 @@ fn install_cursor(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
     } else {
         workspace.to_path_buf()
     };
-    merge_json_file(
+    if !merge_json_file(
         &base.join(".cursor").join("mcp.json"),
         &mcp_config_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     write_file(
         &base.join(".cursor").join("rules").join("cairn.mdc"),
         &template("cursor/cairn.mdc"),
@@ -1852,14 +1859,16 @@ fn install_cursor(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
         &mut res,
         dry_run,
     );
-    merge_json_file(
+    if !merge_json_file(
         &base.join(".cursor").join("hooks.json"),
         &cursor_hooks_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     res.notes
         .push("Restart Cursor (or reload the window) to load the new MCP server.".into());
     res
@@ -1947,14 +1956,16 @@ fn install_droid(workspace: &Path, force: bool, dry_run: bool, _scope: &str) -> 
                     .push(format!("WARNING: `droid mcp add` failed ({e}).")),
             }
             if !registered {
-                merge_json_file(
+                if !merge_json_file(
                     &workspace.join(".factory").join("mcp.json"),
                     &mcp_config_json(),
                     force,
                     &mut res,
                     "mcpServers",
                     false,
-                );
+                ) {
+                    return res;
+                }
                 res.notes.push(
                     "Wrote .factory/mcp.json so the registration is present on \
                      the next droid run."
@@ -1963,14 +1974,16 @@ fn install_droid(workspace: &Path, force: bool, dry_run: bool, _scope: &str) -> 
             }
         }
     } else {
-        merge_json_file(
+        if !merge_json_file(
             &workspace.join(".factory").join("mcp.json"),
             &mcp_config_json(),
             force,
             &mut res,
             "mcpServers",
             dry_run,
-        );
+        ) {
+            return res;
+        }
         res.notes.push(
             "droid CLI not found; wrote .factory/mcp.json (registers on next \
              droid run)."
@@ -1995,14 +2008,16 @@ fn install_zcode(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> I
     } else {
         base.join(".zcode").join("config.json")
     };
-    merge_json_file(
+    if !merge_json_file(
         &mcp_path,
         &zcode_mcp_config_json(),
         force,
         &mut res,
         "zcode",
         dry_run,
-    );
+    ) {
+        return res;
+    }
 
     write_tree(
         &base.join(".zcode").join("skills").join("cairn"),
@@ -2055,14 +2070,16 @@ fn install_zcode(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> I
 fn install_agy(_workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("agy");
     let cfg = agy_config_path();
-    merge_json_file(
+    if !merge_json_file(
         &cfg,
         &agy_mcp_config_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     res.notes
         .push(format!("Global MCP config: {}", cfg.display()));
     if scope == "workspace" {
@@ -2091,14 +2108,16 @@ fn opencode_config_path(workspace: &Path, scope: &str) -> PathBuf {
 fn install_opencode(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("opencode");
     let p = opencode_config_path(workspace, scope);
-    merge_json_file(
+    if !merge_json_file(
         &p,
         &opencode_format_mcp_config_json(),
         force,
         &mut res,
         "opencode",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     note_mcp_merge(&mut res, &p, "under the `mcp` key (opencode's schema).");
     res.notes.push(
         "Skill (golden rules + tool-behaviors) reaches opencode via the \
@@ -2119,14 +2138,16 @@ fn kilo_config_path(workspace: &Path, scope: &str) -> PathBuf {
 fn install_kilo(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("kilo");
     let p = kilo_config_path(workspace, scope);
-    merge_json_file(
+    if !merge_json_file(
         &p,
         &opencode_format_mcp_config_json(),
         force,
         &mut res,
         "kilo",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     note_mcp_merge(&mut res, &p, "under the `mcp` key (kilo's schema).");
     res.notes.push(
         "Skill (golden rules + tool-behaviors) may reach kilo via the \
@@ -2155,14 +2176,16 @@ fn omp_agents_dir(workspace: &Path, scope: &str) -> PathBuf {
 fn install_omp(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("omp");
     let mcp_path = omp_mcp_path(workspace, scope);
-    merge_json_file(
+    if !merge_json_file(
         &mcp_path,
         &mcp_config_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     note_mcp_merge(&mut res, &mcp_path, "under the `mcpServers` key.");
     let agents_dir = omp_agents_dir(workspace, scope);
     write_file(
@@ -3088,28 +3111,17 @@ mod tests {
     }
 
     #[test]
-    fn merge_json_file_refuses_to_write_when_backup_fails() {
+    fn install_aborts_the_client_when_the_config_backup_fails() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = tmp_dir("backup-fails");
-        let path = dir.join("mcp.json");
+        let path = dir.join("opencode.json");
         std::fs::write(&path, b"{not json").expect("seed");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");
-        let mut res = InstallResult::new("claude");
-        merge_json_file(
-            &path,
-            &mcp_config_json(),
-            false,
-            &mut res,
-            "mcpServers",
-            false,
-        );
+        let res = install_opencode(&dir, false, false, "workspace");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
         assert_eq!(std::fs::read(&path).expect("bytes"), b"{not json");
-        assert!(
-            res.notes
-                .iter()
-                .any(|n| n.contains("refusing to overwrite"))
-        );
+        assert_eq!(res.notes.len(), 1, "{:?}", res.notes);
+        assert!(res.notes[0].starts_with("install failed: refusing to overwrite"));
         assert!(res.written.is_empty() && res.skipped.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
