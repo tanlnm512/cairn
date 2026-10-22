@@ -323,6 +323,17 @@ def _load_config() -> dict:
     return values
 
 
+def _read_config_object() -> dict | None:
+    """Full CONFIG_FILE object ({} when absent); None when unreadable or not a JSON object."""
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def get_config_value(key: str, default=None):
     """Value for ``key`` from CONFIG_FILE, or ``default`` when unset.
 
@@ -341,15 +352,17 @@ def get_config_value(key: str, default=None):
 
 
 def set_config_values(values: dict) -> bool:
-    """Merge ``values`` into CONFIG_FILE atomically (tmp file + os.replace).
-
-    Creates the parent directory. Returns True on success; on OSError logs
-    one warning, leaves the previous file intact with no tmp file left
-    behind, and returns False.
-    """
+    """Merge ``values`` into CONFIG_FILE atomically; False (file untouched) on an unparseable file or OSError."""
     try:
         CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        merged = {**_load_config(), **values}
+        existing = _read_config_object()
+        if existing is None:
+            _logger.warning(
+                "%s is not a readable JSON object; refusing to overwrite it",
+                CONFIG_FILE,
+            )
+            return False
+        merged = {**existing, **values}
         fd, tmp = tempfile.mkstemp(
             dir=str(CONFIG_FILE.parent), prefix=".config-", suffix=".tmp"
         )

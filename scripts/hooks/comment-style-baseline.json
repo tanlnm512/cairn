@@ -1011,13 +1011,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:a9768f42816ceff9467dfad5ab74ea1aa1f4b7c24d80b512c2bb3df97e122faa",
-      "paths": [
-        "src/cairn/paths.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:ab7251436951b0d3379cd2385ea8b3e78edaa6bb1bbd2e8e49fbbaf5d3543736",
       "paths": [
         "src/cairn/bench/datasource.py"
