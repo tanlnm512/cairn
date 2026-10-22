@@ -232,3 +232,104 @@ campaign after any phase with a shippable product.
 3. P0-3 build both parity harnesses, capture initial goldens.
 4. P0-4 first D-### dependency batch.
 5. P0-5 rmcp + search_symbols spike.
+
+## 15. Phase 4 — Leftovers to Python-engine removal
+
+Supersedes §14. Re-validated against `main`: the Rust daemon and build engine
+have landed, but the PyPI `cairn` entry point is still the Python CLI. The
+bundled binary only replaces the daemon, about half the top-level commands are
+`not_ported` stubs in `cairn-cli`, and the parity oracles (`parity.py`,
+`g2_check.sh`, `cli_golden.py`, `wheel_smoke.sh`) only run by hand. Phase 4
+closes that gap. Workstreams run in order and each ends at a gate.
+
+### 4a — Parity gates in CI
+
+- **4a-1** Add a CI job that runs `parity.py` replay over `rust/golden/stores/`,
+  `g2_check.sh`, `cli_golden.py` and `wheel_smoke.sh`: nightly and on manual
+  dispatch, plus per-PR on `rust/**` for the cheap subset.
+- **4a-2** Extend `g2_check.sh` with a rebuild-into-an-existing-store leg and a
+  `build --staging` leg. Today the oracle only builds into fresh stores.
+
+**G4a:** all four oracles green on `main` in CI.
+
+### 4b — Engine correctness
+
+Each fix is failing-test-first (C-02). Fix Rust first. Fix Python too while it
+is still a shipped fallback.
+
+| ID | Defect | Where |
+|----|--------|-------|
+| 4b-1 | `build --staging` never renames `{db}.tmp` over the store | `cairn-cli` `cmds_core.rs` build |
+| 4b-2 | A non-staging rebuild restarts `IdGen` at 0 without clearing rows, so ids and `UNIQUE(repo_id,path)` collide | `cairn-build` `builder.rs` `build_graph` |
+| 4b-3 | The dataflow PK migration marker is recorded without rebuilding the table | `cairn-store` `schema.rs` `apply_schema` |
+| 4b-4 | Call and contains edges are attributed to the first same-named symbol in the file | `cairn-build` `builder.rs` edge insert |
+| 4b-5 | The default incremental update lists only uncommitted changes (`git diff HEAD`), and git paths are read without `-z` | `cairn-build` `incremental.rs` |
+| 4b-6 | Repair drops receiver type and arity; it is repo-scoped while the nulling is global; resolved edges lose `target_name`, so repair and the ancestor index miss them | `resolver.rs`, `resolver.py`, `incremental.*` |
+| 4b-7 | The import-aware candidate score adds the match offset | `resolver.rs`, `resolver.py` |
+| 4b-8 | `trace_flow` keeps a node's first-visit depth, so shorter paths are pruned | `cairn-query` `graph.rs`, `traversal.py` |
+| 4b-9 | A healthz 200 carrying `unhealthy` counts as live; the daemon's writable connection has no `busy_timeout` | `cairn-daemon` `lifecycle.rs`, `tools.rs` |
+| 4b-10 | User config is overwritten when its backup or parse fails | `agent_install.rs`, `dashboard/settings.rs`, `paths.py` |
+
+**G4b:** every fix lands with its regression test, and G4a stays green.
+
+### 4c — Port the remaining CLI surface
+
+Ordered by who depends on each command. Each command lands with a
+`cli_golden.py` case (C-4) before its stub arm is removed.
+
+- **4c-1** The agent workflow in `AGENTS.md`:
+  - `task list/show/claim/complete/drop`
+  - `wiki generate/status/retry/export/enrich`, including the LLM task queue
+    and the deterministic critic. The critic must also check `## Notes`, or
+    promote the spliced body.
+  - `hooks install/uninstall`
+- **4c-2** Lifecycle and ops: `status`, `version`, `upgrade`, `uninstall`,
+  `sync`, `metrics`, `report`, `download-reranker`.
+- **4c-3** Graph analytics: `semantic`, `embed`, `grep`, `map`, `blast`,
+  `rationale`, `dataflow build/lookup`, `viz`. `communities` (Louvain) needs a
+  §9 D-### first: port it or keep it as a sidecar.
+- **4c-4** Knowledge layer:
+  - `knowledge ingest/rebuild/embed`. Document conversion stays the `[ingest]`
+    sidecar per §9.
+  - `workflow sync`, tarball `knowledge export`, `validate`, `validate-paths`,
+    `verify`, `skill generate`
+  - `memory reflect/evolve/capture/embed/batch-critic/consolidate`
+  - `compass generate/gaps/flow/flow-gaps`
+- **4c-5** `ask`, `context`, `review`, currently declared PyPI-only: port them
+  or record a ruling.
+- **4c-6** Dev-only `prs`, `bench`, `eval`: port them or record a ruling that
+  they move to `scripts/`.
+- **4c-7** SCIP overlay hook in the Rust builder.
+
+**G4c:** no `not_ported` arm left in `cairn-cli` unless it carries a recorded
+ruling, and `cli_golden.py` green.
+
+### 4d — Entry-point flip
+
+- **4d-1** Windows D-###: either add a Windows target to `release-rust.yml` and
+  bundle it in the Windows wheels, or keep the Python fallback on Windows under
+  a recorded ruling.
+- **4d-2** The PyPI console script execs the bundled binary for every command
+  (D-011 exec shim). The Python CLI runs only when no binary is present.
+- **4d-3** Distribution configuration: Homebrew tap repo and token, crates.io
+  publish.
+- **4d-4** Record the open gate measurements: daemon RSS ≤ 60% of Python,
+  per-tool p95 no worse, closure ≥ 5× on the blowup case. Finalize the
+  provisional pins D-007–D-010.
+
+**G4d:** `wheel_smoke.sh` green on every wheel platform, with `cairn <cmd>`
+resolving to the binary.
+
+### 4e — Python-engine removal
+
+- **4e-1** Freeze the oracles: regenerate the goldens from Python one last
+  time, then drop the Python side of the differential scripts. From here the
+  Rust goldens are the spec of record (§8).
+- **4e-2** Delete the Python engine modules under `src/cairn`. Keep only the
+  wheel shim and the §9 sidecars. Port whatever pytest coverage is worth
+  keeping into Rust tests first.
+- **4e-3** Docs sweep (README, `docs/*`, `AGENTS.md` CLI fallback); archive
+  this spec.
+
+**G4e:** the PyPI wheel holds only the shim, the binary and the sidecars;
+Rust CI and `wheel_smoke.sh` green.

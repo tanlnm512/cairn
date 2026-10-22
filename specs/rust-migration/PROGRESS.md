@@ -87,7 +87,7 @@ lints in cairn-cli test code are fixed in 07cb16e).
 7. **Provisional pins to finalize** — D-007 (notify), D-008 (prost), D-009 (minijinja), D-010 (yaml-rust2 batch) are marked provisional in `decisions.md`.
 8. **Corpus parity residual** — fresh yarl/attrs builds intermittently swap boundary rows in `search_symbols`/`find_definition` cap slices (cross-build bm25 tie volatility, owned by the parity runner's sort-lines normalization ruling; replay over the pinned `rust/golden/stores/` bytes sidesteps it).
 9. **Archive `plan.md`** — the 3e archive step was deferred while workstreams still read the plan.
-10. **Python-engine removal** — the surface-gap porting (item 1) and the eventual removal of the Python engine stay open; the wheel wrapping itself landed (see Wheel wrapping).
+10. **Python-engine removal** — the surface-gap porting (item 1) and the eventual removal of the Python engine stay open; the wheel wrapping itself landed (see Wheel wrapping). Action plan for items 1-10: `plan.md` §15 (Phase 4).
 
 ## Re-verification
 
