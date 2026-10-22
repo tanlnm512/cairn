@@ -496,7 +496,7 @@ def capture_spike_blocks(client: gr.GoldenClient, captures: dict, db: Path,
 def attach_fixture(cap: dict, entry: dict, rules: list, meta: dict,
                    replay_store: str | None = None,
                    replay_workspace: str | None = None,
-                   old: dict | None = None, spike: list | None = None,
+                   spike: list | None = None,
                    store_raw_response: bool = False) -> None:
     """Attach the normalized fixture block (the recorder's fixture shape)."""
     sort_lines = bool(entry.get("sort_lines"))
@@ -521,8 +521,6 @@ def attach_fixture(cap: dict, entry: dict, rules: list, meta: dict,
         fixture["replay_store"] = replay_store
     if replay_workspace:
         fixture["replay_workspace"] = replay_workspace
-    if old and "cases" in old:
-        fixture["cases"] = old["cases"]
     if spike is not None:
         fixture["spike_queries"] = spike
     cap["fixture"] = fixture
@@ -566,8 +564,6 @@ def record(store: str, out_dir: Path, scratch: Path, cfg: dict) -> int:
     finally:
         daemon.stop()
     by_tool = entry_map(entries)
-    old_fixtures = {p.stem: json.loads(p.read_text(encoding="utf-8"))
-                    for p in out_dir.glob("*.json")} if out_dir.is_dir() else {}
     pinned_rel = (PINNED_STORES / store).relative_to(REPO_ROOT)
     replay_store = str(pinned_rel / DB_NAME)
     replay_workspace = str(pinned_rel / "corpus")
@@ -576,7 +572,6 @@ def record(store: str, out_dir: Path, scratch: Path, cfg: dict) -> int:
             cap, by_tool[tool], rules, meta,
             replay_store=replay_store,
             replay_workspace=replay_workspace,
-            old=old_fixtures.get(tool),
             spike=spikes.get(tool),
             store_raw_response=tool == "search_symbols",
         )

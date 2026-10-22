@@ -26,7 +26,6 @@ for _p in (str(REPO_ROOT / "src"), str(Path(__file__).resolve().parent)):
 import golden_record as gr
 
 FLOW_DIR = REPO_ROOT / "rust" / "golden" / "flow"
-MCP_DIR = REPO_ROOT / "rust" / "golden" / "mcp"
 CORPUS_DIR = FLOW_DIR / "corpus"
 STORE_PATH = FLOW_DIR / "flow-store.kg"
 FLOW_TOOLS = ("explore", "trace_flow", "cross_repo_deps", "visualize_graph")
@@ -458,9 +457,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _fixture_paths() -> dict[str, Path]:
-    paths = {f"{tool}": MCP_DIR / f"{tool}.json" for tool in FLOW_TOOLS}
-    paths["taint"] = FLOW_DIR / "taint.json"
-    return paths
+    # Never under rust/golden/mcp: parity --record rewrites that tree whole, so a shared path cannot survive --check.
+    return {tool: FLOW_DIR / f"{tool}.json"
+            for tool in (*FLOW_TOOLS, "taint")}
 
 
 FLOW_README = """# Flow-family parity fixtures
@@ -470,12 +469,10 @@ FLOW_README = """# Flow-family parity fixtures
   harness.
 - `flow-store.kg` — the store built from `corpus/` (closure index included,
   never embedded: explore stays lexical-only).
-- `taint.json` — `cairn taint --from file-read --to sql` expectation (the taint
-  surface is CLI-only, so it has no `rust/golden/mcp/` fixture).
-
-The matching MCP fixtures live in `../mcp/{explore,trace_flow,cross_repo_deps,
-visualize_graph}.json`; each carries its per-case captures in a `cases` array
-(the recorder's five-key compare scope ignores that key).
+- `{explore,trace_flow,cross_repo_deps,visualize_graph,taint}.json` — the
+  five tool fixtures, each carrying its per-case captures in a `cases` array.
+  They live here, not under `../mcp/`: `parity.py --record` rewrites that
+  tree whole, so the two harnesses must own disjoint fixture paths.
 
 Regenerate everything with `.venv/bin/python
 scripts/rust_migration/flow_golden.py`; verify byte-equality with `--check`.
