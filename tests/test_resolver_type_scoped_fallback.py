@@ -97,6 +97,20 @@ def test_single_segment_import_still_works():
     assert result[0][0] == "sid1"
 
 
+def test_match_offset_never_outscores_the_anchored_import_match():
+    """The contiguous window scores the import length only: a deeper qname
+    holding ``a.Foo`` at an offset ties the anchored match, never beats it."""
+    my_imports = ["a.Foo"]
+    cands = [
+        ("sid_anchored", "repoA", "file1", "a.Foo.run"),
+        ("sid_deep", "repoA", "file2", "x.y.a.Foo.run"),
+    ]
+
+    result = _import_aware_candidates("run", my_imports, cands)
+
+    assert sorted(c[0] for c in result) == ["sid_anchored", "sid_deep"]
+
+
 def test_last_segment_fallback_does_not_match_unrelated_import():
     """Last-segment fallback should not match unrelated imports.
 

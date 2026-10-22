@@ -443,7 +443,8 @@ def upgrade_ambiguous_edges(
             updated = conn.execute(
                 """
                 UPDATE edges
-                   SET target_id = ?, target_name = NULL, resolution = 'exact'
+                   SET target_id = ?, target_name = NULL, ref_name = NULL,
+                       resolution = 'exact'
                  WHERE id = ? AND resolution = 'ambiguous' AND target_id IS NULL
                 """,
                 (target_id, edge["id"]),

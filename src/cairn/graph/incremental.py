@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import List, Optional
 
 from ..paths import resolve_store as _resolve_store
-from ..utils.git import _run_git
 from . import builder
 from . import scanner as scanner_mod
 from .schema import get_db, note_contention, build_lock
@@ -43,7 +42,7 @@ def reindex_paths(
     # Group paths by repo for batched resolver re-run.
     repo_edges_by_file: dict[str, dict[str, list]] = {}
     # Deleted and recreated names seed incoming-edge repair.
-    repo_changed_target_names: dict[str, set[str]] = {}
+    changed_target_names: set[str] = set()
 
     for abs_path in paths:
         abs_path = str(abs_path)
@@ -130,7 +129,7 @@ def reindex_paths(
                     deleted += 1
                     # Deleted names still need resolver repair.
                     if deleted_names:
-                        repo_changed_target_names.setdefault(stored_repo, set()).update(deleted_names)
+                        changed_target_names.update(deleted_names)
                 # Also remove from pending_sync if tracking.
                 try:
                     conn.execute(
@@ -177,10 +176,8 @@ def reindex_paths(
                     logger.debug("pending_sync table missing", exc_info=True)
                 conn.execute("COMMIT")
                 deleted += 1
-                if file_id is not None and deleted_names:
-                    repo_changed_target_names.setdefault(
-                        stored_repo, set()
-                    ).update(deleted_names)
+                if file_id is not None:
+                    changed_target_names.update(deleted_names)
                 continue
 
             file_hash = file_sha256(Path(abs_path))
@@ -260,9 +257,7 @@ def reindex_paths(
                 else:
                     deferred_embeds += len(new_ids)
             # Repair only names whose global candidate count changed.
-            changed_names = set(deleted_names) | set(name_to_symbol_ids.keys())
-            if changed_names:
-                repo_changed_target_names.setdefault(stored_repo, set()).update(changed_names)
+            changed_target_names.update(deleted_names, name_to_symbol_ids.keys())
         except Exception:
             logger.debug("post-commit embed leg failed; deferring", exc_info=True)
             deferred_embeds += sum(
@@ -288,15 +283,13 @@ def reindex_paths(
     # Repair pass: re-resolve INCOMING edges from other files whose target was
     # a symbol that got deleted+recreated with a new id. Without this, precise
     # callers of an edited symbol silently drop after an incremental update.
-    for repo_name, names in repo_changed_target_names.items():
-        if not names:
-            continue
+    if changed_target_names:
         try:
             from . import resolver as resolver_mod
-            resolver_mod.repair_incoming_edges(conn, repo_name, sorted(names))
+            resolver_mod.repair_incoming_edges(conn, sorted(changed_target_names))
             conn.commit()
         except Exception as e:
-            errors.append(f"repair/{repo_name}: {e}")
+            errors.append(f"repair: {e}")
 
     # Imports-edge refresh: the reindexed files' module symbols and their
     # import rows changed, so recompute the repo's kind='imports' edges
@@ -338,10 +331,13 @@ def incremental_update(
             ]
         )
         all_paths: list[str] = []
+        detect_errors: list[str] = []
         for r in repos:
             repo_path = scanner_mod.resolve_repo_path(workspace, r)
-            changed = _changed_source_files(repo_path, conn=conn, diff_ref=diff_ref)
-            if not changed:
+            try:
+                changed = _changed_source_files(repo_path, conn=conn, diff_ref=diff_ref)
+            except RuntimeError as e:
+                detect_errors.append(f"detect/{r}: {e}")
                 continue
             for f in changed:
                 all_paths.append(str(repo_path / f))
@@ -391,7 +387,7 @@ def incremental_update(
         "repos_scanned": len(repos),
         "files_reindexed": result["reindexed"],
         "files_deleted": result["deleted"],
-        "errors": result["errors"] + scip_errors + derived_errors,
+        "errors": detect_errors + result["errors"] + scip_errors + derived_errors,
         "deferred_embeds": result["deferred_embeds"],
     }
 
@@ -490,13 +486,18 @@ def _capture_derived_prestate(
         ):
             repair_edge_ids.add(r[0])
             repair_sources.add(r[1])
-    for chunk in _chunked(old_names):
-        ph = ",".join("?" for _ in chunk)
-        for r in cur.execute(
-            f"SELECT id, source_id FROM edges WHERE target_name IN ({ph})", chunk
-        ):
-            repair_edge_ids.add(r[0])
-            repair_sources.add(r[1])
+    repair_old_targets: set[str] = set()
+    for column in ("target_name", "ref_name"):
+        for chunk in _chunked(old_names):
+            ph = ",".join("?" for _ in chunk)
+            for r in cur.execute(
+                f"SELECT id, source_id, target_id FROM edges WHERE {column} IN ({ph})",
+                chunk,
+            ):
+                repair_edge_ids.add(r[0])
+                repair_sources.add(r[1])
+                if r[2]:
+                    repair_old_targets.add(r[2])
 
     ancestor_targets = old_ids | repair_sources
     ancestor_ids: set[str] = set()
@@ -510,7 +511,7 @@ def _capture_derived_prestate(
             )
         )
 
-    old_targets: set[str] = set()
+    old_targets: set[str] = set(repair_old_targets)
     for chunk in _chunked(old_ids):
         ph = ",".join("?" for _ in chunk)
         old_targets.update(
@@ -617,15 +618,16 @@ def _maintain_derived_indexes(
     # Sources of edges pointing (by bare name) at names this edit introduced:
     # candidates for resolution flips and Case-2 uniqueness flips.
     name_repair_sources: set[str] = set()
-    for chunk in _chunked(new_names - pre["old_names"]):
-        ph = ",".join("?" for _ in chunk)
-        name_repair_sources.update(
-            r[0]
-            for r in cur.execute(
-                f"SELECT DISTINCT source_id FROM edges WHERE target_name IN ({ph})",
-                chunk,
+    for column in ("target_name", "ref_name"):
+        for chunk in _chunked(new_names - pre["old_names"]):
+            ph = ",".join("?" for _ in chunk)
+            name_repair_sources.update(
+                r[0]
+                for r in cur.execute(
+                    f"SELECT DISTINCT source_id FROM edges WHERE {column} IN ({ph})",
+                    chunk,
+                )
             )
-        )
 
     changed_sources = pre["old_ids"] | pre["repair_sources"] | name_repair_sources
     # Ancestors of the post-captured sources, read from the pre-edit closure
@@ -687,51 +689,51 @@ def _maintain_derived_indexes(
     return errors
 
 
-def _filter_source_paths(lines) -> List[str]:
-    """Keep non-blank lines whose suffix is a mapped source extension, deduped
-    in first-seen order."""
-    changed = []
-    for line in lines:
-        line = line.strip()
-        if (
-            line
-            and Path(line).suffix in scanner_mod.EXTENSION_MAP
-            and line not in changed
-        ):
-            changed.append(line)
+def _filter_source_paths(paths) -> List[str]:
+    """Keep non-empty paths with a mapped source extension, deduped in first-seen order."""
+    changed: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        if path and Path(path).suffix in scanner_mod.EXTENSION_MAP and path not in seen:
+            seen.add(path)
+            changed.append(path)
     return changed
 
 
-def _changed_source_files(repo_path: Path, conn=None, diff_ref: Optional[str] = None) -> List[str]:
-    """Return changed source paths using git or stat fallback."""
-    if diff_ref is not None:
-        out = _run_git(["diff", "--name-only", diff_ref], str(repo_path))
-        if out is None:
-            logger.warning(
-                "git diff failed for range %r in %s; reindexing nothing for it",
-                diff_ref, repo_path,
-            )
-            return []
-        return _filter_source_paths(out.splitlines())
+def _git_paths(args: list[str], repo_path: Path) -> list[str]:
+    """Run a NUL-separated git path listing; raise RuntimeError with git's stderr on failure."""
+    import subprocess
 
-    out = _run_git(["diff", "--name-only", "HEAD"], str(repo_path))
-    if out is not None:
-        # git ran (may still be empty if truly nothing changed). git diff never
-        # lists untracked files, so ask for those separately or newly created
-        # source files would never be indexed.
-        lines = list(out.splitlines())
-        untracked = _run_git(
-            ["ls-files", "--others", "--exclude-standard"], str(repo_path)
+    try:
+        out = subprocess.run(
+            ["git", *args], cwd=str(repo_path), capture_output=True, timeout=30,
         )
-        if untracked:
-            lines.extend(untracked.splitlines())
-        return _filter_source_paths(lines)
+    except (subprocess.SubprocessError, OSError) as e:
+        raise RuntimeError(f"git {' '.join(args)}: {e}") from e
+    if out.returncode != 0:
+        detail = os.fsdecode(out.stderr).strip() or f"exit {out.returncode}"
+        raise RuntimeError(f"git {' '.join(args)}: {detail}")
+    return [os.fsdecode(p) for p in out.stdout.split(b"\0") if p]
 
-    # git diff failed (no git, no HEAD, not a repo). Fall back to size/mtime
-    # comparison against the files table — the same signal `cairn sync` uses.
-    if conn is None:
-        return []
-    return _changed_via_stat(repo_path, conn)
+
+def _changed_source_files(repo_path: Path, conn=None, diff_ref: Optional[str] = None) -> List[str]:
+    """Return the ``diff_ref`` range's paths (RuntimeError on git failure), else worktree diff, untracked files, and files-table stat drift."""
+    if diff_ref is not None:
+        return _filter_source_paths(
+            _git_paths(["diff", "-z", "--name-only", diff_ref], repo_path)
+        )
+
+    paths: list[str] = []
+    try:
+        paths += _git_paths(["diff", "-z", "--name-only", "HEAD"], repo_path)
+        paths += _git_paths(
+            ["ls-files", "-z", "--others", "--exclude-standard"], repo_path
+        )
+    except RuntimeError:
+        logger.debug("git change listing unavailable in %s", repo_path, exc_info=True)
+    if conn is not None:
+        paths += _changed_via_stat(repo_path, conn)
+    return _filter_source_paths(paths)
 
 
 def _changed_via_stat(repo_path: Path, conn) -> List[str]:

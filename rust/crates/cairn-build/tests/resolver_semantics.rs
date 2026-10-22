@@ -18,7 +18,8 @@ fn fixture() -> Fixture {
          CREATE TABLE imports (id TEXT PRIMARY KEY, file_id TEXT NOT NULL,
            imported_path TEXT, local_alias TEXT);
          CREATE TABLE edges (id TEXT PRIMARY KEY, source_id TEXT, target_id TEXT,
-           target_name TEXT, kind TEXT, line INTEGER, column INTEGER, resolution TEXT);",
+           target_name TEXT, kind TEXT, line INTEGER, column INTEGER, resolution TEXT,
+           ref_name TEXT, receiver_type TEXT, call_arity INTEGER);",
     )
     .expect("fixture schema");
     Fixture { conn }
@@ -232,6 +233,22 @@ fn import_specificity_scores_longest_match() {
 }
 
 #[test]
+fn import_match_offset_never_outscores_the_anchored_match() {
+    let mut fx = fixture();
+    fx.file("f1", "r", "python")
+        .file("f2", "r", "python")
+        .file("f3", "r", "python")
+        .import("i1", "f1", "a.Foo", None)
+        .symbol("s_anchored", "f2", "run", Some("a.Foo.run"), "method", None)
+        .symbol("s_deep", "f3", "run", Some("x.y.a.Foo.run"), "method", None);
+    let ix = ResolverIndexes::build(&fx.conn, Some("r")).expect("indexes");
+    // Both hold the [a, Foo] window, so both score the import length (2).
+    use cairn_build::resolver::Label;
+    let (id, label) = resolve_edge("run", "f1", "r", &ix, None, None);
+    assert_eq!((id, label), (None, Label::Ambiguous));
+}
+
+#[test]
 fn import_multi_match_is_ambiguous_and_miss_falls_through() {
     let mut fx = fixture();
     fx.file("f1", "r", "python")
@@ -360,7 +377,7 @@ fn repair_resolves_only_named_targets_with_rust_generic_tier() {
         .edge("e_ref", "s_owner", "helper", "references");
 
     // Rust calls edges keep their generic tier; references resolve normally.
-    let stats = repair_incoming_edges(&mut fx.conn, "r", &["helper"]).expect("repair");
+    let stats = repair_incoming_edges(&mut fx.conn, &["helper"]).expect("repair");
     assert_eq!(
         fx.row("e_call"),
         (None, Some("helper".into()), Some("unresolved".into()))
@@ -373,10 +390,26 @@ fn repair_resolves_only_named_targets_with_rust_generic_tier() {
     assert_eq!(stats.exact, 1);
 
     // Empty name list and unknown names are zero-work no-ops.
-    let empty = repair_incoming_edges(&mut fx.conn, "r", &[]).expect("repair");
+    let empty = repair_incoming_edges(&mut fx.conn, &[]).expect("repair");
     assert_eq!(empty, Stats::default());
-    let missed = repair_incoming_edges(&mut fx.conn, "r", &["nope"]).expect("repair");
+    let missed = repair_incoming_edges(&mut fx.conn, &["nope"]).expect("repair");
     assert_eq!(missed, Stats::default());
+}
+
+#[test]
+fn repair_accepts_name_sets_beyond_the_sqlite_variable_limit() {
+    let mut fx = fixture();
+    fx.file("f1", "r", "python")
+        .symbol("s_owner", "f1", "main", None, "function", None)
+        .symbol("s_target", "f1", "helper", None, "function", None)
+        .edge("e_ref", "s_owner", "helper", "references");
+    let mut names: Vec<String> = (0..20_000).map(|i| format!("n{i}")).collect();
+    names.push("helper".to_string());
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+
+    let stats = repair_incoming_edges(&mut fx.conn, &refs).expect("repair");
+
+    assert_eq!(stats.exact, 1);
 }
 
 #[test]

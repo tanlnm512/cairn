@@ -479,6 +479,12 @@ EDGE_RESOLUTION_MIGRATION = "ALTER TABLE edges ADD COLUMN resolution TEXT"
 # (they reference only symbols columns).
 EDGE_SOURCE_MIGRATION = "ALTER TABLE edges ADD COLUMN source TEXT"
 
+# Resolver inputs persisted per name-resolved edge so incoming-edge repair
+# re-resolves with the build-time signals; NULL on rows the resolver never saw.
+EDGE_REF_NAME_MIGRATION = "ALTER TABLE edges ADD COLUMN ref_name TEXT"
+EDGE_RECEIVER_TYPE_MIGRATION = "ALTER TABLE edges ADD COLUMN receiver_type TEXT"
+EDGE_CALL_ARITY_MIGRATION = "ALTER TABLE edges ADD COLUMN call_arity INTEGER"
+
 # File size and mtime columns for fast catch-up reconciliation; only re-hashes
 # on mismatch.
 FILES_SIZE_MIGRATION = "ALTER TABLE files ADD COLUMN size INTEGER"
@@ -548,6 +554,9 @@ MIGRATIONS = [
     IMPORTS_LOCAL_ALIAS_MIGRATION,
     SYMBOLS_ARITY_MIGRATION,
     EDGE_SOURCE_MIGRATION,
+    EDGE_REF_NAME_MIGRATION,
+    EDGE_RECEIVER_TYPE_MIGRATION,
+    EDGE_CALL_ARITY_MIGRATION,
 ]
 
 # Default DB location: resolved from the central store for the current workspace.

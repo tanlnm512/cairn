@@ -5,9 +5,8 @@ must match a fresh ``build_graph`` + full derived build on the final tree --
 exactly for the closure, and for dataflow modulo the DFS depth-frontier zone
 (where either enumeration order is a valid builder output, since first-visit
 depth depends on edge insertion order and a maintained DB's rowids legitimately
-differ from a fresh rebuild's). The corpus is handcrafted and receiver-free:
-incoming-edge repair resolves by bare name without receiver info, so
-incremental parity of the edges table itself holds only for that shape.
+differ from a fresh rebuild's). Edges-table parity under resolver signals
+(receiver, arity, ancestors, cross-repo) has its own scenario table.
 """
 from __future__ import annotations
 
@@ -475,6 +474,121 @@ def test_symbol_added_to_existing_file_parity(tmp_path):
         return tick + 2
 
     _scenario(tmp_path, mutate, "spawn-in-file")
+
+
+# ---------------------------------------------------------------------------
+# Edges-table parity: resolution signals survive incoming-edge repair
+# ---------------------------------------------------------------------------
+
+
+# Two repos; edges resolve through tiers that need a stored signal: receiver
+# dispatch, ancestor walk (also through an aliased base), call arity, the
+# global tier from another repo, or a unique namesake.
+_RESOLVER_SOURCES: dict[str, str] = {
+    "one/models.py": (
+        "class A:\n    def run(self):\n        return 1\n\n\n"
+        "class B:\n    def run(self):\n        return 2\n"
+    ),
+    "one/child.py": "from models import A\n\n\nclass C(A):\n    pass\n",
+    "one/lib1.py": "def f(a):\n    return a\n",
+    "one/lib2.py": "def f(a, b):\n    return a\n",
+    "one/main.py": (
+        "def go():\n    a = A()\n    a.run()\n    c = C()\n    c.run()\n"
+        "    f(1)\n    return helper()\n"
+    ),
+    "one/util.py": "def helper():\n    return 0\n",
+    "one/user.py": "def use():\n    return shared_fn()\n",
+    "one/shapes.py": (
+        "class Base:\n    def spin(self):\n        return 1\n\n\n"
+        "class Other:\n    def spin(self):\n        return 2\n"
+    ),
+    "one/child2.py": "from shapes import Base as BB\n\n\nclass D(BB):\n    pass\n",
+    "one/main2.py": "def go2():\n    d = D()\n    return d.spin()\n",
+    "two/lib.py": "def shared_fn():\n    return 1\n",
+}
+
+
+def _edge_rows(db_path: str) -> list[tuple]:
+    conn = get_db(db_path)
+    try:
+        rows = conn.execute(
+            """SELECT sf.repo_id, sf.path, s.qualified_name, e.kind, e.line,
+                      e.column, tf.repo_id, tf.path, t.qualified_name,
+                      e.target_name, e.resolution
+               FROM edges e
+               JOIN symbols s ON e.source_id = s.id
+               JOIN files sf ON s.file_id = sf.id
+               LEFT JOIN symbols t ON e.target_id = t.id
+               LEFT JOIN files tf ON t.file_id = tf.id
+               WHERE e.kind != 'imports'"""
+        ).fetchall()
+    finally:
+        conn.close()
+    return sorted(tuple("" if v is None else v for v in r) for r in rows)
+
+
+def test_repair_accepts_name_sets_beyond_the_sqlite_variable_limit(tmp_path):
+    """A branch-switch-sized changed-name set still repairs its edges."""
+    from cairn.graph.resolver import repair_incoming_edges
+
+    ws = tmp_path / "ws"
+    (ws / "one" / ".git").mkdir(parents=True)
+    _write(ws / "one" / "util.py", _RESOLVER_SOURCES["one/util.py"], time.time())
+    _write(ws / "one" / "user.py", "def use():\n    return helper()\n", time.time())
+    db = str(tmp_path / "limit.kg")
+    build_graph(workspace=str(ws), db_path=db)
+    names = [f"n{i}" for i in range(20_000)] + ["helper"]
+
+    conn = get_db(db)
+    try:
+        stats = repair_incoming_edges(conn, names)
+    finally:
+        conn.close()
+
+    assert stats["exact"] == 1
+
+
+@pytest.mark.parametrize(
+    "rel, text",
+    [
+        ("one/models.py", _RESOLVER_SOURCES["one/models.py"] + "\n# tweak\n"),
+        ("one/lib1.py", _RESOLVER_SOURCES["one/lib1.py"] + "\n# tweak\n"),
+        ("one/main.py", _RESOLVER_SOURCES["one/main.py"] + "\n# tweak\n"),
+        ("one/util2.py", "def helper():\n    return 9\n"),
+        ("two/lib.py", _RESOLVER_SOURCES["two/lib.py"] + "\n# tweak\n"),
+        ("one/lib2.py", "def f(a):\n    return a\n"),
+        ("one/shapes.py", _RESOLVER_SOURCES["one/shapes.py"] + "\n# tweak\n"),
+    ],
+    ids=[
+        "receiver", "arity", "ancestor", "new-namesake", "cross-repo",
+        "arity-flip", "aliased-base",
+    ],
+)
+def test_incremental_edges_match_fresh_build(tmp_path, rel, text):
+    """One edit through incremental_update leaves every edge's target and
+    resolution label, and the transitive closure, equal to a fresh build."""
+    ws = tmp_path / "ws"
+    for repo in ("one", "two"):
+        (ws / repo / ".git").mkdir(parents=True)
+    tick = time.time() + 86400
+    for name, src in _RESOLVER_SOURCES.items():
+        _write(ws / name, src, tick)
+    db = str(tmp_path / "main.kg")
+    _build_full(ws, db)
+
+    _write(ws / rel, text, tick + 2)
+    res = _run_update(ws, db, rel)
+    assert res["files_reindexed"] >= 1, res
+
+    fresh_db = str(tmp_path / "fresh.kg")
+    _build_full(ws, fresh_db)
+    assert _edge_rows(db) == _edge_rows(fresh_db)
+    maintained, fresh = get_db(db), get_db(fresh_db)
+    try:
+        assert _closure_rows(maintained) == _closure_rows(fresh)
+    finally:
+        maintained.close()
+        fresh.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1005,23 +1119,55 @@ def test_flag_absent_update_keeps_worktree_and_untracked_detection(tmp_path):
     assert "e.py" in _indexed_paths(db)
 
 
-def test_range_mode_git_failure_returns_empty_not_stat_fallback(tmp_path):
-    """A failed range diff returns [] rather than falling through to the stat
-    fallback: off-range worktree noise must not widen the span."""
-    from cairn.graph.incremental import _changed_source_files
+def test_flag_absent_update_detects_changes_committed_since_last_index(tmp_path):
+    """No diff_ref: an edit committed after the last index (commit/pull) is
+    reindexed even though the worktree is clean against HEAD."""
+    repo = _committed_repo(tmp_path)
+    db = str(tmp_path / "committed.kg")
+    build_graph(workspace=str(repo), db_path=db)
 
+    (repo / "a.py").write_text("def alpha_two():\n    return 2\n", encoding="utf-8")
+    _git(["commit", "-qam", "second"], repo)
+
+    res = incremental_update(workspace=str(repo), db_path=db)
+
+    assert res["errors"] == [], res["errors"]
+    assert res["files_reindexed"] == 1, res
+    conn = get_db(db)
+    try:
+        assert conn.execute("SELECT 1 FROM symbols WHERE name = 'alpha_two'").fetchone()
+    finally:
+        conn.close()
+
+
+def test_range_update_reindexes_non_ascii_paths(tmp_path):
+    """Range detection reads NUL-separated paths, so a non-ASCII file name is
+    reindexed rather than dropped as a quoted, octal-escaped string."""
+    repo = _committed_repo(tmp_path)
+    db = str(tmp_path / "unicode.kg")
+    build_graph(workspace=str(repo), db_path=db)
+    (repo / "café.py").write_text("def gamma():\n    return 3\n", encoding="utf-8")
+    _git(["add", "."], repo)
+    _git(["commit", "-qm", "unicode"], repo)
+
+    res = incremental_update(workspace=str(repo), db_path=db, diff_ref="HEAD~1..HEAD")
+
+    assert res["errors"] == [], res["errors"]
+    assert res["files_reindexed"] == 1, res
+
+
+def test_range_mode_git_failure_surfaces_error_without_stat_fallback(tmp_path):
+    """A failed range diff is reported as an error and reindexes nothing:
+    off-range worktree noise must not widen the span."""
     repo = _committed_repo(tmp_path)
     db = str(tmp_path / "badrange.kg")
     build_graph(workspace=str(repo), db_path=db)
     (repo / "a.py").write_text("def alpha():\n    return 33\n", encoding="utf-8")
 
-    conn = get_db(db)
-    try:
-        changed = _changed_source_files(repo, conn=conn, diff_ref="no-such-ref..HEAD")
-    finally:
-        conn.close()
+    res = incremental_update(workspace=str(repo), db_path=db, diff_ref="no-such-ref..HEAD")
 
-    assert changed == []
+    assert res["files_reindexed"] == 0, res
+    assert any("no-such-ref" in e for e in res["errors"]), res["errors"]
 
 
 def test_cli_update_rejects_unresolvable_diff_ref_endpoint(tmp_path):
