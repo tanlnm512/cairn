@@ -432,6 +432,38 @@ fn record_migration(conn: &Connection, key: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn dataflow_pk(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut stmt =
+        conn.prepare("SELECT name FROM pragma_table_info('dataflow') WHERE pk > 0 ORDER BY pk")?;
+    stmt.query_map([], |r| r.get(0))?.collect()
+}
+
+fn migrate_dataflow_pk(conn: &Connection) -> rusqlite::Result<()> {
+    if migration_applied(conn, DATAFLOW_PK_MIGRATION)? {
+        return Ok(());
+    }
+    if dataflow_pk(conn)? != ["symbol", "repo"] {
+        // ALTER cannot change a PK: rebuild and carry the rows over.
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS dataflow_new;
+            CREATE TABLE dataflow_new (
+                symbol TEXT NOT NULL,
+                repo TEXT NOT NULL,
+                within_repo TEXT,
+                cross_repo TEXT,
+                analysis_errors TEXT,
+                updated TIMESTAMP,
+                PRIMARY KEY (symbol, repo)
+            );
+            INSERT INTO dataflow_new (symbol, repo, within_repo, cross_repo, updated)
+                SELECT symbol, repo, within_repo, cross_repo, updated FROM dataflow;
+            DROP TABLE dataflow;
+            ALTER TABLE dataflow_new RENAME TO dataflow;",
+        )?;
+    }
+    record_migration(conn, DATAFLOW_PK_MIGRATION)
+}
+
 /// Create tables/indexes/FTS (idempotent) and apply additive migrations,
 /// mirroring `schema.py::_apply_schema`.
 pub fn apply_schema(conn: &Connection) -> rusqlite::Result<()> {
@@ -454,9 +486,7 @@ pub fn apply_schema(conn: &Connection) -> rusqlite::Result<()> {
             Err(e) => return Err(e),
         }
     }
-    if !migration_applied(conn, DATAFLOW_PK_MIGRATION)? {
-        record_migration(conn, DATAFLOW_PK_MIGRATION)?;
-    }
+    migrate_dataflow_pk(conn)?;
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_transitive_target_id ON transitive_edges(target_id)",
     )?;
@@ -620,6 +650,52 @@ mod tests {
                 "missing {expected}"
             );
         }
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(path.parent().expect("parent"));
+    }
+
+    #[test]
+    fn legacy_dataflow_pk_is_rebuilt_before_the_marker_lands() {
+        let path = temp_db("dataflow-pk");
+        let conn = Connection::open(&path).expect("open");
+        conn.execute_batch(
+            "CREATE TABLE dataflow (
+                symbol TEXT PRIMARY KEY,
+                repo TEXT NOT NULL,
+                within_repo TEXT,
+                cross_repo TEXT,
+                updated TIMESTAMP
+            );
+            INSERT INTO dataflow (symbol, repo, within_repo, cross_repo, updated)
+                VALUES ('Shared', 'ra', '[\"x\"]', '[]', 0);",
+        )
+        .expect("legacy table");
+
+        apply_schema(&conn).expect("apply");
+
+        let mut stmt = conn
+            .prepare("SELECT name FROM pragma_table_info('dataflow') WHERE pk > 0 ORDER BY pk")
+            .expect("pk");
+        let pk: Vec<String> = stmt
+            .query_map([], |r| r.get(0))
+            .expect("rows")
+            .map(|c| c.expect("col"))
+            .collect();
+        assert_eq!(pk, vec!["symbol", "repo"]);
+        let (repo, within, errors): (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT repo, within_repo, analysis_errors FROM dataflow WHERE symbol = 'Shared'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("carried row");
+        assert_eq!(
+            (repo.as_str(), within.as_str(), errors),
+            ("ra", "[\"x\"]", None)
+        );
+        assert!(migration_applied(&conn, DATAFLOW_PK_MIGRATION).expect("marker"));
+        drop(stmt);
+        conn.close().expect("close");
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(path.parent().expect("parent"));
     }
