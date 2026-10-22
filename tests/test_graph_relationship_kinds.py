@@ -280,6 +280,35 @@ class TestBuilderModuleAndContains:
         assert row is not None
         assert row[0] == "store"
 
+    def test_edge_source_is_the_enclosing_same_named_owner(self, tmp_path):
+        from cairn.graph.builder import build_graph
+
+        workspace = tmp_path / "ws_owner"
+        repo = workspace / "demo"
+        (repo / ".git").mkdir(parents=True)
+        (repo / "jobs.py").write_text(
+            "class A:\n"
+            "    def run(self):\n"
+            "        foo()\n"
+            "\n"
+            "class B:\n"
+            "    def run(self):\n"
+            "        bar()\n"
+        )
+        db_path = str(tmp_path / "owner.db")
+        build_graph(workspace=str(workspace), db_path=db_path, verbose=False)
+        conn = sqlite3.connect(db_path)
+        try:
+            owners = dict(conn.execute(
+                """SELECT e.target_name, src.qualified_name FROM edges e
+                   JOIN symbols src ON e.source_id = src.id
+                   WHERE e.kind = 'calls'"""
+            ).fetchall())
+        finally:
+            conn.close()
+        assert owners["foo"].endswith("A.run")
+        assert owners["bar"].endswith("B.run")
+
 
 class TestBuilderImportsEdges:
     def test_intra_repo_import_edge(self, built_db):

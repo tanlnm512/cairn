@@ -269,3 +269,35 @@ fn repo_rebuild_never_reuses_ids_of_the_rows_it_replaced() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn edge_source_is_the_enclosing_same_named_owner() {
+    let dir = temp_dir("owner");
+    write(
+        &dir,
+        "src/jobs.py",
+        "class A:\n    def run(self):\n        foo()\n\nclass B:\n    def run(self):\n        bar()\n",
+    );
+    let db = dir.join("store.kg");
+    build_graph(
+        dir.to_str().expect("ws"),
+        db.to_str().expect("db"),
+        None,
+        None,
+    )
+    .expect("build");
+    let conn = cairn_store::conn::open_read_only(&db).expect("open store");
+    let owner_of = |target: &str| -> String {
+        conn.query_row(
+            "SELECT src.qualified_name FROM edges e JOIN symbols src ON e.source_id = src.id
+             WHERE e.kind = 'calls' AND e.target_name = ?",
+            [target],
+            |r| r.get(0),
+        )
+        .expect("calls edge")
+    };
+    assert!(owner_of("foo").ends_with("A.run"));
+    assert!(owner_of("bar").ends_with("B.run"), "{}", owner_of("bar"));
+    drop(conn);
+    let _ = fs::remove_dir_all(&dir);
+}
