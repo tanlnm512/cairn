@@ -283,6 +283,15 @@ fn refresh_conn(conn: &mut Connection, db: &str, repair: Option<bool>) -> Result
         banner_if_unrepaired(&drifted, false);
         return Ok(());
     }
+    let _lock = match cairn_store::swap::build_lock(Path::new(db)) {
+        Ok(lock) => lock,
+        // Contention: a concurrent build owns the store; defer the repair and
+        // let the read proceed against the stale graph.
+        Err(_) => {
+            banner_if_unrepaired(&drifted, false);
+            return Ok(());
+        }
+    };
     cairn_build::incremental::repair_changed(conn, &workspace, &drifted, true).map(|_| ())
 }
 
@@ -2472,5 +2481,63 @@ mod tests {
         assert_eq!(count("SELECT COUNT(*) FROM build_runs"), 1);
         drop(conn);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refresh_repair_defers_while_a_build_holds_the_lock() {
+        let env = crate::test_env::EnvScope::new("refresh-lock");
+        let ws = env.dir().join("ws");
+        let repo = ws.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).expect("repo marker");
+        std::fs::write(repo.join("mod.py"), "def one():\n    return 1\n").expect("source");
+        let db = ws.join("store.kg");
+        let db_str = db.to_string_lossy().to_string();
+        let ws_str = ws.to_string_lossy().to_string();
+        cairn_build::builder::build_graph(&ws_str, &db_str, None, Some(1)).expect("full build");
+
+        let drifted = "def one():\n    return 1\n\n\ndef two():\n    return 2\n";
+        std::fs::write(repo.join("mod.py"), drifted).expect("drift fixture");
+
+        let saved = std::env::var_os("CAIRN_WORKSPACE");
+        // SAFETY: EnvScope holds the env lock for the rest of this test.
+        unsafe { std::env::set_var("CAIRN_WORKSPACE", &ws) };
+        let mut conn = cairn_store::schema::open_initialized(&db).expect("open store");
+        let stored_size = |conn: &Connection| -> i64 {
+            conn.query_row("SELECT size FROM files", [], |r| r.get(0))
+                .expect("files row")
+        };
+        let built_size = stored_size(&conn);
+
+        let held = cairn_store::swap::build_lock(&db).expect("hold build lock");
+        let deferred = refresh_conn(&mut conn, &db_str, Some(true));
+        let size_under_lock = stored_size(&conn);
+        drop(held);
+        let released = refresh_conn(&mut conn, &db_str, Some(true));
+        let size_after = stored_size(&conn);
+
+        // SAFETY: still holding the env lock.
+        unsafe {
+            match &saved {
+                Some(v) => std::env::set_var("CAIRN_WORKSPACE", v),
+                None => std::env::remove_var("CAIRN_WORKSPACE"),
+            }
+        }
+
+        assert_eq!(built_size, "def one():\n    return 1\n".len() as i64);
+        assert!(
+            deferred.is_ok(),
+            "read-path refresh must not fail on lock contention: {deferred:?}"
+        );
+        assert_eq!(
+            size_under_lock, built_size,
+            "repair wrote to the store while another build held the lock"
+        );
+        assert!(released.is_ok(), "{released:?}");
+        assert_eq!(
+            size_after,
+            drifted.len() as i64,
+            "repair must run once the lock frees"
+        );
+        let _ = std::fs::remove_dir_all(env.dir());
     }
 }
