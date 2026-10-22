@@ -575,7 +575,14 @@ fn write_tree(dest_dir: &Path, force: bool, res: &mut InstallResult, dry_run: bo
     }
 }
 
-fn backup_to_bak(path: &Path, reason: &str, res: &mut InstallResult, dry_run: bool) -> Value {
+pub(crate) fn copy_to_backup(path: &Path, backup: &Path) -> bool {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| std::fs::write(backup, bytes).ok())
+        .is_some()
+}
+
+fn backup_to_bak(path: &Path, reason: &str, res: &mut InstallResult, dry_run: bool) -> bool {
     let mut backup = path.with_file_name(format!(
         "{}.bak",
         path.file_name().unwrap_or_default().to_string_lossy()
@@ -599,24 +606,23 @@ fn backup_to_bak(path: &Path, reason: &str, res: &mut InstallResult, dry_run: bo
             path.display(),
             backup.display()
         ));
-        return json!({});
+        return true;
     }
-    match std::fs::read(path)
-        .ok()
-        .and_then(|bytes| std::fs::write(&backup, bytes).ok())
-    {
-        Some(()) => res.written.push(format!(
+    if copy_to_backup(path, &backup) {
+        res.written.push(format!(
             "backed up {reason} {} -> {}",
             path.display(),
             backup.display()
-        )),
-        None => res.notes.push(format!(
+        ));
+        true
+    } else {
+        res.notes.push(format!(
             "refusing to overwrite {reason} config {}: could not back it up. \
              Fix or remove the file and re-run.",
             path.display()
-        )),
+        ));
+        false
     }
-    json!({})
 }
 
 fn merge_keys_non_object(existing: &Map<String, Value>, merger: &Map<String, Value>) -> bool {
@@ -637,23 +643,23 @@ fn merge_json_file(
     if path.exists() {
         match load_json_or_none(path) {
             None => {
-                existing = backup_to_bak(path, "malformed", res, dry_run)
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default();
+                if !backup_to_bak(path, "malformed", res, dry_run) {
+                    return;
+                }
             }
             Some(loaded @ Value::Object(_)) => {
                 let obj = loaded.as_object().expect("object");
-                if merge_keys_non_object(obj, merger.as_object().unwrap_or(obj)) {
-                    backup_to_bak(path, "non-object", res, dry_run);
+                if merge_keys_non_object(obj, merger.as_object().unwrap_or(obj))
+                    && !backup_to_bak(path, "non-object", res, dry_run)
+                {
+                    return;
                 }
                 existing = obj.clone();
             }
             Some(_) => {
-                existing = backup_to_bak(path, "non-object", res, dry_run)
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default();
+                if !backup_to_bak(path, "non-object", res, dry_run) {
+                    return;
+                }
             }
         }
     }
@@ -3078,6 +3084,33 @@ mod tests {
             b"[1, 2]"
         );
         assert!(read_config(&path2)["mcpServers"]["cairn"]["url"].is_string());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_json_file_refuses_to_write_when_backup_fails() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tmp_dir("backup-fails");
+        let path = dir.join("mcp.json");
+        std::fs::write(&path, b"{not json").expect("seed");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        let mut res = InstallResult::new("claude");
+        merge_json_file(
+            &path,
+            &mcp_config_json(),
+            false,
+            &mut res,
+            "mcpServers",
+            false,
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        assert_eq!(std::fs::read(&path).expect("bytes"), b"{not json");
+        assert!(
+            res.notes
+                .iter()
+                .any(|n| n.contains("refusing to overwrite"))
+        );
+        assert!(res.written.is_empty() && res.skipped.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

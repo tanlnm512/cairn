@@ -1528,11 +1528,7 @@ fn apply_doctor_fixes() -> Vec<Value> {
                 "{}.bak",
                 path.file_name().unwrap_or_default().to_string_lossy()
             ));
-            let backed_up = std::fs::read(&path)
-                .ok()
-                .and_then(|bytes| std::fs::write(&backup, bytes).ok())
-                .is_some();
-            if !backed_up {
+            if !crate::agent_install::copy_to_backup(&path, &backup) {
                 actions.push(action(WRITE_FAILED));
                 continue;
             }
