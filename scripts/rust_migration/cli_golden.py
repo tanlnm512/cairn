@@ -193,6 +193,27 @@ COMMANDS = [
     ["compass", "flow-gaps", "--generate", "--dry-run", "--min-edges", "15",
      "--limit", "2"],
     ["compass", "flow-gaps", "--generate", "--limit", "1", "--min-edges", "25"],
+    # Cross-layer family (4c-5): ask/context are read-only over the seeded
+    # bundle; the all-repos legs re-seed a one-store registry via RESEED.
+    ["ask", "--json", "how does resolve_store work"],
+    ["ask", "where is resolve_store defined"],
+    ["ask", "why did we choose resolve_store"],
+    ["ask", ""],
+    ["ask", "--all-repos", "resolve_store"],
+    ["ask", "--all-repos", "--json", "resolve_store"],
+    ["context", "src/cairn/paths.py"],
+    ["context", "rust/crates/cairn-build/src/builder.rs"],
+    # Review family (4c-5): usage-error arms need no seed; the --base and
+    # --pre-submit legs re-seed the feature-branch corpus via RESEED, and the
+    # --capture-event legs restore the memory tree per leg.
+    ["review"],
+    ["review", "--gate"],
+    ["review", "--base", "x", "--pre-submit"],
+    ["review", "--base", "main"],
+    ["review", "--base", "main", "--format", "markdown"],
+    ["review", "--base", "origin/main"],
+    ["review", "--pre-submit"],
+    ["review", "--pre-submit", "--gate"],
 ]
 # The stdin-fed capture leg reads its transcript from stdin (ARG_MAX-free path).
 STDIN_OVERRIDES: dict[tuple[str, ...], str] = {
@@ -679,6 +700,84 @@ def _seed_blast_drift(scratch: Path) -> None:
         ".github/scripts/bench_compare_renamed.py")
 
 
+def _seed_review_drift(scratch: Path) -> None:
+    """Review legs' store+corpus: a real git repo whose HEAD is one commit
+    ahead of main carrying a deletion, a rename, and an edit, so the pack and
+    pre-submit legs diff against a non-empty merge base."""
+    import subprocess
+
+    workspace = scratch / "corpus"
+    shutil.rmtree(workspace, ignore_errors=True)
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        Path(str(scratch / DB_NAME) + suffix).unlink(missing_ok=True)
+    pinned = parity.PINNED_STORES / "self"
+    shutil.copy2(pinned / DB_NAME, scratch / DB_NAME)
+    shutil.copytree(pinned / "corpus", workspace)
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", *args],
+            cwd=str(workspace), check=True, capture_output=True, text=True,
+        )
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "golden@example.com")
+    git("config", "user.name", "golden")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    (workspace / "src/cairn/agent_install/clients/omp.py").unlink()
+    git("mv", ".github/scripts/bench_compare.py",
+        ".github/scripts/bench_compare_renamed.py")
+    target = workspace / "src/cairn/paths.py"
+    target.write_text(
+        target.read_text(encoding="utf-8") + "\n# golden edit\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-qm", "feature")
+
+
+def _seed_registry(scratch: Path) -> None:
+    """Register the corpus workspace in the scratch home with a copy of the
+    current store + bundle so the all-repos legs iterate one reachable store."""
+    import hashlib
+    import json
+
+    # Registration stores the resolved path (cairn init parity): iter_stores
+    # re-resolves the key when deriving the store dir.
+    ws = (scratch / "corpus").resolve()
+    key = hashlib.sha256(str(ws).encode()).hexdigest()[:16]
+    home = scratch / "home" / key
+    home.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(scratch / DB_NAME, home / ".kg")
+    if not (home / ".knowledge").is_dir():
+        shutil.copytree(scratch / ".knowledge", home / ".knowledge")
+    (scratch / "home" / "workspaces.json").write_text(
+        json.dumps({str(ws): key}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8")
+
+
+def _prepare_review_events(scratch: Path) -> Path:
+    """Event payloads for the review capture legs: a resolved pattern-marker
+    comment, an unresolved comment, and a payload failing field validation."""
+    import json
+
+    events = scratch / "events"
+    events.mkdir(parents=True, exist_ok=True)
+    (events / "resolved.json").write_text(json.dumps({
+        "resolved": True, "file": "src/cairn/paths.py", "line": 10,
+        "body": "Use resolve_store for the store paths cairn:pattern",
+        "thread_url": "https://github.com/example/cairn/pull/42",
+    }), encoding="utf-8")
+    (events / "open.json").write_text(json.dumps({
+        "resolved": False, "file": "src/cairn/paths.py", "line": None,
+        "body": "Still open", "thread_url": "https://github.com/example/cairn/pull/43",
+    }), encoding="utf-8")
+    (events / "bad-payload.json").write_text(json.dumps({
+        "resolved": "yes", "file": "src/cairn/paths.py", "line": None,
+        "body": "bogus", "thread_url": "",
+    }), encoding="utf-8")
+    return events
+
+
 # Mutating task cases: the seeded task is restored before each leg.
 RESEED = {
     ("task", "claim", "golden-claim"):
@@ -752,6 +851,17 @@ RESEED = {
         _seed_compass_reset,
     ("compass", "flow-gaps"):
         _seed_compass_reset,
+    # Cross-layer cases (4c-5): the all-repos legs iterate a one-store
+    # registry; the review legs re-seed the feature-branch corpus, and the
+    # capture legs restore the memory tree per leg.
+    ("ask", "--all-repos"):
+        _seed_registry,
+    ("review", "--base"):
+        _seed_review_drift,
+    ("review", "--pre-submit"):
+        _seed_review_drift,
+    ("review", "--capture-event"):
+        _seed_memory_reset,
 }
 
 
@@ -822,6 +932,7 @@ def main(argv: list[str] | None = None) -> int:
         _note(f"rust binary: {rust_bin}")
 
         export_dir = scratch / "export"
+        events = _prepare_review_events(scratch)
         hooks_ws = prepare_hooks_workspace(scratch)
         empty_knowledge = scratch / "empty-knowledge"
         empty_knowledge.mkdir(parents=True, exist_ok=True)
@@ -846,6 +957,11 @@ def main(argv: list[str] | None = None) -> int:
             ["knowledge", "ingest", "--dir", str(scratch / "fed")],
             ["knowledge", "ingest", "--dir", str(scratch / "fed"), "--ingest"],
             ["knowledge", "export", "--out", str(scratch / "export" / "bundle.tar.gz")],
+            # Review capture legs (4c-5): resolved-pattern, unresolved, and a
+            # malformed payload; each mutates (or reads) the seeded memory tree.
+            ["review", "--capture-event", str(events / "resolved.json")],
+            ["review", "--capture-event", str(events / "open.json")],
+            ["review", "--capture-event", str(events / "bad-payload.json")],
         ]
         # Per-command cwd overrides, keyed by the leading argv word.
         CWD_OVERRIDES = {"report": scratch}

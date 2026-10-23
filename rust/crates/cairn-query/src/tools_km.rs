@@ -6706,16 +6706,19 @@ pub fn search_knowledge(
     Ok(out.join("\n"))
 }
 
-/// `ask_compass`: route a natural-language query across graph/wiki/compass/memory.
-pub fn ask_compass(
-    conn: &Connection,
-    bundle: &Bundle,
-    query: &str,
-    file_path: &str,
-) -> Result<String, ToolError> {
-    if !file_path.is_empty() && query.is_empty() {
-        return ask_compass_file_context(conn, bundle, file_path);
-    }
+/// One routed query across the layers (`compass/router.py route_query`).
+pub struct RouteOutcome {
+    pub intent: &'static str,
+    pub layer: &'static str,
+    pub layers_queried: Vec<String>,
+    pub results: Vec<(String, Yaml)>,
+    pub degraded: bool,
+    pub empty: bool,
+}
+
+/// Classify a natural-language query and run the targeted layers, degrading
+/// across the derived and asserted tiers when the target produced nothing.
+pub fn route_query(conn: &Connection, bundle: &Bundle, query: &str) -> RouteOutcome {
     let (intent, layer) = classify_intent(query);
     let token = extract_symbol_token(query);
     let mut results: Vec<(String, Yaml)> = Vec::new();
@@ -6793,23 +6796,46 @@ pub fn ask_compass(
         degraded = true;
     }
     let empty = !results.iter().any(|(_, v)| layer_nonempty(v));
+    RouteOutcome {
+        intent,
+        layer,
+        layers_queried,
+        results,
+        degraded,
+        empty,
+    }
+}
 
-    let queried = if layers_queried.is_empty() {
+/// `ask_compass`: route a natural-language query across graph/wiki/compass/memory.
+pub fn ask_compass(
+    conn: &Connection,
+    bundle: &Bundle,
+    query: &str,
+    file_path: &str,
+) -> Result<String, ToolError> {
+    if !file_path.is_empty() && query.is_empty() {
+        return ask_compass_file_context(conn, bundle, file_path);
+    }
+    let outcome = route_query(conn, bundle, query);
+    let queried = if outcome.layers_queried.is_empty() {
         String::new()
     } else {
-        format!("; queried: {}", layers_queried.join(", "))
+        format!("; queried: {}", outcome.layers_queried.join(", "))
     };
-    let mut out = vec![format!("Intent: {intent} (routed to {layer}{queried})")];
+    let mut out = vec![format!(
+        "Intent: {} (routed to {}{})",
+        outcome.intent, outcome.layer, queried
+    )];
     if !file_path.is_empty() {
         out.push(format!(
             "(file_path '{file_path}' is ignored in routing mode; pass it with an empty query \
              to load file-aware context.)"
         ));
     }
-    if degraded {
+    if outcome.degraded {
         out.push("(Showing fallback results — targeted layer had no coverage.)".to_string());
     }
-    if empty {
+    if outcome.empty {
         out.push(
             "(No results from any layer — coverage for this query is thin. Don't conclude 'no info \
              exists'; drill down with the specific layer tool: explore() for structure, \
@@ -6817,7 +6843,7 @@ pub fn ask_compass(
                 .to_string(),
         );
     }
-    for (layer_name, data) in &results {
+    for (layer_name, data) in &outcome.results {
         out.push(String::new());
         out.push(format!("[{layer_name}]"));
         match data {
@@ -6861,6 +6887,14 @@ fn python_repr(v: &Yaml) -> String {
             }
         }
         other => scalar_repr(other),
+    }
+}
+
+/// Python `str(value)`: strings bare, other values as their repr.
+pub fn py_str(v: &Yaml) -> String {
+    match v {
+        Yaml::String(s) => s.clone(),
+        other => python_repr(other),
     }
 }
 

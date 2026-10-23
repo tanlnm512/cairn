@@ -12,11 +12,11 @@ Two builds provide the surface during the transition window:
 - **The `cairn` binary** (Homebrew tap / `cargo binstall` / release tarball)
   ports the core graph commands (`init config build import-scip stats
   checkpoint update def callers search callees impact deps federated-search
-  tree pack path taint`), the serving + wiring commands (`serve` with
-  `run|start|stop|status|restart`, `connect`, `dashboard`, `install-agents`,
-  `uninstall-agents`, `doctor`), and the knowledge-layer reads/writes
-  (`knowledge` minus `ingest`/`rebuild`/`embed`, `memory` minus the
-  `reflect`/`evolve`/`capture`/`embed`/`batch-critic`/`consolidate`
+  tree pack path taint ask context review`), the serving + wiring commands
+  (`serve` with `run|start|stop|status|restart`, `connect`, `dashboard`,
+  `install-agents`, `uninstall-agents`, `doctor`), and the knowledge-layer
+  reads/writes (`knowledge` minus `ingest`/`rebuild`/`embed`, `memory` minus
+  the `reflect`/`evolve`/`capture`/`embed`/`batch-critic`/`consolidate`
   maintenance verbs, `wiki search`, `compass list|validate`). A command
   outside its set exits non-zero with a named diagnostic.
 - **The PyPI CLI** (`pip install cairn-intel`) carries the complete surface
@@ -74,7 +74,8 @@ pass.
 
 Binary coverage in this section: `def`, `import-scip`, `callers`, `callees`,
 `search`, `impact`, `deps`, `federated-search`, `tree`, `pack`, `path`,
-`taint` — the remaining rows are PyPI-CLI commands.
+`taint`, `ask`, `context`, `review` — the remaining rows are PyPI-CLI
+commands.
 
 | Command | Purpose |
 |---|---|

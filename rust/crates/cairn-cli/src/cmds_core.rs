@@ -72,15 +72,9 @@ pub enum CoreCommand {
     #[command(name = "path")]
     Path(PathArgs),
     /// Natural-language question across all layers.
-    Ask {
-        /// Question text.
-        question: String,
-    },
+    Ask(AskArgs),
     /// Load relevant context (compass + memory + wiki) for a file.
-    Context {
-        /// File to load context for.
-        file_path: String,
-    },
+    Context(ContextArgs),
     /// Trace inter-procedural taint paths from a source to a sink.
     Taint(TaintArgs),
     /// Show reverse dependents for symbols touched by a git diff.
@@ -95,7 +89,7 @@ pub enum CoreCommand {
     /// Print rationale comments (NOTE/WHY/HACK), ordered by hotness.
     Rationale(RationaleArgs),
     /// Review-context pack and review-loop hooks for a change.
-    Review,
+    Review(ReviewArgs),
     /// List open PRs with CI and review state from gh.
     Prs,
     /// Run performance, scalability, or agent-effort benchmarks.
@@ -147,6 +141,9 @@ pub fn run(command: CoreCommand) -> ExitCode {
         },
         CoreCommand::Rationale(args) => rationale(args),
         CoreCommand::Viz(args) => viz(args),
+        CoreCommand::Ask(args) => ask(args),
+        CoreCommand::Context(args) => context(args),
+        CoreCommand::Review(args) => review(args),
         other => not_ported(other.name()),
     }
 }
@@ -183,14 +180,14 @@ impl CoreCommand {
             Self::Tree { .. } => "tree",
             Self::Pack(_) => "pack",
             Self::Path { .. } => "path",
-            Self::Ask { .. } => "ask",
-            Self::Context { .. } => "context",
+            Self::Ask(_) => "ask",
+            Self::Context(_) => "context",
             Self::Taint { .. } => "taint",
             Self::Blast(_) => "blast",
             Self::Communities(_) => "communities",
             Self::Dataflow { .. } => "dataflow",
             Self::Rationale(_) => "rationale",
-            Self::Review => "review",
+            Self::Review(_) => "review",
             Self::Prs => "prs",
             Self::Bench => "bench",
             Self::Eval => "eval",
@@ -2998,6 +2995,436 @@ fn blast(args: crate::cmds_core::BlastArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+// --- cairn ask / context / review --------------------------------------------
+
+/// Click's UsageError shape: usage block, help hint, blank line, message.
+fn click_usage_error(usage: &str, command: &str, message: &str) -> ExitCode {
+    eprintln!("Usage: {usage}");
+    eprintln!("Try 'cairn {command} --help' for help.");
+    eprintln!();
+    eprintln!("Error: {message}");
+    ExitCode::from(2)
+}
+
+/// The route_query dict as `json.dumps(result, indent=2)` renders it.
+fn route_json(outcome: &cairn_query::tools_km::RouteOutcome) -> Value {
+    let mut results = Map::new();
+    for (layer, data) in &outcome.results {
+        results.insert(layer.clone(), py_json::yaml_to_value(data));
+    }
+    let mut object = Map::new();
+    object.insert("intent".into(), Value::from(outcome.intent));
+    object.insert("layer".into(), Value::from(outcome.layer));
+    object.insert(
+        "layers_queried".into(),
+        Value::Array(
+            outcome
+                .layers_queried
+                .iter()
+                .cloned()
+                .map(Value::from)
+                .collect(),
+        ),
+    );
+    object.insert("results".into(), Value::Object(results));
+    if outcome.degraded {
+        object.insert("degraded".into(), Value::from(true));
+    }
+    object.insert("empty".into(), Value::from(outcome.empty));
+    Value::Object(object)
+}
+
+/// `_echo_route_result`: intent header, layers, one section per layer.
+fn print_route(outcome: &cairn_query::tools_km::RouteOutcome) {
+    use yaml_rust2::Yaml;
+    println!("Intent: {} (routed to {})", outcome.intent, outcome.layer);
+    println!("Layers queried: {}", outcome.layers_queried.join(", "));
+    for (layer, data) in &outcome.results {
+        println!("\n--- {layer} ---");
+        match data {
+            Yaml::Hash(hash) => {
+                for (key, value) in hash {
+                    println!(
+                        "  {}: {}",
+                        cairn_query::tools_km::py_str(key),
+                        cairn_query::tools_km::py_str(value)
+                    );
+                }
+            }
+            Yaml::Array(items) => {
+                for item in items {
+                    println!("  {}", cairn_query::tools_km::py_str(item));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// ask handler: natural-language routing across the knowledge layers.
+fn ask(args: crate::cmds_core::AskArgs) -> ExitCode {
+    if args.question.trim().is_empty() {
+        return click_usage_error(
+            "cairn ask [OPTIONS] QUESTION",
+            "ask",
+            "Question must not be empty.",
+        );
+    }
+    if args.all_repos {
+        return ask_all_repos(&args);
+    }
+    let db = db_arg(&args.db);
+    let knowledge = args.knowledge.clone().unwrap_or_else(knowledge_default);
+    let Ok(conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    let bundle = cairn_query::tools_km::Bundle::new(knowledge);
+    let outcome = cairn_query::tools_km::route_query(&conn, &bundle, &args.question);
+    if args.as_json {
+        println!("{}", py_json::dumps(&route_json(&outcome)));
+        return ExitCode::SUCCESS;
+    }
+    print_route(&outcome);
+    ExitCode::SUCCESS
+}
+
+/// `--all-repos`: one attributed answer per reachable registered store; an
+/// unavailable store never aborts the query.
+fn ask_all_repos(args: &crate::cmds_core::AskArgs) -> ExitCode {
+    let mut answers: Vec<(String, cairn_query::tools_km::RouteOutcome)> = Vec::new();
+    let mut states: Vec<(String, String)> = Vec::new();
+    // The routing core is infallible, so per-store errors stay empty; the
+    // payload keeps the key because the CLI contract renders it.
+    let errors: Vec<(String, String)> = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
+    if let Some(home) = store_paths::cairn_home() {
+        for (ws_path, key) in store_paths::load_registry() {
+            let store_home = home.join(&key);
+            let db = store_home.join(".kg");
+            let mut state = classify_store(&store_home, &db).to_string();
+            if state == "ok" {
+                match cairn_store::conn::open_read_only(&db) {
+                    Err(_) => state = "locked".into(),
+                    Ok(conn) => {
+                        let bundle =
+                            cairn_query::tools_km::Bundle::new(store_home.join(".knowledge"));
+                        answers.push((
+                            ws_path.clone(),
+                            cairn_query::tools_km::route_query(&conn, &bundle, &args.question),
+                        ));
+                    }
+                }
+            }
+            if state != "ok" {
+                dropped.push(ws_path.clone());
+            }
+            states.push((ws_path, state));
+        }
+    }
+    if args.as_json {
+        let answers_map: Map<String, Value> = answers
+            .iter()
+            .map(|(ws, outcome)| (ws.clone(), route_json(outcome)))
+            .collect();
+        let to_map = |pairs: &[(String, String)]| -> Value {
+            Value::Object(
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Value::from(v.clone())))
+                    .collect::<Map<String, Value>>(),
+            )
+        };
+        let mut payload = Map::new();
+        payload.insert("answers".into(), Value::Object(answers_map));
+        payload.insert("states".into(), to_map(&states));
+        payload.insert("errors".into(), to_map(&errors));
+        payload.insert(
+            "dropped".into(),
+            Value::Array(dropped.iter().cloned().map(Value::from).collect()),
+        );
+        println!("{}", py_json::dumps(&Value::Object(payload)));
+        return ExitCode::SUCCESS;
+    }
+    if states.is_empty() {
+        println!("No stores are registered.");
+        return ExitCode::SUCCESS;
+    }
+    for (ws_path, outcome) in &answers {
+        println!("=== {ws_path} ===");
+        print_route(outcome);
+    }
+    if !dropped.is_empty() {
+        println!("\nDropped stores:");
+        for ws_path in &dropped {
+            let detail = errors
+                .iter()
+                .find(|(k, _)| k == ws_path)
+                .map(|(_, v)| format!(" ({v})"))
+                .unwrap_or_default();
+            let state = states
+                .iter()
+                .find(|(k, _)| k == ws_path)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            println!("  {state}: {ws_path}{detail}");
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// The default knowledge bundle path for the current context.
+fn knowledge_default() -> String {
+    store_paths::resolve_store(None)
+        .knowledge
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// context handler: compass + wiki + memory context for a file.
+fn context(args: crate::cmds_core::ContextArgs) -> ExitCode {
+    let store = store_paths::resolve_store(None);
+    let db = store.db.to_string_lossy().into_owned();
+    let refresh = refresh_flag(args.refresh, args.no_refresh);
+    if fresh_conn(&db, refresh).is_err() {
+        return command_error(&format!("cannot open {db}"));
+    }
+    let knowledge = args
+        .knowledge
+        .clone()
+        .unwrap_or_else(|| store.knowledge.to_string_lossy().into_owned());
+    let bundle = cairn_query::tools_km::Bundle::new(knowledge);
+    let file_path = &args.file_path;
+    let parts: Vec<&str> = file_path.split('/').filter(|p| !p.is_empty()).collect();
+    let module_guess = if parts.len() >= 4 {
+        parts[..4].join("/")
+    } else {
+        file_path.clone()
+    };
+    let mut out = vec![
+        format!("Context for {file_path}:"),
+        format!("  inferred module: {module_guess}"),
+    ];
+    for cid in bundle.list_concepts(Some("compass/")) {
+        let Ok(concept) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        if let Some(resource) = concept.resource.as_deref().filter(|r| !r.is_empty())
+            && (file_path.contains(resource) || resource.contains(file_path))
+        {
+            out.push(format!(
+                "\n# Compass: {}\n{}",
+                concept.title.unwrap_or_default(),
+                concept.body
+            ));
+            break;
+        }
+    }
+    let seg = Path::new(file_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !seg.is_empty() {
+        for concept in bundle.search(&seg, Some(3)).unwrap_or_default() {
+            if concept.type_ == "Wiki-Article" || concept.type_ == "Wiki-Feature" {
+                out.push(format!(
+                    "\n# Wiki: {}\n{}...",
+                    concept.title.unwrap_or_default(),
+                    concept.body.chars().take(500).collect::<String>()
+                ));
+                break;
+            }
+        }
+        for concept in bundle.search(&seg, Some(3)).unwrap_or_default() {
+            if bundle
+                .relativize_id(&concept.concept_id)
+                .starts_with("memory/")
+            {
+                out.push(format!("\n# Memory: {}", concept.title.unwrap_or_default()));
+                if let Some(description) = concept.description.as_deref().filter(|d| !d.is_empty())
+                {
+                    out.push(format!("  {description}"));
+                }
+                break;
+            }
+        }
+    }
+    println!("{}", out.join("\n"));
+    ExitCode::SUCCESS
+}
+
+/// review handler: diff pack, pre-submit memory guard, or event capture.
+fn review(args: crate::cmds_core::ReviewArgs) -> ExitCode {
+    if let Some(event_path) = &args.capture_event {
+        let path = Path::new(event_path);
+        if path.is_dir() {
+            return click_usage_error(
+                "cairn review [OPTIONS]",
+                "review",
+                &format!(
+                    "Invalid value for '--capture-event': Path '{event_path}' is a directory."
+                ),
+            );
+        }
+        if !path.exists() {
+            return click_usage_error(
+                "cairn review [OPTIONS]",
+                "review",
+                &format!(
+                    "Invalid value for '--capture-event': File '{event_path}' does not exist."
+                ),
+            );
+        }
+    }
+    let given: Vec<&str> = [
+        ("--base", args.base.is_some()),
+        ("--pre-submit", args.pre_submit),
+        ("--capture-event", args.capture_event.is_some()),
+    ]
+    .into_iter()
+    .filter(|(_, present)| *present)
+    .map(|(flag, _)| flag)
+    .collect();
+    if given.len() > 1 {
+        return click_usage_error(
+            "cairn review [OPTIONS]",
+            "review",
+            &format!(
+                "{} are mutually exclusive; pass exactly one.",
+                given.join(", ")
+            ),
+        );
+    }
+    if given.is_empty() {
+        return click_usage_error(
+            "cairn review [OPTIONS]",
+            "review",
+            "Pass exactly one mode: --base <ref>, --pre-submit, or --capture-event <file>.",
+        );
+    }
+    if args.gate && !args.pre_submit {
+        return click_usage_error(
+            "cairn review [OPTIONS]",
+            "review",
+            "--gate requires --pre-submit.",
+        );
+    }
+    if args.capture_event.is_some() {
+        return review_capture_event(&args);
+    }
+    let ws = store_paths::resolve_workspace(None);
+    let workspace_str = ws.to_string_lossy().into_owned();
+    let db = db_arg(&args.db);
+    let Ok(mut conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
+        return command_error(&format!("cannot read store {db}"));
+    };
+    let bundle = cairn_query::tools_km::Bundle::new(knowledge_default());
+    let config = load_config(ws);
+    let registry = cairn_query::graph::merged_registry(&config.taint_sources, &config.taint_sinks);
+    let refresh = refresh_flag(args.refresh, args.no_refresh);
+    let mut refresh_fn = |conn: &mut Connection| refresh_with_banner(conn, &db, refresh);
+    if args.pre_submit {
+        let result = match cairn_query::review::build_pre_submit(
+            &mut conn,
+            &workspace_str,
+            &bundle,
+            args.fuzzy,
+            &registry,
+            &mut refresh_fn,
+        ) {
+            Ok(result) => result,
+            Err(message) => return command_error(&message),
+        };
+        match cairn_query::review::render_pre_submit(&result, args.output_format.as_str()) {
+            Ok(rendered) => {
+                if !rendered.is_empty() {
+                    println!("{rendered}");
+                }
+            }
+            Err(message) => return command_error(&message),
+        }
+        if args.gate {
+            if let Some(error) = &result.memories.error {
+                return command_error(&format!("pre-submit gate could not read memories: {error}"));
+            }
+            if cairn_query::review::has_blocking_matches(&result) {
+                return ExitCode::FAILURE;
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
+    let Some(base) = args.base.clone() else {
+        return ExitCode::SUCCESS;
+    };
+    let pack = match cairn_query::review::build_pack(
+        &mut conn,
+        &workspace_str,
+        &bundle,
+        &base,
+        args.fuzzy,
+        &registry,
+        &mut refresh_fn,
+    ) {
+        Ok(pack) => pack,
+        Err(message) => return command_error(&message),
+    };
+    match cairn_query::review::render_pack(&pack, args.output_format.as_str()) {
+        Ok(text) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(message) => command_error(&message),
+    }
+}
+
+/// The `--capture-event` arm: record one resolved-comment event as a memory.
+fn review_capture_event(args: &crate::cmds_core::ReviewArgs) -> ExitCode {
+    let event_path = args.capture_event.clone().unwrap_or_default();
+    let payload_text = match std::fs::read_to_string(Path::new(&event_path)) {
+        Ok(text) => text,
+        Err(e) => return command_error(&format!("cannot read event file {event_path}: {e}")),
+    };
+    let payload: Value = match serde_json::from_str(&payload_text) {
+        Ok(value) => value,
+        Err(e) => return command_error(&format!("cannot read event file {event_path}: {e}")),
+    };
+    let bundle = cairn_query::tools_km::Bundle::new(knowledge_default());
+    let db = db_arg(&args.db);
+    let Ok(conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
+        return command_error(&format!("cannot read store {db}"));
+    };
+    match cairn_query::review::capture_review_event(&conn, &bundle, &payload) {
+        Err(message) => command_error(&message),
+        Ok(outcome) => {
+            let path = outcome.path.clone().unwrap_or_default();
+            if outcome.recorded
+                && cairn_build::embeddings::embed_memory_concepts(
+                    &conn,
+                    &bundle,
+                    std::slice::from_ref(&path),
+                )
+                .is_err()
+            {
+                eprintln!(
+                    "Embedding failed; memories saved without vectors \
+                     (run `cairn memory embed` to backfill)."
+                );
+            }
+            if outcome.recorded {
+                println!(
+                    "Recorded {} '{}' -> {} (tier={})",
+                    outcome.type_.unwrap_or_default(),
+                    outcome.title.unwrap_or_default(),
+                    path,
+                    outcome.tier.unwrap_or_default()
+                );
+            } else {
+                println!("Comment is not resolved; nothing recorded.");
+            }
+            ExitCode::SUCCESS
+        }
+    }
+}
+
 // --- cairn dataflow -----------------------------------------------------------------
 
 /// dataflow build handler.
@@ -3661,6 +4088,86 @@ pub struct BlastArgs {
     /// Write to file instead of stdout.
     #[arg(long = "output")]
     pub output: Option<String>,
+}
+
+#[derive(clap::Args)]
+pub struct AskArgs {
+    /// Question text.
+    pub question: String,
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Knowledge bundle path.
+    #[arg(long = "knowledge")]
+    pub knowledge: Option<String>,
+    /// Emit JSON.
+    #[arg(long = "json")]
+    pub as_json: bool,
+    /// Route across every registered workspace store.
+    #[arg(long = "all-repos")]
+    pub all_repos: bool,
+}
+
+#[derive(clap::Args)]
+pub struct ContextArgs {
+    /// File to load context for.
+    pub file_path: String,
+    /// Knowledge bundle path.
+    #[arg(long = "knowledge")]
+    pub knowledge: Option<String>,
+    /// Reindex drifted files before answering.
+    #[arg(long = "refresh")]
+    pub refresh: bool,
+    /// Answer from the current graph without reindexing.
+    #[arg(long = "no-refresh")]
+    pub no_refresh: bool,
+}
+
+/// The review `--format` choices (click.Choice parity).
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum ReviewFormat {
+    Text,
+    Markdown,
+}
+
+impl ReviewFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Markdown => "markdown",
+        }
+    }
+}
+
+#[derive(clap::Args)]
+pub struct ReviewArgs {
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Build the review pack for the diff against this ref's merge base.
+    #[arg(long = "base")]
+    pub base: Option<String>,
+    /// Check the diff against recorded mistake and pattern memories.
+    #[arg(long = "pre-submit")]
+    pub pre_submit: bool,
+    /// Record a resolved review-comment event JSON as a memory.
+    #[arg(long = "capture-event")]
+    pub capture_event: Option<String>,
+    /// With --pre-submit, exit non-zero when a mistake or pattern matches the diff.
+    #[arg(long = "gate")]
+    pub gate: bool,
+    /// Pack rendering format.
+    #[arg(long = "format", default_value = "text")]
+    pub output_format: ReviewFormat,
+    /// Also traverse unresolved name-only edges.
+    #[arg(long = "fuzzy", default_value_t = false)]
+    pub fuzzy: bool,
+    /// Reindex drifted files before diffing.
+    #[arg(long = "refresh")]
+    pub refresh: bool,
+    /// Diff against the current graph without reindexing.
+    #[arg(long = "no-refresh")]
+    pub no_refresh: bool,
 }
 
 #[derive(clap::Args)]

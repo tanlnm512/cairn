@@ -215,15 +215,14 @@ serves this fallback against the workspace store directly:
 - `cairn federated-search "QUERY"` -- cross-store search with per-repo attribution
 - `cairn pack --task "<text>" --budget <N>` -- one-shot token-budgeted context block
 - `cairn taint --from <src> --to <sink>` -- taint path trace over precise edges
+- `cairn ask "<question>"` -- natural-language routing across graph/wiki/compass/memory
+  (`--all-repos` fans out across registered stores)
+- `cairn context <file>` -- compass + memory + wiki context for a file
+- `cairn review --base <ref>` -- diff review pack (`--pre-submit` memory guard;
+  `--capture-event <file>` comment capture)
 - `cairn memory record <type> "<title>"` -- capture a learning
 - `cairn memory share/check/timeline` -- multi-agent sharing, overlap check,
   per-symbol history; `memory search --as-of <date>` for point-in-time recall
-
-`cairn context <file>`, `cairn ask "<question>"`, and
-`cairn review --base <ref>` (diff review pack; `--pre-submit` memory guard;
-`--capture-event <file>` comment capture) still require the PyPI CLI
-(`pip install cairn-intel`) during the transition window — the binary exits
-non-zero with a named diagnostic for them.
 
 ## Knowledge Files
 
