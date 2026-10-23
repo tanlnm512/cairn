@@ -1159,7 +1159,58 @@ fn run_compass(group: CompassGroup) -> ExitCode {
         CompassGroup::Validate { db, knowledge } => {
             compass_validate(db.as_deref(), knowledge.as_deref())
         }
-        other => not_ported(other.name()),
+        CompassGroup::Generate {
+            module,
+            repo,
+            use_llm,
+            db,
+            knowledge,
+            dry_run,
+            show_rejections,
+        } => compass_generate(
+            &module,
+            repo.as_deref(),
+            db.as_deref(),
+            knowledge.as_deref(),
+            use_llm,
+            dry_run,
+            show_rejections,
+        ),
+        CompassGroup::Gaps { db, knowledge } => compass_gaps(db.as_deref(), knowledge.as_deref()),
+        CompassGroup::Flow {
+            entry,
+            db,
+            knowledge,
+            dry_run,
+            as_workflow,
+            max_steps,
+            use_llm,
+            entry_id,
+        } => compass_flow(
+            &entry,
+            db.as_deref(),
+            knowledge.as_deref(),
+            dry_run,
+            as_workflow,
+            max_steps,
+            use_llm,
+            entry_id.as_deref(),
+        ),
+        CompassGroup::FlowGaps {
+            min_edges,
+            generate,
+            limit,
+            dry_run,
+            db,
+            knowledge,
+        } => compass_flow_gaps(
+            min_edges,
+            generate,
+            limit,
+            dry_run,
+            db.as_deref(),
+            knowledge.as_deref(),
+        ),
     }
 }
 
@@ -1410,13 +1461,6 @@ fn task_drop(task_id: &str, knowledge: Option<&str>) -> ExitCode {
 }
 
 // --- shared output/store helpers -------------------------------------------------
-
-fn not_ported(name: &str) -> ExitCode {
-    display::error(&format!(
-        "cairn {name} is not implemented in the Rust CLI yet"
-    ));
-    ExitCode::FAILURE
-}
 
 fn cli_err(msg: &str) -> ExitCode {
     eprintln!("Error: {msg}");
@@ -4113,6 +4157,819 @@ fn compass_validate(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn critic_verdict_lines(result: &tools_km::CriticResult) {
+    println!(
+        "  passed: {}  quality: {:.2}  errors: {}  warnings: {}",
+        py_bool(result.passed),
+        result.quality_score,
+        result.errors.len(),
+        result.warnings.len()
+    );
+    for e in &result.errors {
+        println!("  ERROR: {e}");
+    }
+    for w in &result.warnings {
+        println!("  warn: {w}");
+    }
+}
+
+fn module_error_exit(module: &str, e: &tools_km::ModuleResolutionError) -> ExitCode {
+    println!("Cannot generate compass for '{module}': {}", e.0);
+    ExitCode::FAILURE
+}
+
+/// SubprocessBackend exec: run the agent CLI, killed at the 120s timeout.
+fn exec_agent(argv: &[String]) -> String {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    const EXEC_TIMEOUT_S: u64 = 120;
+    let Ok(mut child) = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return String::new();
+    };
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stdout.read_to_string(&mut buf);
+        buf
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(EXEC_TIMEOUT_S);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = reader.join().unwrap_or_default();
+                return if status.success() { out } else { String::new() };
+            }
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return String::new();
+            }
+        }
+    }
+}
+
+/// FileQueueBackend fallback: queue the task and poll it for the result.
+fn queue_wait(
+    bundle: &Bundle,
+    kind: &str,
+    resource: &str,
+    facts: &yaml_rust2::yaml::Hash,
+    timeout_s: u64,
+) -> String {
+    const POLL_INTERVAL_S: u64 = 2;
+    const MAX_WAIT_S: u64 = 600;
+    let Ok(task) = tasks::create_task(bundle, kind, resource, facts.clone(), 0) else {
+        return String::new();
+    };
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(timeout_s.min(MAX_WAIT_S));
+    loop {
+        if let Ok(Some(t)) = tasks::get_task(bundle, &task.id) {
+            if t.status == "done" {
+                return tasks::read_result(bundle, &task.id).unwrap_or_default();
+            }
+            if t.status == "failed" || t.status == "dropped" {
+                return String::new();
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return String::new();
+        }
+        std::thread::sleep(std::time::Duration::from_secs(POLL_INTERVAL_S));
+    }
+}
+
+/// SubprocessBackend synthesize/revise: exec the agent, then the queue fallback.
+fn agent_backend_run(
+    cli: &str,
+    prompt_id: &str,
+    facts: &yaml_rust2::yaml::Hash,
+    bundle: &Bundle,
+) -> String {
+    let prompt = format!(
+        "[cairn task: {prompt_id}]\n\nUse the cairn skill to process this. \
+         Facts (graph-grounded):\n{}\n\n## Output spec\n{}\n\nOutput ONLY the \
+         result content, nothing else.",
+        py_json::dumps(&py_json::yaml_to_value(&Yaml::Hash(facts.clone()))),
+        tasks::output_spec(prompt_id, &yaml_rust2::yaml::Hash::new()),
+    );
+    let argv: Vec<String> = match cli {
+        "claude" => vec![
+            cli.to_string(),
+            "-p".into(),
+            prompt,
+            "--allowedTools".into(),
+            "Read,Glob,Grep".into(),
+        ],
+        "droid" => vec![cli.to_string(), "exec".into(), prompt],
+        _ => vec![cli.to_string(), "exec".into(), "--prompt".into(), prompt],
+    };
+    let out = exec_agent(&argv);
+    if !out.is_empty() {
+        return out;
+    }
+    let resource = match facts.get(&Yaml::String("resource".into())) {
+        Some(Yaml::String(s)) => s.clone(),
+        _ => prompt_id.to_string(),
+    };
+    queue_wait(bundle, prompt_id, &resource, facts, 120)
+}
+
+/// One generator->critic->revise outcome for the agent-sync path.
+struct CompassLlmOutcome {
+    concept: Concept,
+    mode: String,
+    cycles: usize,
+    fact_errors: Vec<String>,
+    trace: Vec<(usize, Vec<String>, f64)>,
+}
+
+fn generate_compass_with_llm(
+    conn: &Connection,
+    bundle: &Bundle,
+    module: &str,
+    repo: Option<&str>,
+    cli: &str,
+) -> Result<CompassLlmOutcome, tools_km::ModuleResolutionError> {
+    let facts = tools_km::gather_module_facts(conn, module, repo)?;
+    let resolved_repo = facts.repo.as_deref();
+    let facts_yaml = tools_km::compass_facts_yaml(&facts);
+    let mut trace: Vec<(usize, Vec<String>, f64)> = Vec::new();
+    let mut draft = String::new();
+    let mut fact_errors: Vec<String> = Vec::new();
+    for cycle in 0..=(tasks::MAX_REVISE_CYCLES as usize) {
+        draft = if cycle == 0 {
+            agent_backend_run(cli, "compass-synthesize", &facts_yaml, bundle)
+        } else {
+            let mut revise = facts_yaml.clone();
+            revise.insert(
+                Yaml::String("previous_draft".into()),
+                Yaml::String(draft.clone()),
+            );
+            revise.insert(
+                Yaml::String("errors".into()),
+                Yaml::Array(fact_errors.iter().map(tools_km::ys).collect()),
+            );
+            agent_backend_run(cli, "compass-revise", &revise, bundle)
+        };
+        if draft.is_empty() {
+            let concept = tools_km::generate_compass(conn, bundle, &facts.module, resolved_repo)?;
+            return Ok(CompassLlmOutcome {
+                concept,
+                mode: "deterministic-fallback".to_string(),
+                cycles: cycle,
+                fact_errors: vec!["llm unavailable".to_string()],
+                trace,
+            });
+        }
+        let tmp = Concept {
+            type_: "Compass".to_string(),
+            resource: Some(facts.module.clone()),
+            body: draft.clone(),
+            ..Default::default()
+        };
+        match tools_km::critic_concept(&tmp, conn) {
+            Ok(result) => {
+                fact_errors = result.errors.clone();
+                trace.push((cycle, result.errors, result.quality_score));
+            }
+            Err(e) => return Err(tools_km::ModuleResolutionError(e.0)),
+        }
+        if fact_errors.is_empty() {
+            break;
+        }
+    }
+    let concept =
+        tools_km::compass_concept_from_body(conn, bundle, &facts.module, resolved_repo, &draft)?;
+    Ok(CompassLlmOutcome {
+        concept,
+        mode: "llm".to_string(),
+        cycles: trace.len(),
+        fact_errors,
+        trace,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compass_generate(
+    module: &str,
+    repo: Option<&str>,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+    use_llm: bool,
+    dry_run: bool,
+    show_rejections: bool,
+) -> ExitCode {
+    let knowledge_path = knowledge.map_or_else(knowledge_default, PathBuf::from);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let bundle = resolve_bundle(&knowledge_path);
+    let backend = std::env::var("CAIRN_LLM_BACKEND")
+        .unwrap_or_else(|_| "file-queue".to_string())
+        .to_lowercase();
+
+    if use_llm && matches!(backend.as_str(), "droid" | "opencode" | "claude") {
+        let outcome = match generate_compass_with_llm(&conn, &bundle, module, repo, &backend) {
+            Ok(outcome) => outcome,
+            Err(e) => return module_error_exit(module, &e),
+        };
+        let concept = outcome.concept;
+        let Ok(result) = tools_km::critic_concept(&concept, &conn) else {
+            return cli_err("critic execution failed");
+        };
+        if show_rejections {
+            println!("--- critic trace ({} cycle(s)) ---", outcome.trace.len());
+            for (cycle, errors, quality) in &outcome.trace {
+                let verdict = if errors.is_empty() { "ok" } else { "REJECTED" };
+                println!(
+                    "  cycle {cycle}: quality={quality:.2} ({} error(s)) [{verdict}]",
+                    errors.len()
+                );
+                for e in errors.iter().take(3) {
+                    println!("    - {e}");
+                }
+            }
+            println!();
+        }
+        let fact_errors = &outcome.fact_errors;
+        if dry_run {
+            println!(
+                "Would write compass ({}): {}",
+                outcome.mode, concept.concept_id
+            );
+            println!("  revise cycles: {}", outcome.cycles);
+            println!(
+                "  critic verdict: passed={} quality={:.2} errors={} warnings={}",
+                py_bool(result.passed),
+                result.quality_score,
+                result.errors.len(),
+                result.warnings.len()
+            );
+            for e in fact_errors.iter().take(5) {
+                println!("    {e}");
+            }
+            println!("\n--- body (not written) ---\n");
+            println!("{}", concept.body);
+            return ExitCode::SUCCESS;
+        }
+        if !fact_errors.is_empty() {
+            println!(
+                "compass {}: NOT written — {} unresolved fact error(s) after {} revise cycle(s):",
+                concept.concept_id,
+                fact_errors.len(),
+                outcome.cycles
+            );
+            for e in fact_errors.iter().take(5) {
+                println!("    {e}");
+            }
+            return ExitCode::FAILURE;
+        }
+        if !result.passed {
+            println!(
+                "Compass rejected by critic (quality={:.2}, {} error(s)) — not written.",
+                result.quality_score,
+                result.errors.len()
+            );
+            for e in &result.errors {
+                println!("  ERROR: {e}");
+            }
+            for w in &result.warnings {
+                println!("  warn: {w}");
+            }
+            return ExitCode::FAILURE;
+        }
+        let mut concept = concept;
+        if let Err(e) = bundle.write_concept(&mut concept) {
+            return cli_err(&e.0);
+        }
+        println!(
+            "Generated compass ({}): {}",
+            outcome.mode, concept.concept_id
+        );
+        println!("  revise cycles: {}", outcome.cycles);
+        println!("  fact errors: {}", fact_errors.len());
+        for e in fact_errors.iter().take(5) {
+            println!("    {e}");
+        }
+        println!("\n--- body ---\n");
+        println!("{}", concept.body);
+        return ExitCode::SUCCESS;
+    }
+
+    if use_llm {
+        let facts = match tools_km::gather_module_facts(&conn, module, repo) {
+            Ok(facts) => facts,
+            Err(e) => return module_error_exit(module, &e),
+        };
+        if dry_run {
+            println!("--- dry-run: task not queued ---");
+            println!(
+                "Would queue compass-synthesize task for `{}` ({} symbols, {} key file(s)).",
+                facts.module,
+                facts.symbol_count,
+                facts.key_files.len()
+            );
+            println!("Re-run without --dry-run to enqueue it.");
+            return ExitCode::SUCCESS;
+        }
+        let task = match tasks::create_task(
+            &bundle,
+            "compass-synthesize",
+            &facts.module,
+            tools_km::compass_facts_yaml(&facts),
+            0,
+        ) {
+            Ok(task) => task,
+            Err(e) => return cli_err(&e.0),
+        };
+        println!("Queued compass task: {}", task.id);
+        println!("Any agent with the cairn skill can process it:");
+        println!(
+            "  cairn task show {}        # view the task + facts",
+            task.id
+        );
+        println!("  cairn task claim {}       # claim it", task.id);
+        println!(
+            "  cairn task complete {} --result-file <path>   # submit result",
+            task.id
+        );
+        println!("On completion, run: cairn compass validate  (deterministic critic)");
+        return ExitCode::SUCCESS;
+    }
+
+    let concept = match tools_km::generate_compass(&conn, &bundle, module, repo) {
+        Ok(concept) => concept,
+        Err(e) => return module_error_exit(module, &e),
+    };
+    let Ok(result) = tools_km::critic_concept(&concept, &conn) else {
+        return cli_err("critic execution failed");
+    };
+    if dry_run {
+        println!("--- critic verdict (dry-run; nothing written) ---");
+        critic_verdict_lines(&result);
+        println!("\n--- body (not written) ---\n");
+        println!("{}", concept.body);
+        return ExitCode::SUCCESS;
+    }
+    if !result.passed {
+        println!(
+            "Compass rejected by critic (quality={:.2}, {} error(s)) — not written.",
+            result.quality_score,
+            result.errors.len()
+        );
+        for e in &result.errors {
+            println!("  ERROR: {e}");
+        }
+        for w in &result.warnings {
+            println!("  warn: {w}");
+        }
+        println!(
+            "\nThe deterministic generator is graph-sourced, so this usually means \
+             a stale graph (run `cairn build`) or a generator bug."
+        );
+        return ExitCode::FAILURE;
+    }
+    let mut concept = concept;
+    if let Err(e) = bundle.write_concept(&mut concept) {
+        return cli_err(&e.0);
+    }
+    println!("Generated compass: {}", concept.concept_id);
+    println!(
+        "  quality: {:.2}, errors: {}",
+        result.quality_score,
+        result.errors.len()
+    );
+    for e in &result.errors {
+        println!("  ERROR: {e}");
+    }
+    println!("\n--- body ---\n");
+    println!("{}", concept.body);
+    ExitCode::SUCCESS
+}
+
+fn compass_gaps(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let knowledge_path = knowledge.map_or_else(knowledge_default, PathBuf::from);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let bundle = resolve_bundle(&knowledge_path);
+    let gaps = tools_km::detect_gaps(&conn, &bundle);
+    if gaps.is_empty() {
+        println!("No coverage gaps (all modules have compass files).");
+        return ExitCode::SUCCESS;
+    }
+    println!("{} modules without compass coverage:", gaps.len());
+    for g in &gaps {
+        println!("  {g}");
+    }
+    ExitCode::SUCCESS
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compass_flow(
+    entry: &str,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+    dry_run: bool,
+    as_workflow: bool,
+    max_steps: i64,
+    use_llm: bool,
+    entry_id: Option<&str>,
+) -> ExitCode {
+    let knowledge_path = knowledge.map_or_else(knowledge_default, PathBuf::from);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let bundle = resolve_bundle(&knowledge_path);
+
+    if entry_id.is_none() {
+        let defs: Vec<_> = cairn_query::graph::find_definition(&conn, entry, 50)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| d.name == entry || d.qualified_name.as_deref() == Some(entry))
+            .collect();
+        if defs.len() > 1 {
+            println!(
+                "`{entry}` is ambiguous: {} symbols share the name.",
+                defs.len()
+            );
+            for d in &defs {
+                println!("  {}  {} ({})", d.id, d.file_path, d.repo);
+            }
+            println!(
+                "Re-run with --entry-id <id>, or use `cairn compass flow-gaps --generate` \
+                 for the batch path."
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let facts = match tools_km::gather_flow_facts(&conn, entry, entry_id) {
+        Ok(facts) => facts,
+        Err(e) => return cli_err(&e.to_string()),
+    };
+    if facts.total_steps <= 1 {
+        println!("No outgoing calls traced from `{entry}` -- nothing to document.");
+        println!("Verify the symbol exists and has resolved callees (run `cairn build` first).");
+        return ExitCode::FAILURE;
+    }
+
+    if use_llm {
+        if dry_run {
+            println!("--- dry-run: task not queued ---");
+            println!(
+                "Would queue flow-synthesize task for `{entry}` ({} step(s)).",
+                facts.total_steps
+            );
+            println!("Re-run without --dry-run to enqueue it.");
+            return ExitCode::SUCCESS;
+        }
+        let key = match tools_km::flow_coverage_key(&conn, entry, entry_id, &facts) {
+            Ok(key) => key,
+            Err(e) => return cli_err(&e.to_string()),
+        };
+        let task = match tasks::create_task(
+            &bundle,
+            "flow-synthesize",
+            &key,
+            tools_km::flow_facts_yaml(&facts),
+            0,
+        ) {
+            Ok(task) => task,
+            Err(e) => return cli_err(&e.0),
+        };
+        println!(
+            "Traced {} step(s) from `{entry}` across {} module(s).",
+            facts.total_steps,
+            facts.modules.len()
+        );
+        println!("Queued flow task: {}", task.id);
+        println!("Any agent with the cairn skill can process it:");
+        println!(
+            "  cairn task show {}        # view the task + facts",
+            task.id
+        );
+        println!("  cairn task claim {}       # claim it", task.id);
+        println!(
+            "  cairn task complete {} --result-file <path>   # submit result",
+            task.id
+        );
+        let safe_id = key.replace(['/', '.', '#'], "-");
+        println!("On completion, the critic auto-promotes to compass/flow-{safe_id}.");
+        return ExitCode::SUCCESS;
+    }
+
+    println!(
+        "Traced {} step(s) from `{entry}` across {} module(s).",
+        facts.total_steps,
+        facts.modules.len()
+    );
+    if !facts.branches.is_empty() {
+        println!("  branch points: {}", facts.branches.len());
+    }
+    if !facts.leaves.is_empty() {
+        println!("  terminal calls: {}", facts.leaves.len());
+    }
+    println!();
+
+    let concept = match tools_km::generate_flow_compass(&conn, entry, entry_id, &facts, None, None)
+    {
+        Ok(concept) => concept,
+        Err(e) => return cli_err(&e.to_string()),
+    };
+    let Ok(result) = tools_km::critic_concept(&concept, &conn) else {
+        return cli_err("critic execution failed");
+    };
+
+    let mut steps = Vec::new();
+    if as_workflow {
+        steps = tools_km::flow_to_workflow(&facts, max_steps.max(0) as usize);
+        if dry_run {
+            println!("--- workflow steps (not written) ---");
+            for (i, step) in steps.iter().enumerate() {
+                println!("  {}. {}", i + 1, step.name.clone().unwrap_or_default());
+                if let Some(desc) = &step.description
+                    && !desc.is_empty()
+                {
+                    println!("     {desc}");
+                }
+            }
+            println!();
+        }
+    }
+
+    if dry_run {
+        println!("--- flow trace ---");
+        for line in &facts.chain_lines {
+            println!("  {line}");
+        }
+        println!("\n--- critic verdict (dry-run; nothing written) ---");
+        critic_verdict_lines(&result);
+        println!("\n--- body (not written) ---\n");
+        println!("{}", concept.body);
+        return ExitCode::SUCCESS;
+    }
+
+    if !result.passed {
+        println!(
+            "Flow compass rejected by critic (quality={:.2}, {} error(s)) -- not written.",
+            result.quality_score,
+            result.errors.len()
+        );
+        for e in &result.errors {
+            println!("  ERROR: {e}");
+        }
+        for w in &result.warnings {
+            println!("  warn: {w}");
+        }
+        println!(
+            "\nThe flow body is graph-sourced, so this usually means a stale graph \
+             (run `cairn build`) or a generator bug."
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let mut concept = concept;
+    if let Err(e) = bundle.write_concept(&mut concept) {
+        return cli_err(&e.0);
+    }
+    println!("Generated flow compass: {}", concept.concept_id);
+    println!(
+        "  quality: {:.2}, errors: {}",
+        result.quality_score,
+        result.errors.len()
+    );
+    println!("\n--- body ---\n");
+    println!("{}", concept.body);
+
+    if as_workflow {
+        let workflow_cid = match tools_km::generate_flow_workflow(
+            &bundle,
+            entry,
+            &facts,
+            max_steps.max(0) as usize,
+        ) {
+            Ok(cid) => cid,
+            Err(e) => return cli_err(&e.0),
+        };
+        println!(
+            "Generated flow workflow: {workflow_cid} ({} steps)",
+            steps.len()
+        );
+        println!("  Trace with: cairn knowledge workflow trace \"Flow: {entry}\"");
+    }
+    ExitCode::SUCCESS
+}
+
+/// pathlib `Path(suffix).parent/stem` rendering for a colliding flow title.
+fn flow_gap_suffix_stem(resource: &str, fname: &str) -> String {
+    let suffix = match resource.split_once('#') {
+        Some((_, s)) => s,
+        None => fname,
+    };
+    if suffix.contains('/') {
+        let path = Path::new(suffix);
+        let parent = path.parent().and_then(|p| p.to_str()).unwrap_or("");
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(suffix);
+        format!("{parent}/{stem}")
+    } else {
+        Path::new(suffix)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(suffix)
+            .to_string()
+    }
+}
+
+fn compass_flow_gaps(
+    min_edges: i64,
+    generate: bool,
+    limit: i64,
+    dry_run: bool,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let knowledge_path = knowledge.map_or_else(knowledge_default, PathBuf::from);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let bundle = resolve_bundle(&knowledge_path);
+    let result = match tools_km::detect_flow_gaps(&conn, &bundle, min_edges) {
+        Ok(result) => result,
+        Err(e) => return cli_err(&e.0),
+    };
+    for cid in &result.unreadable {
+        println!("WARNING: unreadable flow compass file skipped: {cid}");
+    }
+    let uncovered = result.uncovered;
+    let covered = result.covered;
+    if uncovered.is_empty() && covered.is_empty() {
+        println!(
+            "No candidate flows found (min-edges={min_edges}). Run `cairn build` first, \
+             or lower --min-edges."
+        );
+        return ExitCode::SUCCESS;
+    }
+
+    if generate {
+        let targets: &[tools_km::FlowGapEntry] = if limit <= 0 {
+            &uncovered
+        } else {
+            let n = (limit as usize).min(uncovered.len());
+            &uncovered[..n]
+        };
+        println!(
+            "Generating {} flow compass(es) (min-edges={}, {} already documented)...",
+            targets.len(),
+            min_edges,
+            covered.len()
+        );
+        if dry_run {
+            println!("(dry-run: nothing will be written)");
+        }
+        println!();
+
+        let (mut generated, mut rejected, mut skipped, mut errors) =
+            (0usize, 0usize, 0usize, 0usize);
+        for entry in targets {
+            let fname = entry.file.rsplit('/').next().unwrap_or(&entry.file);
+            let display_title = if entry.colliding {
+                format!(
+                    "Flow: {} ({})",
+                    entry.name,
+                    flow_gap_suffix_stem(&entry.resource, fname)
+                )
+            } else {
+                format!("Flow: {}", entry.name)
+            };
+            let entry_id = Some(entry.id.as_str());
+            let facts = match tools_km::gather_flow_facts(&conn, &entry.name, entry_id) {
+                Ok(facts) => facts,
+                Err(e) => {
+                    println!("  ERROR {display_title} ({e})");
+                    errors += 1;
+                    continue;
+                }
+            };
+            if facts.total_steps <= 1 {
+                println!("  SKIP  {:40} (no outgoing calls)", entry.name);
+                skipped += 1;
+                continue;
+            }
+            let concept = match tools_km::generate_flow_compass(
+                &conn,
+                &entry.name,
+                entry_id,
+                &facts,
+                Some(&entry.resource),
+                Some(&display_title),
+            ) {
+                Ok(concept) => concept,
+                Err(e) => {
+                    println!("  ERROR {display_title} ({e})");
+                    errors += 1;
+                    continue;
+                }
+            };
+            let critic_result = match tools_km::critic_concept(&concept, &conn) {
+                Ok(result) => result,
+                Err(e) => {
+                    println!("  ERROR {display_title} ({})", e.0);
+                    errors += 1;
+                    continue;
+                }
+            };
+            if !critic_result.passed {
+                println!(
+                    "  REJECT {display_title} (quality={:.2})",
+                    critic_result.quality_score
+                );
+                rejected += 1;
+                continue;
+            }
+            if dry_run {
+                println!("  WOULD  {display_title}");
+                generated += 1;
+                continue;
+            }
+            let mut concept = concept;
+            if let Err(e) = bundle.write_concept(&mut concept) {
+                println!("  ERROR {display_title} ({})", e.0);
+                errors += 1;
+                continue;
+            }
+            println!(
+                "  OK    {display_title}  (steps={}, quality={:.2})",
+                facts.total_steps, critic_result.quality_score
+            );
+            generated += 1;
+        }
+
+        println!();
+        let action = if dry_run {
+            "would generate"
+        } else {
+            "generated"
+        };
+        println!(
+            "Batch complete: {action} {generated}, {rejected} rejected, {skipped} skipped, \
+             {errors} error(s)."
+        );
+        if !dry_run && (rejected > 0 || errors > 0) {
+            return ExitCode::FAILURE;
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    if !uncovered.is_empty() {
+        println!(
+            "{} undocumented flow(s) (min-edges={}, {} already documented):",
+            uncovered.len(),
+            min_edges,
+            covered.len()
+        );
+        for e in &uncovered {
+            let fname = e.file.rsplit('/').next().unwrap_or(&e.file);
+            println!("  {:40} out={:3}  {}", e.name, e.out_edges, fname);
+        }
+    } else {
+        println!(
+            "All candidate flows are documented ({} total).",
+            covered.len()
+        );
+    }
+    if !covered.is_empty() {
+        println!("\nAlready documented ({}):", covered.len());
+        for e in &covered {
+            let fname = e.file.rsplit('/').next().unwrap_or(&e.file);
+            println!("  {:40} out={:3}  {}  [DONE]", e.name, e.out_edges, fname);
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 // --- wiki group --------------------------------------------------------------
 
 fn wiki_search(query: &str, knowledge: Option<&str>) -> ExitCode {
@@ -4619,20 +5476,6 @@ fn wiki_enrich(
     println!("  cairn task list --kind wiki-page-enrich --status pending");
     println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
     ExitCode::SUCCESS
-}
-
-impl CompassGroup {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Generate { .. } => "compass generate",
-            Self::List { .. } => "compass list",
-            Self::Validate { .. } => "compass validate",
-            Self::Gaps { .. } => "compass gaps",
-            Self::Flow { .. } => "compass flow",
-            Self::FlowGaps { .. } => "compass flow-gaps",
-        }
-    }
 }
 
 #[cfg(test)]

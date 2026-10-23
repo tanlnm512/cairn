@@ -102,7 +102,7 @@ fn exact_symbol_names(conn: &Connection, token: &str) -> Vec<String> {
 }
 
 fn symbols_under_path(conn: &Connection, token: &str) -> Vec<String> {
-    let Some((repo, module_path)) = resolve_module(conn, token, None) else {
+    let Some((repo, module_path)) = crate::tools_km::resolve_module(conn, token, None).ok() else {
         return Vec::new();
     };
     let mut sql = String::from(
@@ -110,7 +110,7 @@ fn symbols_under_path(conn: &Connection, token: &str) -> Vec<String> {
          JOIN files f ON s.file_id = f.id \
          WHERE (f.path = ?1 OR f.path LIKE ?2 ESCAPE '\\' OR f.path LIKE ?3 ESCAPE '\\')",
     );
-    let (p0, p1, p2) = module_match_params(&module_path);
+    let (p0, p1, p2) = crate::tools_km::module_match_params(&module_path);
     let mut params: Vec<String> = vec![p0, p1, p2];
     if let Some(repo) = repo {
         sql.push_str(" AND f.repo_id = ?4");
@@ -140,119 +140,6 @@ fn symbols_under_path(conn: &Connection, token: &str) -> Vec<String> {
     names.sort();
     names.dedup();
     names
-}
-
-fn escape_like(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
-fn module_match_params(module_path: &str) -> (String, String, String) {
-    let e = escape_like(module_path);
-    (module_path.to_string(), format!("{e}/%"), format!("/{e}/%"))
-}
-
-/// Resolve (repo, repo-relative module path); None on ambiguity or empty input.
-fn resolve_module(
-    conn: &Connection,
-    module_path: &str,
-    repo: Option<&str>,
-) -> Option<(Option<String>, String)> {
-    let module_path = module_path.trim_matches('/');
-    if module_path.is_empty() {
-        return None;
-    }
-    let repo = match repo {
-        Some(repo) => Some(repo.to_string()),
-        None => infer_repo(conn, module_path),
-    };
-    let normalized = repo
-        .as_ref()
-        .and_then(|r| {
-            module_path
-                .strip_prefix(&format!("{r}/"))
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| module_path.to_string());
-    Some((repo, normalized))
-}
-
-fn infer_repo(conn: &Connection, module_path: &str) -> Option<String> {
-    let repos: Vec<(String, Option<String>)> = {
-        let mut stmt = conn.prepare("SELECT id, path FROM repos").ok()?;
-        let mapped = stmt
-            .query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
-            })
-            .ok()?;
-        mapped.flatten().collect()
-    };
-    // Unambiguous anchors: bare repo id or explicit `{repo}/` prefix.
-    for (rid, _) in &repos {
-        if module_path == rid || module_path.starts_with(&format!("{rid}/")) {
-            return Some(rid.clone());
-        }
-    }
-    // Legacy absolute paths anchor on the registered repo root.
-    let rooted: Vec<&String> = repos
-        .iter()
-        .filter(|(_, path)| {
-            path.as_deref()
-                .map(|p| {
-                    let root = p.trim_end_matches('/');
-                    !root.is_empty() && module_path.starts_with(&format!("{root}/"))
-                })
-                .unwrap_or(false)
-        })
-        .map(|(rid, _)| rid)
-        .collect();
-    if rooted.len() > 1 {
-        return None;
-    }
-    if let Some(rid) = rooted.first() {
-        return Some((*rid).clone());
-    }
-    // Bare module name: infer from the repos that contain it.
-    let (p0, p1, p2) = module_match_params(module_path);
-    let repo_ids: Vec<String> = {
-        let mut stmt = conn
-            .prepare(
-                "SELECT DISTINCT repo_id FROM files \
-                 WHERE (path = ?1 OR path LIKE ?2 ESCAPE '\\' OR path LIKE ?3 ESCAPE '\\')",
-            )
-            .ok()?;
-        let mapped = stmt
-            .query_map(rusqlite::params![p0, p1, p2], |r| r.get::<_, String>(0))
-            .ok()?;
-        mapped.flatten().collect()
-    };
-    if repo_ids.len() > 1 {
-        return None;
-    }
-    if repo_ids.len() == 1 {
-        return repo_ids.into_iter().next();
-    }
-    // No file evidence: a unique repo-id segment mid-path is the last signal.
-    let segment: Vec<&String> = repos
-        .iter()
-        .map(|(rid, _)| rid)
-        .filter(|rid| {
-            **rid != module_path && format!("/{module_path}/").contains(&format!("/{rid}/"))
-        })
-        .collect();
-    if segment.len() > 1 {
-        return None;
-    }
-    if let Some(rid) = segment.first() {
-        return Some((*rid).clone());
-    }
-    // Fallback: single-repo workspace infers its only repo.
-    if repos.len() == 1 {
-        return repos.into_iter().next().map(|(rid, _)| rid);
-    }
-    None
 }
 
 // --- ranking (skillgen/ranking.py port) ------------------------------------------

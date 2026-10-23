@@ -12,7 +12,7 @@ pub use taint::{
     find_symbol_paths, format_taint_warning, intersect_seeds, intersect_seeds_registry,
     merged_registry, resolve_pattern_symbols,
 };
-pub use trace::{FlowNode, trace_flow};
+pub use trace::{FlowNode, trace_flow, trace_flow_opts};
 pub use viz::{
     Graph, get_deps_graph, get_impact_graph, get_module_graph, get_repo_graph, get_symbol_graph,
     get_symbol_neighbors, get_symbol_overview, to_dot, to_html, to_json, to_mermaid, viz_embed,
@@ -926,7 +926,20 @@ mod trace {
 
     /// Downward structural callee walk with cycles, leaves, and depth cutoffs.
     pub fn trace_flow(conn: &Connection, entry: &str, max_depth: i64) -> Flow {
-        let entry_row = find_definition(conn, entry, 1).unwrap_or_default();
+        trace_flow_opts(conn, entry, max_depth, None)
+    }
+
+    /// `trace_flow` with an optional symbol id for collision-safe entry resolution.
+    pub fn trace_flow_opts(
+        conn: &Connection,
+        entry: &str,
+        max_depth: i64,
+        entry_id: Option<&str>,
+    ) -> Flow {
+        let entry_row: Vec<_> = match entry_id {
+            Some(id) => find_definition_by_id(conn, id).into_iter().collect(),
+            None => find_definition(conn, entry, 1).unwrap_or_default(),
+        };
         let entry_file = entry_row
             .first()
             .map(|r| r.file_path.clone())

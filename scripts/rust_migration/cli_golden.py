@@ -170,6 +170,29 @@ COMMANDS = [
     ["memory", "embed"],
     ["memory", "batch-critic"],
     ["memory", "consolidate"],
+    # Compass family (4c-4c): generate/gaps/flow/flow-gaps. The 3+-word
+    # legs re-seed the pinned compass tree via RESEED so coverage state
+    # resets after the writing legs (flow legs also queue tasks under
+    # _tasks/, which no later leg reads); the read-only 2-word "compass
+    # gaps" relies on the preceding --use-llm leg leaving compass/ as
+    # seeded. The mid-path module leg pins the `%/{module}/%` match arm.
+    ["compass", "generate", "--dry-run", "src/cairn/graph"],
+    ["compass", "generate", "--dry-run", "cairn/graph"],
+    ["compass", "generate", "src/cairn/graph"],
+    ["compass", "generate", "--use-llm", "--dry-run", "src/cairn/graph"],
+    ["compass", "generate", "--use-llm", "src/cairn/graph"],
+    ["compass", "gaps"],
+    ["compass", "flow", "--dry-run", "build_pack"],
+    ["compass", "flow", "build_pack"],
+    ["compass", "flow", "--as-workflow", "--max-steps", "5", "build_pack"],
+    ["compass", "flow", "main"],
+    ["compass", "flow", "NoSuchSymbol"],
+    ["compass", "flow", "--use-llm", "--dry-run", "build_pack"],
+    ["compass", "flow", "--use-llm", "build_pack"],
+    ["compass", "flow-gaps", "--min-edges", "15"],
+    ["compass", "flow-gaps", "--generate", "--dry-run", "--min-edges", "15",
+     "--limit", "2"],
+    ["compass", "flow-gaps", "--generate", "--limit", "1", "--min-edges", "25"],
 ]
 # The stdin-fed capture leg reads its transcript from stdin (ARG_MAX-free path).
 STDIN_OVERRIDES: dict[tuple[str, ...], str] = {
@@ -569,6 +592,14 @@ def _reset_hooks_workspace(scratch: Path, installed: bool) -> None:
         install_hooks(["alpha", "beta"], str(ws))
 
 
+def _seed_compass_reset(scratch: Path) -> None:
+    """Restore the pinned compass tree so each compass leg starts from the
+    same coverage state."""
+    compass = scratch / ".knowledge" / "compass"
+    shutil.rmtree(compass, ignore_errors=True)
+    shutil.copytree(parity.PINNED_STORES / "self" / "bundle" / "compass", compass)
+
+
 def _seed_task(scratch: Path, task_id: str, kind: str, resource: str,
                facts: dict, status: str = "pending",
                result: str | None = None,
@@ -714,6 +745,13 @@ RESEED = {
         _seed_memory_reset,
     ("memory", "consolidate"):
         _seed_memory_reset,
+    # Compass cases (4c-4c): coverage state resets before every leg.
+    ("compass", "generate"):
+        _seed_compass_reset,
+    ("compass", "flow"):
+        _seed_compass_reset,
+    ("compass", "flow-gaps"):
+        _seed_compass_reset,
 }
 
 

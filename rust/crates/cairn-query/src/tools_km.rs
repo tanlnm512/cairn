@@ -3809,7 +3809,7 @@ pub fn sync_workflow(
             Vec::new(),
         )));
     }
-    let facts = gather_flow_facts(conn, &resource).map_err(|e| ToolError(e.to_string()))?;
+    let facts = gather_flow_facts(conn, &resource, None).map_err(|e| ToolError(e.to_string()))?;
     if facts.total_steps <= 1 {
         return Ok(Some(error_result(
             format!(
@@ -3950,16 +3950,16 @@ fn search_knowledge_data(
 pub const DEFAULT_FLOW_STEP_LIMIT: usize = 20;
 
 /// Graph-grounded facts for one flow trace.
-struct FlowFacts {
-    entry: String,
-    total_steps: usize,
-    truncated: bool,
-    chain_lines: Vec<String>,
-    chain_raw: Vec<crate::graph::FlowNode>,
-    branches: Vec<(String, Vec<String>)>,
-    leaves: Vec<String>,
-    modules: Vec<String>,
-    cycles: Vec<(String, i64)>,
+pub struct FlowFacts {
+    pub entry: String,
+    pub total_steps: usize,
+    pub truncated: bool,
+    pub chain_lines: Vec<String>,
+    pub chain_raw: Vec<crate::graph::FlowNode>,
+    pub branches: Vec<(String, Vec<String>)>,
+    pub leaves: Vec<String>,
+    pub modules: Vec<String>,
+    pub cycles: Vec<(String, i64)>,
 }
 
 fn repo_roots(conn: &Connection) -> Result<HashMap<String, String>, rusqlite::Error> {
@@ -3977,8 +3977,12 @@ fn rel_path(path: &str, repo: &str, roots: &HashMap<String, String>) -> String {
     path.to_string()
 }
 
-fn gather_flow_facts(conn: &Connection, entry: &str) -> Result<FlowFacts, rusqlite::Error> {
-    let flow = crate::graph::trace_flow(conn, entry, 8);
+pub fn gather_flow_facts(
+    conn: &Connection,
+    entry: &str,
+    entry_id: Option<&str>,
+) -> Result<FlowFacts, rusqlite::Error> {
+    let flow = crate::graph::trace_flow_opts(conn, entry, 8, entry_id);
     let roots = repo_roots(conn)?;
     let mut chain_lines = Vec::new();
     for node in &flow.chain {
@@ -4165,14 +4169,18 @@ fn coverage_resource(
     format!("{name}#{suffix}")
 }
 
-fn flow_coverage_key(
+pub fn flow_coverage_key(
     conn: &Connection,
     entry: &str,
+    entry_id: Option<&str>,
     facts: &FlowFacts,
 ) -> Result<String, rusqlite::Error> {
-    let row = crate::graph::find_definition(conn, entry, 1)?
-        .into_iter()
-        .next();
+    let row = match entry_id {
+        Some(id) => crate::graph::find_definition_by_id(conn, id),
+        None => crate::graph::find_definition(conn, entry, 1)?
+            .into_iter()
+            .next(),
+    };
     let entry_file = match &row {
         Some(r) => r.file_path.clone(),
         None => facts
@@ -4193,18 +4201,24 @@ fn flow_coverage_key(
 }
 
 /// The flow compass concept for an entry symbol (caller runs the critic).
-fn generate_flow_compass(
+pub fn generate_flow_compass(
     conn: &Connection,
     entry: &str,
+    entry_id: Option<&str>,
     facts: &FlowFacts,
+    resource: Option<&str>,
+    title: Option<&str>,
 ) -> Result<Concept, rusqlite::Error> {
     let body = flow_template_body(facts);
-    let key = flow_coverage_key(conn, entry, facts)?;
+    let key = match resource {
+        Some(r) => r.to_string(),
+        None => flow_coverage_key(conn, entry, entry_id, facts)?,
+    };
     let safe_id = key.replace(['/', '.', '#'], "-");
     let last_segment = entry.rsplit('.').next().unwrap_or(entry).to_string();
     Ok(Concept {
         type_: "Compass".to_string(),
-        title: Some(format!("Flow: {entry}")),
+        title: Some(title.map_or_else(|| format!("Flow: {entry}"), str::to_string)),
         description: Some(format!("Execution flow traced from `{entry}`")),
         resource: Some(key),
         tags: vec!["flow".to_string(), last_segment],
@@ -4216,7 +4230,7 @@ fn generate_flow_compass(
 }
 
 /// Convert flow facts into bounded annotated workflow steps.
-fn flow_to_workflow(facts: &FlowFacts, max_steps: usize) -> Vec<WorkflowStep> {
+pub fn flow_to_workflow(facts: &FlowFacts, max_steps: usize) -> Vec<WorkflowStep> {
     let branches: HashMap<&str, &Vec<String>> = facts
         .branches
         .iter()
@@ -4289,7 +4303,7 @@ pub fn generate_flow_tool(
                 .to_string(),
         );
     }
-    let facts = gather_flow_facts(conn, entry).map_err(|e| ToolError(e.to_string()))?;
+    let facts = gather_flow_facts(conn, entry, None).map_err(|e| ToolError(e.to_string()))?;
     if facts.total_steps <= 1 {
         return Ok(format!(
             "No outgoing calls traced from '{entry}' — nothing to document."
@@ -4343,8 +4357,8 @@ pub fn generate_flow_tool(
         results.push(format!("Workflow: {cid} ({max_steps} steps max)"));
     }
 
-    let concept =
-        generate_flow_compass(conn, entry, &facts).map_err(|e| ToolError(e.to_string()))?;
+    let concept = generate_flow_compass(conn, entry, None, &facts, None, None)
+        .map_err(|e| ToolError(e.to_string()))?;
     let result = critic_concept(&concept, conn)?;
     if !result.passed {
         results.push(format!(
@@ -4379,6 +4393,977 @@ pub fn generate_flow_tool(
     ));
     results.push(critic_verdict_block(&result));
     Ok(results.join("\n"))
+}
+
+// --- module compass + coverage gaps (compass/generator.py + compass/gaps.py port) ---
+
+/// Module argument is ambiguous across repos or empty.
+#[derive(Debug, Clone)]
+pub struct ModuleResolutionError(pub String);
+
+/// The flow facts in the `_gather_flow_facts` dict shape, for queue tasks.
+pub fn flow_facts_yaml(facts: &FlowFacts) -> Hash {
+    let mut h = Hash::new();
+    h.insert(ys("entry"), ys(&facts.entry));
+    h.insert(ys("mode"), ys("flow"));
+    h.insert(ys("total_steps"), Yaml::Integer(facts.total_steps as i64));
+    h.insert(ys("truncated"), Yaml::Boolean(facts.truncated));
+    h.insert(
+        ys("chain"),
+        Yaml::Array(facts.chain_lines.iter().map(ys).collect()),
+    );
+    h.insert(
+        ys("chain_raw"),
+        Yaml::Array(
+            facts
+                .chain_raw
+                .iter()
+                .map(|n| {
+                    let mut node = Hash::new();
+                    node.insert(ys("symbol"), ys(&n.symbol));
+                    node.insert(ys("kind"), ys(&n.kind));
+                    node.insert(ys("file"), ys(&n.file));
+                    node.insert(ys("repo"), ys(&n.repo));
+                    node.insert(ys("depth"), Yaml::Integer(n.depth));
+                    node.insert(
+                        ys("parent"),
+                        match &n.parent {
+                            Some(p) => ys(p),
+                            None => Yaml::Null,
+                        },
+                    );
+                    Yaml::Hash(node)
+                })
+                .collect(),
+        ),
+    );
+    h.insert(
+        ys("branches"),
+        Yaml::Array(
+            facts
+                .branches
+                .iter()
+                .map(|(symbol, callees)| {
+                    let mut b = Hash::new();
+                    b.insert(ys("symbol"), ys(symbol));
+                    b.insert(ys("callees"), Yaml::Array(callees.iter().map(ys).collect()));
+                    Yaml::Hash(b)
+                })
+                .collect(),
+        ),
+    );
+    h.insert(
+        ys("leaves"),
+        Yaml::Array(facts.leaves.iter().map(ys).collect()),
+    );
+    h.insert(
+        ys("modules"),
+        Yaml::Array(facts.modules.iter().map(ys).collect()),
+    );
+    h.insert(
+        ys("cycles"),
+        Yaml::Array(
+            facts
+                .cycles
+                .iter()
+                .map(|(symbol, depth)| {
+                    let mut c = Hash::new();
+                    c.insert(ys("symbol"), ys(symbol));
+                    c.insert(ys("depth"), Yaml::Integer(*depth));
+                    Yaml::Hash(c)
+                })
+                .collect(),
+        ),
+    );
+    h
+}
+
+/// One traced step as an editable Knowledge-workflow (writes the concept).
+pub fn generate_flow_workflow(
+    bundle: &Bundle,
+    entry: &str,
+    facts: &FlowFacts,
+    max_steps: usize,
+) -> Result<String, ToolError> {
+    let steps = flow_to_workflow(facts, max_steps);
+    let title = format!("Flow: {entry}");
+    let last_segment = entry.rsplit('.').next().unwrap_or(entry).to_string();
+    add_workflow(
+        bundle,
+        &title,
+        steps,
+        vec!["flow".to_string(), last_segment],
+        Vec::new(),
+        Vec::new(),
+        Some(entry),
+    )
+}
+
+/// Segment-anchored module-match params: exact, root-anchored, mid-path.
+pub fn module_match_params(module_path: &str) -> (String, String, String) {
+    let e = escape_like(module_path);
+    (
+        module_path.to_string(),
+        format!("{e}/%"),
+        format!("%/{e}/%"),
+    )
+}
+
+pub fn resolve_module(
+    conn: &Connection,
+    module_path: &str,
+    repo: Option<&str>,
+) -> Result<(Option<String>, String), ModuleResolutionError> {
+    let module_path = module_path.trim_matches('/').to_string();
+    if module_path.is_empty() {
+        return Err(ModuleResolutionError("module path is empty".into()));
+    }
+    let repo = match repo {
+        Some(r) => Some(r.to_string()),
+        None => infer_repo(conn, &module_path)?,
+    };
+    let normalized = repo
+        .as_ref()
+        .and_then(|r| module_path.strip_prefix(&format!("{r}/")))
+        .unwrap_or(&module_path)
+        .to_string();
+    Ok((repo, normalized))
+}
+
+fn infer_repo(
+    conn: &Connection,
+    module_path: &str,
+) -> Result<Option<String>, ModuleResolutionError> {
+    let rows: Vec<(String, Option<String>)> = conn
+        .prepare("SELECT id, path FROM repos")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })?
+            .collect::<Result<_, _>>()
+        })
+        .map_err(|e| ModuleResolutionError(e.to_string()))?;
+    let repos: Vec<(String, String)> = rows
+        .into_iter()
+        .map(|(rid, path)| (rid, path.unwrap_or_default()))
+        .collect();
+    for (rid, _) in &repos {
+        if module_path == rid || module_path.starts_with(&format!("{rid}/")) {
+            return Ok(Some(rid.clone()));
+        }
+    }
+    let rooted: Vec<String> = {
+        let mut v: Vec<String> = repos
+            .iter()
+            .filter(|(_, path)| {
+                let root = path.trim_end_matches('/');
+                !root.is_empty() && module_path.starts_with(&format!("{root}/"))
+            })
+            .map(|(rid, _)| rid.clone())
+            .collect();
+        v.sort();
+        v
+    };
+    if rooted.len() > 1 {
+        return Err(ModuleResolutionError(format!(
+            "module '{}' matches multiple repos ({}); pass --repo to pick one",
+            module_path,
+            rooted.join(", ")
+        )));
+    }
+    if let Some(first) = rooted.first() {
+        return Ok(Some(first.clone()));
+    }
+    let (m0, m1, m2) = module_match_params(module_path);
+    let rows: Vec<String> = conn
+        .prepare(
+            "SELECT DISTINCT repo_id FROM files \
+             WHERE (path = ? OR path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\')",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_map(rusqlite::params![m0, m1, m2], |r| r.get::<_, String>(0))?
+                .collect::<Result<_, _>>()
+        })
+        .map_err(|e| ModuleResolutionError(e.to_string()))?;
+    if rows.len() > 1 {
+        let mut candidates = rows;
+        candidates.sort();
+        return Err(ModuleResolutionError(format!(
+            "module '{}' exists in multiple repos ({}); pass --repo to pick one",
+            module_path,
+            candidates.join(", ")
+        )));
+    }
+    if let Some(only) = rows.first() {
+        return Ok(Some(only.clone()));
+    }
+    let segment: Vec<String> = {
+        let mut v: Vec<String> = repos
+            .iter()
+            .map(|(rid, _)| rid.clone())
+            .filter(|rid| {
+                rid != module_path && format!("/{module_path}/").contains(&format!("/{rid}/"))
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    if segment.len() > 1 {
+        return Err(ModuleResolutionError(format!(
+            "module '{}' matches multiple repos ({}); pass --repo to pick one",
+            module_path,
+            segment.join(", ")
+        )));
+    }
+    if let Some(first) = segment.first() {
+        return Ok(Some(first.clone()));
+    }
+    if repos.len() == 1 {
+        return Ok(Some(repos[0].0.clone()));
+    }
+    Ok(None)
+}
+
+fn symbols_in_module(
+    conn: &Connection,
+    module_path: &str,
+    repo: Option<&str>,
+) -> Result<Vec<crate::graph::SymbolRow>, rusqlite::Error> {
+    let mut sql = "SELECT s.id, s.name, s.kind, s.qualified_name, s.line_start, \
+                  f.path, f.repo_id \
+                  FROM symbols s JOIN files f ON s.file_id = f.id \
+                  WHERE (f.path = ? OR f.path LIKE ? ESCAPE '\\' \
+                  OR f.path LIKE ? ESCAPE '\\')"
+        .to_string();
+    let (m0, m1, m2) = module_match_params(module_path);
+    let mut params = vec![m0, m1, m2];
+    if let Some(repo) = repo {
+        sql.push_str(" AND f.repo_id = ?");
+        params.push(repo.to_string());
+    }
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next()? {
+        out.push(crate::graph::SymbolRow {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            kind: r.get(2)?,
+            qualified_name: r.get(3)?,
+            line_start: r.get(4)?,
+            line_end: None,
+            file_path: r.get(5)?,
+            repo: r.get(6)?,
+        });
+    }
+    Ok(out)
+}
+
+/// One key file with its incoming-reference score and sample symbols.
+pub struct KeyFile {
+    pub path: String,
+    pub repo: String,
+    pub score: i64,
+    pub symbols: Vec<String>,
+}
+
+fn rank_key_files(
+    conn: &Connection,
+    symbols: &[crate::graph::SymbolRow],
+    top: usize,
+) -> Result<Vec<KeyFile>, rusqlite::Error> {
+    if symbols.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<String> = symbols.iter().map(|s| s.id.clone()).collect();
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!(
+        "SELECT target_id, COUNT(*) AS c FROM edges \
+         WHERE target_id IN ({placeholders}) GROUP BY target_id"
+    );
+    let mut incoming: HashMap<String, i64> = HashMap::new();
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(rusqlite::params_from_iter(ids.iter()))?;
+    while let Some(r) = rows.next()? {
+        incoming.insert(r.get::<_, String>(0)?, r.get::<_, i64>(1)?);
+    }
+    // Insertion order preserves python's dict order for tied scores.
+    let mut order: Vec<String> = Vec::new();
+    let mut scores: HashMap<String, KeyFile> = HashMap::new();
+    for s in symbols {
+        let n = incoming.get(&s.id).copied().unwrap_or(0);
+        if !scores.contains_key(&s.file_path) {
+            order.push(s.file_path.clone());
+            scores.insert(
+                s.file_path.clone(),
+                KeyFile {
+                    path: s.file_path.clone(),
+                    repo: s.repo.clone(),
+                    score: 0,
+                    symbols: Vec::new(),
+                },
+            );
+        }
+        let entry = scores.get_mut(&s.file_path).expect("just inserted");
+        entry.score += n;
+        entry.symbols.push(s.name.clone());
+    }
+    let mut ranked: Vec<KeyFile> = order
+        .into_iter()
+        .map(|p| scores.remove(&p).expect("key order"))
+        .collect();
+    ranked.sort_by_key(|k| std::cmp::Reverse(k.score));
+    ranked.truncate(top);
+    Ok(ranked)
+}
+
+fn cross_module_deps(
+    conn: &Connection,
+    module_path: &str,
+    repo: Option<&str>,
+) -> Result<Vec<String>, rusqlite::Error> {
+    let legacy_repo_root = match repo {
+        Some(r) => conn
+            .prepare("SELECT path FROM repos WHERE id = ?")
+            .and_then(|mut stmt| stmt.query_row([r], |row| row.get::<_, String>(0)))
+            .unwrap_or_default(),
+        None => String::new(),
+    };
+    let outside = match repo {
+        Some(_) => {
+            "NOT ((f2.path = ? OR f2.path LIKE ? ESCAPE '\\' OR f2.path LIKE ? ESCAPE '\\') \
+             AND f2.repo_id = ?)"
+        }
+        None => "NOT (f2.path = ? OR f2.path LIKE ? ESCAPE '\\' OR f2.path LIKE ? ESCAPE '\\')",
+    };
+    let mut sql = format!(
+        "SELECT DISTINCT f2.path AS target_path, f2.repo_id AS target_repo \
+         FROM edges e \
+         JOIN symbols s1 ON e.source_id = s1.id \
+         JOIN files f1 ON s1.file_id = f1.id \
+         JOIN symbols s2 ON e.target_id = s2.id \
+         JOIN files f2 ON s2.file_id = f2.id \
+         WHERE (f1.path = ? OR f1.path LIKE ? ESCAPE '\\' OR f1.path LIKE ? ESCAPE '\\') \
+         AND {outside}"
+    );
+    let mut params: Vec<String> = Vec::new();
+    let (f0, f1p, f2p) = module_match_params(module_path);
+    params.extend([f0.clone(), f1p.clone(), f2p.clone()]);
+    params.extend([f0, f1p, f2p]);
+    if let Some(r) = repo {
+        params.push(r.to_string());
+        sql.push_str(" AND f1.repo_id = ?");
+        params.push(r.to_string());
+    }
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+    let mut mods: Vec<String> = Vec::new();
+    while let Some(r) = rows.next()? {
+        let target_repo: String = r.get(1)?;
+        let mut rel: String = r.get(0)?;
+        if !legacy_repo_root.is_empty()
+            && let Some(stripped) = rel.strip_prefix(&format!("{legacy_repo_root}/"))
+        {
+            rel = stripped.to_string();
+        }
+        let parts: Vec<&str> = rel
+            .split('/')
+            .filter(|p| !p.is_empty() && !matches!(*p, "src" | "main" | "java" | "kotlin"))
+            .collect();
+        let module = if parts.is_empty() {
+            target_repo.clone()
+        } else {
+            format!("{}/{}", target_repo, parts[..parts.len().min(2)].join("/"))
+        };
+        if !mods.contains(&module) {
+            mods.push(module);
+        }
+    }
+    mods.sort();
+    mods.truncate(8);
+    Ok(mods)
+}
+
+/// Top communities by (-size, label) with each hub's qualified name.
+fn subsystems_fact(conn: &Connection) -> Vec<(String, i64, Option<String>)> {
+    let Ok(mut stmt) = conn
+        .prepare("SELECT id, label, size FROM communities ORDER BY size DESC, label ASC LIMIT 5")
+    else {
+        return Vec::new();
+    };
+    let rows: Vec<(String, String, i64)> = match stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .and_then(|rows| rows.collect::<Result<_, _>>())
+    {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+    rows.into_iter()
+        .map(|(id, label, size)| {
+            let hub = conn
+                .prepare(
+                    "SELECT s.qualified_name \
+                     FROM symbol_communities sc \
+                     JOIN symbols s ON s.id = sc.symbol_id \
+                     JOIN files f ON f.id = s.file_id \
+                     WHERE sc.community_id = ? \
+                     ORDER BY sc.structural_degree DESC, f.path ASC, s.qualified_name ASC \
+                     LIMIT 1",
+                )
+                .and_then(|mut stmt| stmt.query_row([&id], |r| r.get::<_, Option<String>>(0)))
+                .ok()
+                .flatten();
+            (label, size, hub)
+        })
+        .collect()
+}
+
+fn is_gradle_repo(conn: &Connection, repo: &str) -> bool {
+    let names = [
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+    ];
+    let patterns: Vec<String> = names
+        .iter()
+        .flat_map(|n| [(*n).to_string(), format!("/{n}")])
+        .collect();
+    let ph = vec!["path LIKE ?"; patterns.len()].join(" OR ");
+    let sql = format!("SELECT 1 FROM files WHERE repo_id = ? AND ({ph}) LIMIT 1");
+    conn.prepare(&sql)
+        .and_then(|mut stmt| {
+            stmt.exists(rusqlite::params_from_iter(
+                std::iter::once(repo.to_string()).chain(patterns),
+            ))
+        })
+        .unwrap_or(false)
+}
+
+fn quick_commands(conn: &Connection, repo: Option<&str>) -> Vec<String> {
+    let mut cmds = Vec::new();
+    if let Some(repo) = repo
+        && is_gradle_repo(conn, repo)
+    {
+        cmds.push(format!(
+            "Build {repo}: `./gradlew :assembleDebug` (run in {repo}/)"
+        ));
+    }
+    cmds.push("Find callers: `cairn callers <symbol>`".to_string());
+    cmds
+}
+
+fn derive_title(module_path: &str) -> String {
+    let parts: Vec<&str> = module_path
+        .trim_matches('/')
+        .split('/')
+        .filter(|p| !p.is_empty())
+        .collect();
+    if parts.len() >= 2 {
+        parts[parts.len() - 2..].join(" / ")
+    } else {
+        parts.first().copied().unwrap_or(module_path).to_string()
+    }
+}
+
+/// The deterministic 5-question compass body.
+fn template_body(
+    symbols: &[crate::graph::SymbolRow],
+    key_files: &[KeyFile],
+    cross_deps: &[String],
+    subsystems: &[(String, i64, Option<String>)],
+) -> String {
+    let mut lines = vec!["# What Does This Module Do?".to_string()];
+    if symbols.is_empty() {
+        lines.push("- (no symbols detected in this module)".to_string());
+    } else {
+        let mut kinds: Vec<(String, i64)> = Vec::new();
+        for s in symbols {
+            match kinds.iter_mut().find(|(k, _)| *k == s.kind) {
+                Some((_, n)) => *n += 1,
+                None => kinds.push((s.kind.clone(), 1)),
+            }
+        }
+        kinds.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        let summary = kinds
+            .iter()
+            .take(5)
+            .map(|(k, v)| format!("{k}({v})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("- {} symbols: {summary}", symbols.len()));
+    }
+    lines.push(String::new());
+    if !subsystems.is_empty() {
+        lines.push("# Subsystems".to_string());
+        for (label, size, hub) in subsystems {
+            match hub {
+                Some(h) => lines.push(format!("- {label} ({size} symbols) - hub `{h}`")),
+                None => lines.push(format!("- {label} ({size} symbols)")),
+            }
+        }
+        lines.push(String::new());
+    }
+    lines.push("# Common Modification Patterns".to_string());
+    if key_files.is_empty() {
+        lines.push("- (no files with incoming references detected)".to_string());
+    } else {
+        for kf in key_files {
+            let fname = kf.path.rsplit('/').next().unwrap_or(&kf.path);
+            let sample: Vec<&str> = kf.symbols.iter().take(3).map(String::as_str).collect();
+            let sample = if sample.is_empty() {
+                "various"
+            } else {
+                &sample.join(", ")
+            };
+            lines.push(format!(
+                "- `{fname}` - {} (refs: {}; e.g. {sample})",
+                kf.repo, kf.score
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push("# Build-Failure Patterns".to_string());
+    let mut section: Vec<String> = Vec::new();
+    let top_score = key_files.first().map(|k| k.score).unwrap_or(0);
+    if top_score > 20 {
+        let top = key_files[0]
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&key_files[0].path);
+        section.push(format!(
+            "- `{top}` is a high-traffic file ({top_score} incoming refs); changes ripple \
+             widely — check `cairn impact` before modifying."
+        ));
+    }
+    if !cross_deps.is_empty() {
+        section.push(format!(
+            "- This module reaches {} other modules; verify cross-module impact before \
+             refactoring.",
+            cross_deps.len()
+        ));
+    }
+    if symbols.len() > 50 {
+        section.push(format!(
+            "- Large module ({} symbols); consider splitting if adding features.",
+            symbols.len()
+        ));
+    }
+    if section.is_empty() {
+        section.push(
+            "- (run the critic pass with an LLM to surface deeper tribal knowledge)".to_string(),
+        );
+    }
+    lines.extend(section);
+    lines.push(String::new());
+    lines.push("# Cross-Module Dependencies".to_string());
+    for m in cross_deps.iter().take(4) {
+        lines.push(format!("- {} (`{m}`)", m.rsplit('/').next().unwrap_or(m)));
+    }
+    if cross_deps.is_empty() {
+        lines.push("- (no cross-module references found)".to_string());
+    }
+    lines.push(String::new());
+    lines.push("# Tribal Knowledge".to_string());
+    lines.push("- (populated from code comments and TODOs when an LLM is available)".to_string());
+    lines.join("\n") + "\n"
+}
+
+/// The one compass concept identity for a module.
+fn compass_concept(module_path: &str, repo: Option<&str>, body: String) -> Concept {
+    let title = derive_title(module_path);
+    let concept_id = format!(
+        "compass/{}",
+        module_path.trim_matches('/').replace('/', "-")
+    );
+    let mut tags: Vec<String> = repo
+        .filter(|r| !r.is_empty())
+        .map(str::to_string)
+        .into_iter()
+        .collect();
+    tags.extend(
+        module_path
+            .split('/')
+            .filter(|p| !p.is_empty())
+            .map(str::to_string),
+    );
+    tags.truncate(6);
+    Concept {
+        type_: "Compass".to_string(),
+        title: Some(title),
+        description: Some(format!("Navigation guide for {module_path}")),
+        resource: Some(module_path.to_string()),
+        tags,
+        timestamp: Some(iso_utc_now()),
+        concept_id,
+        body,
+        ..Default::default()
+    }
+}
+
+/// Generate the deterministic compass concept for a module path.
+pub fn generate_compass(
+    conn: &Connection,
+    bundle: &Bundle,
+    module_path: &str,
+    repo: Option<&str>,
+) -> Result<Concept, ModuleResolutionError> {
+    let (repo, module_path) = resolve_module(conn, module_path, repo)?;
+    let symbols = symbols_in_module(conn, &module_path, repo.as_deref())
+        .map_err(|e| ModuleResolutionError(e.to_string()))?;
+    let key_files =
+        rank_key_files(conn, &symbols, 5).map_err(|e| ModuleResolutionError(e.to_string()))?;
+    let cross_deps = cross_module_deps(conn, &module_path, repo.as_deref())
+        .map_err(|e| ModuleResolutionError(e.to_string()))?;
+    let body = template_body(&symbols, &key_files, &cross_deps, &subsystems_fact(conn));
+    let mut concept = compass_concept(&module_path, repo.as_deref(), body.clone());
+    concept.body = preserved_concept_notes(bundle, &concept.concept_id, &body);
+    Ok(concept)
+}
+
+/// The compass concept for an externally synthesized body (resolved module).
+pub fn compass_concept_from_body(
+    conn: &Connection,
+    bundle: &Bundle,
+    module_path: &str,
+    repo: Option<&str>,
+    body: &str,
+) -> Result<Concept, ModuleResolutionError> {
+    let (repo, module_path) = resolve_module(conn, module_path, repo)?;
+    let mut concept = compass_concept(&module_path, repo.as_deref(), body.to_string());
+    concept.body = preserved_concept_notes(bundle, &concept.concept_id, body);
+    Ok(concept)
+}
+
+/// Graph-grounded module facts for the compass-synthesize queue task.
+pub struct CompassFacts {
+    pub resource: String,
+    pub module: String,
+    /// The resolved owning repo (not part of the queue-task facts dict).
+    pub repo: Option<String>,
+    pub symbol_count: usize,
+    pub key_files: Vec<(String, i64)>,
+    pub cross_deps: Vec<String>,
+    pub quick_commands: Vec<String>,
+    pub subsystems: Vec<(String, i64, Option<String>)>,
+    pub symbol_names: Vec<String>,
+}
+
+/// The `_gather_facts` dict shape, for the queue task.
+pub fn compass_facts_yaml(facts: &CompassFacts) -> Hash {
+    let mut h = Hash::new();
+    h.insert(ys("resource"), ys(&facts.resource));
+    h.insert(ys("module"), ys(&facts.module));
+    h.insert(ys("symbol_count"), Yaml::Integer(facts.symbol_count as i64));
+    h.insert(
+        ys("key_files"),
+        Yaml::Array(
+            facts
+                .key_files
+                .iter()
+                .map(|(file, refs)| {
+                    let mut kf = Hash::new();
+                    kf.insert(ys("file"), ys(file));
+                    kf.insert(ys("refs"), Yaml::Integer(*refs));
+                    Yaml::Hash(kf)
+                })
+                .collect(),
+        ),
+    );
+    h.insert(
+        ys("cross_deps"),
+        Yaml::Array(facts.cross_deps.iter().map(ys).collect()),
+    );
+    h.insert(
+        ys("quick_commands"),
+        Yaml::Array(facts.quick_commands.iter().map(ys).collect()),
+    );
+    h.insert(
+        ys("subsystems"),
+        Yaml::Array(
+            facts
+                .subsystems
+                .iter()
+                .map(|(label, size, hub)| {
+                    let mut s = Hash::new();
+                    s.insert(ys("label"), ys(label));
+                    s.insert(ys("size"), Yaml::Integer(*size));
+                    s.insert(ys("hub"), hub.as_deref().map(ys).unwrap_or(Yaml::Null));
+                    Yaml::Hash(s)
+                })
+                .collect(),
+        ),
+    );
+    h.insert(
+        ys("symbol_names"),
+        Yaml::Array(facts.symbol_names.iter().map(ys).collect()),
+    );
+    h
+}
+
+/// Gather the module facts (single source of truth for queue synthesis).
+pub fn gather_module_facts(
+    conn: &Connection,
+    module_path: &str,
+    repo: Option<&str>,
+) -> Result<CompassFacts, ModuleResolutionError> {
+    let (repo, module_path) = resolve_module(conn, module_path, repo)?;
+    let symbols = symbols_in_module(conn, &module_path, repo.as_deref())
+        .map_err(|e| ModuleResolutionError(e.to_string()))?;
+    let key_files =
+        rank_key_files(conn, &symbols, 5).map_err(|e| ModuleResolutionError(e.to_string()))?;
+    let cross_deps = cross_module_deps(conn, &module_path, repo.as_deref())
+        .map_err(|e| ModuleResolutionError(e.to_string()))?;
+    let commands = quick_commands(conn, repo.as_deref());
+    Ok(CompassFacts {
+        key_files: key_files
+            .iter()
+            .map(|kf| {
+                (
+                    kf.path.rsplit('/').next().unwrap_or(&kf.path).to_string(),
+                    kf.score,
+                )
+            })
+            .collect(),
+        resource: module_path.clone(),
+        module: module_path,
+        repo,
+        symbol_count: symbols.len(),
+        cross_deps,
+        quick_commands: commands,
+        subsystems: subsystems_fact(conn),
+        symbol_names: symbols.iter().take(40).map(|s| s.name.clone()).collect(),
+    })
+}
+
+/// Modules (per repo) that lack a compass concept, in store order.
+pub fn detect_gaps(conn: &Connection, bundle: &Bundle) -> Vec<String> {
+    let all_modules = gap_candidate_modules(conn);
+    let repo_ids: HashSet<String> = conn
+        .prepare("SELECT id FROM repos")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| r.get::<_, String>(0))?
+                .collect::<Result<_, _>>()
+        })
+        .unwrap_or_default();
+    let mut covered: Vec<(Option<String>, String)> = Vec::new();
+    for cid in bundle.list_concepts(Some("compass/")) {
+        let Ok(concept) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        if let Some(resource) = &concept.resource
+            && !resource.is_empty()
+        {
+            let repo = concept
+                .tags
+                .first()
+                .filter(|t| repo_ids.contains(*t))
+                .cloned();
+            covered.push((repo, resource.clone()));
+        }
+    }
+    all_modules
+        .into_iter()
+        .filter(|module| {
+            let (repo_id, rel) = match module.split_once('/') {
+                Some((r, rest)) => (r, rest),
+                None => (module.as_str(), ""),
+            };
+            !covered.iter().any(|(c_repo, c)| {
+                c_repo.as_deref().is_none_or(|cr| cr == repo_id)
+                    && (rel == c.as_str()
+                        || rel.starts_with(&format!("{c}/"))
+                        || c.starts_with(&format!("{rel}/")))
+            })
+        })
+        .collect()
+}
+
+fn gap_candidate_modules(conn: &Connection) -> Vec<String> {
+    let repos: Vec<(String, String)> = conn
+        .prepare("SELECT id, path FROM repos")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .collect::<Result<_, _>>()
+        })
+        .unwrap_or_default();
+    let mut modules = Vec::new();
+    for (repo_id, repo_path) in &repos {
+        let paths: Vec<String> = conn
+            .prepare("SELECT path FROM files WHERE repo_id = ?")
+            .and_then(|mut stmt| {
+                stmt.query_map([repo_id], |r| r.get::<_, String>(0))?
+                    .collect::<Result<_, _>>()
+            })
+            .unwrap_or_default();
+        let mut dirs: Vec<String> = Vec::new();
+        for path in &paths {
+            let rel = path.replacen(&format!("{repo_path}/"), "", 1);
+            let parts: Vec<&str> = rel.split('/').collect();
+            if parts.len() >= 3 {
+                let segments = if parts.len() > 3 {
+                    parts[..3].join("/")
+                } else {
+                    parts[..parts.len() - 1].join("/")
+                };
+                let dir = format!("{repo_id}/{segments}");
+                if !dirs.contains(&dir) {
+                    dirs.push(dir);
+                }
+            }
+        }
+        dirs.sort();
+        for dir in dirs {
+            let prefix = dir.split_once('/').map(|(_, p)| p).unwrap_or("");
+            let root = repo_path.trim_end_matches('/');
+            let rooted = format!("{root}/{prefix}");
+            let prefixes: Vec<&str> = if root.is_empty() {
+                vec![prefix]
+            } else {
+                vec![prefix, rooted.as_str()]
+            };
+            let n: i64 = prefixes
+                .iter()
+                .map(|p| -> i64 {
+                    conn.prepare(
+                        "SELECT COUNT(*) AS c FROM symbols s JOIN files f ON s.file_id=f.id \
+                         WHERE f.repo_id = ? AND (f.path = ? OR f.path LIKE ? ESCAPE '\\')",
+                    )
+                    .and_then(|mut stmt| {
+                        stmt.query_row(
+                            rusqlite::params![repo_id, p, format!("{}{}", escape_like(p), "/%")],
+                            |r| r.get::<_, i64>(0),
+                        )
+                    })
+                    .unwrap_or(0)
+                })
+                .sum();
+            if n >= 5 {
+                modules.push(dir);
+            }
+        }
+    }
+    modules
+}
+
+/// One flow-coverage candidate with its classification.
+pub struct FlowGapEntry {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub file: String,
+    pub repo: String,
+    pub out_edges: i64,
+    pub resource: String,
+    pub colliding: bool,
+    pub covered: bool,
+}
+
+/// Flow candidates over the edge threshold, split by compass coverage.
+pub struct FlowGaps {
+    pub uncovered: Vec<FlowGapEntry>,
+    pub covered: Vec<FlowGapEntry>,
+    pub unreadable: Vec<String>,
+}
+
+pub fn detect_flow_gaps(
+    conn: &Connection,
+    bundle: &Bundle,
+    min_edges: i64,
+) -> Result<FlowGaps, ToolError> {
+    let candidates = flow_candidates(conn, min_edges)?;
+    let mut covered_resources: HashSet<String> = HashSet::new();
+    let mut unreadable: Vec<String> = Vec::new();
+    for cid in bundle.list_concepts(Some("compass/flow-")) {
+        match bundle.read_concept(&cid) {
+            Err(_) => unreadable.push(cid),
+            Ok(concept) => {
+                if let Some(resource) = &concept.resource
+                    && !resource.is_empty()
+                {
+                    covered_resources.insert(resource.clone());
+                }
+            }
+        }
+    }
+    let mut uncovered = Vec::new();
+    let mut covered = Vec::new();
+    for c in candidates {
+        let files = flow_name_files(conn, &c.name).map_err(|e| ToolError(e.to_string()))?;
+        let local_ids =
+            flow_same_file_ids(conn, &c.name, &c.file).map_err(|e| ToolError(e.to_string()))?;
+        let resource = coverage_resource(&c.name, &c.file, &files, &local_ids, &c.id);
+        let entry = FlowGapEntry {
+            covered: covered_resources.contains(&resource),
+            colliding: files.len() > 1 || local_ids.len() > 1,
+            resource,
+            id: c.id,
+            name: c.name,
+            kind: c.kind,
+            file: c.file,
+            repo: c.repo,
+            out_edges: c.out_edges,
+        };
+        if entry.covered {
+            covered.push(entry);
+        } else {
+            uncovered.push(entry);
+        }
+    }
+    Ok(FlowGaps {
+        uncovered,
+        covered,
+        unreadable,
+    })
+}
+
+struct FlowCandidate {
+    id: String,
+    name: String,
+    kind: String,
+    file: String,
+    repo: String,
+    out_edges: i64,
+}
+
+fn flow_candidates(conn: &Connection, min_edges: i64) -> Result<Vec<FlowCandidate>, ToolError> {
+    let kinds = crate::tools_nav::STRUCTURAL_EDGE_KINDS;
+    let kind_ph = vec!["?"; kinds.len()].join(",");
+    let sql = format!(
+        "SELECT s.id, s.name, s.kind, f.path AS file_path, f.repo_id AS repo, \
+         COUNT(e.id) AS out_edges \
+         FROM symbols s \
+         JOIN files f ON s.file_id = f.id \
+         JOIN edges e ON e.source_id = s.id \
+         WHERE e.target_id IS NOT NULL \
+         AND e.kind IN ({kind_ph}) \
+         AND s.kind IN ('function', 'method') \
+         GROUP BY s.id \
+         HAVING out_edges >= ? \
+         ORDER BY out_edges DESC"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| ToolError(e.to_string()))?;
+    let params: Vec<&dyn rusqlite::ToSql> = kinds
+        .iter()
+        .map(|k| k as &dyn rusqlite::ToSql)
+        .chain(std::iter::once(&min_edges as &dyn rusqlite::ToSql))
+        .collect();
+    let mut rows = stmt
+        .query(params.as_slice())
+        .map_err(|e| ToolError(e.to_string()))?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next().map_err(|e| ToolError(e.to_string()))? {
+        out.push(FlowCandidate {
+            id: r.get(0).map_err(|e| ToolError(e.to_string()))?,
+            name: r.get(1).map_err(|e| ToolError(e.to_string()))?,
+            kind: r.get(2).map_err(|e| ToolError(e.to_string()))?,
+            file: r.get(3).map_err(|e| ToolError(e.to_string()))?,
+            repo: r.get(4).map_err(|e| ToolError(e.to_string()))?,
+            out_edges: r.get(5).map_err(|e| ToolError(e.to_string()))?,
+        });
+    }
+    Ok(out)
 }
 
 // --- compass router ---------------------------------------------------------------
@@ -6935,5 +7920,210 @@ mod tests {
             "both sources are archived"
         );
         std::fs::remove_dir_all(&bundle.root).ok();
+    }
+
+    fn compass_conn() -> Connection {
+        let conn = Connection::open_in_memory().expect("mem db");
+        conn.execute_batch(
+            "CREATE TABLE repos (id TEXT, path TEXT);
+             CREATE TABLE files (id INTEGER PRIMARY KEY, repo_id TEXT, path TEXT);
+             CREATE TABLE symbols (id TEXT PRIMARY KEY, file_id INTEGER, name TEXT, \
+              kind TEXT, qualified_name TEXT, line_start INTEGER);
+             CREATE TABLE edges (id INTEGER PRIMARY KEY, source_id TEXT, target_id TEXT, kind TEXT);",
+        )
+        .expect("schema");
+        conn
+    }
+
+    #[test]
+    fn resolve_module_infers_repo_and_errors_on_ambiguity() {
+        let conn = compass_conn();
+        conn.execute_batch(
+            "INSERT INTO repos VALUES ('ra', '/x/ra'), ('rb', '/x/rb');
+             INSERT INTO files VALUES (1, 'ra', 'app/mod/a.py');
+             INSERT INTO files VALUES (2, 'rb', 'app/mod/b.py');",
+        )
+        .expect("seed");
+        let err = resolve_module(&conn, "app/mod", None).expect_err("ambiguous");
+        assert!(
+            err.0.contains("exists in multiple repos (ra, rb)"),
+            "ambiguity error: {}",
+            err.0
+        );
+        let (repo, module) = resolve_module(&conn, "rb/app/mod", None).expect("anchor");
+        assert_eq!(repo.as_deref(), Some("rb"));
+        assert_eq!(module, "app/mod");
+        let err = resolve_module(&conn, "/", None).expect_err("empty");
+        assert_eq!(err.0, "module path is empty");
+    }
+
+    #[test]
+    fn coverage_resource_collision_classes() {
+        let unique = vec!["a/x.py".to_string()];
+        assert_eq!(
+            coverage_resource("f", "a/x.py", &unique, &["1".to_string()], "1"),
+            "f"
+        );
+        let distinct_base = vec!["a/x.py".to_string(), "b/y.py".to_string()];
+        assert_eq!(
+            coverage_resource("f", "a/x.py", &distinct_base, &["1".to_string()], "1"),
+            "f#x.py"
+        );
+        let same_base = vec!["a/x.py".to_string(), "b/x.py".to_string()];
+        assert_eq!(
+            coverage_resource("f", "a/x.py", &same_base, &["1".to_string()], "1"),
+            "f#a/x.py"
+        );
+        assert_eq!(
+            coverage_resource(
+                "f",
+                "a/x.py",
+                &same_base,
+                &["1".to_string(), "2".to_string()],
+                "9"
+            ),
+            "f#a/x.py-9"
+        );
+    }
+
+    #[test]
+    fn detect_gaps_matches_coverage_on_segment_boundaries() {
+        let conn = compass_conn();
+        let mut seed = String::from("INSERT INTO repos VALUES ('ra', '/x/ra');");
+        for i in 0..5 {
+            seed.push_str(&format!(
+                "INSERT INTO files VALUES ({}, 'ra', 'app/foo/a{}.py');",
+                i + 1,
+                i
+            ));
+            seed.push_str(&format!(
+                "INSERT INTO symbols VALUES ('s{}', {}, 'sym{}', 'function', 'sym{}', 1);",
+                i,
+                i + 1,
+                i,
+                i
+            ));
+        }
+        for i in 0..5 {
+            seed.push_str(&format!(
+                "INSERT INTO files VALUES ({}, 'ra', 'app/foobar/b{}.py');",
+                i + 10,
+                i
+            ));
+            seed.push_str(&format!(
+                "INSERT INTO symbols VALUES ('t{}', {}, 'tym{}', 'function', 'tym{}', 1);",
+                i,
+                i + 10,
+                i,
+                i
+            ));
+        }
+        conn.execute_batch(&seed).expect("seed modules");
+        let bundle = scratch_bundle("gaps");
+        let mut concept = Concept {
+            type_: "Compass".to_string(),
+            title: Some("app / foo".into()),
+            resource: Some("app/foo".into()),
+            tags: vec!["ra".to_string()],
+            concept_id: "compass/app-foo".into(),
+            body: String::new(),
+            ..Default::default()
+        };
+        bundle.write_concept(&mut concept).expect("write");
+
+        let gaps = detect_gaps(&conn, &bundle);
+        assert_eq!(
+            gaps,
+            vec!["ra/app/foobar".to_string()],
+            "app/foo covers only its own segment: {gaps:?}"
+        );
+        std::fs::remove_dir_all(&bundle.root).ok();
+    }
+
+    #[test]
+    fn generate_compass_builds_identity_and_kind_summary() {
+        let conn = compass_conn();
+        let mut seed = String::from("INSERT INTO repos VALUES ('ra', '/x/ra');");
+        let mut edges = String::new();
+        for i in 0..4 {
+            seed.push_str(&format!(
+                "INSERT INTO files VALUES ({}, 'ra', 'app/mod/a{}.py');",
+                i + 1,
+                i
+            ));
+            let kind = if i == 3 { "class" } else { "function" };
+            seed.push_str(&format!(
+                "INSERT INTO symbols VALUES ('s{}', {}, 'sym{}', '{}', 'sym{}', 1);",
+                i,
+                i + 1,
+                i,
+                kind,
+                i
+            ));
+            for e in 0..(if i == 0 { 21 } else { 6 }) {
+                edges.push_str(&format!(
+                    "INSERT INTO edges VALUES (NULL, 'ext{}', 's{}', 'calls');",
+                    e, i
+                ));
+            }
+        }
+        conn.execute_batch(&seed).expect("seed");
+        conn.execute_batch(&edges).expect("edges");
+        let bundle = scratch_bundle("gencompass");
+        let concept = generate_compass(&conn, &bundle, "app/mod", None).expect("generate");
+        assert_eq!(concept.concept_id, "compass/app-mod");
+        assert_eq!(concept.title.as_deref(), Some("app / mod"));
+        assert_eq!(concept.tags, vec!["ra", "app", "mod"]);
+        assert!(concept.body.contains("- 4 symbols: function(3), class(1)"));
+        assert!(
+            concept
+                .body
+                .contains("- `a0.py` - ra (refs: 21; e.g. sym0)")
+        );
+        assert!(
+            concept
+                .body
+                .contains("- `a0.py` is a high-traffic file (21 incoming refs); changes ripple")
+        );
+        assert!(concept.body.contains("# Tribal Knowledge"));
+        std::fs::remove_dir_all(&bundle.root).ok();
+    }
+
+    #[test]
+    fn module_match_is_segment_anchored_mid_path() {
+        let conn = compass_conn();
+        conn.execute_batch(
+            "INSERT INTO repos VALUES ('ra', '/x/ra');
+             INSERT INTO files VALUES (1, 'ra', 'src/cairn/graph/a.py');
+             INSERT INTO files VALUES (2, 'ra', 'other/mod/b.py');
+             INSERT INTO symbols VALUES ('s1', 1, 'sym1', 'function', 'sym1', 1);
+             INSERT INTO symbols VALUES ('s2', 2, 'sym2', 'function', 'sym2', 1);",
+        )
+        .expect("seed");
+        let (repo, module) = resolve_module(&conn, "cairn/graph", None).expect("resolve");
+        assert_eq!(repo.as_deref(), Some("ra"));
+        assert_eq!(module, "cairn/graph");
+        let symbols = symbols_in_module(&conn, "cairn/graph", repo.as_deref()).expect("symbols");
+        assert_eq!(
+            symbols.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            vec!["sym1"],
+            "the mid-path `%/{module}/%` arm must match src/cairn/graph/a.py"
+        );
+    }
+
+    #[test]
+    fn cross_module_deps_survives_single_segment_targets() {
+        let conn = compass_conn();
+        conn.execute_batch(
+            "INSERT INTO repos VALUES ('ra', '/x/ra');
+             INSERT INTO files VALUES (1, 'ra', 'src/app/mod/a.py');
+             INSERT INTO files VALUES (2, 'ra', 'conftest.py');
+             INSERT INTO symbols VALUES ('s1', 1, 'in_mod', 'function', 'in_mod', 1);
+             INSERT INTO symbols VALUES ('s2', 2, 'conf_fn', 'function', 'conf_fn', 1);
+             INSERT INTO edges VALUES (1, 's1', 's2', 'calls');",
+        )
+        .expect("seed");
+        let deps = cross_module_deps(&conn, "src/app/mod", Some("ra")).expect("deps");
+        assert_eq!(deps, vec!["ra/conftest.py".to_string()]);
     }
 }
