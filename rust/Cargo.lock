@@ -218,6 +218,7 @@ dependencies = [
  "cairn-store",
  "clap",
  "minijinja",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

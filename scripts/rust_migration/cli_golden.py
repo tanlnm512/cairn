@@ -87,8 +87,39 @@ COMMANDS = [
     ["wiki", "status", "--repo", "cairn"],
     ["wiki", "retry"],
     ["wiki", "enrich", "--all"],
+    # Lifecycle/ops family (4c-2): read-only over the seeded store — the
+    # metrics legs render populated tables/kv sections via _seed_telemetry;
+    # the mutating arms run dry/dead-pinned below.
+    ["status"],
+    ["version"],
+    ["metrics"],
+    ["metrics", "--json"],
+    ["metrics", "--builds", "--json"],
+    ["metrics", "--quality"],
+    ["metrics", "--contention"],
+    ["metrics", "--tasks"],
+    ["sync"],
+    ["download-reranker"],
 ]
 DIFF_PRINT_CHARS = 300
+# Report renders runtime identity fields (python/platform/sqlite versions) that
+# are environment values, not contract: normalize their values, keep the shape.
+_REPORT_ENV_FIELD_RE = re.compile(
+    r"(?m)^(\s*\"?(?:python|platform|sqlite|db_schema_user_version)\"?:).*$"
+)
+EXTRA_SCRUB_RULES = [
+    ("report_env_fields", _REPORT_ENV_FIELD_RE, r"\1 <ENV>"),
+    # Plain-text progress bars carry wall-clock seconds; the shape is contract.
+    ("progress_elapsed", re.compile(r"%  \d+s"), "% <S>"),
+]
+# `upgrade` legs pin a dead loopback proxy so the PyPI probe fails
+# deterministically on both sides (offline and networked machines alike).
+DEAD_PROXY = "http://127.0.0.1:9"
+ENV_OVERRIDES: dict[tuple[str, ...], dict[str, str]] = {
+    ("upgrade", "--check"): {
+        "https_proxy": DEAD_PROXY, "HTTPS_PROXY": DEAD_PROXY,
+    },
+}
 
 
 def _note(msg: str) -> None:
@@ -114,6 +145,9 @@ def cli_env(scratch: Path, workspace: Path, cargo_path: bool) -> dict:
     # Python-side logging (ann-index degrade warnings, rich handler) is noise
     # this gate does not contract on; the C-4 surface is stdout + exit codes.
     env["CAIRN_LOG_LEVEL"] = "ERROR"
+    # The python CLI self-records `cli:cairn <cmd>` tool_metrics rows at exit;
+    # with per-leg timings they are nondeterministic, so gate the whole family.
+    env["CAIRN_TELEMETRY"] = "off"
     env["CAIRN_HOME"] = str(scratch / "home")
     env["CAIRN_DB"] = str(scratch / DB_NAME)
     env["CAIRN_KNOWLEDGE"] = str(scratch / ".knowledge")
@@ -143,6 +177,47 @@ def prepare_store(scratch: Path) -> None:
                "src/cairn/llm", {"key_files": ["src/graph/queries.py"]},
                status="done", result="Compass body for src/cairn/llm.\n")
     _seed_wiki(scratch)
+    _seed_telemetry(scratch)
+
+
+def _seed_telemetry(scratch: Path) -> None:
+    """Fixed tool_metrics + events rows so the metrics legs render their
+    populated tables and kv sections, not just their empty arms."""
+    import json
+    import sqlite3
+
+    conn = sqlite3.connect(str(scratch / DB_NAME))
+    try:
+        for tool, invoked_at, duration, status in [
+            ("golden_probe", 1.0, 12.5, "ok"),
+            ("golden_probe", 2.0, 30.25, "error"),
+        ]:
+            conn.execute(
+                "INSERT INTO tool_metrics (tool_name, invoked_at, duration_ms, status) "
+                "VALUES (?, ?, ?, ?)",
+                (tool, invoked_at, duration, status),
+            )
+        events = [
+            (100.0, "lock_contention", {"site": "build_lock"}),
+            (101.0, "lock_contention", {"site": "build_lock"}),
+            (102.0, "lock_contention", {"site": "query_lock"}),
+            (103.0, "semantic_backend", {"backend": "hash"}),
+            (104.0, "semantic_backend", {"backend": "hash"}),
+            (105.0, "semantic_backend", {"backend": "hash"}),
+            (106.0, "empty_result", {"query_kind": "semantic_search"}),
+            (107.0, "truncate_result", {"tool": "pack"}),
+            (108.0, "task_lifecycle", {"event": "queued", "task_kind": "wiki-page"}),
+            (109.0, "task_lifecycle", {"event": "queued", "task_kind": "wiki-page"}),
+            (110.0, "task_lifecycle", {"event": "completed", "task_kind": "wiki-page"}),
+        ]
+        for ts, name, attrs in events:
+            conn.execute(
+                "INSERT INTO events (ts, name, session_id, attrs) VALUES (?, ?, ?, ?)",
+                (ts, name, "golden", json.dumps(attrs)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _seed_wiki(scratch: Path) -> None:
@@ -263,6 +338,28 @@ def _seed_task(scratch: Path, task_id: str, kind: str, resource: str,
         ))
 
 
+def _seed_sync_drift(scratch: Path) -> None:
+    """Re-materialize the pinned store with one drifted corpus file."""
+    import sqlite3
+
+    workspace = scratch / "corpus"
+    shutil.rmtree(workspace, ignore_errors=True)
+    shutil.rmtree(scratch / ".knowledge", ignore_errors=True)
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        Path(str(scratch / DB_NAME) + suffix).unlink(missing_ok=True)
+    parity.load_pinned_store("self", scratch)
+    (workspace / ".git").write_text("gitdir: pinned-parity-corpus\n", encoding="utf-8")
+    conn = sqlite3.connect(str(scratch / DB_NAME))
+    try:
+        rel = conn.execute(
+            "SELECT path FROM files WHERE path LIKE '%.py' ORDER BY path LIMIT 1"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    target = workspace / rel
+    target.write_text(target.read_text(encoding="utf-8") + "\n# drift\n", encoding="utf-8")
+
+
 # Mutating task cases: the seeded task is restored before each leg.
 RESEED = {
     ("task", "claim", "golden-claim"):
@@ -287,6 +384,10 @@ RESEED = {
         lambda s: _reset_hooks_workspace(s, installed=False),
     ("hooks", "uninstall", "--workspace"):
         lambda s: _reset_hooks_workspace(s, installed=True),
+    # Mutating sync case: a fresh store + git marker + one drifted indexed
+    # file before each leg, so both legs reindex exactly that file.
+    ("sync", "--workspace"):
+        _seed_sync_drift,
 }
 
 
@@ -301,11 +402,12 @@ def ensure_rust_binary() -> Path:
     return RUST_BIN
 
 
-def run_side(exe: list[str], argv: list[str], env: dict) -> tuple[int, str, str]:
+def run_side(exe: list[str], argv: list[str], env: dict,
+             cwd: Path = REPO_ROOT) -> tuple[int, str, str]:
     proc = subprocess.run(
         [*exe, *argv],
         capture_output=True, text=True, env=env, timeout=CMD_TIMEOUT_S,
-        cwd=str(REPO_ROOT),
+        cwd=str(cwd),
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -357,22 +459,41 @@ def main(argv: list[str] | None = None) -> int:
 
         export_dir = scratch / "export"
         hooks_ws = prepare_hooks_workspace(scratch)
+        empty_knowledge = scratch / "empty-knowledge"
+        empty_knowledge.mkdir(parents=True, exist_ok=True)
         commands = COMMANDS + [
             ["hooks", "install", "--workspace", str(hooks_ws)],
             ["hooks", "uninstall", "--workspace", str(hooks_ws)],
             ["hooks", "install", "--workspace", str(hooks_ws / "empty")],
             ["wiki", "export", "--dir", str(export_dir), "--force"],
+            # Empty knowledge dir: every memory tier is zero, so the tier
+            # averages must render the python zero guard, not a NaN.
+            ["status", "--knowledge", str(empty_knowledge)],
+            # Report runs from the scratch dir so the repo-dev quality gates
+            # render their no-source-root arm instead of the live checkout.
+            ["report", "--db", str(scratch / "missing.kg")],
+            ["uninstall", "--dry-run", "--graph-only"],
+            ["upgrade", "--check"],
+            ["sync", "--workspace", str(workspace)],
         ]
+        # Per-command cwd overrides, keyed by the leading argv word.
+        CWD_OVERRIDES = {"report": scratch}
         failures = []
         for cmd in commands:
-            hook = RESEED.get(tuple(cmd[:3]))
+            # Keys may stop before a positional path: try the 3-word key the
+            # task/wiki cases use, then the 2-word key (`sync --workspace`).
+            hook = RESEED.get(tuple(cmd[:3])) or (
+                RESEED.get(tuple(cmd[:2])) if len(cmd) > 2 else None
+            )
             if hook is not None:
                 hook(scratch)
-            py = run_side(parity.cairn_cli(), cmd, py_env)
+            overrides = ENV_OVERRIDES.get(tuple(cmd[:2]), {})
+            cwd = CWD_OVERRIDES.get(cmd[0], REPO_ROOT)
+            py = run_side(parity.cairn_cli(), cmd, {**py_env, **overrides}, cwd)
             if hook is not None:
                 hook(scratch)
-            rs = run_side([str(rust_bin)], cmd, rust_env)
-            diff = first_diff(cmd, py, rs, rules)
+            rs = run_side([str(rust_bin)], cmd, {**rust_env, **overrides}, cwd)
+            diff = first_diff(cmd, py, rs, rules + EXTRA_SCRUB_RULES)
             label = " ".join(cmd)
             if diff:
                 failures.append(label)

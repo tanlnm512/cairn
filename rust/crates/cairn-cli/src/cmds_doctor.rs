@@ -35,11 +35,11 @@ pub struct DoctorArgs {
 }
 
 #[derive(Debug)]
-struct CheckResult {
-    name: String,
-    status: &'static str,
-    detail: String,
-    hint: Option<String>,
+pub(crate) struct CheckResult {
+    pub(crate) name: String,
+    pub(crate) status: &'static str,
+    pub(crate) detail: String,
+    pub(crate) hint: Option<String>,
 }
 
 fn result(
@@ -131,7 +131,7 @@ pub fn run(args: DoctorArgs) -> ExitCode {
     }
 }
 
-fn run_doctor(db: &str) -> Vec<CheckResult> {
+pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
     let path = Path::new(db);
     if !path.exists() {
         let mut degraded = db_unavailable_results(&format!(
@@ -1206,7 +1206,7 @@ fn iso_cutoff(days: i64) -> String {
 
 // --- 10. config echo -----------------------------------------------------------------------------
 
-fn knob_source(name: &str, default: &str) -> (String, &'static str) {
+pub(crate) fn knob_source(name: &str, default: &str) -> (String, &'static str) {
     if let Ok(env_value) = std::env::var(name) {
         let trimmed = env_value.trim();
         if !trimmed.is_empty() {

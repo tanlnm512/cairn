@@ -221,7 +221,7 @@ fn fmt_pct(share: f64) -> String {
 }
 
 /// `_shorten`: strip the workspace root for display.
-fn shorten(path: &str) -> String {
+pub(crate) fn shorten(path: &str) -> String {
     let ws = store_paths::resolve_workspace(None);
     let ws = ws.to_string_lossy().to_string();
     let prefix = format!("{ws}/");
@@ -1194,7 +1194,7 @@ fn checkpoint(args: crate::cmds_core::CheckpointArgs) -> ExitCode {
 }
 
 /// `_human_bytes`: B/KB/MB/GB with no decimals, TB with one.
-fn human_bytes(mut n: f64) -> String {
+pub(crate) fn human_bytes(mut n: f64) -> String {
     for unit in ["B", "KB", "MB", "GB"] {
         if n < 1024.0 {
             return format!("{n:.0} {unit}");

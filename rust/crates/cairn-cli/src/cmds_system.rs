@@ -8,8 +8,8 @@ use crate::cmds_agents;
 use crate::cmds_connect;
 use crate::cmds_dashboard;
 use crate::cmds_doctor;
+use crate::cmds_lifecycle;
 use crate::cmds_serve;
-use crate::display;
 
 #[derive(Subcommand)]
 pub enum SystemCommand {
@@ -26,13 +26,58 @@ pub enum SystemCommand {
         fix: bool,
     },
     /// System status and health across all layers.
-    Status,
+    Status {
+        /// SQLite DB path.
+        #[arg(long)]
+        db: Option<String>,
+        /// Knowledge directory path.
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
     /// Manually re-index size/mtime-drifted files.
-    Sync,
-    /// Report tool metrics.
-    Metrics,
-    /// Print a redacted diagnostic bundle.
-    Report,
+    Sync {
+        #[arg(long)]
+        workspace: Option<String>,
+        /// SQLite DB path.
+        #[arg(long)]
+        db: Option<String>,
+    },
+    /// Report tool metrics by default; --builds/--quality/--contention/--tasks render telemetry sections (combinable).
+    Metrics {
+        /// SQLite DB path.
+        #[arg(long)]
+        db: Option<String>,
+        /// Filter by tool name.
+        #[arg(long = "tool")]
+        tool_name: Option<String>,
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
+        /// Recent build-run trend with the resolution mix.
+        #[arg(long)]
+        builds: bool,
+        /// Retrieval quality: empty-result rate, truncations, backend mix.
+        #[arg(long)]
+        quality: bool,
+        /// Lock-contention events grouped by site.
+        #[arg(long)]
+        contention: bool,
+        /// LLM task-queue lifecycle: events by kind and task type.
+        #[arg(long)]
+        tasks: bool,
+    },
+    /// Print a redacted diagnostic bundle (versions, doctor checks, recent errors, config); never uploads.
+    Report {
+        /// SQLite DB path.
+        #[arg(long)]
+        db: Option<String>,
+        /// Emit the bundle as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Write the bundle to this file as well as printing it.
+        #[arg(long)]
+        out: Option<String>,
+    },
     /// Start or reuse the shared HTTP daemon and print its URL.
     Connect {
         /// HTTP daemon port.
@@ -95,10 +140,45 @@ pub enum SystemCommand {
         #[arg(long)]
         workspace: Option<String>,
     },
-    /// Uninstall cairn: agent wiring, hooks, graph store.
-    Uninstall,
-    /// Upgrade cairn.
-    Upgrade,
+    /// Uninstall cairn: agent wiring, hooks, graph store, and the binary.
+    Uninstall {
+        /// Remove everything for ALL workspaces (the entire ~/.cairn).
+        #[arg(long)]
+        full: bool,
+        /// Remove agent wiring only.
+        #[arg(long = "agents-only")]
+        agents_only: bool,
+        /// Remove git hooks only.
+        #[arg(long = "hooks-only")]
+        hooks_only: bool,
+        /// Remove graph + knowledge data only.
+        #[arg(long = "graph-only")]
+        graph_only: bool,
+        /// Remove the cairn binary only.
+        #[arg(long = "package-only")]
+        package_only: bool,
+        /// Limit agent removal to these clients (repeatable).
+        #[arg(long = "client")]
+        clients: Vec<String>,
+        /// Agent-wiring scope to remove: 'workspace', 'global', or 'all'.
+        #[arg(long, default_value = "workspace")]
+        scope: String,
+        /// Workspace root (default: resolved).
+        #[arg(long)]
+        workspace: Option<String>,
+        /// Show what would be removed; change nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Skip confirmations (implied by --full).
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Upgrade cairn. Detects install method and updates in place.
+    Upgrade {
+        /// Only check, don't upgrade.
+        #[arg(long)]
+        check: bool,
+    },
     /// Print the installed cairn version.
     Version,
     /// Git hook management.
@@ -106,9 +186,13 @@ pub enum SystemCommand {
         #[command(subcommand)]
         command: HooksGroup,
     },
-    /// Download the reranker model and enable reranking.
+    /// Download the reranker model and enable reranking persistently (CAIRN_RERANK=0 forces it off).
     #[command(name = "download-reranker")]
-    DownloadReranker,
+    DownloadReranker {
+        /// CrossEncoder model id (default: BAAI/bge-reranker-base, or $CAIRN_RERANK_MODEL if set).
+        #[arg(long)]
+        model: Option<String>,
+    },
     /// Start the HTTP MCP server daemon in the foreground, or manage the shared daemon.
     Serve {
         /// SQLite DB path (default: central store).
@@ -219,7 +303,7 @@ pub enum ServeGroup {
     },
 }
 
-/// Run a system command; every handler is a Phase 3a stub until ported.
+/// Run a system command.
 pub fn run(command: SystemCommand) -> ExitCode {
     match command {
         SystemCommand::Doctor { db, json, fix } => cmds_doctor::run(cmds_doctor::DoctorArgs {
@@ -227,6 +311,66 @@ pub fn run(command: SystemCommand) -> ExitCode {
             as_json: json,
             fix,
         }),
+        SystemCommand::Status { db, knowledge } => {
+            cmds_lifecycle::run_status(cmds_lifecycle::StatusArgs { db, knowledge })
+        }
+        SystemCommand::Sync { workspace, db } => {
+            cmds_lifecycle::run_sync(cmds_lifecycle::SyncArgs { workspace, db })
+        }
+        SystemCommand::Metrics {
+            db,
+            tool_name,
+            json,
+            builds,
+            quality,
+            contention,
+            tasks,
+        } => cmds_lifecycle::run_metrics(cmds_lifecycle::MetricsArgs {
+            db,
+            tool: tool_name,
+            as_json: json,
+            builds,
+            quality,
+            contention,
+            tasks,
+        }),
+        SystemCommand::Report { db, json, out } => {
+            cmds_lifecycle::run_report(cmds_lifecycle::ReportArgs {
+                db,
+                as_json: json,
+                out,
+            })
+        }
+        SystemCommand::Uninstall {
+            full,
+            agents_only,
+            hooks_only,
+            graph_only,
+            package_only,
+            clients,
+            scope,
+            workspace,
+            dry_run,
+            yes,
+        } => cmds_lifecycle::run_uninstall(cmds_lifecycle::UninstallArgs {
+            full,
+            agents_only,
+            hooks_only,
+            graph_only,
+            package_only,
+            clients,
+            scope,
+            workspace,
+            dry_run,
+            yes,
+        }),
+        SystemCommand::Upgrade { check } => {
+            cmds_lifecycle::run_upgrade(cmds_lifecycle::UpgradeArgs { check })
+        }
+        SystemCommand::Version => cmds_lifecycle::run_version(),
+        SystemCommand::DownloadReranker { model } => {
+            cmds_lifecycle::run_download_reranker(cmds_lifecycle::DownloadRerankerArgs { model })
+        }
         SystemCommand::Connect { port, host, impl_ } => {
             cmds_connect::run(cmds_connect::ConnectArgs { port, host, impl_ })
         }
@@ -340,15 +484,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
             HooksGroup::Install { workspace } => run_hooks_install(workspace),
             HooksGroup::Uninstall { workspace } => run_hooks_uninstall(workspace),
         },
-        other => not_ported(other.name()),
     }
-}
-
-fn not_ported(name: &str) -> ExitCode {
-    display::error(&format!(
-        "cairn {name} is not implemented in the Rust CLI yet"
-    ));
-    ExitCode::FAILURE
 }
 
 /// click.ClickException rendering: "Error: <msg>" on stderr, exit 1.
@@ -396,29 +532,6 @@ fn run_hooks_uninstall(workspace: Option<String>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-impl SystemCommand {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Doctor { .. } => "doctor",
-            Self::Status => "status",
-            Self::Sync => "sync",
-            Self::Metrics => "metrics",
-            Self::Report => "report",
-            Self::Connect { .. } => "connect",
-            Self::Dashboard { .. } => "dashboard",
-            Self::InstallAgents { .. } => "install-agents",
-            Self::UninstallAgents { .. } => "uninstall-agents",
-            Self::Uninstall => "uninstall",
-            Self::Upgrade => "upgrade",
-            Self::Version => "version",
-            Self::Hooks { .. } => "hooks",
-            Self::DownloadReranker => "download-reranker",
-            Self::Serve { .. } => "serve",
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use clap::{Command, Subcommand};
@@ -437,8 +550,8 @@ mod tests {
     }
 
     #[test]
-    fn stub_exit_is_failure_with_diagnostic() {
-        assert_eq!(run(SystemCommand::Status), ExitCode::FAILURE);
+    fn version_prints_the_package_version() {
+        assert_eq!(run(SystemCommand::Version), ExitCode::SUCCESS);
     }
 
     #[test]
