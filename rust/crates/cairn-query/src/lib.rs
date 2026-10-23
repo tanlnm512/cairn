@@ -3,6 +3,8 @@
 pub mod blast;
 pub mod graph;
 pub mod grep;
+pub mod ingest;
+pub mod skillgen;
 pub mod tasks;
 pub mod tools_federation;
 pub mod tools_flow;

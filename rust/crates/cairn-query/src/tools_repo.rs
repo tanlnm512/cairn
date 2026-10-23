@@ -15,22 +15,22 @@ const DOMINANT_SEGMENT_SHARE: f64 = 0.60;
 // --- projection --------------------------------------------------------------
 
 #[derive(Clone)]
-struct SymbolRow {
+pub(crate) struct SymbolRow {
     repo: String,
     path: String,
-    qualified_name: String,
-    incoming: i64,
-    outgoing: i64,
+    pub(crate) qualified_name: String,
+    pub(crate) incoming: i64,
+    pub(crate) outgoing: i64,
 }
 
-struct Projection {
-    symbols: Vec<SymbolRow>,
+pub(crate) struct Projection {
+    pub(crate) symbols: Vec<SymbolRow>,
     /// Repo ids in sorted order (Python iterates a sorted dict).
     repos: Vec<String>,
     paths: BTreeMap<String, BTreeSet<String>>,
 }
 
-fn projection(conn: &Connection) -> Result<Projection, rusqlite::Error> {
+pub(crate) fn projection(conn: &Connection) -> Result<Projection, rusqlite::Error> {
     let mut stmt = conn.prepare(
         "SELECT \
             repos.id AS repo_id, \

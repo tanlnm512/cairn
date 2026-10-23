@@ -39,7 +39,7 @@ fn err<T>(msg: impl Into<String>) -> Result<T, ToolError> {
 
 /// String-valued YAML node (never auto-typed; `Yaml::from_str` would coerce
 /// number/bool-looking titles into scalars).
-fn ys(s: impl Into<String>) -> Yaml {
+pub fn ys(s: impl Into<String>) -> Yaml {
     Yaml::String(s.into())
 }
 
@@ -51,6 +51,23 @@ pub fn iso_utc_now() -> String {
         .duration_since(UNIX_EPOCH)
         .expect("clock before epoch");
     format_iso_utc(now.as_secs() as i64)
+}
+
+/// Python `datetime.now(timezone.utc).isoformat()` (microseconds + offset).
+pub fn iso_utc_micros() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock before epoch");
+    let days = now.as_secs() as i64 / 86_400;
+    let rem = now.as_secs() as i64 % 86_400;
+    let (y, m, d) = civil_from_days(days);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{micros:06}+00:00",
+        h = rem / 3600,
+        mi = (rem % 3600) / 60,
+        s = rem % 60,
+        micros = now.subsec_micros()
+    )
 }
 
 /// UTC date as `YYYY-MM-DD` (Python's `%Y-%m-%d`).
@@ -662,7 +679,7 @@ fn frontmatter_close(text: &str) -> Option<usize> {
 // --- YAML emitter (PyYAML block-style compatible) -----------------------------
 
 /// Emit a Yaml value in PyYAML `safe_dump(sort_keys=False)` block style.
-fn emit_yaml(value: &Yaml) -> String {
+pub fn emit_yaml(value: &Yaml) -> String {
     let mut out = String::new();
     emit_node(value, 0, &mut out);
     out.trim_end_matches('\n').to_string()
@@ -856,6 +873,11 @@ impl Bundle {
     pub fn read_concept(&self, concept_id: &str) -> Result<Concept, ToolError> {
         let path = self.validate_concept_path(concept_id)?;
         Concept::from_file(&path).map_err(|e| ToolError(e.to_string()))
+    }
+
+    /// The bundle-relative concept file path (escape-checked).
+    pub fn concept_file(&self, concept_id: &str) -> Result<PathBuf, ToolError> {
+        self.validate_concept_path(concept_id)
     }
 
     /// Write a concept at `<concept_id>.md`, invalidating the search index.
@@ -2454,6 +2476,8 @@ pub fn add_document(
         description,
         doc_source,
         None,
+        None,
+        None,
     )
 }
 
@@ -2474,6 +2498,8 @@ pub fn add_document_with_slug(
     description: Option<&str>,
     doc_source: &str,
     slug: Option<&str>,
+    relationships: Option<&[Yaml]>,
+    verified_refs: Option<&[(String, String)]>,
 ) -> Result<String, ToolError> {
     let title = strip_private_data(title);
     let body = strip_private_data(body);
@@ -2504,6 +2530,19 @@ pub fn add_document_with_slug(
     if let Some(steps) = &steps {
         extensions.push(("steps".into(), steps_yaml(steps)));
     }
+    if let Some(relationships) = relationships
+        && !relationships.is_empty()
+    {
+        extensions.push((
+            "relates_to".into(),
+            Yaml::Array(crate::tasks::normalize_relationships(Some(&Yaml::Array(
+                relationships.to_vec(),
+            )))),
+        ));
+    }
+    if let Some(verified) = verified_refs.filter(|refs| !refs.is_empty()) {
+        extensions.push(("verified".into(), verified_yaml(verified)));
+    }
 
     let mut concept = Concept {
         type_: format!("Knowledge-{doc_type}"),
@@ -2522,6 +2561,21 @@ pub fn add_document_with_slug(
     }
     bundle.write_concept(&mut concept)?;
     Ok(concept_id)
+}
+
+/// The OKF `verified` family rows for doc->code refs.
+fn verified_yaml(refs: &[(String, String)]) -> Yaml {
+    Yaml::Array(
+        refs.iter()
+            .map(|(ref_, kind)| {
+                let mut h = Hash::new();
+                h.insert(ys("ref"), ys(ref_.clone()));
+                h.insert(ys("kind"), ys(kind.clone()));
+                h.insert(ys("verified"), Yaml::Boolean(true));
+                Yaml::Hash(h)
+            })
+            .collect(),
+    )
 }
 
 /// List knowledge documents, optionally filtered by type/status/tag.
@@ -5524,6 +5578,201 @@ pub fn doc_link_tasks(bundle: &Bundle) -> Vec<(String, String, Vec<String>)> {
     out
 }
 
+// --- OKF conformance + stale-path validation (okf/conformance.py, critic.py) ---
+
+/// Check every .md file under the bundle root for OKF conformance.
+pub fn check_bundle(root: &Path) -> Vec<String> {
+    if !root.is_dir() {
+        return vec![format!("Bundle root does not exist: {}", root.display())];
+    }
+    let bundle = Bundle::new(root);
+    let mut errors = Vec::new();
+    for cid in bundle.list_concepts(None) {
+        let path = root.join(format!("{cid}.md"));
+        let rel = format!("{cid}.md");
+        match std::fs::read_to_string(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                errors.push(format!("{rel}: File not found: {}", path.display()));
+            }
+            Err(e) => errors.push(format!("{rel}: Parse error in {}: {e}", path.display())),
+            Ok(text) => {
+                // Python list() on a scalar tags value raises inside from_file,
+                // so the whole concept reports as a parse error.
+                let scalar_tags_error = split_frontmatter(&text).and_then(|(fm, _)| {
+                    let tags = fm.iter().find(|(k, _)| k == "tags").map(|(_, v)| v)?;
+                    // Python's `tags or []` treats falsy scalars as no tags.
+                    match tags {
+                        Yaml::Integer(0) | Yaml::Boolean(false) => None,
+                        Yaml::Integer(_) => Some("'int' object is not iterable"),
+                        Yaml::Real(text) => {
+                            let truthy = text.parse::<f64>().is_ok_and(|v| v != 0.0);
+                            truthy.then_some("'float' object is not iterable")
+                        }
+                        Yaml::Boolean(true) => Some("'bool' object is not iterable"),
+                        _ => None,
+                    }
+                });
+                if let Some(err) = scalar_tags_error {
+                    errors.push(format!("{rel}: Parse error in {}: {err}", path.display()));
+                } else {
+                    let concept = Concept::from_text(&text, cid.clone());
+                    if concept.type_.is_empty() {
+                        errors.push(format!("{rel}: Missing required field: type"));
+                    }
+                }
+            }
+        }
+    }
+    errors
+}
+
+/// One stale concept report entry (validate_paths).
+#[derive(Debug, Clone)]
+pub struct StaleConcept {
+    pub concept_id: String,
+    pub verified: f64,
+}
+
+/// Stale-entry report for backtick file/symbol refs (critic.validate_paths).
+pub fn validate_paths_stale(conn: &Connection, bundle: &Bundle) -> Vec<StaleConcept> {
+    let mut stale = Vec::new();
+    for cid in bundle.list_concepts(None) {
+        let concept = match bundle.read_concept(&cid) {
+            Ok(concept) => concept,
+            // Unreadable concepts cannot be verified: report, never drop.
+            Err(_) => {
+                stale.push(StaleConcept {
+                    concept_id: cid,
+                    verified: 0.0,
+                });
+                continue;
+            }
+        };
+        let score = graph_verification(&concept, conn).unwrap_or(0.0);
+        if score < 1.0 {
+            stale.push(StaleConcept {
+                concept_id: cid,
+                verified: score,
+            });
+        }
+    }
+    stale
+}
+
+/// Live symbols sharing a dead symbol ref's identity anchors.
+fn successor_candidates(conn: &Connection, ref_: &str, file_scope_refs: &[String]) -> Vec<String> {
+    let bare = ref_.strip_suffix("()").unwrap_or(ref_);
+    let prefix = bare.rsplit_once('.').map(|(p, _)| p).unwrap_or("");
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<String> = Vec::new();
+    if !prefix.is_empty() {
+        let esc = escape_like(prefix);
+        clauses.push(
+            "(s.qualified_name LIKE ?1 ESCAPE '\\' OR s.qualified_name LIKE ?2 ESCAPE '\\')".into(),
+        );
+        params.push(format!("{esc}.%"));
+        params.push(format!("%.{esc}.%"));
+    }
+    let mut scope_clauses: Vec<String> = Vec::new();
+    for file_ref in file_scope_refs {
+        if !file_exists(conn, file_ref).unwrap_or(false) {
+            continue;
+        }
+        let (p0, p1, p2, p3) = path_match_params(file_ref);
+        let base = params.len();
+        scope_clauses.push(format!(
+            "(f.path = ?{a} OR f.path LIKE ?{b} ESCAPE '\\' \
+             OR f.path LIKE ?{c} ESCAPE '\\' OR f.path LIKE ?{d} ESCAPE '\\')",
+            a = base + 1,
+            b = base + 2,
+            c = base + 3,
+            d = base + 4
+        ));
+        params.extend([p0, p1, p2, p3]);
+        // Repo-qualified ref (`repo/src/x.py`): validate the remainder within
+        // that repo, matching file_exists' bridge arm.
+        if let Some((rid, rest)) = file_ref.split_once('/') {
+            let (p0, p1, p2, p3) = path_match_params(rest);
+            let base = params.len();
+            scope_clauses.push(format!(
+                "(f.repo_id = ?{a} AND (f.path = ?{b} OR f.path LIKE ?{c} ESCAPE '\\' \
+                 OR f.path LIKE ?{d} ESCAPE '\\' OR f.path LIKE ?{e} ESCAPE '\\'))",
+                a = base + 1,
+                b = base + 2,
+                c = base + 3,
+                d = base + 4,
+                e = base + 5
+            ));
+            params.push(rid.to_string());
+            params.extend([p0, p1, p2, p3]);
+        }
+    }
+    if !scope_clauses.is_empty() {
+        clauses.push(format!("({})", scope_clauses.join(" OR ")));
+    }
+    if clauses.is_empty() {
+        return Vec::new();
+    }
+    let sql = format!(
+        "SELECT s.id, s.name, s.qualified_name FROM symbols s \
+         JOIN files f ON f.id = s.file_id WHERE {}",
+        clauses.join(" AND ")
+    );
+    let Ok(mut stmt) = conn.prepare(&sql) else {
+        return Vec::new();
+    };
+    let refs: Vec<&dyn rusqlite::ToSql> =
+        params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+    let Ok(mapped) = stmt.query_map(refs.as_slice(), |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?,
+        ))
+    }) else {
+        return Vec::new();
+    };
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    let mut identities: Vec<String> = Vec::new();
+    for row in mapped.flatten() {
+        let (id, name, qualified) = row;
+        if seen_ids.insert(id) {
+            identities.push(qualified.unwrap_or(name));
+        }
+    }
+    identities
+}
+
+/// Successor symbol for a memory body's dead symbol refs, or None.
+pub fn resolve_successor(conn: &Connection, body: &str) -> Option<String> {
+    let dead: Vec<String> = extract_symbol_refs(body)
+        .into_iter()
+        .filter(|r| !symbol_exists(conn, r).unwrap_or(false))
+        .collect();
+    if dead.is_empty() {
+        return None;
+    }
+    let file_refs = extract_file_refs(body);
+    let mut links: Vec<String> = Vec::new();
+    for ref_ in &dead {
+        let candidates = successor_candidates(conn, ref_, &file_refs);
+        if candidates.len() == 1 {
+            links.push(candidates[0].clone());
+        }
+    }
+    let mut distinct: Vec<String> = Vec::new();
+    for l in links {
+        if !distinct.contains(&l) {
+            distinct.push(l);
+        }
+    }
+    if distinct.len() == 1 {
+        distinct.into_iter().next()
+    } else {
+        None
+    }
+}
+
 // --- memory sharing surface (memory/store.py: share/check/purge port) ------------
 
 /// Validate that every symbol entry is a non-empty string.
@@ -5657,6 +5906,71 @@ pub fn purge_archived(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_bundle_surfaces_scalar_tags_and_missing_type() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("cairn-conformance-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("root");
+        let write = |name: &str, text: &str| {
+            std::fs::write(root.join(name), text).expect("write");
+        };
+        write(
+            "int-tags.md",
+            "---\ntype: Knowledge-spec\ntitle: t\ntags: 5\n---\nbody\n",
+        );
+        write(
+            "bool-tags.md",
+            "---\ntype: Knowledge-spec\ntitle: t\ntags: true\n---\nbody\n",
+        );
+        write(
+            "str-tags.md",
+            "---\ntype: Knowledge-spec\ntitle: t\ntags: abc\n---\nbody\n",
+        );
+        // falsy scalars fall back to [] in Python (`tags or []`) and report nothing
+        write(
+            "zero-tags.md",
+            "---\ntype: Knowledge-spec\ntitle: t\ntags: 0\n---\nbody\n",
+        );
+        write(
+            "fzero-tags.md",
+            "---\ntype: Knowledge-spec\ntitle: t\ntags: 0.0\n---\nbody\n",
+        );
+        write(
+            "false-tags.md",
+            "---\ntype: Knowledge-spec\ntitle: t\ntags: false\n---\nbody\n",
+        );
+        write("no-type.md", "no frontmatter\n");
+
+        let errors = check_bundle(&root);
+        let msg = errors.join("\n");
+        assert!(
+            msg.contains("int-tags.md: Parse error in ")
+                && msg.contains("'int' object is not iterable"),
+            "scalar int tags must be a parse error: {msg}"
+        );
+        assert!(
+            msg.contains("bool-tags.md: Parse error in ")
+                && msg.contains("'bool' object is not iterable"),
+            "scalar bool tags must be a parse error: {msg}"
+        );
+        assert!(
+            !msg.contains("str-tags.md"),
+            "a string tags value is fine: {msg}"
+        );
+        for fine in ["zero-tags.md", "fzero-tags.md", "false-tags.md"] {
+            assert!(!msg.contains(fine), "falsy scalar tags are silent: {msg}");
+        }
+        assert!(
+            msg.contains("no-type.md: Missing required field: type"),
+            "{msg}"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     #[test]
     fn slugify_matches_python() {

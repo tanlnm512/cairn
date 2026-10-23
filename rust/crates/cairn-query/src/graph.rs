@@ -389,7 +389,7 @@ mod lexical {
 
 // --- impact -----------------------------------------------------------------
 
-mod impact {
+pub(crate) mod impact {
     //! Recursive caller traversal with cycle detection, closure fast path.
 
     use std::collections::{HashMap, HashSet};
@@ -417,7 +417,7 @@ mod impact {
         pub truncated: bool,
     }
 
-    fn closure_available(conn: &Connection) -> bool {
+    pub(crate) fn closure_available(conn: &Connection) -> bool {
         conn.query_row("SELECT 1 FROM transitive_edges LIMIT 1", [], |r| {
             r.get::<_, i64>(0)
         })

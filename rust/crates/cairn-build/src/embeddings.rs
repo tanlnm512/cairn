@@ -1,7 +1,7 @@
 //! Embeddings build path: chunking, stale re-embedding, multivector, orphan
 //! reap, and term-df refresh for the hash and embeddings-server backends.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 
 use rusqlite::Connection;
@@ -680,6 +680,115 @@ fn embed_mv_kinds(
         embedded += batch.len();
     }
     Ok(embedded)
+}
+
+// --- knowledge corpus -----------------------------------------------------------
+
+/// Counts reported by one knowledge-embed pass (`embed_knowledge` summary).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnowledgeEmbedSummary {
+    pub model: String,
+    pub embedded: usize,
+    pub skipped: usize,
+    pub total: usize,
+}
+
+/// The backend stamp for embedding passes (`current_model()`).
+pub fn current_model() -> Result<String, String> {
+    Ok(resolve_embed_env()?.model)
+}
+
+/// Embed knowledge concepts missing under the current model.
+pub fn embed_knowledge(
+    conn: &Connection,
+    bundle: &cairn_query::tools_km::Bundle,
+    batch_size: usize,
+    mut progress: impl FnMut(usize, usize),
+) -> Result<KnowledgeEmbedSummary, String> {
+    if batch_size == 0 {
+        return Err("batch_size must be >= 1".to_string());
+    }
+    let env = resolve_embed_env()?;
+    let cids = bundle.list_concepts(Some("knowledge/"));
+    if cids.is_empty() {
+        return Ok(KnowledgeEmbedSummary {
+            model: env.model,
+            embedded: 0,
+            skipped: 0,
+            total: 0,
+        });
+    }
+    let mut existing: HashSet<String> = HashSet::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT doc_id FROM knowledge_embeddings \
+                 WHERE model = ?1 AND chunk_index = 0",
+            )
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([&env.model], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        for row in mapped {
+            existing.insert(row.map_err(|e| e.to_string())?);
+        }
+    }
+    let to_embed: Vec<String> = cids
+        .iter()
+        .filter(|cid| !existing.contains(*cid))
+        .cloned()
+        .collect();
+
+    let total = to_embed.len();
+    let mut embedded = 0usize;
+    let now = now_iso();
+    for (i, batch) in to_embed.chunks(batch_size).enumerate() {
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for cid in batch {
+            let Ok(concept) = bundle.read_concept(cid) else {
+                continue;
+            };
+            let chunk = [concept.title, concept.description, Some(concept.body)]
+                .into_iter()
+                .flatten()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !chunk.trim().is_empty() {
+                pairs.push((cid.clone(), chunk));
+            }
+        }
+        if pairs.is_empty() {
+            continue;
+        }
+        let texts: Vec<String> = pairs.iter().map(|(_, c)| c.clone()).collect();
+        let (blobs, _dim) = embed_texts(&env, &texts)?;
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        for ((cid, chunk), blob) in pairs.iter().zip(&blobs) {
+            let dim = (blob.len() / 4) as i64;
+            // Rowid-stable upsert keeps the vec0 ANN index aligned across re-embeds.
+            tx.execute(
+                "INSERT INTO knowledge_embeddings \
+                 (doc_id, chunk_index, model, dim, vec, chunk, embedded_at) \
+                 VALUES (?, 0, ?, ?, ?, ?, ?) \
+                 ON CONFLICT(doc_id, chunk_index, model) DO UPDATE SET \
+                 dim=excluded.dim, vec=excluded.vec, chunk=excluded.chunk, \
+                 embedded_at=excluded.embedded_at",
+                rusqlite::params![cid, env.model, dim, blob, chunk, now],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        embedded += pairs.len();
+        progress(std::cmp::min((i + 1) * batch_size, total), total);
+    }
+
+    Ok(KnowledgeEmbedSummary {
+        model: env.model,
+        embedded,
+        skipped: total - embedded,
+        total,
+    })
 }
 
 // --- orphan reap -----------------------------------------------------------------

@@ -2,14 +2,18 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Instant;
 
 use clap::Subcommand;
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use yaml_rust2::Yaml;
 
-use cairn_query::tasks;
+use cairn_query::ingest;
+use cairn_query::skillgen;
+use cairn_query::tasks::{self, DanglingPointer};
 use cairn_query::tools_km::{self, Bundle, Concept, KnowledgeHit, RelatedDoc, WorkflowStep};
+use cairn_query::tools_search::{self, EffectiveBackend};
 use cairn_query::tools_wiki::{self, PipelineError};
 use cairn_store::{conn as store_conn, schema as store_schema};
 
@@ -54,12 +58,35 @@ pub enum KnowledgeCommand {
         command: TaskGroup,
     },
     /// Check OKF conformance of the .knowledge/ bundle.
-    Validate,
+    Validate {
+        /// Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge).
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
     /// Check all concepts for stale file/symbol references.
     #[command(name = "validate-paths")]
-    ValidatePaths,
+    ValidatePaths {
+        /// SQLite DB path (default: the resolved store).
+        #[arg(long)]
+        db: Option<String>,
+        /// Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge).
+        #[arg(long)]
+        knowledge: Option<String>,
+        /// Mark stale concepts (set stale=true in extensions).
+        #[arg(long)]
+        mark: bool,
+    },
     /// Run the deterministic critic on one knowledge document.
-    Verify,
+    Verify {
+        /// Concept id relative to .knowledge/ without the .md suffix.
+        doc_path: String,
+        /// SQLite DB path (default: the resolved store).
+        #[arg(long)]
+        db: Option<String>,
+        /// Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge).
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -109,7 +136,26 @@ pub enum KnowledgeGroup {
         affects: String,
     },
     /// Ingest sources into the knowledge bundle.
-    Ingest,
+    Ingest {
+        /// Fed markdown file (repeatable).
+        #[arg(long = "file", value_name = "FILE")]
+        files: Vec<String>,
+        /// Fed markdown directory (repeatable).
+        #[arg(long = "dir", value_name = "DIRECTORY")]
+        dirs: Vec<String>,
+        /// Repository root to scan for docs (repeatable).
+        #[arg(long = "repo", value_name = "PATH")]
+        repos: Vec<String>,
+        /// Approve: write staged manifest rows into the store, then embed.
+        #[arg(long = "ingest")]
+        do_ingest: bool,
+        /// Ingest drafts tagged 'draft' instead of skipping.
+        #[arg(long = "include-drafts")]
+        include_drafts: bool,
+        /// Staging directory (default: <workspace>/.cairn/ingest-outbox).
+        #[arg(long)]
+        outbox: Option<String>,
+    },
     /// Rebuild the knowledge index tables.
     Rebuild {
         #[arg(long)]
@@ -659,8 +705,31 @@ pub enum CompassGroup {
 
 #[derive(Subcommand)]
 pub enum SkillGroup {
-    /// Generate skill files from the graph.
-    Generate,
+    /// Generate a SKILL.md from SELECTORS (module, directory prefix, or symbol list).
+    Generate {
+        /// Module, directory prefix, or symbol list.
+        #[arg(required = true)]
+        selectors: Vec<String>,
+        /// Target directory (default: <workspace>/.agents/skills/cairn-<slug>/).
+        #[arg(long)]
+        output: Option<String>,
+        /// Maximum symbols packaged.
+        #[arg(long = "top-k", default_value_t = 20, value_parser = clap::value_parser!(i64).range(1..))]
+        top_k: i64,
+        /// Maximum memories packaged.
+        #[arg(long = "top-n", default_value_t = 5, value_parser = clap::value_parser!(i64).range(1..))]
+        top_n: i64,
+        /// SQLite DB path (default: resolved store).
+        #[arg(long)]
+        db: Option<String>,
+        /// Queue a polish task through the LLM task queue; the completed
+        /// result replaces SKILL.md only after the critic gate accepts it.
+        #[arg(long)]
+        polish: bool,
+        /// Knowledge bundle backing the --polish task queue.
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -728,11 +797,37 @@ pub fn run(command: KnowledgeCommand) -> ExitCode {
         KnowledgeCommand::Memory { command } => run_memory(command),
         KnowledgeCommand::Wiki { command } => run_wiki(command),
         KnowledgeCommand::Compass { command } => run_compass(command),
-        KnowledgeCommand::Skill { command } => not_ported(match command {
-            SkillGroup::Generate => "skill generate",
-        }),
+        KnowledgeCommand::Skill { command } => match command {
+            SkillGroup::Generate {
+                selectors,
+                output,
+                top_k,
+                top_n,
+                db,
+                polish,
+                knowledge,
+            } => skill_generate(
+                &selectors,
+                output.as_deref(),
+                top_k,
+                top_n,
+                db.as_deref(),
+                polish,
+                knowledge.as_deref(),
+            ),
+        },
         KnowledgeCommand::Task { command } => run_task(command),
-        other => not_ported(other.name()),
+        KnowledgeCommand::Validate { knowledge } => validate_cmd(knowledge.as_deref()),
+        KnowledgeCommand::ValidatePaths {
+            db,
+            knowledge,
+            mark,
+        } => validate_paths_cmd(db.as_deref(), knowledge.as_deref(), mark),
+        KnowledgeCommand::Verify {
+            doc_path,
+            db,
+            knowledge,
+        } => verify_cmd(&doc_path, db.as_deref(), knowledge.as_deref()),
     }
 }
 
@@ -767,6 +862,23 @@ fn run_knowledge(group: KnowledgeGroup) -> ExitCode {
             tags,
             affects,
         } => knowledge_import(&dir_path, &doc_type, &tags, &affects),
+        KnowledgeGroup::Ingest {
+            files,
+            dirs,
+            repos,
+            do_ingest,
+            include_drafts,
+            outbox,
+        } => knowledge_ingest(
+            &files,
+            &dirs,
+            &repos,
+            do_ingest,
+            include_drafts,
+            outbox.as_deref(),
+        ),
+        KnowledgeGroup::Rebuild { db } => knowledge_rebuild(db.as_deref()),
+        KnowledgeGroup::Embed { db, batch_size } => knowledge_embed(db.as_deref(), batch_size),
         KnowledgeGroup::Islands { as_json, db } => knowledge_islands(as_json, db.as_deref()),
         KnowledgeGroup::Related {
             doc_id,
@@ -803,7 +915,6 @@ fn run_knowledge(group: KnowledgeGroup) -> ExitCode {
         KnowledgeGroup::Status { doc_id, new_status } => knowledge_status(&doc_id, &new_status),
         KnowledgeGroup::Export { out } => knowledge_export(&out),
         KnowledgeGroup::Workflow { command } => run_workflow(command),
-        other => not_ported(other.name()),
     }
 }
 
@@ -1574,6 +1685,8 @@ fn knowledge_import(dir_path: &str, doc_type: &str, tags: &str, affects: &str) -
             None,
             "imported",
             Some(&slug),
+            None,
+            None,
         ) {
             Ok(cid) => imported.push(cid),
             Err(_) => continue,
@@ -1991,7 +2104,20 @@ fn knowledge_export(out_path: &str) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if out_path.ends_with(".tar.gz") || out_path.ends_with(".tgz") || out_path.ends_with(".tar") {
-        return not_ported("knowledge export --out <tarball>");
+        let dst = PathBuf::from(out_path);
+        if let Some(parent) = dst.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let written = if out_path.ends_with("gz") {
+            crate::targz::write_tar_gz(&kn_dir, ".knowledge", &dst)
+        } else {
+            crate::targz::write_tar(&kn_dir, ".knowledge", &dst)
+        };
+        if written.is_err() {
+            return cli_err("could not write the tarball");
+        }
+        println!("Exported knowledge bundle tarball to {}", dst.display());
+        return ExitCode::SUCCESS;
     }
     let dst = PathBuf::from(out_path);
     if std::fs::create_dir_all(&dst).is_err() {
@@ -2020,6 +2146,678 @@ fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+// --- validate / validate-paths / verify (cli/validate.py port) -----------------
+
+/// The --knowledge default: CAIRN_KNOWLEDGE-aware resolved store bundle.
+fn knowledge_path_arg(knowledge: Option<&str>) -> PathBuf {
+    knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from)
+}
+
+fn validate_cmd(knowledge: Option<&str>) -> ExitCode {
+    let knowledge_path = knowledge_path_arg(knowledge);
+    let errors = tools_km::check_bundle(&knowledge_path);
+    if errors.is_empty() {
+        println!(
+            "OKF bundle at {} is conformant (0 errors).",
+            knowledge_path.display()
+        );
+        return ExitCode::SUCCESS;
+    }
+    println!("{} conformance errors:", errors.len());
+    for e in &errors {
+        println!("  {e}");
+    }
+    // Exit non-zero so CI/scripts can detect conformance failure.
+    ExitCode::FAILURE
+}
+
+fn set_extension(ext: &mut Vec<(String, Yaml)>, key: &str, value: Yaml) {
+    match ext.iter_mut().find(|(k, _)| k == key) {
+        Some(slot) => slot.1 = value,
+        None => ext.push((key.to_string(), value)),
+    }
+}
+
+fn validate_paths_cmd(db: Option<&str>, knowledge: Option<&str>, mark: bool) -> ExitCode {
+    let bundle = resolve_bundle(&knowledge_path_arg(knowledge));
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let stale = tools_km::validate_paths_stale(&conn, &bundle);
+    if stale.is_empty() {
+        println!("All concepts have valid references (0 stale).");
+        return ExitCode::SUCCESS;
+    }
+
+    let now = tools_km::iso_utc_now();
+    let mut marked = 0usize;
+    for entry in &stale {
+        println!(
+            "  [STALE] {}  (verified: {})",
+            entry.concept_id,
+            py_round3_text(entry.verified)
+        );
+        if !mark {
+            continue;
+        }
+        // read_concept keys the concept by its resolved file path; restore the
+        // bundle-relative id so the validity projection upserts the existing row.
+        match (|| -> Result<(), String> {
+            let mut concept = bundle.read_concept(&entry.concept_id).map_err(|e| e.0)?;
+            concept.concept_id = entry.concept_id.clone();
+            set_extension(&mut concept.extensions, "stale", Yaml::Boolean(true));
+            if entry.concept_id.starts_with("memory/") {
+                // Memory records auto-invalidate at build time; an existing
+                // interval or successor link is preserved.
+                let successor = concept
+                    .ext_str("successor_symbol")
+                    .map(str::to_string)
+                    .or_else(|| tools_km::resolve_successor(&conn, &concept.body));
+                let valid_from = concept
+                    .ext_str("valid_from")
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| concept.timestamp.clone())
+                    .unwrap_or_else(|| now.clone());
+                let valid_until = concept
+                    .ext_str("valid_until")
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| now.clone());
+                tools_km::write_validity(
+                    &mut concept,
+                    &valid_from,
+                    Some(valid_until.as_str()),
+                    successor.as_deref(),
+                    Some(&bundle),
+                    Some(&conn),
+                )
+                .map_err(|e| e.0)
+            } else {
+                bundle.write_concept(&mut concept).map_err(|e| e.0)
+            }
+        })() {
+            Ok(()) => marked += 1,
+            Err(e) => println!("    (mark failed: {e})"),
+        }
+    }
+
+    let action = if mark { "marked" } else { "found" };
+    let count = if mark { marked } else { stale.len() };
+    println!("\n{action} {count} stale concept(s).");
+    // Exit non-zero so CI/scripts can detect stale concepts.
+    ExitCode::FAILURE
+}
+
+fn verify_cmd(doc_path: &str, db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let bundle = resolve_bundle(&knowledge_path_arg(knowledge));
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let concept = match bundle.concept_file(doc_path) {
+        Err(e) => {
+            eprintln!("Could not read concept '{doc_path}': {}", e.0);
+            return ExitCode::from(2);
+        }
+        Ok(path) => match std::fs::read_to_string(&path) {
+            Err(e) => {
+                eprintln!(
+                    "Could not read concept '{doc_path}': {}",
+                    py_oserror_text(&e, path.to_string_lossy().as_ref())
+                );
+                return ExitCode::from(2);
+            }
+            Ok(text) => {
+                Concept::from_text(&text, path.with_extension("").to_string_lossy().to_string())
+            }
+        },
+    };
+    let result = match tools_km::critic_concept(&concept, &conn) {
+        Ok(result) => result,
+        Err(e) => return cli_err(&e.0),
+    };
+    let status = if result.passed { "OK" } else { "FAIL" };
+    println!(
+        "[{status}] {doc_path} (quality={:.2})",
+        result.quality_score
+    );
+    for e in &result.errors {
+        println!("  ERROR: {e}");
+    }
+    for w in &result.warnings {
+        println!("  warn: {w}");
+    }
+    // Non-zero exit on blocking errors so scripts/CI can detect a failed verify.
+    if !result.passed {
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+// --- knowledge rebuild / embed (cli/knowledge.py port) --------------------------
+
+/// Python's dangling-pointer warning rendering (index/executor shared).
+fn echo_dangling_warnings(items: &[DanglingPointer]) {
+    for item in items {
+        match &item.candidates {
+            Some(candidates) => println!(
+                "  warning: {} declares relates_to '{}' matching multiple knowledge \
+                 documents ({}); ambiguous pointer, kept in frontmatter, not indexed.",
+                item.doc_id,
+                item.concept_id,
+                candidates.join(", ")
+            ),
+            None => println!(
+                "  warning: {} declares relates_to '{}' matching no knowledge document \
+                 or resource path; kept in frontmatter, not indexed.",
+                item.doc_id, item.concept_id
+            ),
+        }
+    }
+}
+
+fn knowledge_rebuild(db: Option<&str>) -> ExitCode {
+    let paths = resolve_store(None);
+    if paths.ensure().is_err() {
+        return cli_err("could not create the store directories");
+    }
+    let bundle = resolve_bundle(&paths.knowledge);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let report = match tasks::rebuild_knowledge_index(&conn, &bundle) {
+        Ok(report) => report,
+        Err(e) => return cli_err(&e.0),
+    };
+    println!(
+        "Rebuilt knowledge index: {} doc(s), {} edge(s) ({} derived), {} ref(s).",
+        report.docs, report.edges, report.derived, report.doc_refs
+    );
+    echo_dangling_warnings(&report.dangling);
+    let queued = tasks::queue_doc_link_tasks(&conn, &bundle);
+    println!("Island detection: queued {queued} doc-link task(s).");
+    ExitCode::SUCCESS
+}
+
+/// The plain-text progress bar's 0.5s draw throttle (display.py contract).
+struct ThrottledBar {
+    description: &'static str,
+    unit: &'static str,
+    t0: Instant,
+    last_draw: Instant,
+}
+
+impl ThrottledBar {
+    fn new(description: &'static str, unit: &'static str) -> Self {
+        let now = Instant::now();
+        Self {
+            description,
+            unit,
+            t0: now,
+            last_draw: now,
+        }
+    }
+
+    fn draw(&mut self, completed: usize, total: usize) {
+        crate::cmds_lifecycle::plain_progress_draw(
+            self.description,
+            completed,
+            total,
+            self.t0.elapsed().as_secs_f64(),
+            self.unit,
+        );
+    }
+
+    fn maybe_draw(&mut self, completed: usize, total: usize) {
+        if self.last_draw.elapsed().as_secs_f64() >= 0.5 {
+            self.last_draw = Instant::now();
+            self.draw(completed, total);
+        }
+    }
+}
+
+fn knowledge_embed(db: Option<&str>, batch_size: i64) -> ExitCode {
+    let env = tools_search::semantic_env(None);
+    if env.backend == EffectiveBackend::Unavailable {
+        display::error("Semantic backend unavailable");
+        display::dim(&tools_search::install_hint());
+        return ExitCode::FAILURE;
+    }
+    let paths = resolve_store(None);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    if paths.ensure().is_err() {
+        return cli_err("could not create the store directories");
+    }
+    let bundle = resolve_bundle(&paths.knowledge);
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let model = match cairn_build::embeddings::current_model() {
+        Ok(model) => model,
+        Err(e) => return cli_err(&e),
+    };
+    display::info(&format!("Embedding knowledge docs with {model}"));
+
+    let timer = Instant::now();
+    let mut bar = ThrottledBar::new("Embedding docs", "docs");
+    bar.draw(0, 0);
+    let mut state = (0usize, 0usize);
+    let summary = match cairn_build::embeddings::embed_knowledge(
+        &conn,
+        &bundle,
+        batch_size.max(1) as usize,
+        |done, total| {
+            state = (done, total);
+            bar.maybe_draw(done, total);
+        },
+    ) {
+        Ok(summary) => summary,
+        Err(message) => {
+            // A deliberate embed abort is a CLI error, not a traceback.
+            display::error(&message);
+            return ExitCode::FAILURE;
+        }
+    };
+    let _ = state;
+    bar.draw(state.0, state.1);
+    println!();
+    let elapsed = timer.elapsed().as_secs_f64();
+    crate::rail::summary_panel(
+        &format!(
+            "Embedded {} docs in {elapsed:.1}s",
+            crate::cmds_core::fmt_int(summary.embedded as i64)
+        ),
+        &[
+            (
+                "embedded",
+                crate::cmds_core::fmt_int(summary.embedded as i64),
+            ),
+            ("skipped", crate::cmds_core::fmt_int(summary.skipped as i64)),
+        ],
+        None,
+    );
+    ExitCode::SUCCESS
+}
+
+// --- knowledge ingest (cli/knowledge.py port) -----------------------------------
+
+/// A relationship entry's field as text.
+fn rel_field(entry: &Yaml, key: &str) -> String {
+    match entry {
+        Yaml::Hash(h) => h
+            .get(&tools_km::ys(key))
+            .and_then(|v| match v {
+                Yaml::String(s) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn knowledge_ingest(
+    files: &[String],
+    dirs: &[String],
+    repos: &[String],
+    do_ingest: bool,
+    include_drafts: bool,
+    outbox: Option<&str>,
+) -> ExitCode {
+    if files.is_empty() && dirs.is_empty() && repos.is_empty() {
+        eprintln!("Error: --file, --dir, or --repo required.");
+        return ExitCode::FAILURE;
+    }
+    for repo in repos {
+        if !Path::new(repo).exists() {
+            return usage_error(
+                "knowledge ingest [OPTIONS]",
+                &format!("Invalid value for '--repo': Path '{repo}' does not exist."),
+            );
+        }
+    }
+    let workspace = crate::store_paths::resolve_workspace(None);
+    let file_paths: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
+    let dir_paths: Vec<PathBuf> = dirs.iter().map(PathBuf::from).collect();
+    let repo_paths: Vec<PathBuf> = repos.iter().map(PathBuf::from).collect();
+    let manifest = match ingest::run_ingest(
+        &workspace,
+        &file_paths,
+        &dir_paths,
+        &repo_paths,
+        outbox.map(Path::new),
+        include_drafts,
+    ) {
+        Ok(manifest) => manifest,
+        Err(e) => {
+            eprintln!("Error: {e}.");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let dangling: Vec<DanglingPointer> = if do_ingest {
+        let paths = resolve_store(None);
+        if paths.ensure().is_err() {
+            return cli_err("could not create the store directories");
+        }
+        let Ok(conn) = open_db_writable(&paths.db) else {
+            return ExitCode::FAILURE;
+        };
+        let bundle = resolve_bundle(&paths.knowledge);
+        let embed_available =
+            tools_search::semantic_env(None).backend != EffectiveBackend::Unavailable;
+        let embed_pass = |conn: &Connection, bundle: &Bundle| -> Result<usize, String> {
+            cairn_build::embeddings::embed_knowledge(conn, bundle, 32, |_, _| {})
+                .map(|summary| summary.embedded)
+        };
+        let embed: Option<&ingest::EmbedPass> = embed_available.then_some(&embed_pass);
+        let report = match ingest::execute_manifest(&manifest, &conn, &bundle, embed) {
+            Ok(report) => report,
+            Err(e) => return cli_err(&e.0),
+        };
+        let dangling = report.dangling_pointers.clone();
+        let embed_note = report
+            .embedded
+            .map(|n| format!(", embedded {n}"))
+            .unwrap_or_default();
+        println!(
+            "Wrote {} document(s) to the store{embed_note}.",
+            report.written.len()
+        );
+        // Verify legs in the report's insertion order; any False leg fails.
+        let legs: Vec<(&str, String, bool)> = vec![
+            ("index_edges", report.index_edges.to_string(), false),
+            ("index_doc_refs", report.index_doc_refs.to_string(), false),
+            ("verified_refs", report.verified_refs.to_string(), false),
+            ("doc_link_tasks", report.doc_link_tasks.to_string(), false),
+            ("store_count", report.store_count.to_string(), false),
+            ("expected_count", report.expected_count.to_string(), false),
+            (
+                "count_ok",
+                py_bool(report.count_ok).to_string(),
+                !report.count_ok,
+            ),
+            (
+                "smoke_search_hit",
+                py_bool(report.smoke_search_hit).to_string(),
+                !report.smoke_search_hit,
+            ),
+            (
+                "validate_ok",
+                py_bool(report.validate_ok).to_string(),
+                !report.validate_ok,
+            ),
+            ("validate_errors", report.validate_errors.to_string(), false),
+            ("validate_message", report.validate_message.clone(), false),
+        ];
+        let mut legs = legs;
+        if let Some(err) = &report.embed_error {
+            legs.insert(4, ("embed_error", err.clone(), false));
+        }
+        let mut failed: Vec<&str> = Vec::new();
+        for (key, value, is_false) in &legs {
+            println!("  {key}: {value}");
+            if *is_false {
+                failed.push(key);
+            }
+        }
+        if !failed.is_empty() {
+            eprintln!(
+                "Error: post-ingest verification failed ({}).",
+                failed.join(", ")
+            );
+            return ExitCode::FAILURE;
+        }
+        dangling
+    } else {
+        // Dry run: predict pointers that will never index before writing.
+        let bundle = knowledge_bundle();
+        ingest::predict_dangling(&bundle, &manifest)
+    };
+
+    println!(
+        "Staged {} document(s), skipped {}.",
+        manifest.accepted, manifest.skipped
+    );
+    for row in &manifest.rows {
+        match row {
+            ingest::ManifestRow::Skipped(s) => {
+                println!("  skipped: {} ({})", s.source_path, s.skip);
+            }
+            ingest::ManifestRow::Staged(r) => {
+                println!("  staged: {} -> {}", r.source_path, r.concept_id);
+                for rel in &r.relationships {
+                    println!(
+                        "    {}: {} ({})",
+                        rel_field(rel, "relation"),
+                        rel_field(rel, "concept_id"),
+                        rel_field(rel, "kind")
+                    );
+                }
+            }
+        }
+    }
+    echo_dangling_warnings(&dangling);
+    println!("Outbox: {}", manifest.workspace.display());
+    ExitCode::SUCCESS
+}
+
+// --- skill generate (cli/skill.py port) -----------------------------------------
+
+fn skill_generate(
+    selectors: &[String],
+    output: Option<&str>,
+    top_k: i64,
+    top_n: i64,
+    db: Option<&str>,
+    polish: bool,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let resolution = skillgen::resolve_selector(&conn, &selectors.join(" "));
+    if !resolution.unmatched.is_empty() || resolution.candidates.is_empty() {
+        let listed = if resolution.unmatched.is_empty() {
+            "no candidates resolved".to_string()
+        } else {
+            resolution.unmatched.join(", ")
+        };
+        eprintln!("Error: Unresolved selector: {listed}; no skill written.");
+        return ExitCode::FAILURE;
+    }
+    let assembly_bundle = resolve_bundle(&skillgen::knowledge_path_for(
+        &conn,
+        &resolve_store(None).knowledge,
+    ));
+    let draft = match skillgen::assemble_draft(
+        &conn,
+        &assembly_bundle,
+        &resolution,
+        top_k as usize,
+        top_n as usize,
+    ) {
+        Ok(draft) => draft,
+        Err(e) => return cli_err(&e.0),
+    };
+
+    let stem = if draft.module.is_empty() {
+        selectors[0].clone()
+    } else {
+        draft.module.clone()
+    };
+    let slug = {
+        let slug = skillgen::slugify(&stem);
+        if slug.is_empty() {
+            "skill".to_string()
+        } else {
+            slug
+        }
+    };
+    let target = match output {
+        Some(output) => PathBuf::from(output),
+        None => match skillgen::landing_dir(&crate::store_paths::resolve_workspace(None), &slug) {
+            Ok(target) => target,
+            Err(e) => return cli_err(&e),
+        },
+    };
+    let mut sections: Vec<(&str, String)> = Vec::new();
+    if !draft.compass_body.is_empty() {
+        sections.push(("Module Compass", draft.compass_body.clone()));
+    }
+    if !draft.symbols.is_empty() {
+        sections.push((
+            "Key Symbols",
+            draft
+                .symbols
+                .iter()
+                .map(|s| format!("- {s}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ));
+    }
+    if !draft.memories.is_empty() {
+        sections.push(("Module Memory", draft.memories.join("\n")));
+    }
+    let section_refs: Vec<(&str, &str)> = sections
+        .iter()
+        .map(|(heading, markdown)| (*heading, markdown.as_str()))
+        .collect();
+    let (inline, references) =
+        skillgen::split_references(&section_refs, skillgen::REFERENCE_SPLIT_CHARS);
+    let description = format!(
+        "Module context for {stem}. Load when asked about {stem} structure, call \
+         graphs, or blast radius before editing its files."
+    );
+    let inline_refs: Vec<(&str, &str)> = inline
+        .iter()
+        .map(|(heading, markdown)| (heading.as_str(), markdown.as_str()))
+        .collect();
+    let rendered =
+        match skillgen::render_skill(&format!("cairn-{slug}"), &description, &inline_refs) {
+            Ok(rendered) => rendered,
+            Err(e) => return cli_err(&e),
+        };
+    // Critic gate on the exact bytes destined for disk; rejection writes nothing.
+    let gate = skillgen::verify_draft(&conn, &rendered);
+    if !gate.ok {
+        eprintln!(
+            "Error: Unverified references: {}; no skill written.",
+            gate.failing_refs.join(", ")
+        );
+        return ExitCode::FAILURE;
+    }
+    for (_, content) in &references {
+        let gate = skillgen::verify_draft(&conn, content);
+        if !gate.ok {
+            eprintln!(
+                "Error: Unverified references: {}; no skill written.",
+                gate.failing_refs.join(", ")
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+    let mut polish_outcome = None;
+    if polish {
+        let polish_bundle =
+            resolve_bundle(&knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from));
+        match skillgen::run_polish_stage(
+            &polish_bundle,
+            &conn,
+            &slug,
+            &rendered,
+            &target.join("SKILL.md").to_string_lossy(),
+        ) {
+            Ok(outcome) => polish_outcome = Some(outcome),
+            Err(e) => {
+                // Polish is optional; its failure must not suppress the write.
+                eprintln!(
+                    "Polish stage unavailable ({}); the deterministic skill stands.",
+                    e.0
+                );
+            }
+        }
+    }
+
+    if std::fs::create_dir_all(&target).is_err() {
+        return cli_err("could not create the skill directory");
+    }
+    if std::fs::write(target.join("SKILL.md"), &rendered).is_err() {
+        return cli_err("could not write SKILL.md");
+    }
+    for (filename, content) in &references {
+        let path = target.join(filename);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if std::fs::write(&path, content).is_err() {
+            return cli_err("could not write the reference file");
+        }
+    }
+    println!("Wrote SKILL.md: {}", target.join("SKILL.md").display());
+    if let Some(outcome) = polish_outcome {
+        settle_polish(outcome, &target);
+    }
+    ExitCode::SUCCESS
+}
+
+fn settle_polish(outcome: skillgen::PolishOutcome, target: &Path) {
+    match outcome.state.as_str() {
+        "applied" => {
+            let _ = std::fs::write(target.join("SKILL.md"), &outcome.rendered);
+            println!(
+                "Applied polished SKILL.md (task {} passed the critic gate).",
+                outcome.task_id
+            );
+        }
+        "queued" => {
+            println!(
+                "Queued polish task {}; any agent with the cairn skill can process it:",
+                outcome.task_id
+            );
+            println!("  cairn task list --kind skill-polish --status pending");
+            println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
+            println!("Rerun 'cairn skill generate --polish' after completion to apply the result.");
+        }
+        "pending" => {
+            println!(
+                "Polish task {} is still in flight; rerun 'cairn skill generate --polish' once it \
+                 completes.",
+                outcome.task_id
+            );
+        }
+        // rejected | unavailable: the deterministic skill stands.
+        _ => {
+            let mut detail = outcome.reason.clone();
+            if !outcome.failing_refs.is_empty() {
+                let listed = outcome.failing_refs.join(", ");
+                detail = if detail.is_empty() {
+                    listed
+                } else {
+                    format!("{detail}; unverified references: {listed}")
+                };
+            }
+            eprintln!(
+                "Polish task {} not applied ({detail}); the deterministic skill stands.",
+                outcome.task_id
+            );
+        }
+    }
 }
 
 // --- knowledge workflow subgroup ---------------------------------------------
@@ -2251,7 +3049,7 @@ fn memory_record(
 
 /// note_failure_signature: prior occurrence count (0 = first, capture skipped).
 fn note_failure_signature(conn: &Connection, sig: &str, tool_name: &str) -> i64 {
-    let now = iso_utc_micros_offset();
+    let now = tools_km::iso_utc_micros();
     let _ = conn.execute(
         "INSERT INTO memory_failure_signatures (sig, tool_name, occurrences, first_seen, last_seen) \
          VALUES (?, ?, 1, ?, ?) \
@@ -2266,35 +3064,6 @@ fn note_failure_signature(conn: &Connection, sig: &str, tool_name: &str) -> i64 
     )
     .map(|n| n - 1)
     .unwrap_or(0)
-}
-
-fn iso_utc_micros_offset() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    let micros = now.subsec_micros();
-    let days = secs / 86_400;
-    let rem = secs % 86_400;
-    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let civil = civil_from_days(days as i64);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}+00:00",
-        civil.0, civil.1, civil.2, h, m, s, micros
-    )
-}
-
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 fn parse_symbol_list(symbols: &str) -> Result<Vec<String>, ExitCode> {
@@ -3375,23 +4144,6 @@ fn wiki_enrich(
     ExitCode::SUCCESS
 }
 
-impl KnowledgeCommand {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Knowledge { .. } => "knowledge",
-            Self::Memory { .. } => "memory",
-            Self::Wiki { .. } => "wiki",
-            Self::Compass { .. } => "compass",
-            Self::Skill { .. } => "skill",
-            Self::Task { .. } => "task",
-            Self::Validate => "validate",
-            Self::ValidatePaths => "validate-paths",
-            Self::Verify => "verify",
-        }
-    }
-}
-
 impl MemoryGroup {
     /// The python-CLI command name for diagnostics.
     fn name(&self) -> &'static str {
@@ -3415,29 +4167,6 @@ impl MemoryGroup {
             Self::Consolidate { .. } => "memory consolidate",
             Self::Share { .. } => "memory share",
             Self::Check { .. } => "memory check",
-        }
-    }
-}
-
-impl KnowledgeGroup {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Add { .. } => "knowledge add",
-            Self::Import { .. } => "knowledge import",
-            Self::Ingest => "knowledge ingest",
-            Self::Rebuild { .. } => "knowledge rebuild",
-            Self::Islands { .. } => "knowledge islands",
-            Self::Related { .. } => "knowledge related",
-            Self::Chain { .. } => "knowledge chain",
-            Self::Search { .. } => "knowledge search",
-            Self::List { .. } => "knowledge list",
-            Self::Embed { .. } => "knowledge embed",
-            Self::Impact { .. } => "knowledge impact",
-            Self::Remove { .. } => "knowledge remove",
-            Self::Status { .. } => "knowledge status",
-            Self::Export { .. } => "knowledge export",
-            Self::Workflow { .. } => "knowledge workflow",
         }
     }
 }
@@ -3480,7 +4209,19 @@ mod tests {
 
     #[test]
     fn stub_exit_is_failure_with_diagnostic() {
-        assert_eq!(run(KnowledgeCommand::Verify), ExitCode::FAILURE);
+        let code = run(KnowledgeCommand::Knowledge {
+            command: KnowledgeGroup::Workflow {
+                command: WorkflowGroup::Sync {
+                    reference: None,
+                    all: false,
+                    dry_run: false,
+                    max_steps: 20,
+                    db: None,
+                    knowledge: None,
+                },
+            },
+        });
+        assert_eq!(code, ExitCode::FAILURE);
     }
 
     #[test]
@@ -3524,5 +4265,54 @@ mod tests {
         );
         assert_eq!(code, std::process::ExitCode::FAILURE);
         assert!(!parent.exists(), "no store directory may be fabricated");
+    }
+
+    #[test]
+    fn validate_paths_mark_closes_the_stale_memory_interval() {
+        let env = crate::test_env::EnvScope::new("vp-mark");
+        let home = env.dir().to_path_buf();
+        let knowledge = home.join(".knowledge");
+        let db = home.join("store.kg");
+        // SAFETY: EnvScope holds ENV_LOCK and restores every pinned var on drop.
+        unsafe {
+            std::env::set_var("CAIRN_KNOWLEDGE", &knowledge);
+            std::env::set_var("CAIRN_DB", &db);
+        }
+        let memory = knowledge.join("memory/tribal");
+        std::fs::create_dir_all(&memory).expect("memory dir");
+        std::fs::write(
+            memory.join("dead-ref.md"),
+            "---\ntype: Memory\ntitle: dead ref\ntags: []\n---\n\nCites `NoSuchSymbol`.\n",
+        )
+        .expect("memory file");
+        {
+            let conn = cairn_store::conn::open_writable(&db).expect("db");
+            cairn_store::schema::apply_schema(&conn).expect("schema");
+        }
+
+        let code = validate_paths_cmd(None, None, true);
+        assert_eq!(code, ExitCode::FAILURE, "one stale concept -> exit 1");
+
+        let marked = std::fs::read_to_string(memory.join("dead-ref.md")).expect("reread");
+        assert!(
+            marked.contains("stale: true"),
+            "stale flag missing:\n{marked}"
+        );
+        assert!(
+            marked.contains("valid_until:"),
+            "marking must close the interval with valid_until=now:\n{marked}"
+        );
+        let conn = rusqlite::Connection::open(&db).expect("reopen");
+        let valid_until: Option<String> = conn
+            .query_row(
+                "SELECT valid_until FROM memory_validity WHERE concept_id = 'memory/tribal/dead-ref'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("validity row");
+        assert!(
+            valid_until.is_some(),
+            "memory_validity.valid_until must not be NULL"
+        );
     }
 }

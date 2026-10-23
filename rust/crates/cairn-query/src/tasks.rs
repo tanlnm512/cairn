@@ -1370,7 +1370,7 @@ fn hash_str<'a>(entry: &'a Yaml, key: &str) -> Option<&'a str> {
 }
 
 /// Normalized relationship entries, deduped first-wins (relationships.py).
-fn normalize_relationships(entries: Option<&Yaml>) -> Vec<Yaml> {
+pub fn normalize_relationships(entries: Option<&Yaml>) -> Vec<Yaml> {
     let items: Vec<Yaml> = match entries {
         Some(Yaml::Array(items)) => items.clone(),
         Some(Yaml::Hash(_)) | None => Vec::new(),
@@ -1483,17 +1483,46 @@ struct EdgeRow {
     provenance: String,
 }
 
+/// One unresolved relates_to pointer (knowledge/index.py).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DanglingPointer {
+    pub doc_id: String,
+    pub concept_id: String,
+    /// `Some` when the basename matched several resources.
+    pub candidates: Option<Vec<String>>,
+}
+
+/// Rebuild counts plus dangling pointers (rebuild_knowledge_index report).
+#[derive(Debug, Clone, Default)]
+pub struct KnowledgeIndexReport {
+    pub docs: usize,
+    pub edges: usize,
+    pub derived: usize,
+    pub doc_refs: usize,
+    pub dangling: Vec<DanglingPointer>,
+}
+
 /// Rebuild knowledge_edges / knowledge_doc_refs from the bundle's frontmatter.
-pub fn rebuild_knowledge_index(conn: &Connection, bundle: &Bundle) -> Result<(), ToolError> {
+pub fn rebuild_knowledge_index(
+    conn: &Connection,
+    bundle: &Bundle,
+) -> Result<KnowledgeIndexReport, ToolError> {
     let docs = load_docs(bundle);
-    let doc_ids: HashSet<&str> = docs.iter().map(|d| d.doc_id.as_str()).collect();
+    let doc_ids: HashSet<String> = docs.iter().map(|d| d.doc_id.clone()).collect();
     let resources = resource_index(&docs);
     let mut edges: Vec<EdgeRow> = Vec::new();
+    let mut dangling: Vec<DanglingPointer> = Vec::new();
     for doc in &docs {
         for entry in normalize_relationships(doc.concept.ext("relates_to")) {
             let pointer = hash_str(&entry, "concept_id").unwrap_or_default().trim();
-            let related = resolve_pointer(bundle, pointer, &doc_ids, &resources, &doc.doc_id);
+            let (related, ambiguous) =
+                resolve_pointer(bundle, pointer, &doc_ids, &resources, &doc.doc_id);
             let Some(related) = related else {
+                dangling.push(DanglingPointer {
+                    doc_id: doc.doc_id.clone(),
+                    concept_id: pointer.to_string(),
+                    candidates: ambiguous,
+                });
                 continue;
             };
             if related == doc.doc_id {
@@ -1528,6 +1557,7 @@ pub fn rebuild_knowledge_index(conn: &Connection, bundle: &Bundle) -> Result<(),
             _ => HashSet::new(),
         }
     };
+    let mut derived: Vec<EdgeRow> = Vec::new();
     for i in 0..docs.len() {
         for j in (i + 1)..docs.len() {
             let (a, b) = (&docs[i], &docs[j]);
@@ -1553,7 +1583,7 @@ pub fn rebuild_knowledge_index(conn: &Connection, bundle: &Bundle) -> Result<(),
                 _ => "module-overlap",
             };
             for (src, dst) in [(&a.doc_id, &b.doc_id), (&b.doc_id, &a.doc_id)] {
-                edges.push(EdgeRow {
+                derived.push(EdgeRow {
                     doc_id: src.clone(),
                     related_id: dst.clone(),
                     relation: "relates-to".into(),
@@ -1563,9 +1593,161 @@ pub fn rebuild_knowledge_index(conn: &Connection, bundle: &Bundle) -> Result<(),
             }
         }
     }
-    write_edges(conn, &edges)?;
-    write_refs(conn, &docs)?;
-    Ok(())
+    let derived_count = derived.len();
+    edges.extend(derived);
+    let written = write_edges(conn, &edges)?;
+    let refs = write_refs(conn, &docs)?;
+    Ok(KnowledgeIndexReport {
+        docs: docs.len(),
+        edges: written,
+        derived: derived_count,
+        doc_refs: refs,
+        dangling,
+    })
+}
+
+/// Staged relates_to pointers that would not index (dangling_manifest_pointers).
+pub fn dangling_manifest_pointers(
+    bundle: &Bundle,
+    rows: &[StagedPointerRow<'_>],
+) -> Vec<DanglingPointer> {
+    let docs = if bundle.root.exists() {
+        load_docs(bundle)
+    } else {
+        Vec::new()
+    };
+    let mut doc_ids: HashSet<String> = docs.iter().map(|d| d.doc_id.clone()).collect();
+    let mut resources = resource_index(&docs);
+    for row in rows {
+        if let (Some(path), Some(cid)) = (row.source_path, row.concept_id) {
+            doc_ids.insert(cid.to_string());
+            resources
+                .entry(path.trim_start_matches('/').to_string())
+                .or_insert_with(|| cid.to_string());
+        }
+    }
+    let mut dangling: Vec<DanglingPointer> = Vec::new();
+    for row in rows {
+        let Some(self_id) = row.concept_id else {
+            continue;
+        };
+        let source = row.source_path.unwrap_or(self_id);
+        for entry in normalize_relationships(Some(&Yaml::Array(row.relationships.to_vec()))) {
+            let pointer = hash_str(&entry, "concept_id").unwrap_or_default().trim();
+            let (related, ambiguous) =
+                resolve_pointer(bundle, pointer, &doc_ids, &resources, self_id);
+            if related.is_none() {
+                dangling.push(DanglingPointer {
+                    doc_id: source.to_string(),
+                    concept_id: pointer.to_string(),
+                    candidates: ambiguous,
+                });
+            }
+        }
+    }
+    dangling
+}
+
+/// One staged manifest row's pointer-relevant fields.
+pub struct StagedPointerRow<'a> {
+    pub source_path: Option<&'a str>,
+    pub concept_id: Option<&'a str>,
+    pub relationships: &'a [Yaml],
+}
+
+/// Declared relationships read from parsed frontmatter (extract_relationships).
+pub fn extract_relationships(extensions: &Hash) -> Vec<Yaml> {
+    let mut entries: Vec<Yaml> = Vec::new();
+    for (key, forced) in [
+        ("relates_to", None),
+        ("supersedes", Some("supersedes")),
+        ("superseded-by", Some("superseded-by")),
+    ] {
+        let Some(raw) = extensions.get(&ys(key)) else {
+            continue;
+        };
+        let items: Vec<Yaml> = match raw {
+            Yaml::Hash(_) => vec![raw.clone()],
+            Yaml::Array(items) => items.clone(),
+            other => vec![other.clone()],
+        };
+        for item in items {
+            for mut entry in normalize_relationships(Some(&item)) {
+                if let (Some(forced), Yaml::Hash(h)) = (forced, &mut entry) {
+                    h.insert(ys("relation"), ys(forced));
+                }
+                entries.push(entry);
+            }
+        }
+    }
+    let mut seen: HashSet<(String, String, String)> = HashSet::new();
+    entries
+        .into_iter()
+        .filter(|entry| {
+            let key = (
+                hash_str(entry, "concept_id")
+                    .unwrap_or_default()
+                    .to_string(),
+                hash_str(entry, "relation").unwrap_or_default().to_string(),
+                hash_str(entry, "kind").unwrap_or_default().to_string(),
+            );
+            seen.insert(key)
+        })
+        .collect()
+}
+
+/// Queue one doc-link task per uncovered island pair (islands.py).
+pub fn queue_doc_link_tasks(conn: &Connection, bundle: &Bundle) -> usize {
+    let covering: HashSet<Vec<String>> = tools_km::doc_link_tasks(bundle)
+        .into_iter()
+        .filter(|(_, status, _)| matches!(status.as_str(), "pending" | "in-progress" | "done"))
+        .map(|(_, _, members)| members)
+        .collect();
+    let mut covered = covering;
+    let mut queued = 0usize;
+    for members in tools_km::doc_islands(conn, bundle) {
+        if covered.contains(&members) {
+            continue;
+        }
+        let mut titles = Hash::new();
+        for member in &members {
+            let title = bundle
+                .read_concept(member)
+                .ok()
+                .and_then(|c| c.title)
+                .unwrap_or_else(|| member.clone());
+            titles.insert(ys(member.clone()), ys(title));
+        }
+        let mut facts = Hash::new();
+        facts.insert(ys("members"), Yaml::Array(members.iter().map(ys).collect()));
+        facts.insert(ys("member_titles"), Yaml::Hash(titles));
+        if create_task(bundle, "doc-link", "knowledge-island", facts, 0).is_ok() {
+            queued += 1;
+        }
+        covered.insert(members);
+    }
+    queued
+}
+
+/// Newest task by (created_at, attempt) -- the head of a revise chain.
+pub fn latest_task(tasks: &[Task]) -> Option<&Task> {
+    tasks
+        .iter()
+        .max_by_key(|t| (t.created_at.clone(), t.attempt))
+}
+
+/// The task result's critic verdict, or `default` when the result never landed.
+pub fn result_critic_status(
+    bundle: &Bundle,
+    task_id: &str,
+    default: Option<&str>,
+) -> Option<String> {
+    match bundle.read_concept(&format!("{TASK_DIR}/{task_id}.result")) {
+        // An unreadable result falls back to the default; a stored result
+        // without a verdict is None, never the default.
+        Err(_) => default.map(str::to_string),
+        Ok(concept) => concept.ext_str("critic_status").map(str::to_string),
+    }
 }
 
 fn resource_index(docs: &[DocRec]) -> HashMap<String, String> {
@@ -1584,15 +1766,16 @@ fn resource_index(docs: &[DocRec]) -> HashMap<String, String> {
     index
 }
 
-fn resolve_pointer<'a>(
+fn resolve_pointer(
     bundle: &Bundle,
     pointer: &str,
-    doc_ids: &HashSet<&'a str>,
+    doc_ids: &HashSet<String>,
     resources: &HashMap<String, String>,
     self_id: &str,
-) -> Option<&'a str> {
+) -> (Option<String>, Option<Vec<String>>) {
     let mut related = normalize_doc_id(bundle, pointer);
-    if !doc_ids.contains(related.as_str()) || related == self_id {
+    let mut ambiguous: Option<Vec<String>> = None;
+    if !doc_ids.contains(&related) || related == self_id {
         let bare = pointer.trim_start_matches('/');
         let mut candidate = resources.get(bare).cloned();
         if candidate.is_none() {
@@ -1602,18 +1785,31 @@ fn resolve_pointer<'a>(
                 .collect();
             matches.sort_by_key(|r| (r.len(), (*r).to_string()));
             // a unique basename match extends the pointer; two or more is a guess
-            if matches.len() == 1 {
-                candidate = Some(resources[matches[0]].clone());
+            match matches.len() {
+                1 => candidate = Some(resources[matches[0]].clone()),
+                0 => {}
+                _ => {
+                    ambiguous = Some(
+                        matches
+                            .into_iter()
+                            .map(|r| r.to_string())
+                            .collect::<Vec<_>>(),
+                    )
+                }
             }
         }
         if let Some(found) = candidate {
             related = found;
         }
     }
-    doc_ids.get(related.as_str()).copied()
+    if doc_ids.contains(&related) {
+        (Some(related), None)
+    } else {
+        (None, ambiguous)
+    }
 }
 
-fn write_edges(conn: &Connection, edges: &[EdgeRow]) -> Result<(), ToolError> {
+fn write_edges(conn: &Connection, edges: &[EdgeRow]) -> Result<usize, ToolError> {
     let mut existing: HashMap<(String, String, String, String), f64> = HashMap::new();
     {
         let mut stmt = conn
@@ -1669,10 +1865,10 @@ fn write_edges(conn: &Connection, edges: &[EdgeRow]) -> Result<(), ToolError> {
         )
         .map_err(|e| ToolError(e.to_string()))?;
     }
-    Ok(())
+    Ok(rows.len())
 }
 
-fn write_refs(conn: &Connection, docs: &[DocRec]) -> Result<(), ToolError> {
+fn write_refs(conn: &Connection, docs: &[DocRec]) -> Result<usize, ToolError> {
     let mut verified_by_key: HashMap<(String, String, String), i64> = HashMap::new();
     for doc in docs {
         for family in ["verified", "sources"] {
@@ -1713,7 +1909,7 @@ fn write_refs(conn: &Connection, docs: &[DocRec]) -> Result<(), ToolError> {
         )
         .map_err(|e| ToolError(e.to_string()))?;
     }
-    Ok(())
+    Ok(verified_by_key.len())
 }
 
 #[cfg(test)]
@@ -1795,6 +1991,33 @@ mod tests {
         let outcome = drop_task(&bundle, "../outside").expect("drop");
         assert!(!outcome.dropped);
         assert_eq!(outcome.errors, vec!["task not found"]);
+    }
+
+    #[test]
+    fn result_critic_status_defaults_only_on_an_unreadable_result() {
+        let bundle = scratch_bundle("critic-status");
+        // A stored result without a critic verdict is None, not the default.
+        let mut result = Concept {
+            type_: "Task-Result".into(),
+            title: Some("Result for t1".into()),
+            body: "body\n".into(),
+            concept_id: format!("{TASK_DIR}/t1.result"),
+            ..Default::default()
+        };
+        bundle.write_concept(&mut result).expect("result");
+        assert_eq!(result_critic_status(&bundle, "t1", Some("failed")), None);
+        // An unreadable result falls back to the default.
+        assert_eq!(
+            result_critic_status(&bundle, "no-such-task", Some("failed")),
+            Some("failed".to_string())
+        );
+        // A recorded verdict wins.
+        result.extensions = vec![("critic_status".into(), ys("passed"))];
+        bundle.write_concept(&mut result).expect("rewrite");
+        assert_eq!(
+            result_critic_status(&bundle, "t1", Some("failed")),
+            Some("passed".to_string())
+        );
     }
 
     #[test]

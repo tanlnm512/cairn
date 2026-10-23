@@ -22,6 +22,7 @@ pub mod pack;
 pub mod py_json;
 pub mod rail;
 pub mod store_paths;
+pub mod targz;
 
 #[cfg(test)]
 pub(crate) mod test_env {
@@ -30,7 +31,13 @@ pub(crate) mod test_env {
     use std::sync::{Mutex, MutexGuard};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-    const PINNED: [&str; 2] = ["HOME", "CAIRN_HOME"];
+    const PINNED: [&str; 5] = [
+        "HOME",
+        "CAIRN_HOME",
+        "CAIRN_DB",
+        "CAIRN_KNOWLEDGE",
+        "CAIRN_WORKSPACE",
+    ];
 
     /// Serializes process-env tests and pins HOME to a fresh dir with CAIRN_HOME unset.
     pub(crate) struct EnvScope {
@@ -56,7 +63,9 @@ pub(crate) mod test_env {
             // SAFETY: every env-mutating test holds ENV_LOCK; restored on drop.
             unsafe {
                 std::env::set_var("HOME", &dir);
-                std::env::remove_var("CAIRN_HOME");
+                for key in PINNED.iter().skip(1) {
+                    std::env::remove_var(key);
+                }
             }
             Self {
                 dir,
