@@ -922,6 +922,18 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
             if summary.skipped > 0 {
                 kv_pairs.push(("skipped".into(), fmt_int(summary.skipped as i64)));
             }
+            if let Some(scip) = &summary.scip
+                && scip.edges > 0
+            {
+                kv_pairs.push((
+                    "scip".into(),
+                    format!(
+                        "{} edges ({} disagreements)",
+                        fmt_int(scip.edges as i64),
+                        fmt_int(scip.disagreements as i64)
+                    ),
+                ));
+            }
             let resolution = &summary.resolution;
             let total_edges = i64::max(summary.edges as i64, 1);
             let exact = resolution.exact as i64;

@@ -10,10 +10,13 @@ use rayon::prelude::*;
 use rusqlite::Connection;
 use serde_json::Value;
 
+use crate::config::load_config;
 use crate::parse_dispatch::parse_language_file;
 use crate::resolver::EdgeSignal;
 use crate::routes;
 use crate::scanner;
+use crate::scip::importer::{import_scip_file, replace_skip_row};
+use crate::scip::indexers::generate_index_result;
 use crate::service_calls;
 use crate::timefmt::now_iso;
 
@@ -41,6 +44,19 @@ pub struct BuildSummary {
     pub skipped: usize,
     pub parse_errors: usize,
     pub resolution: ResolutionCounts,
+    /// Present only when a configured SCIP overlay ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scip: Option<ScipReport>,
+}
+
+/// Aggregated counts of the applied SCIP indexes, mirroring the Python `scip`
+/// summary entry.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct ScipReport {
+    pub edges: usize,
+    pub disagreements: usize,
+    pub upgrades: usize,
+    pub join_anomalies: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
@@ -408,11 +424,119 @@ fn populate(
         let _ = import_edges;
     }
 
+    // Fifth pass: configured SCIP indexes as an edges-only overlay over the
+    // resolved graph. Best-effort by contract: an unappliable index degrades
+    // to tree-sitter edges, never a failed build.
+    summary.scip = apply_scip_overlay(
+        conn,
+        workspace,
+        &repos_seen
+            .iter()
+            .map(|(repo, _)| repo.clone())
+            .collect::<Vec<_>>(),
+        true,
+        &mut |line| eprintln!("{line}"),
+    );
+
     if let Some(repo) = repo_filter {
         conn.execute("DELETE FROM repo_build_state WHERE repo_id = ?", [repo])
             .map_err(rusqlite_err)?;
     }
     Ok(summary)
+}
+
+const SCIP_SKIP_IMPORT_FAILED: &str = "scip_import_failed";
+const SCIP_SKIP_INDEX_MISSING: &str = "scip_index_missing";
+
+/// Apply the configured SCIP indexes as an edges-only overlay; None when none
+/// is configured. Every failure degrades to tree-sitter edges with a skip row.
+pub fn apply_scip_overlay(
+    conn: &Connection,
+    workspace: &str,
+    repo_ids: &[String],
+    generate_missing: bool,
+    log: &mut dyn FnMut(&str),
+) -> Option<ScipReport> {
+    let mut indexes = match load_config(Path::new(workspace)) {
+        Ok(cfg) => cfg.scip_indexes,
+        Err(e) => {
+            log(&format!(
+                "  [scip] config load failed ({e}); overlay skipped"
+            ));
+            return None;
+        }
+    };
+    if indexes.is_empty() {
+        return None;
+    }
+    indexes.sort();
+
+    // Skip attribution is workspace-scoped, not per-document, so a repo id is
+    // only safe to guess in a single-repo workspace.
+    let repo_id = match repo_ids {
+        [only] => only.as_str(),
+        _ => "",
+    };
+    let mut report = ScipReport::default();
+    let ws_root = match std::fs::canonicalize(workspace) {
+        Ok(root) => root,
+        Err(e) => {
+            log(&format!("  [scip] overlay skipped: {e}"));
+            return Some(report);
+        }
+    };
+    for (lang, rel_path) in &indexes {
+        let idx_path = ws_root.join(rel_path);
+        if !idx_path.exists() {
+            if !generate_missing {
+                log(&format!(
+                    "  [scip] {lang}: index {rel_path} missing; keeping tree-sitter edges"
+                ));
+                record_scip_skip(conn, repo_id, rel_path, SCIP_SKIP_INDEX_MISSING);
+                continue;
+            }
+            let result =
+                generate_index_result(lang, &idx_path, &ws_root.to_string_lossy(), &mut |_| {});
+            if !result.ok {
+                if let Some(reason) = result.reason {
+                    record_scip_skip(conn, repo_id, rel_path, reason);
+                    log(&format!(
+                        "  [scip] {lang}: index generation failed ({reason}); \
+                         keeping tree-sitter edges. {}",
+                        result.detail
+                    ));
+                }
+                continue;
+            }
+        }
+        match import_scip_file(conn, &idx_path.to_string_lossy(), workspace) {
+            Ok(record) => {
+                report.edges += record.edges;
+                report.disagreements += record.disagreements;
+                report.upgrades += record.upgrades;
+                if record.join_anomalies > 0 {
+                    report.join_anomalies += record.join_anomalies;
+                    log(&format!(
+                        "  [scip] {lang}: {} file(s) kept tree-sitter edges (join anomaly)",
+                        record.join_anomalies
+                    ));
+                }
+            }
+            Err(e) => {
+                log(&format!(
+                    "  [scip] index import failed ({rel_path}): {e}; \
+                     keeping tree-sitter edges"
+                ));
+                record_scip_skip(conn, repo_id, rel_path, SCIP_SKIP_IMPORT_FAILED);
+            }
+        }
+    }
+    Some(report)
+}
+
+/// Best-effort skip row: a lost row never fails the overlay.
+fn record_scip_skip(conn: &Connection, repo_id: &str, path: &str, reason: &str) {
+    let _ = replace_skip_row(conn, repo_id, path, reason);
 }
 
 fn elapsed_ms(t: Instant) -> f64 {

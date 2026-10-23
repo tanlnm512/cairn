@@ -38,12 +38,7 @@ const INSERT_EDGE: &str = "INSERT INTO edges (id, source_id, target_id, target_n
 const DELETE_FILE_CALLREF_EDGES: &str = "DELETE FROM edges WHERE kind IN ('calls','references') AND source_id IN \
      (SELECT id FROM symbols WHERE file_id = ?)";
 
-/// Importer-owned skip rows are index-scoped, not repo-scoped, so repo_id stays empty.
 const INSERT_SKIP: &str = "INSERT INTO skipped_files (id, repo_id, path, reason, recorded_at) \
-     VALUES (?, '', ?, ?, ?)";
-
-/// An anomalous-join row names a matched file, so it carries that file's repo id.
-const INSERT_ANOMALY_SKIP: &str = "INSERT INTO skipped_files (id, repo_id, path, reason, recorded_at) \
      VALUES (?, ?, ?, ?, ?)";
 
 /// Re-imports replace the earlier skip row for the same (repo, path, reason).
@@ -203,20 +198,28 @@ fn parse_index(scip_path: &str) -> Result<proto::Index, String> {
         .map_err(|e| format!("corrupt SCIP index: {scip_path} ({e})"))
 }
 
-/// Decode-failure counterpart of `_parse_index`: record scip_parse_error for
-/// this index, replacing any earlier row, before the caller sees the error.
-fn record_parse_error(conn: &Connection, scip_path: &str) -> Result<(), String> {
-    conn.execute(
-        DELETE_PRIOR_SKIP,
-        rusqlite::params!["", scip_path, SKIP_PARSE_ERROR],
-    )
-    .map_err(|e| e.to_string())?;
+/// Replace the (repo, path, reason) skip row for an index the overlay could
+/// not apply; index-scoped rows (parse errors) carry an empty repo id.
+pub(crate) fn replace_skip_row(
+    conn: &Connection,
+    repo_id: &str,
+    path: &str,
+    reason: &str,
+) -> Result<(), String> {
+    conn.execute(DELETE_PRIOR_SKIP, rusqlite::params![repo_id, path, reason])
+        .map_err(|e| e.to_string())?;
     conn.execute(
         INSERT_SKIP,
-        rusqlite::params![new_id(), scip_path, SKIP_PARSE_ERROR, now_iso()],
+        rusqlite::params![new_id(), repo_id, path, reason, now_iso()],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Decode-failure counterpart of `_parse_index`: record scip_parse_error for
+/// this index, replacing any earlier row, before the caller sees the error.
+fn record_parse_error(conn: &Connection, scip_path: &str) -> Result<(), String> {
+    replace_skip_row(conn, "", scip_path, SKIP_PARSE_ERROR)
 }
 
 /// Return exact position-joined resolution, dropping counted join misses.
@@ -390,24 +393,15 @@ fn count_disagreements(
 /// atomically; undoes them and re-raises on any failure.
 fn write_overlay(
     conn: &Connection,
-    anomaly_rows: &[(String, String, String)],
+    anomaly_rows: &[(String, String)],
     delete_file_ids: &[String],
     kept_rows: &[EdgeRow],
 ) -> Result<(), String> {
     conn.execute_batch("SAVEPOINT scip_import")
         .map_err(|e| e.to_string())?;
     let apply = (|| -> Result<(), String> {
-        for (id, repo_id, path) in anomaly_rows {
-            conn.execute(
-                DELETE_PRIOR_SKIP,
-                rusqlite::params![repo_id, path, SKIP_JOIN_ANOMALY],
-            )
-            .map_err(|e| e.to_string())?;
-            conn.execute(
-                INSERT_ANOMALY_SKIP,
-                rusqlite::params![id, repo_id, path, SKIP_JOIN_ANOMALY, now_iso()],
-            )
-            .map_err(|e| e.to_string())?;
+        for (repo_id, path) in anomaly_rows {
+            replace_skip_row(conn, repo_id, path, SKIP_JOIN_ANOMALY)?;
         }
         for file_id in delete_file_ids {
             conn.execute(DELETE_FILE_CALLREF_EDGES, rusqlite::params![file_id])
@@ -525,7 +519,7 @@ pub fn import_scip_file(
 
     // Read phase: every fallible step (per-document disagreement scan, counter
     // updates) runs before the first write, so the write phase below is pure SQL.
-    let mut anomaly_rows: Vec<(String, String, String)> = Vec::new();
+    let mut anomaly_rows: Vec<(String, String)> = Vec::new();
     let mut kept_rows: Vec<EdgeRow> = Vec::new();
     let mut delete_file_ids: Vec<String> = Vec::new();
     for (rel, anomalous, rows) in planned {
@@ -533,11 +527,7 @@ pub fn import_scip_file(
             continue;
         };
         if anomalous {
-            anomaly_rows.push((
-                new_id(),
-                covered_repo_ids.get(&rel).cloned().unwrap_or_default(),
-                rel,
-            ));
+            anomaly_rows.push((covered_repo_ids.get(&rel).cloned().unwrap_or_default(), rel));
             record.join_anomalies += 1;
             continue;
         }
