@@ -428,6 +428,25 @@ pub fn slugify(text: &str) -> String {
     trimmed.chars().take(60).collect()
 }
 
+/// Python str.title(): uppercase each alphabetic run's first char, lowercase the rest.
+pub fn py_title(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_alpha = false;
+    for c in s.chars() {
+        if c.is_alphabetic() {
+            if prev_alpha {
+                out.extend(c.to_lowercase());
+            } else {
+                out.extend(c.to_uppercase());
+            }
+        } else {
+            out.push(c);
+        }
+        prev_alpha = c.is_alphabetic();
+    }
+    out
+}
+
 // --- YAML frontmatter (okf/concept.py port) ----------------------------------
 
 /// An OKF concept: frontmatter fields + producer extensions + markdown body.
@@ -1595,6 +1614,9 @@ fn rename_memory_embedding(conn: &Connection, old_id: &str, new_id: &str) -> Res
     Ok(())
 }
 
+/// The deterministic critic's fixed score when no LLM critic is wired.
+pub const DEFAULT_CRITIC_SCORE: f64 = 0.5;
+
 fn append_promotion(concept: &mut Concept, action: &str, score: f64) {
     let entry = Yaml::Hash({
         let mut h = Hash::new();
@@ -1662,6 +1684,427 @@ pub fn decay(
         }
     }
     Ok((expired, archived))
+}
+
+// --- stance reflect (memory/stance.py port) -------------------------------------
+
+/// Reflect outcome counts (`reflect_store` summary).
+pub struct ReflectSummary {
+    pub changed: usize,
+    pub unchanged: usize,
+    pub contested: usize,
+}
+
+/// Recompute stance keys from supersession and citation evidence; idempotent.
+pub fn reflect_store(bundle: &Bundle, conn: &Connection) -> Result<ReflectSummary, ToolError> {
+    let mut summary = ReflectSummary {
+        changed: 0,
+        unchanged: 0,
+        contested: 0,
+    };
+    let mut memo: HashMap<String, bool> = HashMap::new();
+    let _lock = bundle.lock()?;
+    for cid in bundle.list_concepts(Some("memory/")) {
+        let Ok(mut concept) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        let (changed, final_stance) = reflect_one(bundle, conn, &mut concept, &mut memo)?;
+        if changed {
+            concept.concept_id = cid;
+            bundle.write_concept(&mut concept)?;
+            summary.changed += 1;
+        } else {
+            summary.unchanged += 1;
+        }
+        if final_stance.as_deref() == Some("contested") {
+            summary.contested += 1;
+        }
+    }
+    Ok(summary)
+}
+
+fn has_refs(concept: &Concept) -> bool {
+    !extract_file_refs(&concept.body).is_empty() || !extract_symbol_refs(&concept.body).is_empty()
+}
+
+fn read_peer(bundle: &Bundle, edge: &str) -> Option<Concept> {
+    let cid = edge.strip_suffix(".md").unwrap_or(edge);
+    bundle.read_concept(cid).ok()
+}
+
+fn shares_verified_symbol_ref(
+    conn: &Connection,
+    a: &Concept,
+    b: &Concept,
+    memo: &mut HashMap<String, bool>,
+) -> Result<bool, ToolError> {
+    let a_refs: HashSet<String> = extract_symbol_refs(&a.body).into_iter().collect();
+    let b_refs: HashSet<String> = extract_symbol_refs(&b.body).into_iter().collect();
+    let mut shared: Vec<String> = a_refs.intersection(&b_refs).cloned().collect();
+    shared.sort();
+    for ref_ in shared {
+        if !memo.contains_key(&ref_) {
+            let verified = symbol_exists(conn, &ref_).map_err(|e| ToolError(e.to_string()))?;
+            memo.insert(ref_.clone(), verified);
+        }
+        if memo[&ref_] {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// One reflect pass over a concept; mutates stance/baseline keys only.
+fn reflect_one(
+    bundle: &Bundle,
+    conn: &Connection,
+    concept: &mut Concept,
+    memo: &mut HashMap<String, bool>,
+) -> Result<(bool, Option<String>), ToolError> {
+    let peer = concept
+        .ext_str("memory_superseded_by")
+        .and_then(|edge| read_peer(bundle, edge));
+    let has_refs = has_refs(concept);
+    let fraction =
+        py_round3(graph_verification(concept, conn).map_err(|e| ToolError(e.to_string()))?);
+    let recorded = concept.ext_f64("memory_refs_baseline");
+    let verdict = if let Some(peer) = &peer
+        && shares_verified_symbol_ref(conn, concept, peer, memo)?
+    {
+        Some(("contested", Some(peer.concept_id.clone())))
+    } else if has_refs {
+        if let Some(baseline) = recorded
+            && fraction < baseline
+        {
+            Some(("tentative", None))
+        } else if fraction >= 1.0 {
+            Some(("preferred", None))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut changed = false;
+    if has_refs {
+        // Seeding cannot fire the drop rule; a present baseline only rises.
+        let updated = recorded.map_or(fraction, |r| r.max(fraction));
+        if Some(updated) != recorded {
+            set_ext(
+                &mut concept.extensions,
+                "memory_refs_baseline",
+                Yaml::Real(fmt_score(updated)),
+            );
+            changed = true;
+        }
+    }
+    if let Some((verdict, _)) = &verdict
+        && concept.ext_str("memory_stance") != Some(verdict)
+    {
+        set_ext(&mut concept.extensions, "memory_stance", ys(*verdict));
+        changed = true;
+    }
+    match verdict {
+        Some(("contested", Some(ref peer_id))) => {
+            let peer_rel = rel_cid(bundle, peer_id);
+            if concept.ext_str("memory_stance_peer") != Some(peer_rel.as_str()) {
+                set_ext(&mut concept.extensions, "memory_stance_peer", ys(&peer_rel));
+                changed = true;
+            }
+        }
+        _ => {
+            // The peer key is reflect-owned: drop it whenever no contested
+            // verdict holds, even when no verdict fired at all.
+            if concept
+                .extensions
+                .iter()
+                .any(|(k, _)| k == "memory_stance_peer")
+            {
+                concept
+                    .extensions
+                    .retain(|(k, _)| k != "memory_stance_peer");
+                changed = true;
+            }
+        }
+    }
+    let final_stance = match verdict {
+        Some((verdict, _)) => Some(verdict.to_string()),
+        None => concept.ext_str("memory_stance").map(str::to_string),
+    };
+    Ok((changed, final_stance))
+}
+
+// --- evolve + batch critic (memory/promotion.py port) ---------------------------
+
+/// Evolve outcome: stored path, tier, score, and the superseded id.
+pub struct EvolveResult {
+    pub path: String,
+    pub tier: String,
+    pub score: f64,
+    pub superseded: String,
+}
+
+/// Create a redacted revision that supersedes `memory_path` (`evolve_memory`).
+pub fn evolve_memory(
+    conn: &Connection,
+    bundle: &Bundle,
+    memory_path: &str,
+    new_title: Option<&str>,
+    new_body: Option<&str>,
+) -> Result<Option<EvolveResult>, ToolError> {
+    let new_body = new_body.map(strip_private_data);
+    let new_title = new_title.map(strip_private_data);
+    let _lock = bundle.lock()?;
+    let Some(old) = get_memory(bundle, memory_path)? else {
+        return Ok(None);
+    };
+    let mtype = old.ext_str("memory_type").unwrap_or("decision").to_string();
+    let norm_old = rel_cid(bundle, &old.concept_id);
+    let old_chain: Vec<String> = match old.ext("memory_supersedes") {
+        Some(Yaml::Array(items)) => items
+            .iter()
+            .map(|i| rel_cid(bundle, &str_of(Some(i)).unwrap_or_default()))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let mut chain = vec![norm_old];
+    chain.extend(old_chain);
+    let confidence = old
+        .ext("memory_signals")
+        .and_then(|v| match v {
+            Yaml::Hash(h) => h.get(&ys("agent_confidence")).and_then(|x| match x {
+                Yaml::Real(s) => s.parse().ok(),
+                Yaml::Integer(i) => Some(*i as f64),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .unwrap_or(0.7);
+    let title = new_title
+        .filter(|t| !t.is_empty())
+        .or_else(|| old.title.clone())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| "memory".to_string());
+    let body = new_body
+        .filter(|b| !b.is_empty())
+        .or_else(|| Some(old.body.clone()))
+        .filter(|b| !b.is_empty())
+        .unwrap_or_default();
+    let mut concept = create_memory(
+        &mtype,
+        &title,
+        &body,
+        old.resource.as_deref(),
+        confidence,
+        None,
+        Some(old.tags.clone()),
+        None,
+        Some(chain),
+        None,
+    )?;
+    let signals = score_memory(&concept, conn)?;
+    apply_score(&mut concept, &signals);
+    seed_refs_baseline(&mut concept, &signals);
+    let tier = tier_for_score(signals["score"]).to_string();
+    let new_path = store_memory(&mut concept, bundle, &tier, None, Some(conn))?;
+    mark_superseded(bundle, &old.concept_id, &new_path)?;
+    append_promotion(&mut concept, "evolve", signals["score"]);
+    Ok(Some(EvolveResult {
+        path: new_path,
+        tier,
+        score: signals["score"],
+        superseded: old.concept_id,
+    }))
+}
+
+/// Batch-critic outcome counts.
+pub struct BatchCriticResult {
+    pub processed: usize,
+    pub tribal: usize,
+    pub dropped: usize,
+    pub remaining_drafts: usize,
+}
+
+/// Run the deterministic critic over queued drafts; promote, drop, or keep.
+pub fn batch_critic(conn: &Connection, bundle: &Bundle) -> Result<BatchCriticResult, ToolError> {
+    let drafts = list_memories(bundle, Some("drafts"), None);
+    let mut out = BatchCriticResult {
+        processed: drafts.len(),
+        tribal: 0,
+        dropped: 0,
+        remaining_drafts: 0,
+    };
+    for mut concept in drafts {
+        let mut signals = score_memory(&concept, conn)?;
+        signals.insert("critic_score".to_string(), py_round3(DEFAULT_CRITIC_SCORE));
+        let score = py_round3(compute_score(&signals));
+        signals.insert("score".to_string(), score);
+        apply_score(&mut concept, &signals);
+        let new_tier = tier_for_score(score);
+        let old_id = concept.concept_id.clone();
+        let old_rel = rel_cid(bundle, &old_id);
+        let decision = if score < 0.3 {
+            "archive"
+        } else if new_tier == "tribal" {
+            "promote"
+        } else {
+            "keep_draft"
+        };
+        append_promotion(&mut concept, decision, score);
+        let tier = match decision {
+            "archive" => {
+                out.dropped += 1;
+                "archived"
+            }
+            "promote" => {
+                out.tribal += 1;
+                "tribal"
+            }
+            _ => {
+                out.remaining_drafts += 1;
+                "drafts"
+            }
+        };
+        let new_id = store_memory(&mut concept, bundle, tier, Some(&old_id), Some(conn))?;
+        if new_id != old_rel {
+            rename_memory_embedding(conn, &old_rel, &new_id)?;
+        }
+    }
+    Ok(out)
+}
+
+// --- consolidate (memory/store.py port) -----------------------------------------
+
+/// Merge same-title raw memories into unified tribal knowledge, archiving
+/// their sources; returns the archived source count.
+pub fn consolidate_memories(
+    bundle: &Bundle,
+    conn: Option<&Connection>,
+) -> Result<usize, ToolError> {
+    let _lock = bundle.lock()?;
+    let raw_ids = bundle.list_concepts(Some("memory/raw"));
+    if raw_ids.len() < 2 {
+        return Ok(0);
+    }
+    let mut concepts = Vec::new();
+    for cid in &raw_ids {
+        if let Ok(c) = bundle.read_concept(cid) {
+            concepts.push(c);
+        }
+    }
+    // Insertion-ordered groups keyed by the lowercased title (Python dict order).
+    let mut groups: Vec<(String, Vec<Concept>)> = Vec::new();
+    for c in concepts {
+        let key = c.title.as_deref().unwrap_or("").trim().to_lowercase();
+        if key.is_empty() {
+            continue;
+        }
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, group)) => group.push(c),
+            None => groups.push((key, vec![c])),
+        }
+    }
+    let mut consolidated = 0usize;
+    for (title_key, group) in groups {
+        if group.len() < 2 {
+            continue;
+        }
+        let primary = &group[0];
+        let mut merged_body_lines = vec![primary.body.clone()];
+        for c in &group[1..] {
+            if !c.body.is_empty() && !merged_body_lines.contains(&c.body) {
+                merged_body_lines.push(c.body.clone());
+            }
+        }
+        let new_title = primary
+            .title
+            .clone()
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| py_title(&title_key));
+        let mut tags: Vec<String> = Vec::new();
+        for c in &group {
+            for t in &c.tags {
+                if !tags.contains(t) {
+                    tags.push(t.clone());
+                }
+            }
+        }
+        let mut unified = Concept {
+            type_: "TribalMemory".to_string(),
+            title: Some(new_title.clone()),
+            description: Some(
+                primary
+                    .description
+                    .clone()
+                    .filter(|d| !d.is_empty())
+                    .unwrap_or_else(|| format!("Consolidated memory for {new_title}")),
+            ),
+            body: merged_body_lines.join("\n\n---\n\n"),
+            tags,
+            concept_id: format!("memory/tribal/{}-{}", slugify(&new_title), unique_suffix()),
+            extensions: vec![
+                ("memory_tier".to_string(), ys("tribal")),
+                (
+                    "consolidated_from".to_string(),
+                    Yaml::Array(
+                        group
+                            .iter()
+                            .map(|c| ys(rel_cid(bundle, &c.concept_id)))
+                            .collect(),
+                    ),
+                ),
+            ],
+            ..Default::default()
+        };
+        bundle.write_concept(&mut unified)?;
+        if let Some(conn) = conn {
+            let valid_from = unified
+                .ext_str("valid_from")
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .or_else(|| unified.timestamp.clone())
+                .unwrap_or_else(iso_utc_now);
+            write_validity(&mut unified, &valid_from, None, None, None, Some(conn))?;
+        }
+        for c in group {
+            if c.concept_id.is_empty() || c.concept_id == unified.concept_id {
+                continue;
+            }
+            let source_id = rel_cid(bundle, &c.concept_id);
+            let mut c = c;
+            let old_file = bundle.root.join(format!("{}.md", c.concept_id));
+            set_ext(&mut c.extensions, "memory_tier", ys("archived"));
+            let slug = slugify(c.title.as_deref().unwrap_or(""));
+            let slug = if slug.is_empty() {
+                "memory".to_string()
+            } else {
+                slug
+            };
+            c.concept_id = format!("memory/archived/{slug}-{}", unique_suffix());
+            if bundle.write_concept(&mut c).is_err() {
+                continue;
+            }
+            if old_file.exists() {
+                let _ = std::fs::remove_file(&old_file);
+            }
+            if let Some(conn) = conn {
+                // A failed move keeps the already-archived file but skips the count.
+                let moved = conn
+                    .execute(
+                        "UPDATE memory_validity SET concept_id = ?1 WHERE concept_id = ?2",
+                        rusqlite::params![c.concept_id, source_id],
+                    )
+                    .is_ok();
+                let renamed = rename_memory_embedding(conn, &source_id, &c.concept_id).is_ok();
+                if !moved || !renamed {
+                    continue;
+                }
+            }
+            consolidated += 1;
+        }
+    }
+    Ok(consolidated)
 }
 
 // --- scoring (memory/scoring.py port) ------------------------------------------
@@ -1842,10 +2285,17 @@ fn apply_score(concept: &mut Concept, signals: &HashMap<String, f64>) {
         sig.insert(ys(key), Yaml::Real(fmt_score(signals[key])));
     }
     set_ext(&mut concept.extensions, "memory_signals", Yaml::Hash(sig));
+    // The raw signals["score"] (score_memory rounds, batch_critic's rescore does not).
+    let score_text = format!("{}", signals["score"]);
+    let score_text = if score_text.contains('.') {
+        score_text
+    } else {
+        format!("{score_text}.0")
+    };
     set_ext(
         &mut concept.extensions,
         "memory_score",
-        Yaml::Real(fmt_score(signals["score"])),
+        Yaml::Real(score_text),
     );
 }
 
@@ -2259,6 +2709,7 @@ pub fn capture_memory(
     body: &str,
     resource: Option<&str>,
     confidence: f64,
+    session_origin: Option<&str>,
     stance: Option<&str>,
 ) -> Result<CaptureResult, ToolError> {
     let body = strip_private_data(body);
@@ -2288,7 +2739,7 @@ pub fn capture_memory(
         &body,
         resource,
         confidence,
-        None,
+        session_origin,
         None,
         None,
         if supersedes_chain.is_empty() {
@@ -3214,6 +3665,248 @@ pub fn add_workflow(
         Some(steps),
         None,
         "manual",
+    )
+}
+
+// --- workflow staleness + sync (knowledge/workflow.py port) ---------------------
+
+/// One stale step anchor.
+pub struct StaleStep {
+    pub step: String,
+    pub symbol: String,
+    pub file: String,
+    pub symbol_ok: bool,
+    pub file_ok: bool,
+}
+
+/// Staleness report for a workflow's graph anchors.
+pub struct WorkflowStalenessReport {
+    pub concept_id: String,
+    pub title: String,
+    pub resource: String,
+    pub total_steps: usize,
+    pub stale_details: Vec<StaleStep>,
+}
+
+impl WorkflowStalenessReport {
+    pub fn stale_count(&self) -> usize {
+        self.stale_details.len()
+    }
+}
+
+/// Staleness report for one workflow, resolved by ref; None when unresolved.
+pub fn check_workflow_staleness(
+    conn: &Connection,
+    bundle: &Bundle,
+    ref_: &str,
+) -> Result<Option<WorkflowStalenessReport>, ToolError> {
+    let Some(concept) = resolve_workflow(bundle, ref_)? else {
+        return Ok(None);
+    };
+    let steps = steps_of(&concept);
+    let mut stale_details = Vec::new();
+    for step in &steps {
+        let sym = step.symbol.clone().unwrap_or_default();
+        let file = step.file.clone().unwrap_or_default();
+        // Skip the truncation-notice pseudo-step.
+        if sym.is_empty() || sym.starts_with('(') {
+            continue;
+        }
+        let symbol_ok = if sym.is_empty() {
+            true
+        } else {
+            symbol_exists(conn, &sym).map_err(|e| ToolError(e.to_string()))?
+        };
+        let file_ok = if file.is_empty() {
+            true
+        } else {
+            file_exists(conn, &file).map_err(|e| ToolError(e.to_string()))?
+        };
+        if !symbol_ok || !file_ok {
+            stale_details.push(StaleStep {
+                step: step.name.clone().unwrap_or_else(|| "?".to_string()),
+                symbol: sym,
+                file,
+                symbol_ok,
+                file_ok,
+            });
+        }
+    }
+    Ok(Some(WorkflowStalenessReport {
+        concept_id: normalize_doc_id(bundle, &concept.concept_id),
+        title: concept.title.clone().unwrap_or_default(),
+        resource: concept.resource.clone().unwrap_or_default(),
+        total_steps: steps.len(),
+        stale_details,
+    }))
+}
+
+/// Staleness reports for every workflow with stale steps, most stale first.
+pub fn check_all_workflows(
+    conn: &Connection,
+    bundle: &Bundle,
+) -> Result<Vec<WorkflowStalenessReport>, ToolError> {
+    let mut reports = Vec::new();
+    for concept in list_documents(bundle, Some("workflow"), None, None) {
+        // Resolve each doc by its own concept id: title resolution lets
+        // same-title docs shadow each other.
+        let cid = normalize_doc_id(bundle, &concept.concept_id);
+        if let Some(report) = check_workflow_staleness(conn, bundle, &cid)?
+            && report.stale_count() > 0
+        {
+            reports.push(report);
+        }
+    }
+    reports.sort_by_key(|r| std::cmp::Reverse(r.stale_count()));
+    Ok(reports)
+}
+
+/// Sync outcome: step delta, or the reason the workflow was left unchanged.
+pub struct WorkflowSyncResult {
+    pub concept_id: String,
+    pub title: String,
+    pub resource: String,
+    pub old_step_count: usize,
+    pub new_step_count: usize,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub error: Option<String>,
+}
+
+/// Re-trace a workflow and replace only its steps and rendered body.
+pub fn sync_workflow(
+    conn: &Connection,
+    bundle: &Bundle,
+    ref_: &str,
+    max_steps: usize,
+) -> Result<Option<WorkflowSyncResult>, ToolError> {
+    let Some(concept) = resolve_workflow(bundle, ref_)? else {
+        return Ok(None);
+    };
+    let resource = concept.resource.clone().unwrap_or_default();
+    let old_steps = steps_of(&concept);
+    let old_names: HashSet<String> = old_steps
+        .iter()
+        .map(|s| s.name.clone().unwrap_or_default())
+        .collect();
+
+    let error_result = |error: String, removed: Vec<String>| WorkflowSyncResult {
+        concept_id: normalize_doc_id(bundle, &concept.concept_id),
+        title: concept.title.clone().unwrap_or_default(),
+        resource: resource.clone(),
+        old_step_count: old_steps.len(),
+        new_step_count: 0,
+        added: Vec::new(),
+        removed,
+        error: Some(error),
+    };
+
+    if resource.is_empty() {
+        return Ok(Some(error_result(
+            "Workflow has no resource (entry symbol) recorded — nothing to \
+             re-trace. Workflow left unchanged."
+                .to_string(),
+            Vec::new(),
+        )));
+    }
+    let facts = gather_flow_facts(conn, &resource).map_err(|e| ToolError(e.to_string()))?;
+    if facts.total_steps <= 1 {
+        return Ok(Some(error_result(
+            format!(
+                "Entry symbol '{resource}' no longer traces — it may have been \
+                 renamed or removed. Workflow left unchanged."
+            ),
+            sorted_set(&old_names),
+        )));
+    }
+    let new_steps = flow_to_workflow(&facts, max_steps);
+    let new_names: HashSet<String> = new_steps
+        .iter()
+        .map(|s| s.name.clone().unwrap_or_default())
+        .collect();
+    let added = sorted_diff(&new_names, &old_names);
+    let removed = sorted_diff(&old_names, &new_names);
+
+    let redacted: Vec<WorkflowStep> = new_steps
+        .iter()
+        .map(|s| {
+            let mut s = s.clone();
+            if let Some(desc) = &s.description
+                && !desc.is_empty()
+            {
+                s.description = Some(strip_private_data(desc));
+            }
+            s
+        })
+        .collect();
+    let mut ext = concept.extensions.clone();
+    set_ext(&mut ext, "steps", flow_steps_yaml(&redacted));
+    let title = concept
+        .title
+        .as_deref()
+        .filter(|t| !t.is_empty())
+        .unwrap_or(&resource);
+    let new_body = strip_private_data(&render_steps_body(title, &redacted));
+    // Python's sync constructs a fresh concept: the generated stamp is renewed
+    // and first-class status/stale_after are dropped.
+    let mut updated = Concept {
+        type_: concept.type_.clone(),
+        title: concept.title.clone(),
+        description: concept.description.clone(),
+        resource: concept.resource.clone(),
+        tags: concept.tags.clone(),
+        concept_id: concept.concept_id.clone(),
+        body: new_body,
+        extensions: ext,
+        ..Default::default()
+    };
+    bundle.write_concept(&mut updated)?;
+    Ok(Some(WorkflowSyncResult {
+        concept_id: normalize_doc_id(bundle, &concept.concept_id),
+        title: concept.title.clone().unwrap_or_default(),
+        resource,
+        old_step_count: old_steps.len(),
+        new_step_count: redacted.len(),
+        added,
+        removed,
+        error: None,
+    }))
+}
+
+fn sorted_set(names: &HashSet<String>) -> Vec<String> {
+    let mut out: Vec<String> = names.iter().cloned().collect();
+    out.sort();
+    out
+}
+
+fn sorted_diff(from: &HashSet<String>, without: &HashSet<String>) -> Vec<String> {
+    let mut out: Vec<String> = from.difference(without).cloned().collect();
+    out.sort();
+    out
+}
+
+/// Steps yaml in flow_to_workflow's dict order (name, symbol, file, description).
+fn flow_steps_yaml(steps: &[WorkflowStep]) -> Yaml {
+    Yaml::Array(
+        steps
+            .iter()
+            .map(|s| {
+                let mut h = Hash::new();
+                if let Some(n) = &s.name {
+                    h.insert(ys("name"), ys(n));
+                }
+                if let Some(sym) = &s.symbol {
+                    h.insert(ys("symbol"), ys(sym));
+                }
+                if let Some(f) = &s.file {
+                    h.insert(ys("file"), ys(f));
+                }
+                if let Some(d) = &s.description {
+                    h.insert(ys("description"), ys(d));
+                }
+                Yaml::Hash(h)
+            })
+            .collect(),
     )
 }
 
@@ -4755,6 +5448,7 @@ pub fn record_memory(
             Some(resource)
         },
         confidence,
+        None,
         stance,
     )?;
     let mut msg = format!(
@@ -6083,5 +6777,163 @@ mod tests {
         // to try the flock again (and fail again), never return a no-op guard
         assert!(bundle.lock().is_err(), "second acquire must also fail");
         std::fs::remove_file(&root).ok();
+    }
+
+    fn scratch_bundle(tag: &str) -> Bundle {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("cairn-km-{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("root");
+        Bundle::new(root)
+    }
+
+    fn write_memory(bundle: &Bundle, cid: &str, title: &str, body: &str, exts: &[(&str, Yaml)]) {
+        let mut concept = Concept {
+            type_: "Tribal-decision".into(),
+            title: Some(title.into()),
+            description: Some(title.into()),
+            tags: vec!["decision".into()],
+            concept_id: cid.into(),
+            body: body.into(),
+            ..Default::default()
+        };
+        for (k, v) in exts {
+            set_ext(&mut concept.extensions, k, v.clone());
+        }
+        bundle.write_concept(&mut concept).expect("write");
+    }
+
+    #[test]
+    fn reflect_store_sets_verdicts_and_is_idempotent() {
+        let bundle = scratch_bundle("reflect");
+        write_memory(
+            &bundle,
+            "memory/tribal/old",
+            "old",
+            "Cites `LiveSym`.\n",
+            &[
+                ("memory_tier", ys("tribal")),
+                ("memory_superseded_by", ys("memory/tribal/new")),
+            ],
+        );
+        write_memory(
+            &bundle,
+            "memory/tribal/new",
+            "new",
+            "Cites `LiveSym` too.\n",
+            &[("memory_tier", ys("tribal"))],
+        );
+        write_memory(
+            &bundle,
+            "memory/tribal/dropped",
+            "dropped",
+            "Cites `DeadSym`.\n",
+            &[
+                ("memory_tier", ys("tribal")),
+                ("memory_refs_baseline", Yaml::Real("1.0".into())),
+            ],
+        );
+        let conn = Connection::open_in_memory().expect("mem db");
+        conn.execute_batch(
+            "CREATE TABLE symbols (name TEXT, qualified_name TEXT);
+             CREATE TABLE files (repo_id TEXT, path TEXT);
+             INSERT INTO symbols VALUES ('LiveSym', 'mod.LiveSym');",
+        )
+        .expect("schema");
+
+        let summary = reflect_store(&bundle, &conn).expect("reflect");
+        assert_eq!(summary.changed, 3, "all three change on the first pass");
+        assert_eq!(summary.unchanged, 0);
+        assert_eq!(summary.contested, 1);
+
+        let old = bundle.read_concept("memory/tribal/old").expect("old");
+        assert_eq!(old.ext_str("memory_stance"), Some("contested"));
+        assert_eq!(old.ext_str("memory_stance_peer"), Some("memory/tribal/new"));
+        assert_eq!(old.ext_f64("memory_refs_baseline"), Some(1.0));
+        let new = bundle.read_concept("memory/tribal/new").expect("new");
+        assert_eq!(new.ext_str("memory_stance"), Some("preferred"));
+        let dropped = bundle
+            .read_concept("memory/tribal/dropped")
+            .expect("dropped");
+        assert_eq!(dropped.ext_str("memory_stance"), Some("tentative"));
+        assert_eq!(
+            dropped.ext_f64("memory_refs_baseline"),
+            Some(1.0),
+            "the baseline is a high-water mark and must not fall"
+        );
+
+        let again = reflect_store(&bundle, &conn).expect("reflect again");
+        assert_eq!(again.changed, 0, "reflect is idempotent");
+        assert_eq!(again.unchanged, 3);
+        assert_eq!(again.contested, 1);
+        std::fs::remove_dir_all(&bundle.root).ok();
+    }
+
+    #[test]
+    fn consolidate_merges_same_title_raws_into_tribal() {
+        let bundle = scratch_bundle("consolidate");
+        write_memory(
+            &bundle,
+            "memory/raw/one",
+            "golden pair",
+            "First body.\n",
+            &[("memory_tier", ys("raw"))],
+        );
+        write_memory(
+            &bundle,
+            "memory/raw/two",
+            "Golden Pair",
+            "Second body.\n",
+            &[("memory_tier", ys("raw"))],
+        );
+        write_memory(
+            &bundle,
+            "memory/raw/other",
+            "unrelated",
+            "Stays raw.\n",
+            &[("memory_tier", ys("raw"))],
+        );
+        let conn = Connection::open_in_memory().expect("mem db");
+        conn.execute_batch(
+            "CREATE TABLE memory_validity \
+             (concept_id TEXT PRIMARY KEY, valid_from TEXT, valid_until TEXT, \
+              successor_symbol TEXT);
+             CREATE TABLE memory_embeddings \
+             (doc_id TEXT, chunk_index INTEGER, model TEXT, dim INTEGER, vec BLOB, \
+              chunk TEXT, embedded_at TIMESTAMP);",
+        )
+        .expect("schema");
+
+        let count = consolidate_memories(&bundle, Some(&conn)).expect("consolidate");
+        assert_eq!(count, 2, "both same-title sources are archived");
+        let remaining: Vec<String> = bundle
+            .list_concepts(Some("memory/raw"))
+            .into_iter()
+            .filter(|cid| cid != "memory/raw/other")
+            .collect();
+        assert!(remaining.is_empty(), "sources leave memory/raw");
+        let unified = bundle
+            .list_concepts(Some("memory/tribal"))
+            .into_iter()
+            .find_map(|cid| bundle.read_concept(&cid).ok())
+            .expect("unified tribal concept");
+        assert_eq!(unified.title.as_deref(), Some("golden pair"));
+        assert!(unified.body.contains("First body."));
+        assert!(unified.body.contains("---"));
+        assert!(unified.body.contains("Second body."));
+        let sources = unified.ext("consolidated_from").expect("consolidated_from");
+        match sources {
+            Yaml::Array(items) => assert_eq!(items.len(), 2),
+            other => panic!("consolidated_from must be a list: {other:?}"),
+        }
+        assert_eq!(
+            bundle.list_concepts(Some("memory/archived")).len(),
+            2,
+            "both sources are archived"
+        );
+        std::fs::remove_dir_all(&bundle.root).ok();
     }
 }

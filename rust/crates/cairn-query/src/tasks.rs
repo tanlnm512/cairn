@@ -1167,7 +1167,7 @@ pub fn drop_task(bundle: &Bundle, task_id: &str) -> Result<DropOutcome, ToolErro
 
 // --- output specs (llm/tasks.py `_output_spec` port) ---------------------------
 
-fn output_spec(task_kind: &str, facts: &Hash) -> String {
+pub fn output_spec(task_kind: &str, facts: &Hash) -> String {
     let specs: &[(&str, &str)] = &[
         (
             "compass-synthesize",

@@ -148,7 +148,34 @@ COMMANDS = [
     ["knowledge", "embed"],
     ["skill", "generate", "src/cairn/graph"],
     ["skill", "generate", "rust/crates/cairn-build/src/config.rs"],
+    # Workflow-sync + memory-lifecycle family (4c-4b): every leg mutates or
+    # reads seeded state restored per-leg via RESEED (the memory tree, the
+    # workflow concepts, and the memory_embeddings rows).
+    ["knowledge", "workflow", "sync"],
+    ["knowledge", "workflow", "sync", "x", "--all"],
+    ["knowledge", "workflow", "sync", "--dry-run", "--all"],
+    ["knowledge", "workflow", "sync", "--dry-run", "golden capture workflow"],
+    ["knowledge", "workflow", "sync", "--dry-run", "no-such-workflow"],
+    ["knowledge", "workflow", "sync", "--all"],
+    ["knowledge", "workflow", "sync", "golden sync workflow"],
+    ["knowledge", "workflow", "sync", "golden capture workflow"],
+    ["knowledge", "workflow", "sync", "no-such-workflow"],
+    ["memory", "reflect"],
+    ["memory", "evolve", "memory/tribal/golden-evolve-me",
+     "--body", "Revised body citing `resolve_store`."],
+    ["memory", "evolve", "no/such/memory"],
+    ["memory", "capture", "--session-transcript",
+     '[{"role": "user", "content": "learned to run the golden capture"}]'],
+    ["memory", "capture", "--session-transcript-stdin"],
+    ["memory", "embed"],
+    ["memory", "batch-critic"],
+    ["memory", "consolidate"],
 ]
+# The stdin-fed capture leg reads its transcript from stdin (ARG_MAX-free path).
+STDIN_OVERRIDES: dict[tuple[str, ...], str] = {
+    ("memory", "capture", "--session-transcript-stdin"):
+        '[{"role": "user", "content": "learned to run the golden capture"}]',
+}
 DIFF_PRINT_CHARS = 300
 # Report renders runtime identity fields (python/platform/sqlite versions) that
 # are environment values, not contract: normalize their values, keep the shape.
@@ -207,6 +234,9 @@ def cli_env(scratch: Path, workspace: Path, cargo_path: bool) -> dict:
     # The python CLI self-records `cli:cairn <cmd>` tool_metrics rows at exit;
     # with per-leg timings they are nondeterministic, so gate the whole family.
     env["CAIRN_TELEMETRY"] = "off"
+    # memory capture must take the deterministic queue path on both legs, not
+    # whatever agent CLI the caller's machine happens to have on PATH.
+    env["CAIRN_LLM_BACKEND"] = ""
     env["CAIRN_HOME"] = str(scratch / "home")
     env["CAIRN_DB"] = str(scratch / DB_NAME)
     env["CAIRN_KNOWLEDGE"] = str(scratch / ".knowledge")
@@ -238,6 +268,8 @@ def prepare_store(scratch: Path) -> None:
     _seed_wiki(scratch)
     _seed_telemetry(scratch)
     _seed_knowledge_extras(scratch)
+    _seed_memory_extras(scratch)
+    _seed_workflow_sync(scratch)
 
 
 def _seed_telemetry(scratch: Path) -> None:
@@ -416,6 +448,101 @@ def _seed_broken_concept(scratch: Path) -> None:
     ))
 
 
+def _seed_memory_extras(scratch: Path) -> None:
+    """Seed the 4c-4b memory legs' fixtures: a same-title raw pair (consolidate),
+    a tribal memory to evolve, a superseded pair sharing a live symbol ref
+    (reflect's contested verdict), and a ref-baseline drop (tentative)."""
+    from cairn.okf.bundle import OKFBundle
+    from cairn.okf.concept import OKFConcept
+
+    bundle = OKFBundle(str(scratch / ".knowledge"))
+
+    def mem(cid: str, title: str, body: str, tier: str, exts: dict) -> None:
+        base = {
+            "memory_tier": tier, "memory_type": "decision",
+            "memory_score": 0.6, "memory_is_latest": True,
+            "memory_supersedes": [], "memory_superseded_by": None,
+            "memory_signals": {
+                "graph_verification": 1.0, "cross_session_refs": 0,
+                "agent_confidence": 0.8, "critic_score": 0.5,
+                "freshness": 1.0, "reinforcement": 0.0, "authority": 0.5,
+            },
+        }
+        base.update(exts)
+        bundle.write_concept(OKFConcept(
+            type="Tribal-decision", title=title, description=title,
+            tags=["decision"], concept_id=cid, body=body, extensions=base,
+        ))
+
+    mem("memory/raw/golden-raw-pair-one", "golden raw pair",
+        "First raw capture citing `resolve_store`.\n", "raw", {})
+    mem("memory/raw/golden-raw-pair-two", "golden raw pair",
+        "Second raw capture citing `resolve_store`.\n", "raw", {})
+    mem("memory/tribal/golden-evolve-me", "golden evolve me",
+        "Original body citing `resolve_store`.\n", "tribal", {})
+    mem("memory/tribal/golden-reflect-old", "golden reflect old",
+        "Superseded stance probe citing `resolve_store`.\n", "tribal",
+        {"memory_superseded_by": "memory/tribal/golden-reflect-new"})
+    mem("memory/tribal/golden-reflect-new", "golden reflect new",
+        "Winning stance probe citing `resolve_store`.\n", "tribal", {})
+    mem("memory/tribal/golden-reflect-tentative", "golden reflect tentative",
+        "Baseline probe citing `NoSuchSymbol`.\n", "tribal",
+        {"memory_refs_baseline": 1.0})
+
+
+def _seed_memory_reset(scratch: Path) -> None:
+    """Restore the pinned memory tree plus the 4c-4b seeds, and reset
+    memory_embeddings to exactly one orphan row (the embed leg's reap arm)."""
+    import sqlite3
+
+    mem = scratch / ".knowledge" / "memory"
+    shutil.rmtree(mem, ignore_errors=True)
+    shutil.copytree(parity.PINNED_STORES / "self" / "bundle" / "memory", mem)
+    _seed_memory_extras(scratch)
+    conn = sqlite3.connect(str(scratch / DB_NAME))
+    try:
+        conn.execute("DELETE FROM memory_embeddings")
+        conn.execute(
+            "INSERT INTO memory_embeddings "
+            "(doc_id, chunk_index, model, dim, vec, chunk, embedded_at) "
+            "VALUES ('memory/tribal/orphaned-golden', 0, 'hash-256-v1', 1, "
+            "X'3F800000', 'orphan', '2026-01-01T00:00:00Z')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _seed_workflow_sync(scratch: Path) -> None:
+    """Restore the pinned workflow and (re)write the seeded sync target: a
+    workflow whose resource re-traces but whose steps anchor at gone refs."""
+    from cairn.okf.bundle import OKFBundle
+    from cairn.okf.concept import OKFConcept
+
+    pinned = parity.PINNED_STORES / "self" / "bundle" / "knowledge" / "workflow"
+    shutil.copy2(pinned / "golden-capture-workflow.md",
+                 scratch / ".knowledge" / "knowledge" / "workflow"
+                 / "golden-capture-workflow.md")
+    bundle = OKFBundle(str(scratch / ".knowledge"))
+    bundle.write_concept(OKFConcept(
+        type="Knowledge-workflow", title="golden sync workflow",
+        description="golden sync workflow", resource="main",
+        tags=["golden"], concept_id="knowledge/workflow/golden-sync-workflow",
+        body="# golden sync workflow\n\n1. **Stale**\n",
+        extensions={
+            "tier": "asserted", "doc_status": "active", "doc_owner": "",
+            "doc_source": "manual", "epic_link": "", "affects_modules": [],
+            "affects_repos": [],
+            "steps": [
+                {"name": "Stale", "description": "Points at a gone symbol.",
+                 "symbol": "GoneSymbol", "file": "no/such/file.py"},
+                {"name": "Keep", "description": "Anchored at a live symbol.",
+                 "symbol": "main", "file": "scripts/rust_migration/golden_record.py"},
+            ],
+        },
+    ))
+
+
 def prepare_hooks_workspace(scratch: Path) -> Path:
     """Scratch workspace for the hooks legs: repo alpha (clean), repo beta
     (foreign post-commit), and an empty dir for the no-repos guidance path."""
@@ -571,6 +698,22 @@ RESEED = {
         _restore_pinned,
     ("knowledge", "ingest"):
         _restore_pinned,
+    # Workflow-sync + memory-lifecycle cases (4c-4b): restore the workflow
+    # pair and the memory tree before each leg.
+    ("knowledge", "workflow", "sync"):
+        _seed_workflow_sync,
+    ("memory", "reflect"):
+        _seed_memory_reset,
+    ("memory", "evolve"):
+        _seed_memory_reset,
+    ("memory", "capture"):
+        _seed_memory_reset,
+    ("memory", "embed"):
+        _seed_memory_reset,
+    ("memory", "batch-critic"):
+        _seed_memory_reset,
+    ("memory", "consolidate"):
+        _seed_memory_reset,
 }
 
 
@@ -586,11 +729,11 @@ def ensure_rust_binary() -> Path:
 
 
 def run_side(exe: list[str], argv: list[str], env: dict,
-             cwd: Path = REPO_ROOT) -> tuple[int, str, str]:
+             cwd: Path = REPO_ROOT, stdin: str | None = None) -> tuple[int, str, str]:
     proc = subprocess.run(
         [*exe, *argv],
         capture_output=True, text=True, env=env, timeout=CMD_TIMEOUT_S,
-        cwd=str(cwd),
+        cwd=str(cwd), input=stdin,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -678,11 +821,14 @@ def main(argv: list[str] | None = None) -> int:
             if hook is not None:
                 hook(scratch)
             overrides = ENV_OVERRIDES.get(tuple(cmd[:2]), {})
+            stdin_data = STDIN_OVERRIDES.get(tuple(cmd[:3]))
             cwd = CWD_OVERRIDES.get(cmd[0], REPO_ROOT)
-            py = run_side(parity.cairn_cli(), cmd, {**py_env, **overrides}, cwd)
+            py = run_side(parity.cairn_cli(), cmd, {**py_env, **overrides}, cwd,
+                          stdin=stdin_data)
             if hook is not None:
                 hook(scratch)
-            rs = run_side([str(rust_bin)], cmd, {**rust_env, **overrides}, cwd)
+            rs = run_side([str(rust_bin)], cmd, {**rust_env, **overrides}, cwd,
+                          stdin=stdin_data)
             diff = first_diff(cmd, py, rs, rules + EXTRA_SCRUB_RULES)
             label = " ".join(cmd)
             if diff:

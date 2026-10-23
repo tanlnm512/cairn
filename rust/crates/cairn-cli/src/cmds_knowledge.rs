@@ -310,7 +310,8 @@ pub enum WorkflowGroup {
         #[arg(long = "dry-run")]
         dry_run: bool,
         /// Cap workflow steps.
-        #[arg(long = "max-steps", default_value_t = 20)]
+        #[arg(long = "max-steps", default_value_t = 20,
+              value_parser = clap::value_parser!(i64).range(1..))]
         max_steps: i64,
         #[arg(long)]
         db: Option<String>,
@@ -938,7 +939,21 @@ fn run_workflow(group: WorkflowGroup) -> ExitCode {
             &resource,
         ),
         WorkflowGroup::Trace { reference, as_json } => workflow_trace(&reference, as_json),
-        WorkflowGroup::Sync { .. } => not_ported("knowledge workflow sync"),
+        WorkflowGroup::Sync {
+            reference,
+            all,
+            dry_run,
+            max_steps,
+            db,
+            knowledge,
+        } => workflow_sync(
+            reference.as_deref(),
+            all,
+            dry_run,
+            max_steps,
+            db.as_deref(),
+            knowledge.as_deref(),
+        ),
     }
 }
 
@@ -1047,7 +1062,47 @@ fn run_memory(group: MemoryGroup) -> ExitCode {
             db,
         } => memory_share(memory_id.as_deref(), &agent, &symbols, db.as_deref()),
         MemoryGroup::Check { agent, symbols, db } => memory_check(&agent, &symbols, db.as_deref()),
-        other => not_ported(other.name()),
+        MemoryGroup::Reflect { db, knowledge } => {
+            memory_reflect(db.as_deref(), knowledge.as_deref())
+        }
+        MemoryGroup::Evolve {
+            memory_path,
+            title,
+            body,
+            db,
+            knowledge,
+        } => memory_evolve(
+            &memory_path,
+            title.as_deref(),
+            body.as_deref(),
+            db.as_deref(),
+            knowledge.as_deref(),
+        ),
+        MemoryGroup::Capture {
+            session_transcript,
+            session_transcript_stdin,
+            session_id,
+            db,
+            knowledge,
+        } => memory_capture(
+            session_transcript.as_deref(),
+            session_transcript_stdin,
+            &session_id,
+            db.as_deref(),
+            knowledge.as_deref(),
+        ),
+        MemoryGroup::Embed {
+            db,
+            knowledge,
+            batch_size,
+            reap,
+        } => memory_embed(db.as_deref(), knowledge.as_deref(), batch_size, reap),
+        MemoryGroup::BatchCritic { db, knowledge } => {
+            memory_batch_critic(db.as_deref(), knowledge.as_deref())
+        }
+        MemoryGroup::Consolidate { db, knowledge } => {
+            memory_consolidate(db.as_deref(), knowledge.as_deref())
+        }
     }
 }
 
@@ -1514,24 +1569,6 @@ fn has_word(hay_lower: &str, symbol_lower: &str) -> bool {
 }
 
 /// Python str.title(): alpha chars after any non-alpha boundary capitalize.
-fn py_title(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut prev_alpha = false;
-    for c in s.chars() {
-        if c.is_alphabetic() {
-            if prev_alpha {
-                out.extend(c.to_lowercase());
-            } else {
-                out.extend(c.to_uppercase());
-            }
-        } else {
-            out.push(c);
-        }
-        prev_alpha = c.is_alphabetic();
-    }
-    out
-}
-
 /// Import-collision slug: "(repo)" style suffix, numbered past the first.
 fn unique_slug(base: &str, repo: &str, seen: &mut std::collections::HashSet<String>) -> String {
     const SLUG_MAX: usize = 60;
@@ -1663,7 +1700,7 @@ fn knowledge_import(dir_path: &str, doc_type: &str, tags: &str, affects: &str) -
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
-        let title = py_title(&stem.replace(['-', '_'], " "));
+        let title = tools_km::py_title(&stem.replace(['-', '_'], " "));
         let slug = unique_slug(
             &tools_km::slugify(&title),
             dir_name(&md_file).as_str(),
@@ -2990,6 +3027,167 @@ fn workflow_trace(reference: &str, as_json: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn stale_issues(d: &tools_km::StaleStep) -> String {
+    let mut issues = Vec::new();
+    if !d.symbol_ok {
+        issues.push(format!("symbol '{}' not found", d.symbol));
+    }
+    if !d.file_ok {
+        issues.push(format!("file '{}' not found", d.file));
+    }
+    issues.join(", ")
+}
+
+fn workflow_sync(
+    reference: Option<&str>,
+    all: bool,
+    dry_run: bool,
+    max_steps: i64,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    if reference.is_some() && all {
+        eprintln!("Error: pass a workflow ref or --all, not both.");
+        return ExitCode::FAILURE;
+    }
+    if reference.is_none() && !all {
+        eprintln!("Error: provide a workflow ref or use --all.");
+        return ExitCode::FAILURE;
+    }
+    let store = resolve_store(None);
+    let knowledge_path = knowledge.map_or_else(|| store.knowledge.clone(), PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    let db_file = db_path(db);
+    // No workflows exist without the bundle; guard before the DB is opened.
+    if !bundle.root.exists() || !db_file.parent().is_some_and(Path::exists) {
+        println!("No workflows to sync.");
+        return ExitCode::SUCCESS;
+    }
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let max_steps = max_steps.max(1) as usize;
+
+    if dry_run {
+        if all {
+            let reports = match tools_km::check_all_workflows(&conn, &bundle) {
+                Ok(reports) => reports,
+                Err(e) => return cli_err(&e.0),
+            };
+            if reports.is_empty() {
+                println!("All workflows are up to date (no stale steps found).");
+                return ExitCode::SUCCESS;
+            }
+            println!("{} workflow(s) with stale steps:", reports.len());
+            for r in &reports {
+                println!();
+                println!("  {} ({})", r.title, r.concept_id);
+                println!("    {}/{} steps stale:", r.stale_count(), r.total_steps);
+                for d in r.stale_details.iter().take(8) {
+                    println!("      {}: {}", d.step, stale_issues(d));
+                }
+                if r.stale_details.len() > 8 {
+                    println!("      ... and {} more", r.stale_details.len() - 8);
+                }
+            }
+        } else {
+            let reference = reference.expect("ref or --all validated");
+            let report = match tools_km::check_workflow_staleness(&conn, &bundle, reference) {
+                Ok(report) => report,
+                Err(e) => return cli_err(&e.0),
+            };
+            let Some(report) = report else {
+                eprintln!("No workflow found matching '{reference}'.");
+                return ExitCode::FAILURE;
+            };
+            if report.stale_count() == 0 {
+                println!(
+                    "'{}' is up to date ({} steps, no staleness).",
+                    report.title, report.total_steps
+                );
+                return ExitCode::SUCCESS;
+            }
+            println!("'{}' ({})", report.title, report.concept_id);
+            println!(
+                "  {}/{} steps stale:",
+                report.stale_count(),
+                report.total_steps
+            );
+            for d in &report.stale_details {
+                println!("    {}: {}", d.step, stale_issues(d));
+            }
+            println!();
+            println!("Run without --dry-run to sync.");
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    if all {
+        let workflows = tools_km::list_documents(&bundle, Some("workflow"), None, None);
+        if workflows.is_empty() {
+            println!("No workflows to sync.");
+            return ExitCode::SUCCESS;
+        }
+        println!("Syncing {} workflow(s)...", workflows.len());
+        let mut synced = 0usize;
+        let mut errors = 0usize;
+        for w in &workflows {
+            let cid = tools_km::normalize_doc_id(&bundle, &w.concept_id);
+            let result = match tools_km::sync_workflow(&conn, &bundle, &cid, max_steps) {
+                Ok(result) => result,
+                Err(e) => return cli_err(&e.0),
+            };
+            let Some(result) = result else {
+                continue;
+            };
+            if let Some(error) = &result.error {
+                println!("  SKIP  {}: {}", result.title, error);
+                errors += 1;
+            } else {
+                println!(
+                    "  OK    {}: {} -> {} steps (+{}, -{})",
+                    result.title,
+                    result.old_step_count,
+                    result.new_step_count,
+                    result.added.len(),
+                    result.removed.len()
+                );
+                synced += 1;
+            }
+        }
+        println!();
+        println!("Sync complete: {synced} synced, {errors} skipped.");
+    } else {
+        let reference = reference.expect("ref or --all validated");
+        let result = match tools_km::sync_workflow(&conn, &bundle, reference, max_steps) {
+            Ok(result) => result,
+            Err(e) => return cli_err(&e.0),
+        };
+        let Some(result) = result else {
+            eprintln!("No workflow found matching '{reference}'.");
+            return ExitCode::FAILURE;
+        };
+        if let Some(error) = &result.error {
+            println!("Could not sync '{}': {}", result.title, error);
+            return ExitCode::FAILURE;
+        }
+        println!("Synced '{}' ({})", result.title, result.concept_id);
+        println!(
+            "  steps: {} -> {}",
+            result.old_step_count, result.new_step_count
+        );
+        if !result.added.is_empty() {
+            let shown: Vec<&str> = result.added.iter().take(8).map(String::as_str).collect();
+            println!("  added: {}", shown.join(", "));
+        }
+        if !result.removed.is_empty() {
+            let shown: Vec<&str> = result.removed.iter().take(8).map(String::as_str).collect();
+            println!("  removed: {}", shown.join(", "));
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 // --- memory group ------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
@@ -3033,6 +3231,7 @@ fn memory_record(
         if body.is_empty() { title } else { body },
         resource,
         confidence,
+        None,
         stance,
     ) {
         Ok(result) => result,
@@ -3557,6 +3756,284 @@ fn memory_check(agent_id: &str, symbols: &str, db: Option<&str>) -> ExitCode {
         );
     }
     ExitCode::SUCCESS
+}
+
+/// Best-effort embed of freshly saved memories; failures defer to `memory embed`.
+fn embed_saved_memories(conn: &Connection, bundle: &Bundle, paths: &[String]) {
+    if cairn_build::embeddings::embed_memory_concepts(conn, bundle, paths).is_err() {
+        eprintln!(
+            "Embedding failed; memories saved without vectors \
+             (run `cairn memory embed` to backfill)."
+        );
+    }
+}
+
+fn memory_reflect(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let bundle = memory_bundle(knowledge);
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    match tools_km::reflect_store(&bundle, &conn) {
+        Ok(summary) => {
+            println!(
+                "Reflected {} memory(ies): {} changed, {} unchanged, {} contested.",
+                summary.changed + summary.unchanged,
+                summary.changed,
+                summary.unchanged,
+                summary.contested
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => cli_err(&format!("reflect failed: {}", e.0)),
+    }
+}
+
+fn memory_evolve(
+    memory_path: &str,
+    title: Option<&str>,
+    body: Option<&str>,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let bundle = memory_bundle(knowledge);
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    let result = match tools_km::evolve_memory(&conn, &bundle, memory_path, title, body) {
+        Ok(result) => result,
+        Err(e) => return cli_err(&e.0),
+    };
+    let Some(result) = result else {
+        eprintln!("Memory not found: '{memory_path}'.");
+        return ExitCode::FAILURE;
+    };
+    embed_saved_memories(&conn, &bundle, std::slice::from_ref(&result.path));
+    println!(
+        "Evolved '{memory_path}' -> {} (score={}, tier={}, superseded {})",
+        result.path,
+        py_float_text(result.score),
+        result.tier,
+        result.superseded
+    );
+    ExitCode::SUCCESS
+}
+
+/// JSON-object lines from a backend transcript extraction (`_parse_extract_lines`).
+fn extract_candidates(cli: &str, transcript: &str) -> Vec<serde_json::Value> {
+    let transcript = tools_km::strip_private_data(transcript);
+    let facts = serde_json::json!({ "transcript": transcript });
+    let prompt = format!(
+        "[cairn task: memory-extract]\n\nUse the cairn skill to process this. \
+         Facts (graph-grounded):\n{}\n\n## Output spec\n{}\n\nOutput ONLY the \
+         result content, nothing else.",
+        serde_json::to_string_pretty(&facts).unwrap_or_default(),
+        tasks::output_spec("memory-extract", &yaml_rust2::yaml::Hash::new()),
+    );
+    let argv: Vec<String> = match cli {
+        "claude" => vec![
+            cli.to_string(),
+            "-p".into(),
+            prompt,
+            "--allowedTools".into(),
+            "Read,Glob,Grep".into(),
+        ],
+        "droid" => vec![cli.to_string(), "exec".into(), prompt],
+        _ => vec![cli.to_string(), "exec".into(), "--prompt".into(), prompt],
+    };
+    let Ok(output) = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if !line.starts_with('{') {
+                return None;
+            }
+            serde_json::from_str(line).ok()
+        })
+        .collect()
+}
+
+fn memory_capture(
+    session_transcript: Option<&str>,
+    session_transcript_stdin: bool,
+    session_id: &str,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    let bundle = memory_bundle(knowledge);
+    let transcript = if session_transcript_stdin {
+        use std::io::Read;
+        let mut buf = String::new();
+        if std::io::stdin().read_to_string(&mut buf).is_err() {
+            return cli_err("could not read the session transcript from stdin");
+        }
+        buf
+    } else {
+        session_transcript
+            .filter(|t| !t.is_empty())
+            .unwrap_or("[]")
+            .to_string()
+    };
+
+    let backend = std::env::var("CAIRN_LLM_BACKEND")
+        .unwrap_or_default()
+        .to_lowercase();
+    let candidates = if !backend.is_empty() && crate::agent_install::which(&backend).is_none() {
+        eprintln!("LLM backend '{backend}' not found on PATH; queueing memory-extract task.");
+        Vec::new()
+    } else if matches!(backend.as_str(), "droid" | "opencode" | "claude") {
+        extract_candidates(&backend, &transcript)
+    } else {
+        Vec::new()
+    };
+
+    let mut recorded = 0usize;
+    let mut failed = 0usize;
+    let mut captured_paths: Vec<String> = Vec::new();
+    for cand in &candidates {
+        let cand_type = cand
+            .get("type")
+            .and_then(|v| v.as_str())
+            .filter(|t| MEMORY_TYPES.contains(t))
+            .unwrap_or("decision");
+        let title = cand
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("untitled");
+        let body = cand.get("body").and_then(|v| v.as_str()).unwrap_or("");
+        let confidence = match cand.get("confidence") {
+            None => Ok(0.6),
+            Some(serde_json::Value::Number(n)) => n.as_f64().ok_or(()),
+            Some(serde_json::Value::String(s)) => s.parse::<f64>().map_err(|_| ()),
+            Some(_) => Err(()),
+        };
+        let Ok(confidence) = confidence else {
+            failed += 1;
+            continue;
+        };
+        match tools_km::capture_memory(
+            &conn,
+            &bundle,
+            cand_type,
+            title,
+            body,
+            None,
+            confidence,
+            Some(session_id),
+            None,
+        ) {
+            Ok(result) => {
+                captured_paths.push(result.path);
+                recorded += 1;
+            }
+            Err(_) => failed += 1,
+        }
+    }
+    if !captured_paths.is_empty() {
+        embed_saved_memories(&conn, &bundle, &captured_paths);
+    }
+    if recorded > 0 {
+        println!("Captured {recorded} memories from session {session_id}.");
+    }
+    if failed > 0 {
+        eprintln!("Skipped {failed} unrecordable candidate(s) from session {session_id}.");
+    }
+    if recorded == 0 {
+        let mut facts = yaml_rust2::yaml::Hash::new();
+        let scrubbed = tools_km::strip_private_data(&transcript);
+        let truncated: String = scrubbed.chars().take(8000).collect();
+        facts.insert(Yaml::String("transcript".into()), Yaml::String(truncated));
+        facts.insert(
+            Yaml::String("session_id".into()),
+            Yaml::String(session_id.to_string()),
+        );
+        match tasks::create_task(
+            &bundle,
+            "memory-extract",
+            &format!("session-{session_id}"),
+            facts,
+            0,
+        ) {
+            Ok(task) => println!(
+                "No agent available; queued memory-extract task {}.",
+                task.id
+            ),
+            Err(e) => return cli_err(&e.0),
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn memory_embed(
+    db: Option<&str>,
+    knowledge: Option<&str>,
+    batch_size: i64,
+    reap: bool,
+) -> ExitCode {
+    let bundle = memory_bundle(knowledge);
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    if reap {
+        match cairn_build::embeddings::reap_orphaned_memory_embeddings(&conn, &bundle) {
+            Ok(reaped) if reaped > 0 => println!("Reaped {reaped} orphaned embedding row(s)."),
+            Ok(_) => {}
+            Err(e) => return cli_err(&e),
+        }
+    }
+    match cairn_build::embeddings::embed_memory(&conn, &bundle, batch_size.max(1) as usize) {
+        Ok(summary) => {
+            println!(
+                "Embedded {} memory concept(s) with {} \
+                 ({} already up to date, {} total).",
+                summary.embedded, summary.model, summary.skipped, summary.total
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => cli_err(&e),
+    }
+}
+
+fn memory_batch_critic(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let bundle = memory_bundle(knowledge);
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    match tools_km::batch_critic(&conn, &bundle) {
+        Ok(result) => {
+            println!(
+                "Processed {} drafts: {} -> tribal, {} dropped, {} remain drafts.",
+                result.processed, result.tribal, result.dropped, result.remaining_drafts
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => cli_err(&e.0),
+    }
+}
+
+fn memory_consolidate(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let bundle = memory_bundle(knowledge);
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    match tools_km::consolidate_memories(&bundle, Some(&conn)) {
+        Ok(count) => {
+            println!("Consolidated {count} raw memories into tribal knowledge.");
+            ExitCode::SUCCESS
+        }
+        Err(e) => cli_err(&e.0),
+    }
 }
 
 // --- compass group -----------------------------------------------------------
@@ -4144,33 +4621,6 @@ fn wiki_enrich(
     ExitCode::SUCCESS
 }
 
-impl MemoryGroup {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Record { .. } => "memory record",
-            Self::Reflect { .. } => "memory reflect",
-            Self::Evolve { .. } => "memory evolve",
-            Self::Search { .. } => "memory search",
-            Self::Timeline { .. } => "memory timeline",
-            Self::Capture { .. } => "memory capture",
-            Self::List { .. } => "memory list",
-            Self::Stats { .. } => "memory stats",
-            Self::Digest { .. } => "memory digest",
-            Self::Promote { .. } => "memory promote",
-            Self::Decay { .. } => "memory decay",
-            Self::Embed { .. } => "memory embed",
-            Self::BatchCritic { .. } => "memory batch-critic",
-            Self::Forget { .. } => "memory forget",
-            Self::Demote { .. } => "memory demote",
-            Self::Purge { .. } => "memory purge",
-            Self::Consolidate { .. } => "memory consolidate",
-            Self::Share { .. } => "memory share",
-            Self::Check { .. } => "memory check",
-        }
-    }
-}
-
 impl CompassGroup {
     /// The python-CLI command name for diagnostics.
     fn name(&self) -> &'static str {
@@ -4208,7 +4658,7 @@ mod tests {
     }
 
     #[test]
-    fn stub_exit_is_failure_with_diagnostic() {
+    fn workflow_sync_requires_a_ref_or_all() {
         let code = run(KnowledgeCommand::Knowledge {
             command: KnowledgeGroup::Workflow {
                 command: WorkflowGroup::Sync {
@@ -4226,9 +4676,12 @@ mod tests {
 
     #[test]
     fn py_title_and_word_match_track_python() {
-        assert_eq!(py_title("golden-capture_rule"), "Golden-Capture_Rule");
-        assert_eq!(py_title("release notes v2"), "Release Notes V2");
-        assert_eq!(py_title("it's a title"), "It'S A Title");
+        assert_eq!(
+            tools_km::py_title("golden-capture_rule"),
+            "Golden-Capture_Rule"
+        );
+        assert_eq!(tools_km::py_title("release notes v2"), "Release Notes V2");
+        assert_eq!(tools_km::py_title("it's a title"), "It'S A Title");
         assert!(has_word("call main() to start", "main"));
         assert!(!has_word("domain", "main"));
         assert!(!has_word("mainframe", "main"));
