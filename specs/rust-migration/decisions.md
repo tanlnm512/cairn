@@ -410,3 +410,36 @@ distribution decision — the next unused id is D-013.)
   pip-installed sidecar is present — the stub says so by name. No new Rust
   dependency. Revisit trigger: a maintained petgraph-compatible Louvain with
   a documented networkx-order guarantee, or real usage demand.
+
+## D-014: `prs`, `bench`, `eval` stay on the PyPI CLI — no Rust port (4c-6)
+
+- **What**: `cairn prs`, `cairn bench` and `cairn eval` are not ported to
+  `cairn-cli`. The binary routes all three to one stub arm (`pypi_only` in
+  `cmds_core.rs`) that accepts any trailing arguments and exits 1 naming the
+  PyPI CLI — the D-013 shape — so no `not_ported` placeholder arm remains
+  (G4c). The Python CLI keeps serving them unchanged, and no `cli_golden.py`
+  case is added (the gate contracts ported commands only). At 4e they get no
+  Rust home: harness code that still has a consumer (the CI perf-regression
+  gate in `ci.yml`, the README benchmark reproduction, the release-checklist
+  budget recalibration) re-homes under `scripts/` as standalone developer
+  scripts driving the binary; the rest leaves with the engine (4e-4 already
+  lists `bench` in the deletion set).
+- **Why**: all three are developer-workflow surfaces — none is an MCP tool,
+  none is in the AGENTS.md CLI fallback, none is on an agent hot path.
+  `bench` (`cli/bench.py` + `bench/*`, ~3,800 lines, plus the `[bench]`
+  `datasets` extra and SWE-bench git checkouts) and `eval` (`eval.py`, ~620
+  lines) measure the Python engine itself, so a Rust port is a different
+  harness over a different engine: the committed `benchmarks/baselines/*`
+  would not be comparable and a differential golden over timing output is
+  meaningless. The Rust engine's performance record already has its
+  `scripts/` home (`baseline.py`, `closure_bench.py`; 4d-4). `prs`
+  (`cli/prs.py` + `graph/prs*.py`, ~500 lines) is portable, but its
+  `--conflicts` leg consumes the `communities` tables D-013 keeps on the
+  Python sidecar; a binary `prs` would be partial, and keeping the three
+  together leaves one coherent install channel.
+- **Cost**: binary-only installs (brew/binstall) lose `prs`/`bench`/`eval` —
+  the stub says so by name. No new Rust dependency. Constraint on 4d-2: the
+  exec shim must keep these three (and D-013 `communities`) on the Python
+  side instead of exec'ing the binary for them, or a PyPI user is bounced
+  back to the CLI they are already on. Revisit trigger: a benchmark harness
+  rewritten to drive the binary, or demand for `prs` without `communities`.

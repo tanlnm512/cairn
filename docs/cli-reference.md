@@ -18,7 +18,9 @@ Two builds provide the surface during the transition window:
   reads/writes (`knowledge` minus `ingest`/`rebuild`/`embed`, `memory` minus
   the `reflect`/`evolve`/`capture`/`embed`/`batch-critic`/`consolidate`
   maintenance verbs, `wiki search`, `compass list|validate`). A command
-  outside its set exits non-zero with a named diagnostic.
+  outside its set exits non-zero with a named diagnostic. `prs`, `bench` and
+  `eval` are developer-workflow commands served by the PyPI CLI only — not
+  pending ports: the binary exits 1 and names it.
 - **The PyPI CLI** (`pip install cairn-intel`) carries the complete surface
   below and remains authoritative where the two differ.
 
@@ -166,6 +168,8 @@ commands.
 
 ### `cairn prs`
 
+- PyPI CLI only (developer-workflow command): the binary exits 1 and names
+  it, whatever flags follow.
 - One read-only triage command fusing GitHub PR state with the local graph.
   The default view lists open PRs from `gh` over the workspace's remote as a
   six-column table — `PR`, `Title`, `Branch`, `Author`, `CI`, `Review`. CI
@@ -316,8 +320,8 @@ PyPI-CLI commands.
 | `cairn doctor` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). 12 checks: the 11 store-internal ones — including `memory_staleness` (WARN when tribal memories older than 30d have zero `memory_refs` in that window — write-only memory) and `edge_signals` (WARN when reference edges predate the `edges` signal columns `ref_name`/`receiver_type`/`call_arity` — repair runs name-only until the store is rebuilt; run `cairn build`) — plus `environment` — store existence, client-registration consistency (FAIL on a provable wrong-store or unreachable daemon endpoint; cairn-owned stdio/SSE registrations are flagged and, under `--fix`, repointed to the URL+key form), platform supportability, binary coherence. Emitted last, also on the db-unavailable degraded path. |
 | `cairn metrics` / `report` | tool-metrics and health reports |
 | `cairn validate` / `validate-paths` / `verify` | store integrity checks |
-| `cairn bench` | performance suites |
-| `cairn eval` | retrieval evaluation |
+| `cairn bench` | performance suites — PyPI CLI only (developer harness; the binary exits 1 and names it) |
+| `cairn eval` | retrieval evaluation — PyPI CLI only (developer harness; the binary exits 1 and names it) |
 | `cairn viz [--export FILE]` | render graph diagrams; `--export` writes one self-contained HTML file |
 | `cairn hooks install|uninstall` | manage the cairn git hooks — post-commit + post-checkout (see [below](#cairn-hooks)) |
 | `cairn version` / `upgrade` | version and self-upgrade |

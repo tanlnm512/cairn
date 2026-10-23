@@ -67,7 +67,9 @@ cairn bench --compare before.json     # flags ops >15% slower; exits 2 on regres
 ```
 
 The default `hash` embed backend is dependency-free, so this runs on a plain
-install. See `docs/cli-reference.md` for the full `cairn bench` surface.
+install. `bench` is a PyPI-CLI command — run it from the development install
+above; the Rust binary exits 1 and names it. See `docs/cli-reference.md` for
+the full `cairn bench` surface.
 
 ## Project layout
 

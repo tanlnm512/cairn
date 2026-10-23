@@ -91,11 +91,11 @@ pub enum CoreCommand {
     /// Review-context pack and review-loop hooks for a change.
     Review(ReviewArgs),
     /// List open PRs with CI and review state from gh.
-    Prs,
+    Prs(PypiOnlyArgs),
     /// Run performance, scalability, or agent-effort benchmarks.
-    Bench,
+    Bench(PypiOnlyArgs),
     /// Run retrieval evaluation harness across corpora.
-    Eval,
+    Eval(PypiOnlyArgs),
     /// Generate visual diagrams from the graph.
     Viz(VizArgs),
 }
@@ -108,7 +108,7 @@ pub enum DataflowCommand {
     Lookup(DataflowLookupArgs),
 }
 
-/// Run a core command; unported surfaces keep the Phase 3a stub diagnostic.
+/// Run a core command.
 pub fn run(command: CoreCommand) -> ExitCode {
     match command {
         CoreCommand::Init(args) => init(args),
@@ -144,55 +144,9 @@ pub fn run(command: CoreCommand) -> ExitCode {
         CoreCommand::Ask(args) => ask(args),
         CoreCommand::Context(args) => context(args),
         CoreCommand::Review(args) => review(args),
-        other => not_ported(other.name()),
-    }
-}
-
-fn not_ported(name: &str) -> ExitCode {
-    display::error(&format!(
-        "cairn {name} is not implemented in the Rust CLI yet"
-    ));
-    ExitCode::FAILURE
-}
-
-impl CoreCommand {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Init { .. } => "init",
-            Self::Config { .. } => "config",
-            Self::Build { .. } => "build",
-            Self::ImportScip { .. } => "import-scip",
-            Self::Stats { .. } => "stats",
-            Self::Checkpoint { .. } => "checkpoint",
-            Self::Update { .. } => "update",
-            Self::Def { .. } => "def",
-            Self::Callers { .. } => "callers",
-            Self::Search { .. } => "search",
-            Self::Callees { .. } => "callees",
-            Self::Impact { .. } => "impact",
-            Self::Deps { .. } => "deps",
-            Self::FederatedSearch { .. } => "federated-search",
-            Self::Semantic(_) => "semantic",
-            Self::Embed(_) => "embed",
-            Self::Grep(_) => "grep",
-            Self::Map(_) => "map",
-            Self::Tree { .. } => "tree",
-            Self::Pack(_) => "pack",
-            Self::Path { .. } => "path",
-            Self::Ask(_) => "ask",
-            Self::Context(_) => "context",
-            Self::Taint { .. } => "taint",
-            Self::Blast(_) => "blast",
-            Self::Communities(_) => "communities",
-            Self::Dataflow { .. } => "dataflow",
-            Self::Rationale(_) => "rationale",
-            Self::Review(_) => "review",
-            Self::Prs => "prs",
-            Self::Bench => "bench",
-            Self::Eval => "eval",
-            Self::Viz(_) => "viz",
-        }
+        CoreCommand::Prs(_) => pypi_only("prs"),
+        CoreCommand::Bench(_) => pypi_only("bench"),
+        CoreCommand::Eval(_) => pypi_only("eval"),
     }
 }
 
@@ -3550,6 +3504,17 @@ fn communities(_args: crate::cmds_core::CommunitiesArgs) -> ExitCode {
     ExitCode::FAILURE
 }
 
+// --- cairn prs / bench / eval ------------------------------------------------------
+
+/// prs/bench/eval handler: the developer-workflow surface stays on the PyPI CLI.
+fn pypi_only(name: &str) -> ExitCode {
+    display::error(&format!(
+        "cairn {name} is a developer-workflow command that stays on the PyPI CLI; \
+         run it there: pip install cairn-intel"
+    ));
+    ExitCode::FAILURE
+}
+
 // --- cairn viz ---------------------------------------------------------------------
 
 /// viz handler.
@@ -4178,6 +4143,13 @@ pub struct CommunitiesArgs {
     /// Top-K hubs listed globally and per community.
     #[arg(long = "top-k", default_value_t = 10, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
     pub top_k: usize,
+}
+
+/// Opaque arguments of a PyPI-only command, so the diagnostic fires whatever the caller passed.
+#[derive(clap::Args)]
+pub struct PypiOnlyArgs {
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
+    pub rest: Vec<std::ffi::OsString>,
 }
 
 #[derive(clap::Args)]

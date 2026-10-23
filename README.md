@@ -332,7 +332,8 @@ sqlite3 "$(cairn config --db)" \
   "SELECT COUNT(*) FROM edges WHERE resolution='exact' AND target_id IS NULL"   # -> 0
 ```
 
-Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
+Run the suites yourself: `cairn bench --help` and `cairn eval --help` (PyPI
+CLI; the binary does not carry the harnesses).
 
 ## CLI Reference
 
@@ -357,12 +358,12 @@ agent-wiring commands (coverage detail:
 | `cairn pack --task "<text>" --budget <N>` | One-shot token-budgeted context block: ranked sources, blast lines, compass excerpt, memories |
 | `cairn taint --from <src> --to <sink>` | Trace inter-procedural taint paths over precise call edges (`--fuzzy` opt-in, depth-capped) |
 | `cairn review` | Diff-scoped review pack (`--base`), pre-submit memory guard (`--pre-submit [--gate]`), comment capture (`--capture-event`) |
-| `cairn prs` | Open-PR triage fusing gh with the local graph: CI/review list, per-PR graph impact (`--impact PR\|BRANCH`), merge-order risk (`--conflicts`), `--json`; read-only on both sides |
+| `cairn prs` | Open-PR triage fusing gh with the local graph: CI/review list, per-PR graph impact (`--impact PR\|BRANCH`), merge-order risk (`--conflicts`), `--json`; read-only on both sides (PyPI CLI) |
 | `cairn context <file>` | Compass + memory + wiki context for a file |
 | `cairn memory / compass / wiki / task / knowledge …` | The layered stores + LLM task queue (memory: `share`/`check` multi-agent verbs, `timeline <symbol>`, `search --as-of <date>`) |
 | `cairn install-agents` / `cairn uninstall` | Wire / remove agent integration |
 | `cairn upgrade` | In-place update from PyPI (`--check` to preview; PyPI CLI) |
-| `cairn eval` / `cairn bench` | Retrieval-quality / performance harnesses |
+| `cairn eval` / `cairn bench` | Retrieval-quality / performance harnesses (PyPI CLI) |
 | `cairn doctor` | 11 health checks (PASS/WARN/FAIL; exit code gates CI) |
 | `cairn report` | Redacted diagnostic bundle for bug reports (never uploads) |
 
