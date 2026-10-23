@@ -387,3 +387,26 @@ distribution decision — the next unused id is D-013.)
   rejecting PyO3: a second engine artifact to keep golden-equal, an abi3
   build of the engine, and a wheel channel no longer byte-identical to the
   checksummed tarball/brew artifacts.
+
+## D-013: `communities` (Louvain) stays the Python `[graph-analytics]` sidecar (4c-3)
+
+- **What**: `cairn communities` is not ported to `cairn-cli`. The Rust binary
+  keeps a stub arm that exits 1 naming the sidecar (the same shape as the
+  `[ingest]` ruling); networkx Louvain keeps serving the command from the
+  PyPI package (`pip install 'cairn-intel[graph-analytics]'`).
+- **Why**: plan §9 lists Louvain as a port-or-sidecar decision, and both the
+  dependency cost and the parity risk land on the port side. petgraph ships
+  no Louvain, so a port means either an unestablished community-detection
+  crate or a hand-rolled implementation — a new D-### dependency either way.
+  Worse, the Python behaviour of record is networkx's seeded
+  `louvain_communities`, whose partition output depends on its exact
+  iteration/tie-break order; matching it byte-for-byte in an independent
+  implementation is not a credible golden, and accepting a divergent
+  partition would silently change every `communities` and
+  `symbol_communities` table row versus the Python CLI. The command is
+  exploratory analytics over a persisted table, not on any agent hot path,
+  so the sidecar costs little.
+- **Cost**: binary-only installs (brew/binstall) lose `communities` until a
+  pip-installed sidecar is present — the stub says so by name. No new Rust
+  dependency. Revisit trigger: a maintained petgraph-compatible Louvain with
+  a documented networkx-order guarantee, or real usage demand.

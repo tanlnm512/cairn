@@ -3,6 +3,7 @@
 pub mod builder;
 pub mod closure;
 pub mod config;
+pub mod dataflow;
 pub mod embeddings;
 pub mod gitignore;
 pub mod incremental;

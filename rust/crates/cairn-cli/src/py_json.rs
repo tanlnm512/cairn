@@ -49,6 +49,60 @@ pub fn dumps_compact(value: &Value) -> String {
     out
 }
 
+/// Serialize like python `json.dumps(value, indent=2, sort_keys=True)`.
+pub fn dumps_sorted(value: &Value) -> String {
+    let mut out = String::new();
+    write_sorted(&mut out, value, 0);
+    out
+}
+
+fn write_sorted(out: &mut String, value: &Value, level: usize) {
+    match value {
+        Value::Object(map) => {
+            if map.is_empty() {
+                out.push_str("{}");
+                return;
+            }
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, key) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push('\n');
+                out.push_str(&"  ".repeat(level + 1));
+                write_string(out, key);
+                out.push_str(": ");
+                write_sorted(out, &map[*key], level + 1);
+            }
+            out.push('\n');
+            out.push_str(&"  ".repeat(level));
+            out.push('}');
+        }
+        Value::Array(items) => {
+            if items.is_empty() {
+                out.push_str("[]");
+                return;
+            }
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push('\n');
+                out.push_str(&"  ".repeat(level + 1));
+                write_sorted(out, item, level + 1);
+            }
+            out.push('\n');
+            out.push_str(&"  ".repeat(level));
+            out.push(']');
+        }
+        Value::String(s) => write_string(out, s),
+        other => out.push_str(&serde_json::to_string(other).unwrap_or_else(|_| "null".into())),
+    }
+}
+
 fn write_value(out: &mut String, value: &Value, indent: Option<usize>, level: usize) {
     match value {
         Value::Object(map) => {

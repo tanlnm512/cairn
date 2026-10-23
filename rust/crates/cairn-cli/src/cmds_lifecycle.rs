@@ -177,13 +177,14 @@ pub fn run_sync(args: SyncArgs) -> ExitCode {
     let closure_built = table_has_rows(&conn, "transitive_edges");
     let timer = Instant::now();
     let description = format!("Syncing {} files", changed.len());
-    plain_progress_draw(&description, 0, changed.len(), 0.0);
+    plain_progress_draw(&description, 0, changed.len(), 0.0, "files");
     let result = cairn_build::incremental::reindex_paths(&mut conn, &workspace, &changed);
     plain_progress_draw(
         &description,
         changed.len(),
         changed.len(),
         timer.elapsed().as_secs_f64(),
+        "files",
     );
     println!();
     let mut errors = result.errors.clone();
@@ -212,23 +213,37 @@ pub fn run_sync(args: SyncArgs) -> ExitCode {
         "sync",
         started,
         timer.elapsed().as_secs_f64(),
-        result.reindexed,
+        Some(result.reindexed as i64),
+        None,
         result.deleted,
     );
     ExitCode::SUCCESS
 }
 
-/// The non-TTY `_PlainTextProgress` start/stop draws around the reindex: two
-/// `\r`-overwritten segments of one line, single trailing newline on stop.
-fn plain_progress_draw(description: &str, completed: usize, total: usize, elapsed_s: f64) {
-    let pct = (100 * completed).checked_div(total).unwrap_or(0);
-    let filled = 20 * completed / total.max(1);
-    let bar = format!("{}{}", "█".repeat(filled), "░".repeat(20 - filled));
-    print!(
-        "\r{description}  [{bar}] {}/{} files  {pct}%  {elapsed_s:.0}s",
-        crate::cmds_core::fmt_int(completed as i64),
-        crate::cmds_core::fmt_int(total as i64)
-    );
+/// One non-TTY `_PlainTextProgress` draw: determinate when `total` > 0,
+/// count-only otherwise; callers emit the trailing newline on stop.
+pub fn plain_progress_draw(
+    description: &str,
+    completed: usize,
+    total: usize,
+    elapsed_s: f64,
+    unit: &str,
+) {
+    let pct = (100 * completed).checked_div(total);
+    if let Some(pct) = pct {
+        let filled = 20 * completed / total;
+        let bar = format!("{}{}", "█".repeat(filled), "░".repeat(20 - filled));
+        print!(
+            "\r{description}  [{bar}] {}/{} {unit}  {pct}%  {elapsed_s:.0}s",
+            crate::cmds_core::fmt_int(completed as i64),
+            crate::cmds_core::fmt_int(total as i64)
+        );
+    } else {
+        print!(
+            "\r{description}  {} {unit}  {elapsed_s:.0}s",
+            crate::cmds_core::fmt_int(completed as i64)
+        );
+    }
     let _ = std::io::stdout().flush();
 }
 
@@ -243,12 +258,15 @@ fn telemetry_off() -> bool {
         .unwrap_or(false)
 }
 
-fn record_build_run(
+/// Record a build_runs row; `files`/`symbols` are column choices per kind
+/// (build/sync carry files, embed carries symbols).
+pub fn record_build_run(
     db: &str,
     kind: &str,
     started: std::time::SystemTime,
     duration_s: f64,
-    files: usize,
+    files: Option<i64>,
+    symbols: Option<i64>,
     skipped: usize,
 ) {
     if telemetry_off() {
@@ -278,8 +296,8 @@ fn record_build_run(
             duration_s,
             Option::<String>::None,
             Option::<i64>::None,
-            files as i64,
-            Option::<i64>::None,
+            files,
+            symbols,
             Option::<i64>::None,
             Option::<i64>::None,
             Option::<i64>::None,
