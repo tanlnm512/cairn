@@ -7,6 +7,8 @@
 #   2. `cairn config --json` is stdout-pure JSON with the C-4 store keys;
 #   3. the bundled binary is discoverable: daemon_impl() defaults to rust and
 #      rust_bin() resolves to <site-packages>/cairn/_bin/cairn, which also runs.
+#   4. the console script execs the resolved binary: CAIRN_RUST_BIN pinned to
+#      a marker script, the original argv and exit code come back through it.
 #
 # Exit 0 = all pass, 1 = fail. Removes the injected binary on exit so the
 # source tree returns to a source-checkout state.
@@ -81,5 +83,18 @@ r = subprocess.run([bundled, "--version"], capture_output=True, text=True)
 assert r.returncode == 0, r.stderr
 print(f"discovery OK: impl=rust bundled binary runs ({r.stdout.strip() or bundled})")
 EOF
+
+# --- console-script exec shim (4d-2) -------------------------------------------
+FAKE="$WORK/fake-engine"
+printf '#!/bin/sh\necho EXEC-SHIM "$@"\nexit 7\n' > "$FAKE"
+chmod +x "$FAKE"
+for args in "--version" "config --json"; do
+  out="$(CAIRN_RUST_BIN="$FAKE" "$CAIR" $args 2>/dev/null)"
+  code=$?
+  [ "$out" = "EXEC-SHIM $args" ] \
+    || fail "console script did not exec the resolved binary for '$args' (got: $out)"
+  [ "$code" -eq 7 ] \
+    || fail "console script lost the exec'd binary exit code for '$args' (got $code)"
+done
 
 echo "wheel-smoke: PASS ($WHEEL)"

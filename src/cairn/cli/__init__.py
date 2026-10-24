@@ -1,8 +1,8 @@
 """cairn CLI: cairn commands."""
 from __future__ import annotations
 
-# Re-export main for `from cairn.cli import main` (entry point in pyproject.toml
-# is `cairn.cli:main`, and tests import it directly).
+# Re-export main for `from cairn.cli import main` (tests and the rust sidecar
+# spawn import it directly; the console entry point is cairn.console:main).
 from .main import main
 from .blast import blast
 
