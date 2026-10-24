@@ -63,6 +63,33 @@ def test_env_override_beats_bundled_binary(monkeypatch, tmp_path):
     assert lc.rust_bin() == str(env_bin)
 
 
+def test_windows_console_launcher_keeps_python_default(monkeypatch, tmp_path):
+    """On a Windows host the PATH legs never run: pip's native cairn.exe launcher must not flip the default to rust; CAIRN_RUST_BIN still overrides."""
+    from cairn import paths
+    from cairn.mcp_server import lifecycle as lc
+
+    monkeypatch.setattr(paths, "BUNDLED_BIN_DIR", tmp_path / "_no_bin")
+    monkeypatch.delenv("CAIRN_RUST_BIN", raising=False)
+    # pip's Windows console script is a native PE launcher also named cairn(.exe);
+    # it passes the #!-only native check, so only skipping the legs tells it apart.
+    launcher = tmp_path / "cairn.exe"
+    launcher.write_bytes(b"MZ\x90\x00" + b"\x00" * 64)
+    monkeypatch.setattr(lc, "shutil_which", lambda name: str(launcher))
+
+    monkeypatch.setattr(lc, "_is_windows_host", lambda: True)
+    assert lc.rust_bin() is None
+    assert lc.daemon_impl() == "python"
+
+    env_bin = tmp_path / "env-cairn"
+    env_bin.write_bytes(_STUB_BYTES)
+    monkeypatch.setenv("CAIRN_RUST_BIN", str(env_bin))
+    assert lc.rust_bin() == str(env_bin)
+
+    monkeypatch.delenv("CAIRN_RUST_BIN", raising=False)
+    monkeypatch.setattr(lc, "_is_windows_host", lambda: False)
+    assert lc.rust_bin() == str(launcher)
+
+
 def test_cli_default_start_execs_bundled_binary(monkeypatch, tmp_path):
     """A cold connect with no impl env starts the bundled binary by default; explicit python still wins."""
     from click.testing import CliRunner

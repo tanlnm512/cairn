@@ -117,14 +117,22 @@ def daemon_impl() -> str:
     return "rust" if rust_bin() is not None else "python"
 
 
+def _is_windows_host() -> bool:
+    return os.name == "nt"
+
+
 def rust_bin() -> str | None:
-    """Rust daemon binary path: CAIRN_RUST_BIN, then the bundled package binary, then a native `cairn` on PATH or ~/.local/bin; None when absent."""
+    """Rust daemon binary path: CAIRN_RUST_BIN, then the bundled package binary, then a native `cairn` on PATH or ~/.local/bin (non-Windows); None when absent."""
     cand = os.environ.get(RUST_BIN_ENV)
     if cand and Path(cand).exists():
         return cand
     bundled = bundled_binary()
     if bundled is not None:
         return str(bundled)
+    # No Windows engine ships: pip's console launcher is a native cairn.exe that
+    # passes the #!-only native check, so PATH there can never prove an engine.
+    if _is_windows_host():
+        return None
     for cand in (shutil_which("cairn"), str(Path.home() / ".local" / "bin" / "cairn")):
         if cand and Path(cand).exists() and _is_native_bin(Path(cand)):
             return cand

@@ -443,3 +443,47 @@ distribution decision — the next unused id is D-013.)
   side instead of exec'ing the binary for them, or a PyPI user is bounced
   back to the CLI they are already on. Revisit trigger: a benchmark harness
   rewritten to drive the binary, or demand for `prs` without `communities`.
+
+## D-015: Windows stays on the Python engine — no Rust release target (4d-1)
+
+- **What**: `release-rust.yml` gains no Windows target and the Windows wheels
+  keep bundling nothing (release.yml build matrix, `CIBW_ARCHS_WINDOWS:
+  AMD64`); the engine on Windows is the Python package the wheel already
+  ships. `rust_bin()` (src/cairn/mcp_server/lifecycle.py) consults the PATH
+  and `~/.local/bin` legs only on non-Windows hosts — `CAIRN_RUST_BIN` and
+  the bundled-package leg stay cross-platform, everything else falls through
+  so the daemon default stays python. Pinned by
+  `tests/test_wheel_binary_discovery.py::test_windows_console_launcher_keeps_python_default`.
+- **Why**: the blocker is a porting campaign, not a matrix line — the
+  workspace does not compile on Windows: unguarded `std::os::unix` imports in
+  `cairn-cli` (`targz.rs` PermissionsExt, `agent_install.rs` `write_file`
+  chmod, `cmds_core.rs` OpenOptionsExt) and `cairn-build` (`scip/indexers.rs`
+  PermissionsExt), the non-macOS daemonize path (`cairn-daemon` `lifecycle.rs`
+  `spawn_daemonized`, `CommandExt`), and the `flock(2)` build lock
+  (`cairn-query` `tools_km.rs`). The campaign already ruled Windows out of
+  the Rust matrix (Roll-up above; D-011's platform mapping). The CI cost of
+  the alternative is permanent: a `windows-latest` release leg compiles the
+  full C surface per tag — 15 grammar crates (~34 MB of parser tables,
+  D-005) + bundled SQLite (D-002) + sqlite-vec (D-003) under MSVC — plus its
+  rust-cache namespace, and the G4a parity oracles would need a Windows leg
+  before "green on main" means anything there; plan §12 already carries
+  "CI cost doubles during transition" against a solo maintainer. Meanwhile
+  Windows loses nothing: its wheel ships the full Python engine, the
+  behavioral spec of record until 4e.
+- **Why the code change**: D-011's recorded Windows behavior ("discovery
+  falls through and the daemon default stays python") did not hold in code —
+  `shutil.which("cairn")` on Windows resolves pip's native `Scripts\cairn.exe`
+  launcher, which passes the `#!`-only native-binary check, so `daemon_impl()`
+  flipped to rust pointing at a Python launcher. The unix-only PATH legs make
+  the recorded fall-through real.
+- **Cost**: Windows keeps the Python engine's RSS/perf profile — the
+  finalized D-007–D-010 pins are unix-only. G4d's `wheel_smoke.sh` gate
+  covers the binary-carrying wheel platforms (macOS arm64, manylinux
+  x86_64/aarch64), not Windows. Constraint on 4d-2: the console-script shim
+  resolves through this same `rust_bin()` discovery, so a Windows install
+  (no binary, launcher on PATH) stays on the Python CLI. Constraint on 4e:
+  when the Python engine leaves the wheel, the Windows leg is dropped from
+  release.yml the way musllinux and Intel macOS were at 0.14.0 — an
+  engine-less Windows wheel would break every `cairn` command. Revisit
+  trigger: real Windows demand, which requires the unix-API port above plus
+  the MSVC CI leg.
