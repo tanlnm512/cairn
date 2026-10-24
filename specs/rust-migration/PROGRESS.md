@@ -68,8 +68,8 @@ everything not landed at this HEAD.
 | Gate | Verdict | Recorded check outcomes |
 |---|---|---|
 | G0 | PASS | round 0: `cargo test` exit 0, 26 goldens committed, rust CI leg green |
-| G1 | PASS (round 3) | `parity.py --store self`: rounds 0–2 exit 1, round 3 exit 0 — 26/26 tools golden-equal on the self store; yarl/attrs each reached 26/26 repeatedly with an intermittent cap-tie residual (see Remaining work) |
-| G2 | PASS (round 0) | `g2_check.sh` exit 0 — python vs rust canonical dumps content-equal on the self-store source (25 tables, 113,051 rows) and a probe corpus; rust build 3.70s vs python 5.76s |
+| G1 | PASS (round 3) | `parity.py --store self`: rounds 0–2 exit 1, round 3 exit 0 — 26/26 tools golden-equal on the self store; yarl/attrs each reached 26/26 repeatedly with an intermittent cap-tie residual (see Remaining work). The gate's "daemon RSS ≤ 60% of Python's; no tool regresses p95" legs (plan §5) were not measured for this verdict (Remaining work item 6); measured at 4d-4 — RSS MET, p95 no-regression NOT MET (21/26, 11/26, 17/26 tools) — see "4d-4 gate measurements" below |
+| G2 | PASS (round 0) | `g2_check.sh` exit 0 — python vs rust canonical dumps content-equal on the self-store source (25 tables, 113,051 rows) and a probe corpus; rust build 3.70s vs python 5.76s. The gate's "closure ≥5× faster on the blowup case" leg (plan §6) was not measured for this verdict (Remaining work item 6); measured at 4d-4 — 1.14× on the scaling gate point, NOT MET — see "4d-4 gate measurements" below |
 | G3 | PASS (round 1) | round 0: `cargo test` exit 101, `cli_golden.py` exit 1; round 1: `cargo test --workspace` exit 0 and `cli_golden.py` 19/19 exit 0 |
 
 Current-HEAD verification run for this ledger: `cargo clippy --workspace
@@ -206,3 +206,48 @@ Wave 3 covered the CLI surface port (4c), one commit each on
 | 4c-5 | done | ask, context, review ported (RouteOutcome::route_query in tools_km.rs, review engine as cairn-query review.rs, click-parity UsageError output in cmds_core.rs handlers, not_ported stub arms removed), AGENTS.md fallback section + docs/cli-reference.md Query coverage updated; the gate-2 fmt failure (a line edited after the earlier fmt pass) fixed via cargo fmt --all then the exact hook invocations re-run (cargo-fmt/cargo-clippy Passed on cmds_core.rs, whitespace-only change); re-verified on the final tree: targeted cargo tests green except the documented daemon quirk, the 19 ask/context/review golden legs 19/19 (full cli_golden.py 153/153 passed pre-reformat, the only change since is the whitespace collapse); remaining not_ported arms were prs/bench/eval (4c-6); docs/cli-reference.md still carries stale PyPI-CLI claims for the 4c-2/4c-3/4c-4 families — those waves' doc debt, out of 4c-5 scope | efb6ce2 |
 | 4c-6 | done | prs/bench/eval resolved by ruling (D-014 recorded in decisions.md after escalating the specs/ edit ban; entry number verified free with D-013 highest): they stay on the PyPI CLI — bench (~3,800 lines, `[bench]` datasets extra, SWE-bench checkouts) and eval measure the Python engine itself so a Rust port would be an incomparable harness (the Rust engine's perf home is scripts/rust_migration, plan 4e-4 lists bench in the deletion set), and prs' --conflicts leg consumes the D-013 communities sidecar; Rust side: Prs/Bench/Eval take a hidden trailing-var-arg PypiOnlyArgs (so `bench --suite perf --json` reaches the diagnostic instead of clap exit 2) and route to a pypi_only(name) handler exiting 1 naming the PyPI CLI — the D-013 shape; the dead not_ported catch-all and CoreCommand::name() deleted, zero not_ported arms remain (G4c); failing-first via tests/pypi_only_commands.rs (placeholder message + clap exit 2 observed pre-fix); docs updated (cli-reference, README, CONTRIBUTING); no cli_golden case added for ruled commands (D-013 precedent) | c2e411d |
 | 4c-7 | done | Python's _apply_scip_overlay (builder.py:291) ported into the Rust builder: pub builder::apply_scip_overlay runs as a fifth populate() pass after import-edge materialization (mirroring the builder.py:539 call site), reusing scip::importer::import_scip_file and generate_index_result as-is (no runtime-missing/install-hint branch, per the tribal-memory ruling); BuildSummary gained Option<ScipReport> scip (skip_serializing_if, matching Python's conditional dict key), the build panel renders the scip row, skip-row writes deduped into importer::replace_skip_row; failing-first via rust/crates/cairn-build/tests/builder_scip_overlay.rs ("configured index must land scip edges", 0 edges pre-fix), three tests cover applied-overlay+summary, corrupt-index degradation, and generate_missing=false; goldens insensitive (no golden corpus carries a root cairn.json, overlay is a no-op there); cairn-build 76 passed, cairn-cli 123/124 (documented daemon quirk), Python twin 9 passed with no defect; the cairn-cli sync/update leg still awaits its own wiring (should call apply_scip_overlay with generate_missing=false) | 16df517 |
+
+### 4d-4 gate measurements (G1 RSS/p95 legs, G2 closure leg)
+
+These are the performance legs of G1 ("daemon RSS ≤ 60% of Python's; no tool
+regresses p95 latency", plan §5) and G2 ("closure ≥5× faster on the blowup
+case", plan §6) that the Gate verdicts table above recorded without
+measurement (Remaining work item 6); G4d itself (plan §15: `wheel_smoke.sh`
+green with `cairn <cmd>` resolving to the binary) is not recorded here.
+Recorded by `baseline.py --impl rust` with a same-day Python control per
+corpus (20 timed calls per tool, sequential runs) and `closure_bench.py
+--edge-factor 5` on the 1000-file medium scaling gate point; the full record
+(method deltas, per-tool tables, attribution probes, raw artifacts) is the
+"Rust engine measurements (4d-4)" section of `baselines.md`. Machine: Apple
+M4 Pro, 12 CPUs, macOS 27.0.1; binary built from this tree (cairn-intel
+0.23.0); self corpus at 848 files / 11,828 symbols (Python source growth
+since P0-2; `rust/` stays excluded by the root `cairn.json`), yarl and attrs
+byte-equal to their P0-2 pins.
+
+| Leg | cairn self | yarl | attrs | Verdict |
+|---|---:|---:|---:|---|
+| G1: daemon RSS peak ≤ 60% of Python | 58.7% (125,232 / 213,424 KiB) | 29.6% | 30.8% | MET |
+| G1: per-tool p95 no worse than Python (26 tools, same-day control) | 21/26 | 11/26 | 17/26 | NOT MET |
+| G2: closure ≥ 5× on the blowup case | 1.14× (1000-file ×5: python 3.99 s, rust 3.50 s, 803,934 identical rows); 1.32× on self ×1 | — | — | NOT MET |
+
+Attribution, each measured: self-store graph tools are 100–500× faster in
+Rust because the Python daemon pays a ~3.5 s per-call freshness walk on this
+checkout (`_detect_changed` 3.51 s warm, its `iter_source_files` walk 3.37 s
+over the 243k-entry tree) and the Rust daemon runs no
+per-call guard; the small-store p95 misses come from the Rust daemon opening
+a fresh SQLite connection per call (300 raw open→query→close cycles reproduce
+the 10–25 ms tail on ~7% of calls; a persistent connection answers in 8 µs;
+Python pools per thread with an inode swap check in `_server_core._conn`) —
+follow-up: port that pool to `cairn-daemon` under the 4b-13 swap semantics;
+`path` on self is a steady 437 ms on a wide pattern (flagged);
+`trace_flow`/`ask_compass`/`knowledge_search` run 2–5× slower at p50
+(millisecond scale); the closure is insert-bound in both engines at depth 4
+(Python spends 3.2 s of 4.3 s in the `transitive_edges` insert), so the ≥5×
+wall target needs a re-ruling — the Rust gain is peak WAL (58 MB vs 187 MB
+at ×5, 27 MB vs 115 MB on self).
+
+Pins: D-007–D-010 finalized in `decisions.md` against crates.io on
+2026-10-24 — notify 8.2.0 and yaml-rust2 0.13.0 are the newest stable
+releases, prost 0.14.4 the newest stable with 0.14.0/0.14.2 yanked, minijinja
+3.0.1 stays pinned below 3.0.2/3.0.3; all four are exact `=`-pins in the
+manifests and `rust/Cargo.lock` with CC0-1.0 on the cargo-deny allowlist.

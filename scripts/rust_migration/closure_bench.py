@@ -41,31 +41,15 @@ def _reexec_repo_venv() -> None:
 
 _reexec_repo_venv()
 
-import baseline  # reuse: corpus staging, python closure + WAL-sampling harness
+import baseline  # reuse: corpus staging, python closure + WAL-sampling harness, rust binary
 from cairn.graph.schema import get_db
 
-RUST_BIN = REPO_ROOT / "rust" / "target" / "release" / "cairn"
+ensure_rust_binary = baseline.ensure_rust_binary
 
 
 def _note(msg: str) -> None:
     """Progress goes to stderr: stdout is the verdict channel."""
     print(f"[closure-bench] {msg}", file=sys.stderr, flush=True)
-
-
-def ensure_rust_binary() -> Path:
-    """Build the release cairn binary when missing."""
-    if RUST_BIN.exists():
-        return RUST_BIN
-    import shutil
-
-    cargo = shutil.which("cargo") or Path.home() / ".cargo" / "bin" / "cargo"
-    _note("building rust cairn binary (release)")
-    subprocess.run(
-        [str(cargo), "build", "--release", "-p", "cairn-cli"],
-        cwd=REPO_ROOT / "rust",
-        check=True,
-    )
-    return RUST_BIN
 
 
 def copy_store(src: Path, dst: Path) -> None:
@@ -159,6 +143,13 @@ def main(argv: list[str] | None = None) -> int:
         default=REPO_ROOT,
         help="corpus workspace (default: this repo, the largest available corpus)",
     )
+    parser.add_argument(
+        "--edge-factor",
+        type=int,
+        default=1,
+        help="multiply structural edges before timing (the scaling gate's "
+        "blowup point is 5 over a 1000-file medium corpus)",
+    )
     parser.add_argument("--keep", action="store_true", help="keep the scratch directory")
     args = parser.parse_args(argv)
 
@@ -174,6 +165,17 @@ def main(argv: list[str] | None = None) -> int:
             capture_output=True,
             text=True,
         )
+        if args.edge_factor > 1:
+            from cairn.bench.scaling_suite import synthesize_structural_edges
+
+            conn = sqlite3.connect(str(base))
+            try:
+                inserted = synthesize_structural_edges(conn, factor=args.edge_factor)
+            finally:
+                conn.close()
+            _note(
+                f"synthesized {inserted} structural edge replicas (factor {args.edge_factor})"
+            )
         py_db = scratch / "py.kg"
         rs_db = scratch / "rs.kg"
         copy_store(base, py_db)
@@ -203,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({
             "suite": "rust-migration-closure-bench/1",
             "corpus": str(args.workspace),
+            "edge_factor": args.edge_factor,
             "symbols": symbols,
             "edges": edges,
             "python": py,

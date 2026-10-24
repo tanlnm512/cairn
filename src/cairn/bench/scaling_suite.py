@@ -43,10 +43,8 @@ COMMUNITIES_BUDGET_WALL_SECONDS = 10.0
 def synthesize_structural_edges(
     conn: sqlite3.Connection, *, factor: int = CLOSURE_EDGE_FACTOR
 ) -> int:
-    """Insert ``factor - 1`` replicas per structural edge, each with a fresh id
-    and its target cyclically shifted by the replica index over the sorted
-    symbol ids (name-only targets shift over the sorted symbol names), then
-    return the number of rows inserted."""
+    """Insert ``factor - 1`` replicas per structural edge, each target cyclically
+    shifted over the sorted symbol ids (or known names); return rows inserted."""
     if factor < 2:
         return 0
     from ..graph.traversal import STRUCTURAL_EDGE_KINDS
@@ -71,7 +69,7 @@ def synthesize_structural_edges(
             if tgt in id_pos:
                 shifted = ids[(id_pos[tgt] + k) % len(ids)]
                 new_tgt, new_name = shifted, id_to_name[shifted]
-            elif tname:
+            elif tname in name_pos:
                 new_name = name_domain[(name_pos[tname] + k) % len(name_domain)]
             rows.append((f"{eid}~synth{k}", src, new_tgt, new_name, kind, line, col))
     cur.executemany(

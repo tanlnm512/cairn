@@ -181,6 +181,30 @@ class TestSynthesizeStructuralEdges:
         finally:
             conn.close()
 
+    def test_replica_of_foreign_target_name_keeps_it(self, tmp_path, monkeypatch):
+        """A target_name that is no symbol's name (unresolved foreign target on
+        a real store) keeps its name and id-target instead of crashing."""
+        conn = _built_conn(tmp_path, monkeypatch)
+        try:
+            conn.execute(
+                "INSERT INTO edges (id, source_id, target_id, target_name, kind,"
+                " line, column) VALUES ('foreign~0',"
+                " (SELECT id FROM symbols LIMIT 1), NULL, 'NoSuchSymbolAnywhere',"
+                " 'calls', 1, 1)"
+            )
+            conn.commit()
+            inserted = synthesize_structural_edges(conn)
+            assert inserted > 0
+            for k in range(1, CLOSURE_EDGE_FACTOR):
+                replica = conn.execute(
+                    "SELECT target_id, target_name FROM edges WHERE id = ?",
+                    (f"foreign~0~synth{k}",),
+                ).fetchone()
+                assert replica["target_id"] is None
+                assert replica["target_name"] == "NoSuchSymbolAnywhere"
+        finally:
+            conn.close()
+
     def test_replica_targets_cyclically_shifted_over_sorted_ids(
         self, tmp_path, monkeypatch
     ):

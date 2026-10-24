@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Baseline harness measuring the PYTHON implementation for the rust-migration comparison (P0-2)."""
+"""Baseline harness measuring the python or rust engine for the rust-migration comparison (P0-2)."""
 
 from __future__ import annotations
 
@@ -44,6 +44,22 @@ _BOOT = (
     "import sys; from cairn.mcp_server.server import run; "
     "run(port=int(sys.argv[1]), host='127.0.0.1', api_key=None, stateless=False)"
 )
+
+RUST_BIN = REPO_ROOT / "rust" / "target" / "release" / "cairn"
+
+
+def ensure_rust_binary() -> Path:
+    """The release cairn binary, built when missing."""
+    if RUST_BIN.exists():
+        return RUST_BIN
+    cargo = shutil.which("cargo") or Path.home() / ".cargo" / "bin" / "cargo"
+    _note("building rust cairn binary (release)")
+    subprocess.run(
+        [str(cargo), "build", "--release", "-p", "cairn-cli"],
+        cwd=str(REPO_ROOT / "rust"),
+        check=True,
+    )
+    return RUST_BIN
 
 
 def _note(msg: str) -> None:
@@ -242,13 +258,34 @@ def seed_knowledge(scratch: Path, source_bundle: Path | None) -> int:
 
 
 class Daemon:
-    """One `cairn serve` child process bound to the scratch store."""
+    """One daemon child bound to the scratch store: the python server or `cairn serve run`."""
 
-    def __init__(self, scratch: Path, corpus_ws: Path, db_path: Path, port: int):
+    def __init__(
+        self,
+        scratch: Path,
+        corpus_ws: Path,
+        db_path: Path,
+        port: int,
+        impl: str = "python",
+    ):
         self.port = port
         self.url = f"http://127.0.0.1:{port}/mcp"
+        if impl == "rust":
+            cmd = [
+                str(ensure_rust_binary()),
+                "serve",
+                "run",
+                "--db",
+                str(db_path),
+                "--port",
+                str(port),
+                "--host",
+                "127.0.0.1",
+            ]
+        else:
+            cmd = [sys.executable, "-c", _BOOT, str(port)]
         self.proc = subprocess.Popen(
-            [sys.executable, "-c", _BOOT, str(port)],
+            cmd,
             cwd=str(REPO_ROOT),
             env=_child_env(scratch, corpus_ws, db_path),
             stdout=subprocess.PIPE,
@@ -329,10 +366,13 @@ class McpClient:
         raw = raw.strip()
         if raw.startswith("{"):
             return [json.loads(raw)]
+        # rmcp inserts empty SSE keepalive data frames; python never does.
         return [
-            json.loads(line[len("data:") :].strip())
+            json.loads(payload)
             for line in raw.splitlines()
             if line.startswith("data:")
+            for payload in (line[len("data:") :].strip(),)
+            if payload
         ]
 
     def _reconnect(self) -> None:
@@ -628,7 +668,9 @@ def choose_targets(db_path: Path, corpus_ws: Path, knowledge_dir: Path) -> dict:
 # --- orchestration ----------------------------------------------------------
 
 
-def run_baseline(workspace: Path, label: str, repeats: int, keep_scratch: bool) -> dict:
+def run_baseline(
+    workspace: Path, label: str, repeats: int, keep_scratch: bool, impl: str = "python"
+) -> dict:
     """One corpus measurement: build -> dataflow -> closure(+WAL) -> embed -> daemon latency + RSS."""
     from cairn.bench.corpus import corpus_stats
     from cairn.bench.datasource import build_artifact_stamp
@@ -682,7 +724,7 @@ def run_baseline(workspace: Path, label: str, repeats: int, keep_scratch: bool) 
 
         targets = choose_targets(db_path, corpus_ws, scratch / "home" / ".knowledge")
         port = _free_port()
-        daemon = Daemon(scratch, corpus_ws, db_path, port)
+        daemon = Daemon(scratch, corpus_ws, db_path, port, impl=impl)
         rss = {"peak_kb": 0, "final_kb": None}
         stop = threading.Event()
         sampler: threading.Thread | None = None
@@ -720,6 +762,9 @@ def run_baseline(workspace: Path, label: str, repeats: int, keep_scratch: bool) 
             daemon.stop()
         if sampler is not None:
             sampler.join()
+        # The sampler polls at 200ms; a short run can end between ticks, so the
+        # final reading floors the peak (never under-report the gate metric).
+        rss["peak_kb"] = max(rss["peak_kb"], rss["final_kb"] or 0)
         identity = corpus_identity(workspace)
         stats = corpus_stats(corpus_ws)
         live_ref = (
@@ -728,13 +773,14 @@ def run_baseline(workspace: Path, label: str, repeats: int, keep_scratch: bool) 
         return {
             "schema": SCHEMA,
             "suite": "rust-migration-baseline",
-            "impl": "python",
+            "impl": impl,
             "label": label,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "harness": "scripts/rust_migration/baseline.py",
             "reproduce": (
-                f".venv/bin/python scripts/rust_migration/baseline.py "
-                f"--workspace {workspace} --label {label} --repeats {repeats}"
+                f".venv/bin/python scripts/rust_migration/baseline.py"
+                f"{'' if impl == 'python' else f' --impl {impl}'}"
+                f" --workspace {workspace} --label {label} --repeats {repeats}"
             ),
             **build_artifact_stamp(),
             "method": {
@@ -757,6 +803,17 @@ def run_baseline(workspace: Path, label: str, repeats: int, keep_scratch: bool) 
                     "host": "127.0.0.1",
                 },
                 "knowledge_bundle_seeded_files": seeded_files,
+                **(
+                    {
+                        "store": (
+                            "python build_graph + dataflow + hash embed "
+                            "(identical-stores doctrine); the rust daemon is "
+                            "the measured engine"
+                        )
+                    }
+                    if impl == "rust"
+                    else {}
+                ),
             },
             "corpus": {
                 **identity,
@@ -767,7 +824,7 @@ def run_baseline(workspace: Path, label: str, repeats: int, keep_scratch: bool) 
             "build": build,
             "closure": closure,
             "embed": embed,
-            "daemon": {"boot_seconds": daemon.boot_seconds, "rss": rss},
+            "daemon": {"impl": impl, "boot_seconds": daemon.boot_seconds, "rss": rss},
             "tools": tools,
             "live_store_reference": live_ref,
         }
@@ -812,6 +869,12 @@ def main(argv: list[str] | None = None) -> int:
         "--out", default=None, help="Artifact JSON path (default: stdout)."
     )
     parser.add_argument(
+        "--impl",
+        choices=["python", "rust"],
+        default="python",
+        help="Engine measured by the daemon latency + RSS legs (default python).",
+    )
+    parser.add_argument(
         "--keep-scratch",
         action="store_true",
         help="Keep the scratch store for inspection.",
@@ -827,7 +890,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.repeats < 1:
         parser.error("--repeats must be >= 1")
 
-    payload = run_baseline(workspace, label, args.repeats, args.keep_scratch)
+    payload = run_baseline(
+        workspace, label, args.repeats, args.keep_scratch, impl=args.impl
+    )
     text = json.dumps(payload, indent=2)
     if args.out:
         Path(args.out).write_text(text + "\n", encoding="utf-8")

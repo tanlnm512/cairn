@@ -176,52 +176,59 @@ because those parser.c builds are what the goldens and `.kg` content encode
 - **Cost**: license MIT OR Apache-2.0. Pure Rust → unrestricted platforms.
   Binary size: small single-digit-MB order; record the measured delta at 3a.
 
-## Provisional later-batch entries
+## Later-batch entries
 
-Pins recorded now per plan §10; re-pin at the phase's entry and convert to
-firm D-### when the crate actually joins the build and cargo-deny starts
-gating it.
+Finalized at 4d-4 (2026-10-24): every crate below is in the build (exact
+`=`-pins in the cairn-build/cairn-query/cairn-cli manifests and
+`rust/Cargo.lock`) and cargo-deny gates it; versions re-checked live against
+crates.io on that date (`curl https://crates.io/api/v1/crates/<name>`).
 
-## D-007 (provisional): notify =8.2.0 — file watching (Phase 2d)
+## D-007: notify =8.2.0 — file watching (Phase 2d)
 
-- **What**: `notify` pinned `=8.2.0` (newest stable; a 9.0.0-rc.6 line exists
-  and is not taken). Default features (per-platform backends incl.
-  `macos_fsevent`/`macos_kqueue`).
+- **What**: `notify` pinned `=8.2.0`. Default features (per-platform backends incl.
+  `macos_fsevent`/`macos_kqueue`). Newest crates.io stable (checked 2026-10-24);
+  the 9.0.0-rc line remains not-taken.
 - **Why**: 2d incremental + watcher (plan.md §6), replacing the watchdog
-  extra (pyproject `watch = ["watchdog>=3.0"]`).
+  extra (pyproject `watch = ["watchdog>=3.0"]`). In the build since 2d
+  (cairn-build).
 - **Cost**: license **CC0-1.0** — flag: the P0-1 cargo-deny license
   allowlist must include CC0-1.0 explicitly. Pure Rust → unrestricted
   platforms. Graft semantics parity is the 2d gate, not the crate choice.
 
-## D-008 (provisional): prost =0.14.4 — protobuf runtime for SCIP import (Phase 2g)
+## D-008: prost =0.14.4 — protobuf runtime for SCIP import (Phase 2g)
 
-- **What**: `prost` pinned `=0.14.4`.
+- **What**: `prost` pinned `=0.14.4`. Newest crates.io stable (checked
+  2026-10-24; 0.14.0/0.14.2 are yanked).
 - **Why**: 2g SCIP import (plan.md §6). Replaces the Python arrangement of
   the checked-in `_scip_pb2.py` stub + `protobuf` runtime (pyproject.toml
   scip extra, :128-139); Rust side generates types at dev time via
   prost-build (dev-only) and ships only the `prost` runtime, preserving the
-  run-once auto-gen registry behavior.
+  run-once auto-gen registry behavior. In the build since 2g (cairn-build).
 - **Cost**: license Apache-2.0. Pure Rust → unrestricted platforms.
 
-## D-009 (provisional): minijinja =3.0.1 — dashboard templates (Phase 3b)
+## D-009: minijinja =3.0.1 — dashboard templates (Phase 3b)
 
-- **What**: `minijinja` pinned `=3.0.1`, default features. Amended at 3b
-  landing: adds `serde` (context values), `json` (`tojson`), `urlencode`,
-  and `preserve_order` (dict key order must match Jinja2's insertion order —
-  the settings/embeddings tables iterate `cfg.items()`); each is a pure-Rust
-  or serde side dependency already in the lockfile graph.
+- **What**: `minijinja` pinned `=3.0.1`, features `serde` (context
+  values), `json` (`tojson`), `urlencode`, `preserve_order` (dict key order
+  must match Jinja2's insertion order — the settings/embeddings tables
+  iterate `cfg.items()`); each is a pure-Rust or serde side dependency
+  already in the lockfile graph. Newer stable 3.0.2/3.0.3 exist (checked
+  2026-10-24) — a bump is a new amendment per the upgrade rule.
 - **Why**: 3b dashboard serving (plan.md §6), replacing `jinja2>=3.0`
   (pyproject.toml:47); required for embedding templates in the single binary.
+  In the build since 3b (cairn-cli).
 - **Cost**: license Apache-2.0. Pure Rust → unrestricted platforms.
   Compatibility flag: minijinja is Jinja2-compatible, not byte-identical —
   3b gates on reviewed human-readable output diffs (plan.md §7 3b), and any
   template needing a minijinja-incompatible construct is a spec amendment,
   not a template rewrite.
 
-## D-010 (provisional): yaml-rust2 =0.13.0 — `.knowledge` bundle frontmatter (1b-km)
+## D-010: yaml-rust2 =0.13.0 — `.knowledge` bundle frontmatter (1b-km)
 
 - **What**: `yaml-rust2` pinned `=0.13.0`, `default-features = false` (drops
   the `encoding` feature / `encoding_rs`; concepts are UTF-8 markdown).
+  Newest crates.io stable (checked 2026-10-24). Declared by both
+  cairn-query and cairn-cli.
 - **Why**: the `.knowledge` bundle (contract C-3) stores every concept as
   markdown with YAML frontmatter written by Python's `yaml.safe_dump`
   (nested signal dicts, promotion-history lists, workflow steps). The 1b-km
@@ -232,8 +239,8 @@ gating it.
   single-quotes anything ambiguous, so PyYAML re-parses Rust-written
   frontmatter to identical values.
 - **Cost**: license MIT OR Apache-2.0 (inside the P0-1 allowlist). Pure Rust →
-  unrestricted platforms. New crate in the lockfile (~3 crates with
-  `saphyr`/`reserved-hashmap` internals) — cargo-deny gates it once wired.
+  unrestricted platforms. In the lockfile (~3 crates with
+  `saphyr`/`reserved-hashmap` internals); cargo-deny gates it.
 - **Companion pin**: `regex = "1"` promoted from transitive (D-004
   tree-sitter dep, already in Cargo.lock at 1.13.1) to a direct cairn-query
   dependency — the ported privacy redaction, session-bookkeeping, and

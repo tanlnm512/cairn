@@ -1116,13 +1116,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "docstring:cb518580a010392541f7029db98d6fc8b0105e41c31b9c0c81444d55ea5d0df4",
-      "paths": [
-        "src/cairn/bench/scaling_suite.py"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "docstring:ce374abcd965e6ab92483e7d14097bc33c1d613e388e8eec43e7e8da19d00d54",
       "paths": [
         "src/cairn/llm/tasks.py"
