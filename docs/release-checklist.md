@@ -193,6 +193,29 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
   Publishing → add a pending publisher with owner/repo/workflow/`pypi`
   environment). The first successful publish converts it to a normal publisher
   and creates the project.
+- **Rust distribution channels** (`.github/workflows/release-rust.yml`, same
+  `v*` tag): tarballs + checksums attach to the GitHub Release unconditionally;
+  the Homebrew tap push and the crates.io publish each skip with a workflow
+  notice while their user-owned credentials are absent:
+  - *Homebrew tap* — repo variable `HOMEBREW_TAP_REPO` (e.g.
+    `tanlnm512/homebrew-cairn`) and secret `HOMEBREW_TAP_TOKEN` (fine-grained
+    PAT, Contents read/write, scoped to the tap repo). Once set, every tag
+    push updates `Formula/cairn.rb` in the tap.
+  - *crates.io* — secret `CARGO_REGISTRY_TOKEN` (crates.io → Account
+    Settings → API Tokens, `publish-new` + `publish-update`). Once set, the
+    job `cargo publish`es the workspace crates in dependency order
+    (store → parse → query → daemon → build → cli) and fails if the tag
+    doesn't equal the workspace version (a mismatch would 404 every binstall
+    pkg-url at that version).
+  - *Before the first crates.io publish*, `cairn-parse` needs two packaging
+    rulings — the job stops there today: the `tree-sitter-kotlin` git pin
+    (registry dependencies must resolve to a crates.io version; vendor it
+    like dart or wait for an upstream release) and the vendored
+    `cairn-tree-sitter-dart` (`publish = false`, so it has no registry
+    version to rewrite the path dep to). `cairn-cli` cannot publish before
+    `cairn-parse` does; until then `cargo binstall --git
+    https://github.com/tanlnm512/cairn cairn-cli` keeps working from the
+    repo's own metadata.
 - **Manual CHANGELOG section for a release**: `awk` extracts a version's
   section (the release workflow uses this to build GitHub Release notes):
   ```sh
