@@ -89,7 +89,7 @@ FAKE="$WORK/fake-engine"
 printf '#!/bin/sh\necho EXEC-SHIM "$@"\nexit 7\n' > "$FAKE"
 chmod +x "$FAKE"
 for args in "--version" "config --json"; do
-  out="$(CAIRN_RUST_BIN="$FAKE" "$CAIR" $args 2>/dev/null)"
+  out="$(CAIRN_RUST_BIN="$FAKE" "$CAIRN" $args 2>/dev/null)"
   code=$?
   [ "$out" = "EXEC-SHIM $args" ] \
     || fail "console script did not exec the resolved binary for '$args' (got: $out)"
