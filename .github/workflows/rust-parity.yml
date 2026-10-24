@@ -45,6 +45,10 @@ jobs:
           workspaces: rust
       - name: Build rust cairn (release)
         run: cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+      - name: Build serve_search example
+        run: cargo build --release --manifest-path rust/Cargo.toml -p cairn-daemon --example serve_search
+      - name: Engine-free parity oracle test
+        run: uv run --no-sync python -m pytest tests/test_parity_replay_engine_free.py -v
       - name: parity replay (self)
         run: uv run --no-sync python scripts/rust_migration/parity.py --store self
       - name: cli golden

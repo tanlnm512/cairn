@@ -32,7 +32,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "captured_at": "2026-10-19T15:28:48.112351+00:00"
+    "captured_at": "2026-10-24T20:28:02.084269+00:00"
   },
   "normalization": {
     "rules": [
@@ -59,11 +59,11 @@
     "content": [
       {
         "type": "text",
-        "text": "  ... hit the limit cap; pass a higher limit for more.\ntests/test_abc.py:45  class TestUpdateAbstractMethods.test_remain_abstract.A  (corpus)\ntests/test_annotations.py:184  class TestAnnotations.test_auto_attribs_subclassing.A  (corpus)\ntests/test_annotations.py:213  class TestAnnotations.test_converter_annotations.A  (corpus)\ntests/test_annotations.py:222  class TestAnnotations.test_converter_annotations.A  (corpus)\ntests/test_annotations.py:237  class TestAnnotations.test_converter_attrib_annotations.A  (corpus)"
+        "text": "  ... hit the limit cap; pass a higher limit for more.\ntests/test_abc.py:45  class TestUpdateAbstractMethods.test_remain_abstract.A  (corpus)\ntests/test_annotations.py:184  class TestAnnotations.test_auto_attribs_subclassing.A  (corpus)\ntests/test_annotations.py:213  class TestAnnotations.test_converter_annotations.A  (corpus)\ntests/test_annotations.py:222  class TestAnnotations.test_converter_annotations.A  (corpus)\ntests/test_forward_references.py:14  class test_forward_class_reference.A  (corpus)"
       }
     ],
     "structuredContent": {
-      "result": "  ... hit the limit cap; pass a higher limit for more.\ntests/test_abc.py:45  class TestUpdateAbstractMethods.test_remain_abstract.A  (corpus)\ntests/test_annotations.py:184  class TestAnnotations.test_auto_attribs_subclassing.A  (corpus)\ntests/test_annotations.py:213  class TestAnnotations.test_converter_annotations.A  (corpus)\ntests/test_annotations.py:222  class TestAnnotations.test_converter_annotations.A  (corpus)\ntests/test_annotations.py:237  class TestAnnotations.test_converter_attrib_annotations.A  (corpus)"
+      "result": "  ... hit the limit cap; pass a higher limit for more.\ntests/test_abc.py:45  class TestUpdateAbstractMethods.test_remain_abstract.A  (corpus)\ntests/test_annotations.py:184  class TestAnnotations.test_auto_attribs_subclassing.A  (corpus)\ntests/test_annotations.py:213  class TestAnnotations.test_converter_annotations.A  (corpus)\ntests/test_annotations.py:222  class TestAnnotations.test_converter_annotations.A  (corpus)\ntests/test_forward_references.py:14  class test_forward_class_reference.A  (corpus)"
     }
   },
   "replay_store": "rust/golden/stores/attrs/store.kg",

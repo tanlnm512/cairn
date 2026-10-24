@@ -48,8 +48,9 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=500]
-        # Docs diagram artifacts and pinned parity-store bytes are large by design.
-        exclude: ^docs/diagrams/|^rust/golden/(stores|nav|search|spike)/.*\.kg$
+        # Docs diagram artifacts, pinned parity-store bytes, and the frozen
+        # canonical-dump reference are large by design.
+        exclude: ^docs/diagrams/|^rust/golden/(stores|nav|search|spike)/.*\.kg$|^rust/golden/dump/self-corpus\.norm\.txt$
       - id: debug-statements    # catch pdb/breakpoint() left in
 
   # --- Comment-style ratchet: local mirror of the quality-ratchet CI job.

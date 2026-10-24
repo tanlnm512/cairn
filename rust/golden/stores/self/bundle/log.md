@@ -1653,3 +1653,6 @@
 - 2026-10-19T15:28:20Z | write | knowledge/business-rule/golden-capture-rollback-rule
 - 2026-10-19T15:28:20Z | write | knowledge/workflow/golden-capture-workflow
 - 2026-10-19T15:28:20Z | write | compass/golden-capture
+- 2026-10-24T20:27:26Z | write | knowledge/business-rule/golden-capture-rollback-rule
+- 2026-10-24T20:27:26Z | write | knowledge/workflow/golden-capture-workflow
+- 2026-10-24T20:27:26Z | write | compass/golden-capture

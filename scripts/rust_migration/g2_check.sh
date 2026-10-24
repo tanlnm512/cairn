@@ -1,26 +1,28 @@
 #!/usr/bin/env bash
-# G2 gate (rust-migration 2c): one corpus, two fresh stores, canonical dump diff.
+# G2 gate (rust-migration 2c): canonical dump diff of a fresh Rust store
+# against the frozen Python-recorded reference (the Rust goldens are the
+# spec of record; no Python engine is driven).
 #
-# Builds CORPUS (default: the cairn self-store source, i.e. this repo) into two
-# scratch stores — Python `cairn build` and the Rust `cairn build-graph` — then
-# runs kg_dump.py on both, normalizes volatile content at dump time (plan.md 2c:
-# "id determinism handled at dump time"), and requires kg_diff.py to be empty.
-# Prints per-stage timings for both builds. Exit 0 = gate pass, 1 = fail.
+# base: builds the pinned parity corpus (rust/golden/stores/self/corpus) with
+# the Rust `cairn build-graph`, runs kg_dump.py, normalizes volatile content
+# at dump time (plan.md 2c: "id determinism handled at dump time"), and
+# requires kg_diff.py against rust/golden/dump/self-corpus.norm.txt to be
+# empty. Prints the build timings.
 #
-# Normalization is symmetric and content-derived, applied to BOTH dumps:
+# Normalization is symmetric and content-derived, applied to BOTH sides
+# (kg_normalize.py):
 #   - dropped sections: build_runs / events / tool_metrics (run telemetry) and
 #     dataflow (CLI post-build derived index, outside the Phase 2 build path);
 #   - uuid/counter row ids rewritten to content keys (files/symbols/edges/
 #     imports/rationale/parse_errors/skipped_files);
 #   - volatile stamps blanked: indexed_at / recorded_at / timestamp -> <TS>,
 #     parse_errors.stack_trace -> <TRACE>.
-# The Python leg runs with --no-lsp: the LSP ambiguous-edge upgrade is not part
-# of the Phase 2 build path either side ports.
 #
 # G2_LEGS selects comma-separated legs (default "base"):
-#   base     - the python vs rust fresh-store comparison above
+#   base     - the rust-vs-frozen-reference comparison above
 #   rebuild  - rust `cairn build` twice into one store; dump must equal a fresh build
 #   staging  - rust `cairn build --staging`; live db must exist, no .tmp left, dump must equal a fresh build
+# CORPUS (arg 1, default: the repo root) feeds only the rebuild/staging legs.
 set -uo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -30,7 +32,10 @@ CORPUS="${1:-$REPO_ROOT}"
 WORKERS="${CAIRN_WORKERS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
 PY="$REPO_ROOT/.venv/bin/python"
 KG_DUMP="$REPO_ROOT/scripts/rust_migration/kg_dump.py"
+KG_NORMALIZE="$REPO_ROOT/scripts/rust_migration/kg_normalize.py"
 KG_DIFF="$REPO_ROOT/scripts/rust_migration/kg_diff.py"
+FROZEN_NORM="$REPO_ROOT/rust/golden/dump/self-corpus.norm.txt"
+PINNED_CORPUS="$REPO_ROOT/rust/golden/stores/self/corpus"
 RS_CAIRN="$REPO_ROOT/rust/target/release/cairn"
 WORK="$(mktemp -d /tmp/cairn-g2.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
@@ -68,183 +73,40 @@ fi
 
 # --- dump-time normalization (plan.md 2c: id determinism at dump time) -------
 normalize() {
-  "$PY" - "$1" "$2" <<'PYNORMALIZE'
-"""Rewrite volatile content in a canonical dump: content-keyed ids, blank stamps."""
-import sys
-from collections import defaultdict
-
-src, dst = sys.argv[1], sys.argv[2]
-DROP_TABLES = {"build_runs", "events", "tool_metrics", "dataflow"}
-TS = "<TS>"
-
-sections = []  # (table or None, header lines, rows as cell lists)
-current, header, rows = None, [], []
-with open(src, encoding="utf-8") as fh:
-    for line in fh.read().split("\n"):
-        if line.startswith("[table ") and line.endswith("]"):
-            if current is not None:
-                sections.append((current, header, rows))
-            current, header, rows = line[len("[table "):-1], [], []
-        elif line.startswith("# columns: ") and current is not None:
-            header = line[len("# columns: "):].split("\t")
-        elif current is not None and line:
-            cells = line.split("\t")
-            if cells[0].startswith("\\[table "):
-                cells[0] = cells[0][1:]
-            rows.append(cells)
-if current is not None:
-    sections.append((current, header, rows))
-
-def col(header, name):
-    return header.index(name) if name in header else None
-
-# Content keys per table, applied identically to both dumps.
-fkey = {}   # files.id -> key
-skey = {}   # symbols.id -> key
-dupes = defaultdict(int)
-
-def ordinal(key):
-    n = dupes[key]
-    dupes[key] += 1
-    return key if n == 0 else f"{key}#{n}"
-
-by_table = {t: (h, r) for t, h, r in sections}
-if "files" in by_table:
-    h, rows = by_table["files"]
-    for r in rows:
-        fkey[r[0]] = ordinal("@F|" + r[col(h, "repo_id")] + "|" + r[col(h, "path")])
-if "symbols" in by_table:
-    h, rows = by_table["symbols"]
-    for r in rows:
-        skey[r[0]] = ordinal(
-            "@S|" + fkey.get(r[col(h, "file_id")], r[col(h, "file_id")])
-            + "|" + r[col(h, "name")] + "|" + r[col(h, "kind")]
-            + "|" + r[col(h, "line_start")] + "|" + r[col(h, "line_end")]
-            + "|" + r[col(h, "column_start")] + "|" + r[col(h, "column_end")]
-        )
-
-def ref(table, header, r, name):
-    i = col(header, name)
-    if i is None:
-        return r
-    raw = r[i]
-    if raw == "\\N":
-        return r
-    mapped = (skey if name in ("source_id", "target_id", "symbol_id") else fkey).get(raw, raw)
-    r[i] = mapped
-    return r
-
-out = ["# cairn-canonical-dump 1"]
-dupes.clear()
-for table, header, rows in sections:
-    if table in DROP_TABLES:
-        continue
-    out.append(f"[table {table}]")
-    out.append("# columns: " + "\t".join(header))
-    if not header:
-        out.extend("\t".join(r) for r in sorted(rows))
-        continue
-    stamped = col(header, "indexed_at")
-    if stamped is None:
-        stamped = col(header, "recorded_at")
-    if stamped is None:
-        stamped = col(header, "timestamp")
-    trace = col(header, "stack_trace")
-    idcol = col(header, "id")
-    rewritten = []
-    for r in rows:
-        r = list(r)
-        if stamped is not None:
-            r[stamped] = TS
-        if trace is not None:
-            r[trace] = "<TRACE>"
-        if table == "files":
-            r[idcol] = fkey.get(r[idcol], r[idcol])
-        elif table == "symbols":
-            r = ref(table, header, r, "file_id")
-            r[idcol] = skey.get(r[idcol], r[idcol])
-        elif table == "edges":
-            raw_source = r[col(header, "source_id")]
-            raw_target = r[col(header, "target_id")]
-            tname = r[col(header, "target_name")]
-            r = ref(table, header, r, "source_id")
-            r = ref(table, header, r, "target_id")
-            target = (
-                skey.get(raw_target, raw_target) if raw_target != "\\N"
-                else ("n|" + tname if tname != "\\N" else "nn")
-            )
-            r[idcol] = ordinal(
-                "@E|" + r[col(header, "source_id")] + "|" + r[col(header, "kind")]
-                + "|" + r[col(header, "line")] + "|" + r[col(header, "column")] + "|" + target
-                + "".join(
-                    "|" + r[col(header, c)]
-                    for c in ("receiver_type", "call_arity")
-                    if col(header, c) is not None
-                )
-            )
-        elif table == "imports":
-            r = ref(table, header, r, "file_id")
-            r[idcol] = ordinal(
-                "@I|" + r[col(header, "file_id")] + "|" + r[col(header, "imported_path")]
-                + "|" + r[col(header, "line")] + "|" + r[col(header, "local_alias")]
-            )
-        elif table == "parse_errors":
-            r[idcol] = ordinal("@P|" + r[col(header, "repo_id")] + "|" + r[col(header, "file_path")])
-        elif table == "skipped_files":
-            r[idcol] = ordinal(
-                "@SK|" + r[col(header, "repo_id")] + "|" + r[col(header, "path")]
-                + "|" + r[col(header, "reason")]
-            )
-        elif table == "rationale":
-            r = ref(table, header, r, "file_id")
-            r = ref(table, header, r, "symbol_id")
-            r[idcol] = ordinal(
-                "@R|" + r[col(header, "file_id")] + "|" + r[col(header, "line")]
-                + "|" + r[col(header, "kind")] + "|" + r[col(header, "text")]
-            )
-        rewritten.append("\t".join(r))
-    out.extend(sorted(rewritten))
-with open(dst, "w", encoding="utf-8") as fh:
-    fh.write("\n".join(out) + "\n")
-print(f"normalized {src} -> {dst} ({len(out)} lines)", file=sys.stderr)
-PYNORMALIZE
+  "$PY" "$KG_NORMALIZE" "$1" "$2"
 }
 
 dump_normalized() {
-  "$PY" "$KG_DUMP" "$1" -o "$WORK/$2.dump" || return 1
+  # $3 (optional workspace) maps the staged corpus prefix to <WORKSPACE> so the
+  # dump never bakes in this machine's scratch path. Branch, not an empty-array
+  # expansion: bash 3.2 treats that as unbound under set -u.
+  if [ -n "${3:-}" ]; then
+    "$PY" "$KG_DUMP" "$1" --map-path "$3=<WORKSPACE>" -o "$WORK/$2.dump" || return 1
+  else
+    "$PY" "$KG_DUMP" "$1" -o "$WORK/$2.dump" || return 1
+  fi
   normalize "$WORK/$2.dump" "$WORK/$2.norm"
 }
 
-# --- leg base: python vs rust fresh stores -----------------------------------
-leg_base() {
-  # --- python build ----------------------------------------------------------
-  echo "== python cairn build (workers=$WORKERS) =="
-  local t0 t1 PY_WALL RS_WALL RS_TIMINGS RS_SUMMARY
-  t0=$(date +%s.%N)
-  CAIRN_WORKERS="$WORKERS" "$PY" -m cairn.cli build \
-    --workspace "$CORPUS" --db "$WORK/py.kg" --no-lsp \
-    > "$WORK/py.build.log" 2>&1 \
-    || { tail -20 "$WORK/py.build.log"; echo "G2 base: FAIL — python cairn build failed"; return 1; }
-  t1=$(date +%s.%N)
-  PY_WALL=$("$PY" -c "print(f'{$t1 - $t0:.3f}')")
-  "$PY" - "$WORK/py.kg" <<'PY' > "$WORK/py.phases.json" || { echo "G2 base: FAIL — phase-timing read failed"; return 1; }
-import json, sqlite3, sys
-conn = sqlite3.connect(sys.argv[1])
-row = conn.execute(
-    "SELECT duration_s, phase_timings FROM build_runs ORDER BY id DESC LIMIT 1"
-).fetchone()
-print(json.dumps({
-    "wall_s": row[0] if row else None,
-    "phases": json.loads(row[1]) if row and row[1] else {},
-}))
-PY
-  echo "python build wall: ${PY_WALL}s  phases: $(cat "$WORK/py.phases.json")"
+stage_pinned_corpus() {
+  # git cannot track a `.git` path, so the committed corpus ships without the
+  # repo marker the scanners require; stage a copy with the marker restored.
+  local dst="$WORK/corpus"
+  [ -d "$dst" ] && return 0
+  cp -R "$PINNED_CORPUS" "$dst" || return 1
+  printf 'gitdir: pinned-parity-corpus\n' > "$dst/.git"
+}
 
-  # --- rust build ------------------------------------------------------------
-  echo "== rust cairn build-graph =="
+# --- leg base: rust fresh store vs the frozen python-recorded reference ------
+leg_base() {
+  [ -f "$FROZEN_NORM" ] || { echo "G2 base: FAIL — frozen reference missing: $FROZEN_NORM"; return 1; }
+  [ -d "$PINNED_CORPUS" ] || { echo "G2 base: FAIL — pinned corpus missing: $PINNED_CORPUS"; return 1; }
+  stage_pinned_corpus || { echo "G2 base: FAIL — corpus staging"; return 1; }
+  echo "== rust cairn build-graph over the pinned self corpus (workers=$WORKERS) =="
+  local t0 t1 RS_WALL RS_TIMINGS RS_SUMMARY
   t0=$(date +%s.%N)
   CAIRN_WORKERS="$WORKERS" "$RS_CAIRN" build-graph \
-    --workspace "$CORPUS" --db "$WORK/rs.kg" \
+    --workspace "$WORK/corpus" --db "$WORK/rs.kg" \
     > "$WORK/rs.build.log" 2>&1 \
     || { tail -20 "$WORK/rs.build.log"; echo "G2 base: FAIL — rust build-graph failed"; return 1; }
   t1=$(date +%s.%N)
@@ -254,17 +116,15 @@ PY
   echo "rust build wall: ${RS_WALL}s  $RS_SUMMARY"
   echo "  $RS_TIMINGS"
 
-  # --- canonical dumps + the gate --------------------------------------------
-  dump_normalized "$WORK/py.kg" py || { echo "G2 base: FAIL — kg_dump / normalization (python store)"; return 1; }
-  dump_normalized "$WORK/rs.kg" rs || { echo "G2 base: FAIL — kg_dump / normalization (rust store)"; return 1; }
-  "$PY" "$KG_DIFF" "$WORK/py.norm" "$WORK/rs.norm"
+  dump_normalized "$WORK/rs.kg" rs "$WORK/corpus" || { echo "G2 base: FAIL — kg_dump / normalization (rust store)"; return 1; }
+  "$PY" "$KG_DIFF" "$FROZEN_NORM" "$WORK/rs.norm"
   local diff=$?
   echo ""
   if [ "$diff" -eq 0 ]; then
-    echo "G2 base: PASS — python-built and rust-built dumps content-equal (corpus: $CORPUS)"
+    echo "G2 base: PASS — rust-built dump content-equal to the frozen python-recorded reference"
     return 0
   fi
-  echo "G2 base: FAIL — canonical dumps differ (kg_diff exit $diff)"
+  echo "G2 base: FAIL — canonical dump differs from the frozen reference (kg_diff exit $diff)"
   return 1
 }
 
