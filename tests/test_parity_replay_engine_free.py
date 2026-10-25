@@ -77,7 +77,7 @@ def test_parity_replay_needs_no_python_engine(tmp_path):
         timeout=900,
         env=_engine_free_env(),
     )
-    assert proc.returncode == 0, (proc.stderr + proc.stdout)[-3000:]
+    assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "self: 26/26 tools golden-equal" in proc.stdout
 
 
@@ -95,6 +95,6 @@ def test_cli_golden_replay_needs_no_python_engine(tmp_path):
         timeout=900,
         env=_engine_free_env(),
     )
-    assert proc.returncode == 0, (proc.stderr + proc.stdout)[-3000:]
+    assert proc.returncode == 0, proc.stderr + proc.stdout
     verdict = re.search(r"(\d+)/(\d+) commands golden-equal", proc.stdout)
     assert verdict and verdict.group(1) == verdict.group(2), proc.stdout[-3000:]
