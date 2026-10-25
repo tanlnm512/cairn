@@ -37,7 +37,7 @@ def probe_networkx() -> Callable:
         raise ImportError(
             "community detection needs the optional 'networkx' package; "
             "install it with the graph-analytics extra: "
-            "pip install 'cairn[graph-analytics]'"
+            "pip install 'cairn-intel[graph-analytics]'"
         ) from exc
     return louvain_communities
 

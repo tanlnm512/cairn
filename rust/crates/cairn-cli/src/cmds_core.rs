@@ -410,10 +410,14 @@ fn init(args: crate::cmds_core::InitArgs) -> ExitCode {
     }
 
     if args.import_docs {
-        rail.warn("docs/ ingestion is not implemented in the Rust CLI yet; run the Python CLI for --import-docs");
+        rail.warn(
+            "--import-docs is retired: run `cairn knowledge import <dir>` for markdown import",
+        );
     }
-    if args.with_hooks {
-        rail.warn("git hook installation is not implemented in the Rust CLI yet; run the Python CLI for --with-hooks");
+    if args.with_hooks
+        && crate::cmds_system::run_hooks_install(args.ws_arg.clone()) != ExitCode::SUCCESS
+    {
+        rail.warn("git hooks not installed; run `cairn hooks install` for details");
     }
 
     rail.close("Done");
@@ -618,11 +622,11 @@ fn config(args: crate::cmds_core::ConfigArgs) -> ExitCode {
         backend => {
             if env.hash_fallback {
                 println!(
-                    "embed:      {}  ⚠ fallback (sentence-transformers not installed)",
+                    "embed:      {}  ⚠ hash fallback (token-overlap vectors)",
                     env.model
                 );
                 println!(
-                    "            for real embeddings: uv tool install 'cairn-intel[semantic]' --force"
+                    "            for real vectors: CAIRN_EMBED_BACKEND=omlx | ollama | server (+ CAIRN_EMBED_BASE_URL)"
                 );
             } else if backend == cairn_query::tools_search::EffectiveBackend::Hash {
                 println!("embed:      {}  (CAIRN_EMBED_BACKEND=hash)", env.model);
@@ -2121,7 +2125,6 @@ fn exit_backend_unavailable() -> ExitCode {
     if !server_family {
         display::error("Semantic dependencies unavailable");
         display::dim(&tools_search::install_hint());
-        display::dim("Run `cairn embed --install-deps` to auto-install.");
         return ExitCode::FAILURE;
     }
     display::error("Embedding server unavailable");
@@ -2279,28 +2282,27 @@ fn attach_neighbors(conn: &Connection, name: &str, callers: bool) -> Vec<Value> 
     out
 }
 
+/// A retired local-inference flag: exit 1 naming the shipped backends instead.
+fn retired_embed_flag(flag: &str) -> ExitCode {
+    display::error(&format!(
+        "{flag} is retired: this build ships no local inference. Set \
+         CAIRN_EMBED_BACKEND=omlx or ollama (or server + CAIRN_EMBED_BASE_URL, model via \
+         CAIRN_EMBED_SERVER_MODEL) to embed through an OpenAI-compatible server, or \
+         CAIRN_EMBED_BACKEND=hash for the dep-free backend."
+    ));
+    ExitCode::FAILURE
+}
+
 /// embed handler.
 fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
     if args.install_deps {
-        display::error(
-            "--install-deps installs the Python [semantic] sidecar; run it with the PyPI CLI: \
-             pip install 'cairn-intel[semantic]'",
-        );
-        return ExitCode::FAILURE;
+        return retired_embed_flag("--install-deps");
     }
     if args.download_model {
-        display::error(
-            "--download-model caches the Python [semantic] sidecar's local model; the Rust \
-             binary serves embeddings via the hash or embedding-server backends",
-        );
-        return ExitCode::FAILURE;
+        return retired_embed_flag("--download-model");
     }
     if args.adopt_server_model.is_some() {
-        display::error(
-            "--adopt-server-model drives the Python embed ladder (parity verification and \
-             alias binding), which is not implemented in the Rust CLI yet",
-        );
-        return ExitCode::FAILURE;
+        return retired_embed_flag("--adopt-server-model");
     }
     let env = tools_search::semantic_env(None);
     if env.backend == EffectiveBackend::Unavailable {
@@ -2308,14 +2310,16 @@ fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
     }
     if env.hash_fallback {
         display::warning(
-            "Using the hash embedder (dep-free) because sentence-transformers isn't installed. \
-             The index will work for token-overlap search but won't carry real semantic meaning.",
+            "Using the hash embedder (dep-free): token-overlap vectors only, so retrieval is \
+             degraded.",
         );
-        display::dim("For real embeddings (bge-m3 by default), run ONE TIME:");
-        display::dim("  cairn embed --install-deps");
         display::dim(
-            "This downloads torch + sentence-transformers into ~/.cairn/lib/cp<version> \
-             (survives reinstalls). Then re-run: cairn embed",
+            "For real vectors point CAIRN_EMBED_BACKEND at a local OpenAI-compatible embeddings \
+             server:",
+        );
+        display::dim(
+            "  CAIRN_EMBED_BACKEND=omlx | ollama | server (server needs CAIRN_EMBED_BASE_URL), \
+             then re-run: cairn embed",
         );
         display::dim("Or set CAIRN_EMBED_BACKEND=hash explicitly to silence this warning.");
     }
@@ -3501,8 +3505,8 @@ fn dataflow_lookup(args: crate::cmds_core::DataflowLookupArgs) -> ExitCode {
 /// communities handler: Louvain stays the Python [graph-analytics] sidecar.
 fn communities(_args: crate::cmds_core::CommunitiesArgs) -> ExitCode {
     display::error(
-        "cairn communities is served by the Python [graph-analytics] sidecar (networkx Louvain); \
-         run it with the PyPI CLI: pip install 'cairn-intel[graph-analytics]'",
+        "cairn communities is served by the Python [graph-analytics] sidecar (networkx Louvain): \
+         pip install 'cairn-intel[graph-analytics]' and run `cairn communities` from that install",
     );
     ExitCode::FAILURE
 }
@@ -3604,7 +3608,7 @@ pub struct InitArgs {
     /// Register without building the graph.
     #[arg(long = "no-build", default_value_t = false)]
     pub no_build: bool,
-    /// Auto-discover and ingest docs/**/*.md as knowledge.
+    /// Retired: run `cairn knowledge import <dir>`; accepted and warns.
     #[arg(long = "import-docs", default_value_t = false)]
     pub import_docs: bool,
     /// Install cairn git hooks (post-commit, post-checkout) in discovered repos.
@@ -3645,7 +3649,7 @@ pub struct BuildArgs {
     /// Build to temp DB and atomic-swap for zero downtime.
     #[arg(long = "staging", default_value_t = false)]
     pub staging: bool,
-    /// Upgrade ambiguous Python calls with pyright (accepted; not yet ported).
+    /// Accepted for compatibility; no pyright pass runs in this build.
     #[arg(long = "lsp", num_args = 0..=1, require_equals = false, default_missing_value = "true")]
     pub lsp: Option<bool>,
     /// Materialize the transitive closure (skipped by default).
@@ -3933,16 +3937,16 @@ pub struct EmbedArgs {
     /// Rebuild native ANN index after embedding.
     #[arg(long = "build-index")]
     pub build_index: bool,
-    /// Auto-install missing semantic dependencies (Python sidecar feature).
+    /// Retired: no local-inference install ships; exits 1 naming the replacement.
     #[arg(long = "install-deps")]
     pub install_deps: bool,
-    /// Pre-download model weights into the local HuggingFace cache (Python sidecar feature).
+    /// Retired: no model download ships; exits 1 naming the replacement.
     #[arg(long = "download-model")]
     pub download_model: bool,
     /// Store one vector per symbol (the single-vector build).
     #[arg(long = "no-multivector", default_value_t = false)]
     pub no_multivector: bool,
-    /// Adopt a parity-verified server model (the embed ladder; Python-side feature).
+    /// Retired: configure the server backend through CAIRN_EMBED_* instead; exits 1.
     #[arg(long = "adopt-server-model", num_args = 0..=1, default_missing_value = "")]
     pub adopt_server_model: Option<String>,
 }

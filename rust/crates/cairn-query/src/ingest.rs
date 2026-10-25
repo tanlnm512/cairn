@@ -1101,7 +1101,7 @@ fn fed_binary_docs_with(
         }
         let relpath = path.to_string_lossy().replace('\\', "/");
         let outcome = match sidecar {
-            None => Err("cairn[ingest] not installed".to_string()),
+            None => Err("cairn-intel[ingest] not installed".to_string()),
             Some(python) => convert_with_sidecar(python, path),
         };
         match outcome {
@@ -2155,7 +2155,7 @@ mod tests {
         assert!(docs.is_empty());
         assert_eq!(
             skipped,
-            vec![(rel.clone(), "cairn[ingest] not installed".to_string())]
+            vec![(rel.clone(), "cairn-intel[ingest] not installed".to_string())]
         );
 
         let python = fake_sidecar(&dir, Some("conversion failed: not a zip"));

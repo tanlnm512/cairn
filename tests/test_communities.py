@@ -148,7 +148,7 @@ def test_missing_networkx_hints_without_opening_store(monkeypatch, tmp_path):
         sys.modules, "networkx.algorithms.community", types.ModuleType("networkx.algorithms.community")
     )
 
-    with pytest.raises(ImportError, match=r"cairn\[graph-analytics\]"):
+    with pytest.raises(ImportError, match=r"cairn-intel\[graph-analytics\]"):
         refresh_communities(str(tmp_path / "probe.kg"))
     assert opened == []
 
@@ -196,7 +196,7 @@ def test_cli_without_extra_hints_and_leaves_store_unchanged(monkeypatch, tmp_pat
     )
 
     assert mod.main(["--db", str(db)]) == 1
-    assert "cairn[graph-analytics]" in capsys.readouterr().err
+    assert "cairn-intel[graph-analytics]" in capsys.readouterr().err
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before
 
 

@@ -86,7 +86,7 @@ pub enum SystemCommand {
         /// HTTP daemon host (loopback).
         #[arg(long, default_value = cairn_daemon::lifecycle::DEFAULT_HOST)]
         host: String,
-        /// Daemon implementation a start launches (default: rust when a Rust binary is present, else python; CAIRN_DAEMON_IMPL overrides).
+        /// Daemon launcher a start execs (default: rust; 'python' resolves to the `cairn` on PATH, and the PyPI launcher execs the same engine; CAIRN_DAEMON_IMPL overrides).
         #[arg(long = "impl")]
         impl_: Option<String>,
     },
@@ -99,7 +99,7 @@ pub enum SystemCommand {
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
         /// Bind port.
-        #[arg(long, default_value_t = 8501)]
+        #[arg(long, default_value_t = 8765)]
         port: u16,
     },
     /// Wire cairn into AI coding clients.
@@ -186,10 +186,10 @@ pub enum SystemCommand {
         #[command(subcommand)]
         command: HooksGroup,
     },
-    /// Download the reranker model and enable reranking persistently (CAIRN_RERANK=0 forces it off).
+    /// Exit 2: no cross-encoder reranker ships in this build, so semantic_search runs without the rerank stage.
     #[command(name = "download-reranker")]
     DownloadReranker {
-        /// CrossEncoder model id (default: BAAI/bge-reranker-base, or $CAIRN_RERANK_MODEL if set).
+        /// Accepted for compatibility; nothing is downloaded.
         #[arg(long)]
         model: Option<String>,
     },
@@ -504,7 +504,7 @@ fn hook_workspace(arg: Option<&str>) -> std::path::PathBuf {
     crate::store_paths::resolve_workspace(arg.map(std::path::Path::new))
 }
 
-fn run_hooks_install(workspace: Option<String>) -> ExitCode {
+pub(crate) fn run_hooks_install(workspace: Option<String>) -> ExitCode {
     let ws = hook_workspace(workspace.as_deref());
     let repos = crate::agent_install::discover_hook_repos(&ws);
     if repos.is_empty() {

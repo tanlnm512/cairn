@@ -1,6 +1,6 @@
 # Pre-Release Checklist
 
-← [Docs index](README.md)
+← [README](../README.md)
 
 Run through this before tagging a release or merging a non-trivial PR.
 Each item maps to a real failure mode hit in this project's history —
@@ -20,30 +20,34 @@ don't skip on "I'm sure it's fine."
 | [`## Cutting a release`](#cutting-a-release) | Conventional commits, the changelog-first rule, the `cz` bump, and the tag-push paths. |
 
 ## Tests
+- [ ] `cargo test --manifest-path rust/Cargo.toml --workspace` — the engine
+      suite.
 - [ ] `uv run pytest tests/ -q` — the full local suite (default gate + infra
       tier together; a bare `pytest` runs everything by design). CI runs the
       default gate on PR legs (`-m "not infra"`) and the infra tier
       (`-m infra`) on every main push. Note the pass/skip/fail count; compare
       to the last green run.
 - [ ] `uv run pytest tests/ -m infra -q` — when cutting a release or touching
-      the bench/dataset/soak subsystems, run the infra tier explicitly too
-      (PR CI legs skip it).
+      the frozen oracles (`rust/golden/`) or the binary, run the infra tier
+      explicitly too (PR CI legs skip it; it needs a release binary in
+      `rust/target/release/`).
 - [ ] No new `xfail` or `skip` slipped in to make a failure "pass." Moving a
       whole file (or class) into the infra tier is deliberate CI selection
       recorded in the pyproject marker description — per-test
       skip-quarantining remains forbidden.
 
 ## Build verification (for changes touching indexing/embedding)
-- [ ] `uv run cairn build` succeeds against the real workspace.
+- [ ] `cairn build` succeeds against the real workspace.
 - [ ] Spot-check the DB: `sqlite3 <db> "SELECT path FROM files LIMIT 5"` —
       paths are repo-relative (portable), not absolute.
-- [ ] If embeddings changed: `uv run cairn embed` runs clean and a
+- [ ] If embeddings changed: `cairn embed` runs clean and a
       `semantic_search` returns sane hits.
 
 ## "No behavior changed" claims
 If a change is supposed to be refactor/doc-only/comments-only:
-- [ ] AST-verify: `uv run python -m compileall -q src/` passes, AND run the
-      AST comparison helper (see `docs/release-checklist.md` appendix) —
+- [ ] AST-verify the Python side (`src/`, `scripts/`, `tests/`):
+      `uv run python -m compileall -q src/` passes, AND
+      `make verify-no-code-change` (see [below](#agent--bulk-edit-safety)) —
       self-reports of "no code changed" are unreliable; sub-agents and
       late-night edits silently drift into executable code.
 - [ ] `git diff` the actual lines — read what changed, don't trust the commit
@@ -86,25 +90,6 @@ in `pyproject.toml` under `[tool.commitizen]`. The CHANGELOG stays hand-curated
 — `cz` drafts it, a human finalizes it. Install it once with
 `uv sync --extra dev`.
 
-### Perf latency budgets
-`benchmarks/baselines/perf_p95_budgets.json` holds the catastrophe-class
-(≥10× observed p95) budgets enforced on the main/merge-group bench job.
-Budgets age with the corpus and hardware: when either changes materially,
-save a CI-class `cairn bench --suite perf --json` run and recalibrate from it:
-
-```sh
-uv run python scripts/mint_perf_budgets.py \
-  --from <ci-perf-run.json> --factor 10 \
-  --out benchmarks/baselines/perf_p95_budgets.json
-```
-
-The minted file carries the source run's provenance stamp (timestamp,
-dataset, `cairn_version`, `machine_profile`). Review that stamp in the diff —
-budgets minted from a `reference-local` run enforce at ≥25× (the cross-machine
-headroom the initial checked-in budgets carry) and drop to factor 10 only
-after the first CI-class recalibration — and commit the recalibrated file
-together with the change that motivated it.
-
 ### Main branch protection
 `make verify-protection` is maintainer-run: `gh` must be authenticated with
 admin scope because the legacy branch-protection endpoint requires it. The
@@ -115,17 +100,7 @@ machine-readable output. It exits zero only when `main` has:
 - at least one required approving review;
 - force-push denial;
 - every status check named by `MANDATORY_CHECKS` in
-  `scripts/verify_protection.py`:
-  - Security (pip-audit + bandit)
-  - Type check (mypy)
-  - PR title (conventional commits)
-  - pre-commit (all local gates)
-  - Quality ratchet (audit debt + comment style)
-  - Dependency review (PR)
-  - Test (Python 3.14)
-  - Closure budget gate (1000-file scaling point)
-  - Verify DS-v2 seal
-  - Container build (Dockerfile smoke)
+  `scripts/verify_protection.py`.
 
 ### Conventional commits (the prerequisite)
 `cz` reads the conventional-commit history since the last tag to compute the
@@ -160,6 +135,11 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
    `src/cairn/__init__.py`, commits as `bump: version A -> B`, and tags
    `v$version`. (If the pre-release checklist above isn't done yet, run
    `cz bump --version-files-only` to update files without committing/tagging.)
+   The Cargo workspace version (`rust/Cargo.toml` `[workspace.package]`) is
+   not a `cz` version file: bump it to the same `X.Y.Z` in the changelog
+   commit — `release-rust.yml` refuses a tag that does not equal the
+   workspace version, and the crates.io publish would otherwise 404 every
+   binstall `pkg-url` at that version.
 
 4. **Land the release commits on `main`, then push the tag.** `main` is
    branch-protected (changes must go through a PR with required status checks),
@@ -179,13 +159,16 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
      tag, so the release isn't blocked on `main` — but `main` MUST be synced
      afterward so it matches the released tag.
 
-   Either way, the tag push triggers the pipeline:
+   Either way, the tag push triggers the pipelines:
    ```sh
    git push origin v$version
    ```
-   `.github/workflows/release.yml` then builds wheel + sdist, publishes to PyPI
-   via Trusted Publishing, and cuts the GitHub Release from the `[X.Y.Z]`
-   CHANGELOG section. Watch it: `gh run watch $(gh run list --workflow=release.yml -L1 -q '.[0].databaseId')`.
+   `.github/workflows/release.yml` builds the per-platform wheels (each
+   bundling its engine binary) + sdist, publishes to PyPI via Trusted
+   Publishing, and cuts the GitHub Release from the `[X.Y.Z]` CHANGELOG
+   section; `release-rust.yml` (below) attaches the binary tarballs and
+   updates the Homebrew tap and crates.io. Watch it:
+   `gh run watch $(gh run list --workflow=release.yml -L1 -q '.[0].databaseId')`.
 
 ### Notes
 - **First release of a new PyPI project**: register a *pending* Trusted

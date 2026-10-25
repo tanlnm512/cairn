@@ -1,4 +1,4 @@
-"""Binary-document conversion sidecar behind the cairn[ingest] extra (PDF and docx to markdown)."""
+"""Binary-document conversion sidecar behind the cairn-intel[ingest] extra (PDF and docx to markdown)."""
 from __future__ import annotations
 
 import sys
@@ -8,7 +8,7 @@ from typing import Optional, Sequence
 #: Suffixes this module converts; everything else is left to markdown paths.
 CONVERT_SUFFIXES = frozenset({".pdf", ".docx"})
 
-_EXTRA_MISSING = "cairn[ingest] not installed"
+_EXTRA_MISSING = "cairn-intel[ingest] not installed"
 _EMPTY_EXTRACTION = "empty extraction"
 
 

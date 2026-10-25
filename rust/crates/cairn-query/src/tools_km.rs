@@ -1550,7 +1550,7 @@ fn delete_memory_rows(
     let placeholders = vec!["?"; ids.len()].join(", ");
     let params: Vec<&str> = ids.iter().map(String::as_str).collect();
     for table in [
-        "memory_refs(meadow_path)",
+        "memory_refs(memory_path)",
         "memory_validity(concept_id)",
         "memory_embeddings(doc_id)",
     ] {
@@ -7765,6 +7765,49 @@ mod tests {
             "see `src/main.py` and `helper()` plus `pkg.Mod.fn` not `./gradlew` or `cairn embed`";
         assert_eq!(extract_file_refs(body), vec!["src/main.py"]);
         assert_eq!(extract_symbol_refs(body), vec!["helper()", "pkg.Mod.fn"]);
+    }
+
+    #[test]
+    fn delete_memory_removes_the_file_and_its_rows() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .subsec_nanos();
+        let root =
+            std::env::temp_dir().join(format!("cairn-forget-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(root.join("memory/tribal")).expect("bundle dir");
+        std::fs::write(
+            root.join("memory/tribal/forget-me.md"),
+            "---\ntype: Decision\ntitle: forget me\n---\nbody\n",
+        )
+        .expect("memory file");
+        let bundle = Bundle::new(root.clone());
+        let conn = Connection::open_in_memory().expect("mem db");
+        conn.execute_batch(
+            "CREATE TABLE memory_refs (id TEXT PRIMARY KEY, memory_path TEXT NOT NULL,
+                 session_id TEXT NOT NULL, referenced_at TIMESTAMP NOT NULL, context TEXT);
+             CREATE TABLE memory_validity (concept_id TEXT PRIMARY KEY, valid_from TEXT NOT NULL,
+                 valid_until TEXT, successor_symbol TEXT);
+             CREATE TABLE memory_embeddings (doc_id TEXT NOT NULL, chunk_index INTEGER NOT NULL,
+                 model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB, chunk TEXT, embedded_at TEXT);
+             INSERT INTO memory_refs VALUES ('r1', 'memory/tribal/forget-me', 's1', 't', NULL);
+             INSERT INTO memory_validity VALUES ('memory/tribal/forget-me', 't', NULL, NULL);
+             INSERT INTO memory_embeddings VALUES ('memory/tribal/forget-me', 0, 'm', 1, NULL, NULL, NULL);",
+        )
+        .expect("schema");
+
+        let deleted = delete_memory(&bundle, "memory/tribal/forget-me", Some(&conn))
+            .expect("forget must not fail on the store cleanup");
+
+        assert!(deleted);
+        assert!(!root.join("memory/tribal/forget-me.md").exists());
+        for table in ["memory_refs", "memory_validity", "memory_embeddings"] {
+            let left: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .expect("count");
+            assert_eq!(left, 0, "{table} still holds rows for the forgotten memory");
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

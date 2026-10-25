@@ -1,4 +1,4 @@
-//! clap command tree for the Python CLI surface; dispatch routes to the cmds_* stubs.
+//! clap command tree for the `cairn` CLI; dispatch routes to the cmds_* modules.
 
 use std::process::ExitCode;
 
@@ -62,5 +62,14 @@ mod tests {
         for expected in ["config", "knowledge", "doctor", "memory", "serve"] {
             assert!(names.contains(&expected), "missing {expected} in {names:?}");
         }
+    }
+
+    #[test]
+    fn dashboard_defaults_to_the_documented_port() {
+        let cli = Cli::try_parse_from(["cairn", "dashboard"]).expect("parses");
+        let Command::System(SystemCommand::Dashboard { port, .. }) = cli.command else {
+            panic!("dashboard did not route to the system family");
+        };
+        assert_eq!(port, 8765);
     }
 }

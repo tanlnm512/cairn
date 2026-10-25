@@ -805,11 +805,10 @@ pub fn embed_query(env: &SemanticEnv, text: &str) -> Result<(Vec<u8>, usize), St
     }
 }
 
-/// Python `install_hint()`: shown when the configured backend cannot serve.
+/// Shown when the configured backend cannot serve.
 pub fn install_hint() -> String {
-    "Semantic search requires the 'semantic' extra. \
-     Install it with: pip install 'cairn-intel[semantic]'. \
-     Or set CAIRN_EMBED_BACKEND=omlx or ollama (or server + \
+    "No embedding backend is serving real vectors. \
+     Set CAIRN_EMBED_BACKEND=omlx or ollama (or server + \
      CAIRN_EMBED_BASE_URL) to use a local OpenAI-compatible embeddings \
      server -- no model install needed. \
      Or set CAIRN_EMBED_BACKEND=hash for a dep-free smoke test."

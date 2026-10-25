@@ -1,16 +1,18 @@
 # cairn — rust workspace
 
-Six crates mirroring the python package (`cairn-store`, `cairn-query`,
-`cairn-parse`, `cairn-build`, `cairn-daemon`, `cairn-cli`) plus the vendored
-dart grammar. The workspace version tracks `pyproject.toml` until the flip.
+Six crates (`cairn-store`, `cairn-query`, `cairn-parse`, `cairn-build`,
+`cairn-daemon`, `cairn-cli`) plus the vendored dart grammar build the `cairn`
+engine binary that every install channel ships. The workspace version is
+bumped together with `pyproject.toml` at release time; the release tag must
+equal it.
 
-- Spec and phased plan: `specs/rust-migration/` (`spec.md`, `plan.md`)
-- Campaign ledger: `specs/rust-migration/PROGRESS.md`
-- Frozen contracts: the `.kg` schema (C-1) and the 26-tool MCP surface (C-2)
-- Parity harnesses: `scripts/rust_migration/` (golden recorder, canonical
-  dump/diff, parity runner, cli goldens, g2 dump-parity check)
+- Frozen contracts: the `.kg` schema (C-1) and the 26-tool MCP surface (C-2),
+  pinned by the goldens under `golden/`
+- Oracle replay: `scripts/rust_migration/` (canonical dump/diff, parity
+  runner, cli goldens, g2 dump-parity check, wheel smoke)
 - Gates: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
   -- -D warnings`, `cargo test --workspace` (CI leg `.github/workflows/rust.yml`)
-
-The engine defaults to python; `CAIRN_DAEMON_IMPL=rust` opts into the rust
-daemon.
+- Dependency and pin rulings (D-###): the migration spec, campaign ledger,
+  and decision log are archived in git history under `specs/rust-migration/`
+  (last readable at any pre-removal tag); every runtime crate is an exact
+  `=` pin gated by cargo-deny

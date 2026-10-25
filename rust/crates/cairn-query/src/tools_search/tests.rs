@@ -315,10 +315,12 @@ fn ann_backend_reads_process_config_without_mutation() {
 }
 
 #[test]
-fn install_hint_mentions_every_escape_hatch() {
+fn install_hint_names_only_shipped_backends() {
     let hint = install_hint();
-    assert!(hint.contains("cairn-intel[semantic]"));
-    assert!(hint.contains("CAIRN_EMBED_BACKEND=hash"));
+    assert!(!hint.contains("[semantic]"), "{hint}");
+    assert!(hint.contains("CAIRN_EMBED_BACKEND=omlx"), "{hint}");
+    assert!(hint.contains("CAIRN_EMBED_BASE_URL"), "{hint}");
+    assert!(hint.contains("CAIRN_EMBED_BACKEND=hash"), "{hint}");
 }
 
 #[test]

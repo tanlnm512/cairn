@@ -1,4 +1,4 @@
-"""Binary-document conversion sidecar behind cairn[ingest]."""
+"""Binary-document conversion sidecar behind cairn-intel[ingest]."""
 from __future__ import annotations
 
 import sys
@@ -71,8 +71,8 @@ def test_cli_reports_skip_reason_on_stderr(tmp_path, monkeypatch, capsys):
 
 
 def test_docx_converts_to_markdown(tmp_path, capsys):
-    pytest.importorskip("mammoth", reason="cairn[ingest] extra not installed")
-    pytest.importorskip("markdownify", reason="cairn[ingest] extra not installed")
+    pytest.importorskip("mammoth", reason="cairn-intel[ingest] extra not installed")
+    pytest.importorskip("markdownify", reason="cairn-intel[ingest] extra not installed")
     docx = tmp_path / "spec.docx"
     _minimal_docx(docx, "Deploy the gateway")
     markdown, reason = convert_document(docx)
@@ -87,8 +87,8 @@ def test_docx_converts_to_markdown(tmp_path, capsys):
 
 
 def test_text_pdf_converts_to_markdown(tmp_path):
-    pymupdf = pytest.importorskip("pymupdf", reason="cairn[ingest] extra not installed")
-    pytest.importorskip("pymupdf4llm", reason="cairn[ingest] extra not installed")
+    pymupdf = pytest.importorskip("pymupdf", reason="cairn-intel[ingest] extra not installed")
+    pytest.importorskip("pymupdf4llm", reason="cairn-intel[ingest] extra not installed")
     pdf = tmp_path / "spec.pdf"
     doc = pymupdf.open()
     doc.new_page().insert_text((72, 72), "Deploy the gateway", fontsize=12)
