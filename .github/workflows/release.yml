@@ -108,26 +108,20 @@ jobs:
           workspaces: rust
           key: wheel-linux-musl
 
-      - name: Install cross
+      - name: Install cargo-zigbuild
         if: runner.os == 'Linux'
         uses: taiki-e/install-action@v2
         with:
-          tool: cross
+          tool: cargo-zigbuild,zig
 
       - name: Build rust engines (musl-static)
         if: runner.os == 'Linux'
         working-directory: rust
         run: |
-          # A cache-restored host build dir poisons cross: host-glibc build
-          # scripts cannot execute inside cross's older-glibc container.
-          # Build in an isolated target dir, then place the binaries where
-          # the wheel steps expect them.
-          export CARGO_TARGET_DIR="$PWD/target-cross"
-          cross build --release --target x86_64-unknown-linux-musl -p cairn-cli
-          cross build --release --target aarch64-unknown-linux-musl -p cairn-cli
-          mkdir -p target/x86_64-unknown-linux-musl/release target/aarch64-unknown-linux-musl/release
-          cp target-cross/x86_64-unknown-linux-musl/release/cairn target/x86_64-unknown-linux-musl/release/cairn
-          cp target-cross/aarch64-unknown-linux-musl/release/cairn target/aarch64-unknown-linux-musl/release/cairn
+          # zigbuild compiles on the host with zig as the toolchain: no
+          # container, so no glibc boundary between runner and cross image.
+          cargo zigbuild --release --target x86_64-unknown-linux-musl -p cairn-cli
+          cargo zigbuild --release --target aarch64-unknown-linux-musl -p cairn-cli
 
       - name: Verify static link (musl)
         if: runner.os == 'Linux'
