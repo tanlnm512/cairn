@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 
 use crate::graph::{self, TaintPath, TaintRegistryTables, intersect_seeds_registry};
 
-const GIT_TIMEOUT_S: u64 = 10;
+// Large pre-submit diffs (whole-campaign PRs) legitimately exceed tens of
+// seconds; the cap exists to fail hung git, not big history.
+const GIT_TIMEOUT_S: u64 = 120;
 
 #[derive(Clone, Debug)]
 pub struct ParsedHunk {
