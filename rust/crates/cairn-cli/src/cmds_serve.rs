@@ -34,9 +34,13 @@ pub struct ServeRestartArgs {
     pub host: Option<String>,
 }
 
-/// The daemon's boot guard: the store must exist and carry the symbols table.
+/// The daemon's boot guard: a storeless workspace still serves (healthz
+/// unhealthy until the first build); a present-but-broken store fails fast.
 fn boot_guard(db_path: &std::path::Path) -> Result<(), String> {
     let report = |message: String| Err(message);
+    if !db_path.exists() {
+        return Ok(());
+    }
     let Ok(conn) = cairn_store::conn::open_read_only(db_path) else {
         return report(format!(
             "cairn: error: failed to check database: cannot open {}. \
@@ -423,15 +427,19 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).expect("dir");
-        // Missing store: fail fast with the remediation line.
+        // A storeless workspace still serves (healthz unhealthy until the
+        // first build), so the guard must pass a missing store through.
         let missing = dir.join("missing.kg");
-        let error = boot_guard(&missing).expect_err("missing store must fail");
-        assert!(error.contains("failed to check database"), "{error}");
-        assert!(error.contains("cairn init && cairn build"), "{error}");
-        // A non-store file: same fail-fast path.
+        assert!(
+            boot_guard(&missing).is_ok(),
+            "missing store must not block serve"
+        );
+        // A non-store file: fail fast with the remediation line (SQLite
+        // opens lazily, so garbage surfaces as the symbols-table refusal).
         let garbage = dir.join("garbage.kg");
         std::fs::write(&garbage, b"not sqlite").expect("garbage");
-        assert!(boot_guard(&garbage).is_err());
+        let error = boot_guard(&garbage).expect_err("garbage store must fail");
+        assert!(error.contains("cairn init && cairn build"), "{error}");
         // A store without the symbols table is refused.
         let empty = dir.join("empty.kg");
         let conn = cairn_store::conn::open_writable(&empty).expect("open");
