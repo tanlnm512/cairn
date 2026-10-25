@@ -120,18 +120,24 @@ pub fn run_foreground(args: ServeForegroundArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    runtime.block_on(async move {
-        let (_addr, handle) = match serve_config(config, bind).await {
-            Ok(pair) => pair,
+    let served = runtime.block_on(async move {
+        match serve_config(config, bind).await {
+            Ok((_addr, handle)) => {
+                let _ = tokio::signal::ctrl_c().await;
+                handle.stop();
+                true
+            }
             Err(e) => {
                 eprintln!("cairn: error: {e}");
-                return;
+                false
             }
-        };
-        let _ = tokio::signal::ctrl_c().await;
-        handle.stop();
+        }
     });
-    ExitCode::SUCCESS
+    if served {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 /// Start the persistent shared HTTP daemon; idempotent.
