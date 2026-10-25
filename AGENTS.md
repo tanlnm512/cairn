@@ -177,8 +177,8 @@ Applies to code comments, docstrings, logging, markdown, and CHANGELOG entries.
 | `impact_analysis` | Within-repo by default, but includes cross-repo consumer reach in its output. Precise mode only follows resolved edges, so common names can under-report. | Pair with `cross_repo_deps(repo)` for the full picture. Use `fuzzy=True` when precise impact looks suspiciously small for a widely-used symbol. |
 | `search_symbols` | FTS5 + phrase splitting handles underscored tokens (`*core_ui_v4*` matches). Substring and camelCase patterns also match via a LIKE-based pass (the FTS5 `*` wildcard is prefix-only and the tokenizer doesn't split camelCase, so non-prefix queries fall back to LIKE). | Wildcards and substring queries both work, on underscored and camelCase names. |
 | `get_callers`/`impact_analysis` on a Kotlin class invoked via `operator fun invoke` | Bare calls of the standard Android UseCase idiom (`someUseCase(params)` against a DI-injected property) resolve to the callee's declared type. | Both bare `someUseCase(params)` and explicit-receiver `this.someUseCase(params)` shapes retarget correctly (regression-tested). |
-| `semantic_search` | Defaults to RRF fusion (BM25 + vector, `CAIRN_FUSION=1` default): the returned `score` is a rank-fusion number (~0.01-0.02), not cosine similarity, regardless of the `threshold` argument. Real cosine scores (0.3-0.6+ for genuinely on-topic hits with `local`/`BAAI/bge-m3`) only show when fusion is off. | Rank order is meaningful either way. Set `CAIRN_FUSION=0` if you need the score to reflect actual match strength (e.g. deciding how confident a hit is), not just relative order. |
-| `ann_backend_enabled` | On by default: `CAIRN_ANN_BACKEND` unset resolves to `sqlite-vec`. It degrades silently to the brute-force cosine scan if the extension fails to load. | Set `CAIRN_ANN_BACKEND=off` to force the brute-force scan. |
+| `semantic_search` | Defaults to RRF fusion (BM25 + vector, `CAIRN_FUSION=1` default): the returned `score` is a rank-fusion number (~0.01-0.02), not cosine similarity, regardless of the `threshold` argument. Real cosine scores (0.3-0.6+ for genuinely on-topic hits from an embeddings-server backend) only show when fusion is off. | Rank order is meaningful either way. Set `CAIRN_FUSION=0` if you need the score to reflect actual match strength (e.g. deciding how confident a hit is), not just relative order. |
+| `ann_backend_enabled` | On by default: `CAIRN_ANN_BACKEND` unset resolves to `sqlite-vec` (statically linked into the binary). | Set `CAIRN_ANN_BACKEND=off` to force the brute-force scan. |
 
 ## LLM Task Queue (agent-decoupled synthesis)
 
@@ -205,25 +205,31 @@ graph/compass/memory; `search_knowledge(query, type_filter="Wiki")` queries page
 
 ## CLI Fallback (if MCP tools are unavailable)
 
-The `cairn` binary (Homebrew tap / `cargo binstall` / release tarball)
-serves this fallback against the workspace store directly:
+Every install channel runs the same `cairn` engine binary — Homebrew tap,
+`cargo binstall`, release tarball, or the PyPI wheel, whose `cairn` console
+script execs the binary bundled inside it. It serves this fallback against
+the workspace store directly:
 
 - `cairn def <symbol>` -- find definition
-- `cairn callers <symbol>` -- who calls this
+- `cairn callers <symbol>` / `cairn callees <symbol>` -- who calls this / what it calls
+  (precise by default; `--fuzzy` adds name-matched sites)
+- `cairn search <pattern>` -- symbol search (FTS5, `*` wildcards)
 - `cairn impact <symbol>` -- what breaks if changed (within-repo)
 - `cairn deps <repo>` -- cross-repo dependency map
 - `cairn federated-search "QUERY"` -- cross-store search with per-repo attribution
 - `cairn pack --task "<text>" --budget <N>` -- one-shot token-budgeted context block
 - `cairn taint --from <src> --to <sink>` -- taint path trace over precise edges
+- `cairn ask "<question>"` -- natural-language routing across graph/wiki/compass/memory
+  (`--all-repos` fans out across registered stores)
+- `cairn context <file>` -- compass + memory + wiki context for a file
+- `cairn review --base <ref>` -- diff review pack (`--pre-submit` memory guard;
+  `--capture-event <file>` comment capture)
 - `cairn memory record <type> "<title>"` -- capture a learning
 - `cairn memory share/check/timeline` -- multi-agent sharing, overlap check,
   per-symbol history; `memory search --as-of <date>` for point-in-time recall
 
-`cairn context <file>`, `cairn ask "<question>"`, and
-`cairn review --base <ref>` (diff review pack; `--pre-submit` memory guard;
-`--capture-event <file>` comment capture) still require the PyPI CLI
-(`pip install cairn-intel`) during the transition window — the binary exits
-non-zero with a named diagnostic for them.
+`cairn --help` and `cairn <command> --help` are authoritative; the deep
+reference is `docs/cli-reference.md`.
 
 ## Knowledge Files
 

@@ -18,7 +18,7 @@ jobs:
   review:
     name: cairn review --pre-submit (advisory)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     # Advisory: no infrastructure failure may redden the check.
     continue-on-error: true
     permissions:
@@ -37,19 +37,19 @@ jobs:
           # resolves `main` locally and requires full history.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          python-version: "3.12"
+          workspaces: rust
 
-      - uses: astral-sh/setup-uv@v10.1.0
-
-      # Pinned install: the CLI under review comes from this checkout's
-      # committed uv.lock, never from a registry pull.
-      - name: Install cairn from this checkout
-        run: uv sync
+      # The CLI under review is this checkout's engine, never a registry pull.
+      - name: Build cairn from this checkout
+        run: |
+          cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+          echo "$GITHUB_WORKSPACE/rust/target/release" >> "$GITHUB_PATH"
 
       - name: Index workspace graph
-        run: uv run --no-sync cairn build
+        run: cairn build
 
       # checkout creates only origin/* refs; the engine's merge-base needs a
       # local `main` to resolve.
@@ -60,7 +60,7 @@ jobs:
       # comment step posts nothing. Exit 0 even with findings (no --gate).
       - name: Run pre-submit review
         run: |
-          uv run --no-sync cairn review --pre-submit --format markdown > review-findings.md
+          cairn review --pre-submit --format markdown > review-findings.md
           cat review-findings.md
 
       - name: Post findings comment

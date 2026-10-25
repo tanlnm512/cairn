@@ -1,179 +1,22 @@
-"""Shared pytest fixtures for the cairn test suite.
-
-Consolidates setup shared across test files:
-
-* ``fresh_db``  -- an in-memory SQLite connection with the full schema
-  (``_apply_schema``) already applied, Row factory enabled, FKs ON. Each
-  test gets its own isolated DB; nothing is shared between tests.
-
-* ``hash_backend`` -- forces the dep-free hash embedder
-  (``CAIRN_EMBED_BACKEND=hash``) and resets the cached backend before
-  and after the test, so semantic-stack tests don't need torch / a model
-  download. Apply with ``@pytest.fixture(autouse=True)`` per-test, or just
-  request the fixture by name where needed.
-
-* ``caller_callee_ws`` / ``caller_callee_db`` -- a single-repo Kotlin
-  workspace (a.kt calls b.kt) and a factory that builds its graph into a
-  caller-provided DB path and returns the open connection (the test owns
-  closing it).
-
-Tests that need specific symbol/file rows still seed them locally -- the
-fixture only removes the boilerplate of creating the connection and running
-schema setup, which was duplicated 6x.
-"""
+"""Shared pytest fixtures: every test runs on a clean machine by default."""
 from __future__ import annotations
 
 import os
-import shutil
-import sqlite3
 from pathlib import Path
 
 import pytest
 
-from cairn.graph.builder import build_graph
-from cairn.graph.schema import _apply_schema, get_db
-
-# Names agent-client detection probes via shutil.which (agent_install/detect.py
-# + clients/*). Blocked suite-wide so a developer machine with real CLIs
-# installed behaves like a clean CI runner.
-_AGENT_CLIS = ("claude", "cursor", "droid", "agy", "opencode", "kilo", "omp")
-
 
 @pytest.fixture(autouse=True)
 def _hermetic_env(monkeypatch, tmp_path):
-    """    Every test runs on a clean machine (suite-wide default), so env-dependent tests
-    fail at write time.
-
-    * HOME/CAIRN_HOME point into the tmp sandbox (Path.home patched); no CAIRN_*
-      env leaks between tests.
-    * paths.py's import-time layout (CAIRN_HOME, REGISTRY_FILE, CONFIG_FILE,
-      SHARED_LIB) is re-pointed as a group, so call-time readers (dashboard store
-      enumeration, register_workspace writes) never touch the real machine's stores.
-    * Agent CLIs are invisible to shutil.which; the macOS Cursor.app probe
-      (agent_install.detect) resolves inside the sandbox.
+    """HOME and CAIRN_HOME point into the tmp sandbox and no CAIRN_* env leaks between tests.
 
     Opt out with @pytest.mark.real_env -- justify in a comment."""
     home = tmp_path / "_home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", lambda *a, **k: home)
     monkeypatch.setenv("HOME", str(home))
-    sandbox_cairn = tmp_path / "_cairn_home"
-    monkeypatch.setenv("CAIRN_HOME", str(sandbox_cairn))
     for var in [v for v in os.environ if v.startswith("CAIRN_")]:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("CAIRN_HOME", str(sandbox_cairn))
-
-    # paths.py derives its whole stores layout from the import-time
-    # CAIRN_HOME binding (the same pit CONFIG_FILE patches below). Every
-    # derived attribute is re-pointed as a group: consumers read them at
-    # call time (the dashboard enumerates stores via paths.CAIRN_HOME on
-    # every render; _save_registry writes REGISTRY_FILE), so leaving any
-    # one bound to the real home leaks the machine's real stores into
-    # rendered pages or redirects a test's registry write into ~/.cairn.
-    from cairn import paths as _paths
-
-    monkeypatch.setattr(_paths, "CAIRN_HOME", sandbox_cairn)
-    monkeypatch.setattr(_paths, "REGISTRY_FILE", sandbox_cairn / "workspaces.json")
-    monkeypatch.setattr(_paths, "CONFIG_FILE", sandbox_cairn / "config.json")
-    monkeypatch.setattr(_paths, "SHARED_LIB", sandbox_cairn / "lib")
-    _paths.reset_config_cache()
-
-    real_which = shutil.which
-
-    def _blocked_which(name, *a, **k):
-        if name in _AGENT_CLIS:
-            return None
-        return real_which(name, *a, **k)
-
-    monkeypatch.setattr(shutil, "which", _blocked_which)
-
-    # detect.py's macOS probe: Path("/Applications/Cursor.app").exists().
-    # Remap the module-local Path so absolute /Applications paths land in the
-    # sandbox; every other Path behavior is unchanged.
-    from cairn.agent_install import detect as _detect
-
-    def _sandboxed_path(*args, **kw):
-        # A plain factory, not a Path subclass: modern pathlib's flavour
-        # dispatch silently bypasses a subclass __new__, but detect.py only
-        # needs Path(...) as a constructor and Path.home -- both satisfied.
-        # .home LATE-BINDS through the class attribute (Path.home at call
-        # time) so a test's own Path.home re-patch still wins over this
-        # fixture's -- stacking order must not change detection results.
-        if len(args) == 1 and isinstance(args[0], str) and args[0].startswith("/Applications/"):
-            return Path.home() / "_no_applications" / args[0].lstrip("/")
-        return Path(*args, **kw)
-
-    _sandboxed_path.home = lambda *a, **k: Path.home(*a, **k)
-    monkeypatch.setattr(_detect, "Path", _sandboxed_path)
+    monkeypatch.setenv("CAIRN_HOME", str(tmp_path / "_cairn_home"))
     yield
-
-
-@pytest.fixture
-def fresh_db() -> sqlite3.Connection:
-    """    A fresh in-memory SQLite connection with the full graph schema applied; row
-    factory is set.
-
-    Foreign keys are LEFT OFF (``_apply_schema`` alone does not enable FK; only
-    ``schema.get_db()`` does). Some tests delete parent rows with child references
-    and rely on FK being off to assert reap behavior.
-    Callers needing FK on: ``conn.execute("PRAGMA foreign_keys = ON")``."""
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    _apply_schema(conn)
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-@pytest.fixture
-def hash_backend(monkeypatch):
-    """Force the dep-free hash embedder and reset the cached backend.
-
-    Use as ``autouse=True`` in a test module that exercises the semantic
-    stack but doesn't want to depend on sentence-transformers/torch. The
-    cache reset on entry AND exit is what makes consecutive tests see a
-    consistent backend even if an earlier test changed the env var.
-    """
-    monkeypatch.setenv("CAIRN_EMBED_BACKEND", "hash")
-    from cairn.graph import embeddings as emb
-
-    emb.reset_backend_cache()
-    yield
-    emb.reset_backend_cache()
-
-
-@pytest.fixture
-def caller_callee_ws(tmp_path):
-    """A single-repo workspace with a.kt calling b.kt's symbol."""
-    ws = tmp_path / "ws"
-    repo = ws / "demo"
-    (repo / ".git").mkdir(parents=True)
-    (repo / "a.kt").write_text(
-        "class Caller {\n"
-        "  fun go() {\n"
-        "    val r = Callee()\n"
-        "    r.target()\n"
-        "  }\n"
-        "}\n"
-    )
-    (repo / "b.kt").write_text(
-        "class Callee {\n"
-        "  fun target() {}\n"
-        "}\n"
-    )
-    return ws
-
-
-@pytest.fixture
-def caller_callee_db(caller_callee_ws):
-    """Factory: build the graph over caller_callee_ws, return the connection.
-
-    Usage: ``conn = caller_callee_db(str(tmp_path / "x.db"))``.
-    """
-
-    def _build(db_path):
-        build_graph(workspace=str(caller_callee_ws), db_path=str(db_path))
-        return get_db(str(db_path))
-
-    return _build

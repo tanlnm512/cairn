@@ -1,431 +1,54 @@
-"""Path discovery for cairn: central store keyed by workspace."""
+"""Engine binary discovery for the PyPI shim: CAIRN_RUST_BIN, then the bundled package binary, then PATH."""
 from __future__ import annotations
 
-import hashlib
-import errno
-import fcntl
-import json
-import logging
 import os
-import tempfile
-import time
-from contextlib import contextmanager
-from dataclasses import dataclass
+import shutil
 from pathlib import Path
 
-# Central home for all per-workspace stores. Override for tests/CI.
-CAIRN_HOME = Path(
-    os.environ.get("CAIRN_HOME", str(Path.home() / ".cairn"))
-)
-
-REGISTRY_FILE = CAIRN_HOME / "workspaces.json"
-
-# Persistent settings file: flat string->scalar JSON object whose
-# keys mirror the CAIRN_EMBED_* env names. Bound at import time exactly like
-# REGISTRY_FILE -- tests monkeypatch this attribute, not the env var.
-CONFIG_FILE = CAIRN_HOME / "config.json"
-
-# Shared library directory for the heavy semantic deps (torch,
-# sentence-transformers, numpy). Installed via `cairn embed --install-deps`
-# with `pip install --target` so they survive `uv tool install --force`
-# reinstalls. Scoped per interpreter ABI (lib/cp311, lib/cp314, ...)
-# because these packages ship ABI-specific wheels: interpreters of
-# different ABIs must never share one install dir. Legacy flat installs
-# live directly in lib/ and stay usable via _inject_shared_libs.
-SHARED_LIB = CAIRN_HOME / "lib"
+RUST_BIN_ENV = "CAIRN_RUST_BIN"
 
 # Package-data dir for the injected engine binary: release/wheel builds copy
 # the platform `cairn` binary in immediately before packaging; a source
-# checkout ships none (gitignored) and binary discovery falls through to PATH.
+# checkout ships none (gitignored) and discovery falls through to PATH.
 BUNDLED_BIN_DIR = Path(__file__).resolve().parent / "_bin"
 
 
-# CAIRN_HOME constraint: the binding above is import-time, while the
-# helpers below re-read os.environ at call time (tests and long-lived
-# processes may change the variable after import). Default comparison is
-# by expanded absolute path.
-
-def _current_cairn_home() -> Path:
-    """Effective CAIRN_HOME for the current environment: the env var's value
-    (~-expanded, made absolute) when set, else ``~/.cairn``."""
-    return Path(os.path.abspath(os.path.expanduser(
-        os.environ.get("CAIRN_HOME", str(Path.home() / ".cairn"))
-    )))
-
-
-def cairn_home_is_default() -> bool:
-    """Whether the effective CAIRN_HOME equals the default home (``~/.cairn``),
-    compared as expanded absolute paths."""
-    return _current_cairn_home() == Path.home() / ".cairn"
-
-
-def cairn_home_env() -> dict[str, str]:
-    """Env block selecting the current CAIRN_HOME for child processes:
-    ``{}`` when the home is default, else ``{"CAIRN_HOME": <expanded path>}``."""
-    if cairn_home_is_default():
-        return {}
-    return {"CAIRN_HOME": str(_current_cairn_home())}
-
-
-def render_env_resolution_chain() -> str:
-    """One-line rendering of the env resolution chain in effect:
-    the CAIRN_HOME / CAIRN_WORKSPACE / CAIRN_DB / CAIRN_KNOWLEDGE values
-    (or ``unset``) plus the db path that chain resolves to, per the
-    resolve_workspace / resolve_store order. Reads the environment at call
-    time like the helpers above and is read-only (no registry writes), so
-    it is safe inside error paths.
-    """
-    def _entry(name: str) -> str:
-        value = os.environ.get(name)
-        return f"{name}={value}" if value else f"{name}=unset"
-
-    entries = " ".join(
-        _entry(name)
-        for name in ("CAIRN_HOME", "CAIRN_WORKSPACE", "CAIRN_DB",
-                     "CAIRN_KNOWLEDGE")
-    )
-    return f"{entries}; resolved db: {resolve_store().db}"
-
-
-def _abi_tag() -> str:
-    import sys as _sys
-
-    return f"cp{_sys.version_info[0]}{_sys.version_info[1]}"
-
-
-def shared_lib_path() -> Path:
-    """The shared-deps directory for the RUNNING interpreter's ABI.
-
-    Default: ``<CAIRN_HOME>/lib/cp<major><minor>``. ``CAIRN_LIB`` overrides
-    verbatim (no ABI suffix) for tests and explicit user pinning.
-    """
-    override = os.environ.get("CAIRN_LIB")
-    if override:
-        return Path(override)
-    return SHARED_LIB / _abi_tag()
-
-
 def bundled_binary() -> Path | None:
-    """The bundled `cairn` engine binary inside the package tree, or None when absent (source checkouts)."""
+    """The bundled `cairn` engine binary inside the package tree, or None when absent."""
     cand = BUNDLED_BIN_DIR / "cairn"
     return cand if cand.exists() else None
 
 
-def _inject_shared_libs() -> None:
-    """Prepend the shared lib dirs to sys.path (idempotent, existing dirs only).
-
-    Order (first match wins): the ABI-scoped dir, then the legacy flat
-    ``<CAIRN_HOME>/lib`` from pre-scope installs -- an existing
-    single-interpreter install keeps working unchanged, while every package
-    present in the ABI dir shadows its legacy copy. With ``CAIRN_LIB`` set,
-    only that directory is injected (the override is explicit and exact).
-    """
-    import sys as _sys
-
-    if os.environ.get("CAIRN_LIB"):
-        dirs = [shared_lib_path()]
-    else:
-        dirs = [shared_lib_path(), SHARED_LIB]
-    # reversed so the first dir in `dirs` ends up FIRST on sys.path.
-    for d in reversed(dirs):
-        if d.is_dir() and str(d) not in _sys.path:
-            _sys.path.insert(0, str(d))
+def shutil_which(name: str) -> str | None:
+    return shutil.which(name)
 
 
-# Inject the shared lib dirs into sys.path EARLY (at import time of this
-# module, which every cairn entry point loads). This must happen before any
-# code tries to `import sentence_transformers` / `import torch`. If the dirs
-# don't exist yet (deps not installed), this is a no-op.
-_inject_shared_libs()
+def _is_windows_host() -> bool:
+    return os.name == "nt"
 
 
-@dataclass(frozen=True)
-class StorePaths:
-    """Resolved locations for one workspace's cairn data."""
-
-    workspace: Path
-    home: Path          # <CAIRN_HOME>/<key>
-    db: Path            # <home>/.kg
-    knowledge: Path     # <home>/.knowledge
-
-    def ensure(self) -> "StorePaths":
-        """Create the store directories if missing. Idempotent."""
-        self.home.mkdir(parents=True, exist_ok=True)
-        self.knowledge.mkdir(parents=True, exist_ok=True)
-        return self
-
-
-def store_key(workspace: Path) -> str:
-    """Stable short key for a workspace path."""
-    return hashlib.sha256(str(workspace).encode()).hexdigest()[:16]
-
-
-# --------------------------------------------------------------------------
-# Registry: cwd -> key mapping, persisted as JSON for `cairn config --list`
-#           and ancestor-walk lookup.
-# --------------------------------------------------------------------------
-
-def _load_registry() -> dict[str, str]:
-    """Load the {workspace_abs_path: key} registry. Empty dict if absent/corrupt."""
-    if not REGISTRY_FILE.exists():
-        return {}
+def _is_native_bin(path: Path) -> bool:
+    """True for a native executable; excludes the #!-scripted console script also named `cairn`."""
     try:
-        data = json.loads(REGISTRY_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        _logger.warning(
-            "%s is not valid JSON; ignoring it (run `cairn init` to rebuild it)",
-            REGISTRY_FILE,
-        )
-        return {}
+        with open(path, "rb") as f:
+            return f.read(2) != b"#!"
     except OSError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _save_registry(reg: dict[str, str]) -> None:
-    """Persist the registry atomically (tmp file + fsync + os.replace)."""
-    CAIRN_HOME.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(
-        dir=str(CAIRN_HOME), prefix=".workspaces-", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(reg, fh, indent=2, sort_keys=True)
-            fh.write("\n")
-            # flush+fsync BEFORE the replace: without it a crash can persist
-            # the directory entry while the data blocks were never written.
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, REGISTRY_FILE)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-
-# Bounded wait for the registry lock before a writer proceeds unlocked.
-_REGISTRY_LOCK_TIMEOUT = 5.0
-_REGISTRY_LOCK_POLL = 0.01
-
-
-@contextmanager
-def _registry_lock(timeout: float = _REGISTRY_LOCK_TIMEOUT):
-    """Bounded exclusive flock serializing registry read-modify-write cycles; proceeds unlocked on timeout."""
-    lock_path = REGISTRY_FILE.with_name(REGISTRY_FILE.name + ".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o644)
-    deadline = time.monotonic() + timeout
-    try:
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError as exc:
-                if exc.errno not in (errno.EACCES, errno.EAGAIN):
-                    raise
-                if time.monotonic() >= deadline:
-                    _logger.warning(
-                        "registry lock %s busy; writing without it",
-                        lock_path,
-                    )
-                    break
-                time.sleep(_REGISTRY_LOCK_POLL)
-        try:
-            yield
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-    finally:
-        os.close(fd)
-
-
-def register_workspace(workspace: Path) -> StorePaths:
-    """Register a workspace (creates its store dir + registry entry)."""
-    ws = workspace.resolve()
-    key = store_key(ws)
-    paths = StorePaths(
-        workspace=ws,
-        home=CAIRN_HOME / key,
-        db=CAIRN_HOME / key / ".kg",
-        knowledge=CAIRN_HOME / key / ".knowledge",
-    ).ensure()
-    with _registry_lock():
-        reg = _load_registry()
-        reg[str(ws)] = key
-        _save_registry(reg)
-    return paths
-
-
-def is_registered(workspace: Path) -> bool:
-    return str(workspace.resolve()) in _load_registry()
-
-
-# --------------------------------------------------------------------------
-# Persistent config: $CAIRN_HOME/config.json. Flat JSON object whose keys
-# mirror the CAIRN_EMBED_* env names (e.g. "CAIRN_EMBED_BACKEND": "omlx")
-# and whose values are scalars. Consumers resolve env > file > default;
-# this layer only reads/writes/caches the file side.
-# --------------------------------------------------------------------------
-
-_CONFIG_CACHE: dict = {"stamp": None, "data": {}}
-
-_logger = logging.getLogger(__name__)
-
-
-def reset_config_cache() -> None:
-    """Drop the cached config so the next get_config_value re-reads disk."""
-    _CONFIG_CACHE["stamp"] = None
-    _CONFIG_CACHE["data"] = {}
-
-
-def _load_config() -> dict:
-    """One uncached read of CONFIG_FILE.
-
-    Returns the flat scalar mapping; empty dict when the file is absent,
-    unreadable, corrupt (one warning on invalid JSON), or not an object
-    (one warning). Non-scalar values are dropped with one summary warning
-    naming the keys. Never raises.
-    """
-    if not CONFIG_FILE.exists():
-        return {}
-    try:
-        raw = CONFIG_FILE.read_text(encoding="utf-8")
-    except OSError:
-        return {}
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        _logger.warning(
-            "%s is not valid JSON; ignoring it (env vars still apply)",
-            CONFIG_FILE,
-        )
-        return {}
-    if not isinstance(data, dict):
-        _logger.warning(
-            "%s is not a JSON object; ignoring it (env vars still apply)",
-            CONFIG_FILE,
-        )
-        return {}
-    values = {
-        k: v for k, v in data.items() if isinstance(v, (str, int, float, bool))
-    }
-    dropped = sorted(set(data) - set(values))
-    if dropped:
-        # Names only, never values: dropped entries can carry secrets
-        # (e.g. a mistakenly nested API key) and must not reach the log.
-        _logger.warning(
-            "%s: ignoring non-scalar keys: %s (values must be strings, "
-            "numbers, or booleans)",
-            CONFIG_FILE,
-            ", ".join(dropped),
-        )
-    return values
-
-
-def get_config_value(key: str, default=None):
-    """Value for ``key`` from CONFIG_FILE, or ``default`` when unset.
-
-    Re-reads the file only when its (mtime_ns, size) stamp changed, so a
-    running process picks up edits without restart. Never raises.
-    """
-    try:
-        st = CONFIG_FILE.stat()
-        stamp = (st.st_mtime_ns, st.st_size)
-    except OSError:
-        stamp = None
-    if _CONFIG_CACHE["stamp"] != stamp:
-        _CONFIG_CACHE["stamp"] = stamp
-        _CONFIG_CACHE["data"] = _load_config() if stamp is not None else {}
-    return _CONFIG_CACHE["data"].get(key, default)
-
-
-def set_config_values(values: dict) -> bool:
-    """Merge ``values`` into CONFIG_FILE atomically (tmp file + os.replace).
-
-    Creates the parent directory. Returns True on success; on OSError logs
-    one warning, leaves the previous file intact with no tmp file left
-    behind, and returns False.
-    """
-    try:
-        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        merged = {**_load_config(), **values}
-        fd, tmp = tempfile.mkstemp(
-            dir=str(CONFIG_FILE.parent), prefix=".config-", suffix=".tmp"
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(merged, fh, indent=2, sort_keys=True)
-                fh.write("\n")
-                # flush+fsync BEFORE the replace: os.replace is atomic within
-                # the filesystem but not durable -- without fsync a crash can
-                # persist the directory entry while the tmp file's data blocks
-                # were never written, leaving a zero-length config on recovery.
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, CONFIG_FILE)
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-    except OSError:
-        _logger.warning(
-            "could not write %s; configuration not saved", CONFIG_FILE
-        )
         return False
-    reset_config_cache()
-    return True
 
 
-# --------------------------------------------------------------------------
-# Workspace resolution
-# --------------------------------------------------------------------------
-
-def resolve_workspace(explicit: str | os.PathLike | None = None) -> Path:
-    """Resolve which workspace cairn is operating on.
-
-    Order: explicit arg > CAIRN_WORKSPACE env > registered ancestor > cwd.
-    """
-    if explicit:
-        return Path(explicit).resolve()
-    env_ws = os.environ.get("CAIRN_WORKSPACE")
-    if env_ws:
-        return Path(env_ws).resolve()
-    # Walk up from cwd looking for a registered ancestor.
-    reg = _load_registry()
-    if reg:
-        here = Path.cwd().resolve()
-        for ancestor in [here, *here.parents]:
-            if str(ancestor) in reg:
-                return ancestor
-    return Path.cwd().resolve()
-
-
-def resolve_store(workspace: str | os.PathLike | None = None) -> StorePaths:
-    """StorePaths for the context; CAIRN_DB/CAIRN_KNOWLEDGE override, no registry writes."""
-    ws = resolve_workspace(workspace)
-    key = store_key(ws)
-    home = CAIRN_HOME / key
-    db = Path(os.environ.get("CAIRN_DB", str(home / ".kg")))
-    knowledge = Path(os.environ.get("CAIRN_KNOWLEDGE", str(home / ".knowledge")))
-    return StorePaths(workspace=ws, home=home, db=db, knowledge=knowledge)
-
-
-# --------------------------------------------------------------------------
-# Convenience for the schema/CLI: a db path resolved at import time of the
-# calling process. CLI decorators read DEFAULT_DB_PATH once at import, so this
-# reflects the cwd the user invoked `cairn` from.
-# --------------------------------------------------------------------------
-
-def default_db_path() -> Path:
-    return resolve_store().db
-
-
-def default_knowledge_path() -> Path:
-    return resolve_store().knowledge
-
-
-def default_workspace() -> str:
-    return str(resolve_workspace())
+def rust_bin() -> str | None:
+    """Engine binary path: CAIRN_RUST_BIN, then the bundled package binary, then a native `cairn` on PATH or ~/.local/bin (non-Windows); None when absent."""
+    cand = os.environ.get(RUST_BIN_ENV)
+    if cand and Path(cand).exists():
+        return cand
+    bundled = bundled_binary()
+    if bundled is not None:
+        return str(bundled)
+    # No Windows engine ships: pip's console launcher is a native cairn.exe that
+    # passes the #!-only native check, so PATH there can never prove an engine.
+    if _is_windows_host():
+        return None
+    for cand in (shutil_which("cairn"), str(Path.home() / ".local" / "bin" / "cairn")):
+        if cand and Path(cand).exists() and _is_native_bin(Path(cand)):
+            return cand
+    return None

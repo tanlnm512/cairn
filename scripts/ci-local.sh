@@ -15,7 +15,6 @@
 #   scripts/ci-local.sh typecheck              # mypy (advisory, like CI)
 #   scripts/ci-local.sh precommit              # pre-commit run --all-files
 #   scripts/ci-local.sh build                  # wheel + sdist + import check
-#   scripts/ci-local.sh bench                  # bench + advisory baseline compare
 #
 # Environment:
 #   CI_LOCAL_ARCH     linux/arm64 (default, native) or linux/amd64
@@ -56,8 +55,8 @@ if [[ -z "${CI_LOCAL_INNER:-}" ]]; then
   PY="${2:-${PYTHON_VERSION:-3.12}}"
   case "$JOB" in
     -h|--help|help) usage 0 ;;
-    test|test-all|security|typecheck|precommit|build|bench) ;;
-    *) die "unknown job '$JOB' (test|test-all|security|typecheck|precommit|build|bench)" ;;
+    test|test-all|security|typecheck|precommit|build) ;;
+    *) die "unknown job '$JOB' (test|test-all|security|typecheck|precommit|build)" ;;
   esac
 
   # Boot the container system service if needed (idempotent, ~10s cold).
@@ -137,23 +136,19 @@ cd "$MOUNT_POINT"
 
 case "$JOB" in
   test)
-    # ci.yml: test job -- skill-eval validation, core smoke subset, full suite.
-    install_extras dev
+    # ci.yml: test job -- skill-eval validation, then the suite (the infra
+    # tier needs the release rust binary and runs in rust-parity.yml).
+    install_extras dev,ingest,graph-analytics
     log "validating skill eval specs (CI: Validate skill eval specs)"
     python scripts/run_skill_evals.py
-    log "core smoke subset (CI: Run core smoke subset)"
-    python -m pytest -m core -q
-    log "full suite (CI: Run full test suite, PR-leg shape: infra tier excluded)"
-    python -m pytest -q -m "not infra" --junitxml=test-results.xml \
-      --cov=cairn --cov-report=term --cov-report=xml
-    log "infra tier (CI: Run infra tier, main-push shape)"
-    python -m pytest -q -m infra
-    log "suite green (results: test-results.xml, coverage.xml)"
+    log "suite (CI: Run test suite, infra tier excluded)"
+    python -m pytest -q -m "not infra" --junitxml=test-results.xml
+    log "suite green (results: test-results.xml)"
     ;;
 
   security)
     # ci.yml: security job -- pip-audit is a HARD gate, bandit advisory.
-    install_extras dev,otlp
+    install_extras dev,ingest,graph-analytics
     log "pip-audit (CI: hard gate)"
     python -m pip_audit
     log "bandit (CI: advisory -- findings below don't fail)"
@@ -187,20 +182,6 @@ case "$JOB" in
     python -m pip install --upgrade pip -q
     python -m pip install dist/*.whl -q
     python -c "import cairn; print('ok')"
-    ;;
-
-  bench)
-    # ci.yml: bench job -- fixed corpus, hash backend, advisory throughout.
-    # Compare against the COMMITTED DS-v1 baseline; bench_compare.py honors
-    # an explicit bench-baseline.json as a local override and falls back to
-    # the committed artifact without it.
-    install_extras ""
-    log "cairn bench vs committed DS-v1 (CI: Run bench -- advisory)"
-    cairn bench --suite perf --embed-backend hash --repeats 3 \
-      --json --save bench-current.json --baseline DS-v1 \
-      || warn "bench failed (advisory in CI too)"
-    log "advisory comparison (CI: Compare vs baseline)"
-    python .github/scripts/bench_compare.py || warn "comparison failed (advisory)"
     ;;
 
   *) die "inner: unknown job '$JOB'" ;;

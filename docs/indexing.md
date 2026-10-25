@@ -1,55 +1,51 @@
 # Indexing: how code gets into the graph
 
-← [Docs index](README.md)
+← [README](../README.md)
 
 Read this when you're touching the build path, the resolver, or wondering
-what `cairn build` / `cairn update` actually do.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="diagrams/indexing-pipeline-dark.png">
-  <img src="diagrams/indexing-pipeline.png" alt="Indexing pipeline diagram">
-</picture>
-
-Open [diagrams/indexing-pipeline.html](diagrams/indexing-pipeline.html) for
-the full-size version.
+what `cairn build` / `cairn update` actually do. The engine lives in the
+`cairn-build` crate (scanner, builder, resolver, incremental) with
+per-language extraction in `cairn-parse`.
 
 ## Full build (`cairn build` / `cairn init`)
 
-Entry: `src/cairn/graph/builder.py:build_graph`. Ordered stages:
+Entry: `cairn-build` `builder.rs::build_graph`, run under the store's
+`build_lock`. Ordered stages:
 
-1. **Scan** — `src/cairn/graph/scanner.py`
-   - `discover_repos(workspace)` finds `.git` subdirectories (single-repo
-     fallback when the root is itself a repo).
-   - Per file, a 4-layer filter: default skip-dirs → gitignore (pathspec,
-     nested) → `cairn.json` `exclude` globs → 1 MB size cap. `include`
-     overrides the first three, never the cap.
+1. **Scan** — `scanner.rs`
+   - repo discovery finds `.git` subdirectories (single-repo fallback when the
+     root is itself a repo; `cairn.json` `include_nested_repos` opts nested
+     repositories in under prefixed ids).
+   - Per file, a 4-layer filter: default skip-dirs → gitignore (nested) →
+     `cairn.json` `exclude` globs → 1 MB size cap. `include` overrides the
+     first three, never the cap.
    - Every file hashed (SHA-256). Skips are audited into `skipped_files`
-     with reasons: `default_skip`, `gitignored`, `config_exclude`, `size_cap`.
+     with reasons: `default_skip`, `gitignored`, `config_exclude`,
+     `size_cap`, `parser_unavailable`.
 
 2. **Register repos** — upsert `repos` rows, infer dominant language, pull
-   `git_remote` (`src/cairn/utils/git.py`).
+   `git_remote`.
 
-3. **Clear** — rebuild deletes that repo's files/symbols/edges/imports/
+3. **Clear** — a rebuild deletes that repo's files/symbols/edges/imports/
    embeddings; incoming cross-repo edges are nulled to `unresolved`.
    Crash recovery: `repo_build_state` marks an in-progress rebuild and is
    cleared only on completion.
 
-4. **Parse** — `src/cairn/parsers/` via `ProcessPoolExecutor`
-   (`CAIRN_WORKERS`, default cpu_count, capped 256). 15 languages: python,
-   typescript, javascript, java, kotlin, swift, go, dart, csharp, c, cpp,
-   objc, php, ruby, rust. Each parser returns a `ParsedFile` (symbols, edges,
-   imports) — dataclasses in `src/cairn/parsers/base.py`.
+4. **Parse** — `cairn-parse` on a rayon pool (`CAIRN_WORKERS`, default cpu
+   count, clamped 1–256); scan order is restored with a stable sort before
+   any insert, so output is independent of parse completion order. 15
+   languages: python, typescript, javascript, java, kotlin, swift, go, dart,
+   csharp, c, cpp, objc, php, ruby, rust. Each parser returns a `ParsedFile`
+   (symbols, edges, imports).
 
-5. **Enrich** — best-effort per file: `detect_routes` (route symbols +
-   reference edges) and `detect_service_calls` (`http_call` / `service_call`
-   edges).
+5. **Enrich** — best-effort per file: `routes.rs` (route symbols + reference
+   edges) and `service_calls.rs` (`http_call` / `service_call` edges).
 
-6. **Insert** — `insert_parsed_file` writes `files`, `symbols`
-   (`source='tree_sitter'`), `imports`, `edges` (unresolved at this point).
-   On-disk builds commit every 500 files.
+6. **Insert** — write `files`, `symbols` (`source='tree_sitter'`),
+   `imports`, `edges` (unresolved at this point), `rationale`.
 
-7. **Resolve** — `src/cairn/graph/resolver.py:resolve_repo_edges`. Priority
-   tiers per edge, first tier with candidates wins:
+7. **Resolve** — `resolver.rs`. Priority tiers per edge, first tier with
+   candidates wins:
 
    | Tier | Basis |
    |---|---|
@@ -65,36 +61,41 @@ Entry: `src/cairn/graph/builder.py:build_graph`. Ordered stages:
      for fuzzy queries.
    - `unresolved` — no candidates (stdlib/external).
 
-7b. **Pyright upgrade pass** — ambiguous Python call edges are probed via
-    `pyright --stdio` when available (budget-capped by default; `--lsp`
-    unbounded, `--no-lsp` off, budgets in `cairn.json`'s `lsp` section). A
-    unique definition matching one stored Python symbol upgrades the edge to
-    `exact`; upgrades persist, so budget-stopped passes resume next build.
+   The resolver also stores its signals on the edge (`ref_name`,
+   `receiver_type`, `call_arity`) so incremental repair can re-resolve
+   with the same inputs. `--lsp` is accepted for compatibility; no pyright
+   upgrade pass runs in this build.
 
-8. **Derived indexes** — `build_dataflow_index` (per-symbol impact sets) and
-   `build_transitive_closure` (multi-hop calls at O(1)).
+8. **Derived indexes** — `cairn build --with-closure` materializes
+   `transitive_edges` (multi-hop calls at O(1)); the precomputed impact
+   index is a separate step, `cairn dataflow build` (capped by
+   `--max-symbols` / `CAIRN_DATAFLOW_MAX_SYMBOLS`, default 2000).
 
-9. **Persist** — full-workspace builds run in-memory, then
-    `backup_to` + `swap_db_file` atomically replaces `.kg` (telemetry tables
-    are carried across). `--staging` builds to `.kg.tmp` and swaps under the
-    build lock. A `build_runs` row records timings and resolution stats.
+9. **Persist** — the default build writes into the store under the build
+   lock; `--staging` builds into `<db>.tmp` and atomically swaps it in,
+   carrying the telemetry tables across. A `build_runs` row records timings
+   and resolution stats.
 
 ## Incremental update (`cairn update`)
 
-Entry: `src/cairn/graph/incremental.py`.
+Entry: `cairn-build` `incremental.rs::incremental_update`, which takes the
+build lock before opening its connection.
 
-- **Change detection**: primary is `git diff --name-only HEAD` filtered to
-  indexed extensions; fallback (no git) compares size/mtime with a 0.5s
-  tolerance and also catches new + deleted files. `--file <path>` reindexes
-  one file.
+- **Change detection**, per repo: `--diff-ref A..B` uses exactly
+  `git diff -z --name-only A..B`; otherwise `git diff -z --name-only HEAD`
+  plus `git ls-files -z --others --exclude-standard` (new untracked files),
+  filtered to indexed extensions. Without git, size/mtime drift (0.5 s
+  tolerance) is compared, and a drifted mtime whose content hash is
+  unchanged only refreshes the stored stat. `--file <path>` reindexes one
+  file.
 - **Reindex** (`reindex_paths`): per changed file, in one transaction —
   snapshot old symbol names, delete the file's rows (edges, embeddings +
-  ANN vec0 entries, imports, symbols), re-parse and re-insert if the file
-  still exists.
+  ANN vec0 entries, imports, symbols, rationale), re-parse and re-insert if
+  the file still exists.
 - **After**: the resolver re-runs per repo; `repair_incoming_edges`
-  re-resolves edges in *other* files that pointed at deleted symbols —
-  unique to the incremental path; derived indexes are maintained for just
-  the affected symbols (full rebuild only if never built); memory decay runs.
+  re-resolves edges in *other* files that pointed at deleted or renamed
+  symbols — unique to the incremental path — and cross-repo `imports` edges
+  nulled by the delete leg are re-materialized.
 
 ## What agents should know about resolution labels
 
@@ -107,9 +108,10 @@ handled (bare and explicit-receiver call shapes retarget correctly).
 ## Parser conformance matrix
 
 One row per golden-fixtured language (`tests/fixtures/golden/`); every row
-is green (parser output matches the golden snapshot) or explicitly
-tier-marked with the feature gap. Regenerate with
-`scripts/gen_conformance_table.py`; a staleness test keeps the table honest.
+is green (the `cairn-parse` golden tests assert each `expected.json`) or
+explicitly tier-marked with the feature gap. Regenerate with
+`scripts/gen_conformance_table.py`; `--check` fails when the committed table
+drifts from the fixtures.
 
 <!-- conformance:begin (generated by scripts/gen_conformance_table.py) -->
 

@@ -19,10 +19,9 @@ fn flow_dir() -> PathBuf {
     repo_root().join("rust/golden/flow")
 }
 
-/// A fixture-declared replay artifact (store or workspace) relative to the repo
-/// root, falling back to the legacy flow-corpus default when the key is absent.
-fn fixture_artifact(root: &std::path::Path, fixture: &Value, key: &str, default: &str) -> PathBuf {
-    root.join(fixture[key].as_str().unwrap_or(default))
+/// The flow-corpus (store, workspace) pair every fixture block replays over.
+fn flow_artifacts() -> (PathBuf, PathBuf) {
+    (flow_dir().join("flow-store.kg"), flow_dir().join("corpus"))
 }
 
 /// Copy-on-create scratch store; removes the directory on drop.
@@ -239,48 +238,18 @@ fn assert_case(fixture: &Value, case: Option<&Value>, label: &str, store: &Path,
 }
 
 fn fixture(name: &str) -> Value {
-    let path = if name == "taint" {
-        flow_dir().join("taint.json")
-    } else {
-        repo_root().join(format!("rust/golden/mcp/{name}.json"))
-    };
+    let path = flow_dir().join(format!("{name}.json"));
     serde_json::from_str(
         &fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display())),
     )
     .expect("fixture json")
 }
 
-/// The (store, workspace) pair for a fixture's canonical block: the fixture's
-/// `replay_store`/`replay_workspace` pointers when present, else the legacy
-/// flow-corpus defaults. Cases always replay over the flow corpus.
-fn main_artifacts(fixture: &Value) -> (PathBuf, PathBuf) {
-    let root = repo_root();
-    (
-        fixture_artifact(
-            &root,
-            fixture,
-            "replay_store",
-            "rust/golden/flow/flow-store.kg",
-        ),
-        fixture_artifact(
-            &root,
-            fixture,
-            "replay_workspace",
-            "rust/golden/flow/corpus",
-        ),
-    )
-}
-
-fn case_artifacts() -> (PathBuf, PathBuf) {
-    (flow_dir().join("flow-store.kg"), flow_dir().join("corpus"))
-}
-
 #[test]
 fn explore_matches_the_golden_fixture() {
     let fixture = fixture("explore");
-    let (store, ws) = main_artifacts(&fixture);
+    let (store, ws) = flow_artifacts();
     assert_case(&fixture, None, "explore(fetch_user)", &store, &ws);
-    let (store, ws) = case_artifacts();
     for (i, case) in fixture["cases"]
         .as_array()
         .expect("cases")
@@ -300,9 +269,8 @@ fn explore_matches_the_golden_fixture() {
 #[test]
 fn trace_flow_matches_the_golden_fixture() {
     let fixture = fixture("trace_flow");
-    let (store, ws) = main_artifacts(&fixture);
+    let (store, ws) = flow_artifacts();
     assert_case(&fixture, None, "trace_flow(kickoff)", &store, &ws);
-    let (store, ws) = case_artifacts();
     for (i, case) in fixture["cases"]
         .as_array()
         .expect("cases")
@@ -322,9 +290,8 @@ fn trace_flow_matches_the_golden_fixture() {
 #[test]
 fn cross_repo_deps_matches_the_golden_fixture() {
     let fixture = fixture("cross_repo_deps");
-    let (store, ws) = main_artifacts(&fixture);
+    let (store, ws) = flow_artifacts();
     assert_case(&fixture, None, "cross_repo_deps(corpus)", &store, &ws);
-    let (store, ws) = case_artifacts();
     for (i, case) in fixture["cases"]
         .as_array()
         .expect("cases")
@@ -344,7 +311,7 @@ fn cross_repo_deps_matches_the_golden_fixture() {
 #[test]
 fn visualize_graph_matches_the_golden_fixture() {
     let fixture = fixture("visualize_graph");
-    let (store, ws) = main_artifacts(&fixture);
+    let (store, ws) = flow_artifacts();
     assert_case(
         &fixture,
         None,
@@ -352,7 +319,6 @@ fn visualize_graph_matches_the_golden_fixture() {
         &store,
         &ws,
     );
-    let (store, ws) = case_artifacts();
     for (i, case) in fixture["cases"]
         .as_array()
         .expect("cases")
@@ -372,6 +338,6 @@ fn visualize_graph_matches_the_golden_fixture() {
 #[test]
 fn taint_matches_the_golden_fixture() {
     let fixture = fixture("taint");
-    let (store, ws) = case_artifacts();
+    let (store, ws) = flow_artifacts();
     assert_case(&fixture, None, "taint(file-read -> sql)", &store, &ws);
 }

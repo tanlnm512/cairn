@@ -1,0 +1,128 @@
+name: Rust parity gates
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - "scripts/rust_migration/**"
+      - "src/cairn/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/rust-parity.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-parity-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CAIRN_TELEMETRY: "off"
+
+jobs:
+  # --- Cheap oracles: run on PRs and nightly -------------------------------
+  parity:
+    name: parity (self) + cli golden + G2 base
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Install (with dev extras)
+        run: uv sync --extra dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build rust cairn (release)
+        run: cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+      - name: Build serve_search example
+        run: cargo build --release --manifest-path rust/Cargo.toml -p cairn-daemon --example serve_search
+      - name: Engine-free parity oracle test
+        run: uv run --no-sync python -m pytest tests/test_parity_replay_engine_free.py -v
+      - name: parity replay (self)
+        run: uv run --no-sync python scripts/rust_migration/parity.py --store self
+      - name: cli golden
+        run: uv run --no-sync python scripts/rust_migration/cli_golden.py
+      - name: G2 (base leg)
+        run: bash scripts/rust_migration/g2_check.sh
+
+  # --- Nightly and dispatch only -------------------------------------------
+  parity-stores:
+    name: parity (yarl, attrs)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Install (with dev extras)
+        run: uv sync --extra dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build rust cairn (release)
+        run: cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+      - name: parity replay (yarl)
+        run: uv run --no-sync python scripts/rust_migration/parity.py --store yarl
+      - name: parity replay (attrs)
+        run: uv run --no-sync python scripts/rust_migration/parity.py --store attrs
+
+  g2-legs:
+    name: G2 (rebuild + staging legs)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Install (with dev extras)
+        run: uv sync --extra dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build rust cairn (release)
+        run: cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+      # Expected red until staged builds swap into the store and rebuilds replace it.
+      - name: G2 (rebuild + staging legs)
+        continue-on-error: true
+        env:
+          G2_LEGS: rebuild,staging
+        run: bash scripts/rust_migration/g2_check.sh
+
+  wheel-smoke:
+    name: wheel smoke
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Install (with dev extras)
+        run: uv sync --extra dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: wheel smoke
+        run: bash scripts/rust_migration/wheel_smoke.sh

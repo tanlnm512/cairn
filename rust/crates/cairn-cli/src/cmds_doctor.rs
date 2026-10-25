@@ -35,11 +35,11 @@ pub struct DoctorArgs {
 }
 
 #[derive(Debug)]
-struct CheckResult {
-    name: String,
-    status: &'static str,
-    detail: String,
-    hint: Option<String>,
+pub(crate) struct CheckResult {
+    pub(crate) name: String,
+    pub(crate) status: &'static str,
+    pub(crate) detail: String,
+    pub(crate) hint: Option<String>,
 }
 
 fn result(
@@ -131,13 +131,14 @@ pub fn run(args: DoctorArgs) -> ExitCode {
     }
 }
 
-fn run_doctor(db: &str) -> Vec<CheckResult> {
+pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
     let path = Path::new(db);
     if !path.exists() {
         let mut degraded = db_unavailable_results(&format!(
             "store not found at {db} -- run `cairn init` + `cairn build` first"
         ));
         degraded.push(check_environment(db));
+        degraded.push(check_agent_hooks());
         return degraded;
     }
     let conn = match open_store(path) {
@@ -145,6 +146,7 @@ fn run_doctor(db: &str) -> Vec<CheckResult> {
         Err(e) => {
             let mut degraded = db_unavailable_results(&e.to_string());
             degraded.push(check_environment(db));
+            degraded.push(check_agent_hooks());
             return degraded;
         }
     };
@@ -152,12 +154,14 @@ fn run_doctor(db: &str) -> Vec<CheckResult> {
     results.extend(check_embed_server(&conn));
     results.push(check_freshness(&conn));
     results.push(check_parse_errors(&conn));
+    results.push(check_edge_signals(&conn));
     results.push(check_concurrency(&conn));
     results.push(check_tool_health(&conn));
     results.push(check_memory_staleness(&conn, db));
     results.push(check_config());
     results.push(check_daemon());
     results.push(check_environment(db));
+    results.push(check_agent_hooks());
     results
 }
 
@@ -189,6 +193,12 @@ fn db_unavailable_results(error: &str) -> Vec<CheckResult> {
         result("freshness", WARN, "database unavailable (see schema)", None),
         result(
             "parse_errors",
+            WARN,
+            "database unavailable (see schema)",
+            None,
+        ),
+        result(
+            "edge_signals",
             WARN,
             "database unavailable (see schema)",
             None,
@@ -925,6 +935,76 @@ fn check_parse_errors(conn: &Connection) -> CheckResult {
     )
 }
 
+// --- 6b. edge signals (stores predating the signal columns) --------------------------
+
+const EDGE_SIGNAL_COLUMNS: [&str; 3] = ["ref_name", "receiver_type", "call_arity"];
+const EDGE_SIGNALS_HINT: &str =
+    "run `cairn build` to rebuild the store and populate the edge signals";
+
+// contains/imports edges are structural (never resolved); scip-authored rows
+// and language-server-upgraded exact edges legitimately carry no ref_name.
+fn check_edge_signals(conn: &Connection) -> CheckResult {
+    let cols: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info('edges')")
+        .and_then(|mut stmt| {
+            let mapped = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            mapped.collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap_or_default();
+    if cols.is_empty() {
+        return result(
+            "edge_signals",
+            WARN,
+            "edges table unavailable (see schema)",
+            None,
+        );
+    }
+    if !EDGE_SIGNAL_COLUMNS
+        .iter()
+        .all(|c| cols.iter().any(|col| col == c))
+    {
+        return result(
+            "edge_signals",
+            WARN,
+            "edges signal columns missing (store predates \
+             ref_name/receiver_type/call_arity) -- repair runs name-only until \
+             the store is rebuilt",
+            Some(EDGE_SIGNALS_HINT.to_string()),
+        );
+    }
+    match conn.query_row(
+        "SELECT COUNT(*) FROM edges
+          WHERE ref_name IS NULL
+            AND resolution IN ('ambiguous', 'unresolved')
+            AND kind NOT IN ('contains', 'imports')
+            AND COALESCE(source, 'tree_sitter') != 'scip'",
+        [],
+        |row| row.get::<_, i64>(0),
+    ) {
+        Ok(0) => result(
+            "edge_signals",
+            PASS,
+            "reference edges carry resolver signals",
+            None,
+        ),
+        Ok(n) => result(
+            "edge_signals",
+            WARN,
+            format!(
+                "{n} reference edge(s) without resolver signals -- incremental \
+                 repair runs name-only for them until the store is rebuilt"
+            ),
+            Some(EDGE_SIGNALS_HINT.to_string()),
+        ),
+        Err(e) => result(
+            "edge_signals",
+            WARN,
+            format!("cannot read edge signals: {e}"),
+            None,
+        ),
+    }
+}
+
 // --- 7. concurrency -----------------------------------------------------------------------
 
 fn check_concurrency(conn: &Connection) -> CheckResult {
@@ -1129,7 +1209,7 @@ fn iso_cutoff(days: i64) -> String {
 
 // --- 10. config echo -----------------------------------------------------------------------------
 
-fn knob_source(name: &str, default: &str) -> (String, &'static str) {
+pub(crate) fn knob_source(name: &str, default: &str) -> (String, &'static str) {
     if let Ok(env_value) = std::env::var(name) {
         let trimmed = env_value.trim();
         if !trimmed.is_empty() {
@@ -1216,6 +1296,43 @@ fn check_daemon() -> CheckResult {
             )
         }
     }
+}
+
+// --- agent hooks (retired python runner) -------------------------------------------------------------
+
+/// Hook files whose cairn commands may still name the retired python module runner.
+fn agent_hook_files() -> Vec<PathBuf> {
+    let ws = crate::store_paths::resolve_workspace(None);
+    let home = home_dir();
+    vec![
+        ws.join(".claude").join("settings.json"),
+        home.join(".claude").join("settings.json"),
+        ws.join(".cursor").join("hooks.json"),
+        home.join(".cursor").join("hooks.json"),
+    ]
+}
+
+fn check_agent_hooks() -> CheckResult {
+    let stale: Vec<String> = agent_hook_files()
+        .into_iter()
+        .filter(|path| path.is_file())
+        .filter_map(|path| {
+            let count = crate::agent_install::retired_hook_commands(&path).len();
+            (count > 0).then(|| format!("{} ({count})", path.display()))
+        })
+        .collect();
+    if stale.is_empty() {
+        return result("agent_hooks", PASS, "no retired hook commands", None);
+    }
+    result(
+        "agent_hooks",
+        WARN,
+        format!(
+            "retired `python -m cairn.hooks.claude_hooks` commands in {}",
+            stale.join(", ")
+        ),
+        Some("run `cairn install-agents` to migrate them to `cairn hooks run`".to_string()),
+    )
 }
 
 // --- 11. environment wiring ---------------------------------------------------------------------------
@@ -1528,11 +1645,7 @@ fn apply_doctor_fixes() -> Vec<Value> {
                 "{}.bak",
                 path.file_name().unwrap_or_default().to_string_lossy()
             ));
-            let backed_up = std::fs::read(&path)
-                .ok()
-                .and_then(|bytes| std::fs::write(&backup, bytes).ok())
-                .is_some();
-            if !backed_up {
+            if !crate::agent_install::copy_to_backup(&path, &backup) {
                 actions.push(action(WRITE_FAILED));
                 continue;
             }
@@ -1811,6 +1924,7 @@ mod tests {
             "ann",
             "freshness",
             "parse_errors",
+            "edge_signals",
             "concurrency",
             "tool_health",
             "memory_staleness",
@@ -1839,27 +1953,102 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn missing_store_degrades_without_failures_outside_schema() {
-        // The environment audit reads the real client configs under HOME; a
-        // developer machine carries live registrations, so isolate it.
-        let guard_dir = std::env::temp_dir().join(format!(
-            "cairn-doctor-home-{}",
+    fn edge_signals_store(dir_tag: &str, edge_rows: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "cairn-doctor-edgesig-{dir_tag}-{}-{}",
+            std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
         ));
-        std::fs::create_dir_all(&guard_dir).expect("home dir");
-        let real_home = std::env::var("HOME").ok();
-        // SAFETY: serialized single-threaded test process env isolation.
-        unsafe { std::env::set_var("HOME", &guard_dir) };
-        let results = run_doctor("/nonexistent/cairn-doctor/store.kg");
-        match real_home {
-            Some(home) => unsafe { std::env::set_var("HOME", home) },
-            None => unsafe { std::env::remove_var("HOME") },
+        std::fs::create_dir_all(&dir).expect("dir");
+        let db_path = dir.join("store.kg");
+        {
+            let conn = cairn_store::conn::open_writable(&db_path).expect("create store");
+            cairn_store::schema::apply_schema(&conn).expect("schema");
+            conn.execute_batch(&format!(
+                "INSERT INTO repos (id, name, path, language) VALUES ('r1', 'r1', '.', 'python');
+                 INSERT INTO files (id, repo_id, path, language) \
+                     VALUES ('f1', 'r1', 'a.py', 'python');
+                 INSERT INTO symbols (id, file_id, name, kind) \
+                     VALUES ('s1', 'f1', 'caller', 'function');
+                 {edge_rows}"
+            ))
+            .expect("seed");
         }
-        let _ = std::fs::remove_dir_all(&guard_dir);
+        db_path
+    }
+
+    #[test]
+    fn edge_signals_warns_on_pre_signal_column_edges() {
+        let db_path = edge_signals_store(
+            "legacy",
+            "INSERT INTO edges (id, source_id, target_id, target_name, kind, line, \"column\",
+                                    resolution, source)
+             VALUES ('e1', 's1', NULL, 'gone', 'calls', 1, 0, 'unresolved', 'tree_sitter');",
+        );
+        let results = run_doctor(db_path.to_str().expect("utf8 db path"));
+        let row = results
+            .iter()
+            .find(|r| r.name == "edge_signals")
+            .expect("edge_signals check emitted");
+        assert_eq!(row.status, WARN);
+        assert!(row.detail.contains("1 reference edge"), "{}", row.detail);
+        let hint = row.hint.as_deref().unwrap_or_default();
+        assert!(hint.contains("cairn build"), "{hint}");
+        let _ = std::fs::remove_dir_all(db_path.parent().expect("parent"));
+    }
+
+    #[test]
+    fn edge_signals_passes_when_reference_edges_carry_signals() {
+        let db_path = edge_signals_store(
+            "current",
+            "INSERT INTO edges (id, source_id, target_id, target_name, kind, line, \"column\",
+                                    resolution, source, ref_name)
+             VALUES ('e1', 's1', NULL, 'gone', 'calls', 1, 0, 'unresolved', 'tree_sitter', 'gone');",
+        );
+        let results = run_doctor(db_path.to_str().expect("utf8 db path"));
+        let row = results
+            .iter()
+            .find(|r| r.name == "edge_signals")
+            .expect("edge_signals check emitted");
+        assert_eq!(row.status, PASS, "{}", row.detail);
+        let _ = std::fs::remove_dir_all(db_path.parent().expect("parent"));
+    }
+
+    #[test]
+    fn edge_signals_warns_when_columns_are_absent() {
+        let db_path = edge_signals_store("pre-migration", "");
+        {
+            let conn = cairn_store::conn::open_writable(&db_path).expect("reopen");
+            for col in ["ref_name", "receiver_type", "call_arity"] {
+                conn.execute_batch(&format!("ALTER TABLE edges DROP COLUMN {col}"))
+                    .expect("drop");
+            }
+        }
+        let results = run_doctor(db_path.to_str().expect("utf8 db path"));
+        let row = results
+            .iter()
+            .find(|r| r.name == "edge_signals")
+            .expect("edge_signals check emitted");
+        assert_eq!(row.status, WARN);
+        assert!(
+            row.detail.contains("signal columns missing"),
+            "{}",
+            row.detail
+        );
+        let _ = std::fs::remove_dir_all(db_path.parent().expect("parent"));
+    }
+
+    #[test]
+    fn missing_store_degrades_without_failures_outside_schema() {
+        // The environment audit reads the real client configs under HOME; a
+        // developer machine carries live registrations, so isolate it.
+        let results = {
+            let _env = crate::test_env::EnvScope::new("doctor-home");
+            run_doctor("/nonexistent/cairn-doctor/store.kg")
+        };
         let schema = results.iter().find(|r| r.name == "schema").expect("schema");
         assert_eq!(schema.status, FAIL);
         let failures: Vec<&CheckResult> = results.iter().filter(|r| r.status == FAIL).collect();
@@ -1885,10 +2074,44 @@ mod tests {
         assert_eq!(report.status, PASS);
         assert!(
             report.detail.contains("no daemon serving at http://")
-                || report.detail.ends_with(" daemon serving at http://"),
+                || report.detail.contains(" daemon serving at http://"),
             "detail must name the serving impl or its absence: {}",
             report.detail
         );
+    }
+
+    #[test]
+    fn agent_hooks_check_flags_retired_python_hook_commands() {
+        let env = crate::test_env::EnvScope::new("doctor-hooks");
+        let ws = env.dir().join("ws");
+        std::fs::create_dir_all(ws.join(".claude")).expect("ws");
+        // SAFETY: EnvScope holds the env lock and restores CAIRN_WORKSPACE on drop.
+        unsafe { std::env::set_var("CAIRN_WORKSPACE", &ws) };
+        let settings = ws.join(".claude").join("settings.json");
+
+        let retired = json!({"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [
+            {"type": "command", "command": "'/usr/bin/python3' -m cairn.hooks.claude_hooks post_edit"}
+        ]}]}});
+        std::fs::write(&settings, retired.to_string()).expect("settings");
+        let report = check_agent_hooks();
+        assert_eq!(report.name, "agent_hooks");
+        assert_eq!(report.status, WARN, "{}", report.detail);
+        assert!(report.detail.contains("settings.json"), "{}", report.detail);
+        assert!(
+            report
+                .hint
+                .as_deref()
+                .is_some_and(|h| h.contains("cairn install-agents")),
+            "{:?}",
+            report.hint
+        );
+
+        let migrated = json!({"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [
+            {"type": "command", "command": "'/usr/local/bin/cairn' hooks run post_edit"}
+        ]}]}});
+        std::fs::write(&settings, migrated.to_string()).expect("settings");
+        let report = check_agent_hooks();
+        assert_eq!(report.status, PASS, "{}", report.detail);
     }
 
     #[test]

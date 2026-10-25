@@ -41,10 +41,10 @@ jobs:
       # Every job installs from the committed uv.lock (exact pinned set) via
       # `uv sync` -- the lockfile is the dependency set CI tests, not a fresh
       # pip resolution. `uv run --no-sync` then executes from that venv.
-      # [otlp] rides the audit: it's a user-facing install surface
-      # (pip install cairn-intel[otlp]) -- a CVE there must fail this gate.
-      - name: Install (with dev + otlp extras)
-        run: uv sync --extra dev --extra otlp
+      # The sidecar extras ride the audit: they are user-facing install
+      # surfaces (pip install cairn-intel[ingest]) -- a CVE there must fail it.
+      - name: Install (with dev + sidecar extras)
+        run: uv sync --extra dev --extra ingest --extra graph-analytics
       - name: pip-audit (hard gate -- known-vulnerable deps fail here)
         run: uv run --no-sync pip-audit
       - name: bandit (advisory)
@@ -148,8 +148,8 @@ jobs:
         run: make comment-style
       - name: Parse quality-gate JSON outputs
         run: |
-          uv run --no-sync python -m cairn.cli.system.audit_status --json > audit-status.json
-          uv run --no-sync python -m cairn.cli.system.comment_style --json > comment-style.json
+          uv run --no-sync python scripts/audit_status.py --json > audit-status.json
+          uv run --no-sync python scripts/comment_style.py --json > comment-style.json
           python3 - <<'EOF'
           import json
           from pathlib import Path
@@ -181,6 +181,16 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/dependency-review-action@v4
+        with:
+          # filelock's fix series (4.2+) requires py>=3.11; the py3.10 marker
+          # leg of uv.lock pins 4.1.0 for the dev-only virtualenv chain.
+          allow-ghsas: >-
+            GHSA-2g95-wg33-c5x2,
+            GHSA-567q-5qvw-pf92,
+            GHSA-9vhv-jxww-xfm5,
+            GHSA-crv4-6mhj-j5jh,
+            GHSA-jqc4-5cvw-7w85,
+            GHSA-v4x8-3wr5-3wq8
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -213,31 +223,10 @@ jobs:
       - name: Validate skill eval specs
         run: uv run --no-sync python scripts/run_skill_evals.py
 
-      - name: Run core smoke subset
-        run: uv run --no-sync pytest -m core -q
-
-      - name: Run full test suite
-        run: |
-          # Coverage rides one leg only (3.12, non-PR events): collecting it
-          # on every matrix leg is redundant signal at ~real minutes each.
-          # The infra tier (bench/dataset/soak tests) is excluded from PR
-          # legs and run by the dedicated step below on every non-PR event —
-          # no addopts on purpose: the bench job's `-k t2` gate runs without
-          # -m. -n auto: pytest-xdist across the runner's cores; --durations
-          # keeps per-test hot spots visible in the job log.
-          if [ "${{ matrix.python-version }}" = "3.12" ]; then
-            uv run --no-sync pytest -q -m "not infra" -n auto --durations=25 --junitxml=test-results.xml --cov=cairn --cov-report=term --cov-report=xml
-          else
-            uv run --no-sync pytest -q -m "not infra" -n auto --durations=25 --junitxml=test-results.xml
-          fi
-
-      - name: Run infra tier (non-PR events only)
-        # The bench/dataset/soak infrastructure tier: excluded from PR legs
-        # above, but every merge-group entry and main push runs it so the
-        # tier can never rot. The scaling-gate file is ignored here because
-        # the dedicated closure-gate job below runs it on every event.
-        if: github.event_name != 'pull_request' && matrix.python-version == '3.12'
-        run: uv run --no-sync pytest -q -m infra --ignore=tests/test_scaling_gate.py
+      - name: Run test suite
+        # The infra tier (oracle replays against the release binary) runs in
+        # rust-parity.yml, where the binary is built.
+        run: uv run --no-sync pytest -q -m "not infra" --durations=25 --junitxml=test-results.xml
 
       - name: Publish test summary
         if: always()
@@ -269,77 +258,6 @@ jobs:
                         f"⊘ {skip} skipped")
           EOF
 
-      - name: Coverage summary
-        if: always() && matrix.python-version == '3.12'
-        run: |
-          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
-          import xml.etree.ElementTree as ET
-          try:
-              root = ET.parse("coverage.xml").getroot()
-              rate = float(root.get("line-rate", "0")) * 100
-              print(f"## Coverage (Python ${{ matrix.python-version }})")
-              print()
-              print(f"**{rate:.1f}%** line coverage")
-          except Exception:
-              print("_(coverage report unavailable)_")
-          EOF
-
-  # --- Closure budget gate: enforcing, unlike the advisory bench job --------
-  # Runs the scaling-suite closure gate: build the 1000-file medium corpus,
-  # multiply structural edges 5x deterministically, and assert the
-  # transitive-closure build stays within the recorded wall/memory budget.
-  # A breach reddens CI here (the bench job's timing comparison stays
-  # continue-on-error). Heavy by design (a full corpus build), so it runs as
-  # its own job once instead of on every test-matrix leg; the test job's
-  # infra-tier step ignores the gate's file for the same reason.
-  closure-gate:
-    name: Closure budget gate (1000-file scaling point)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-
-      - name: Install (with dev extras)
-        run: uv sync --extra dev
-
-      - name: Run closure budget gate
-        run: uv run --no-sync pytest tests/test_scaling_gate.py -q
-
-  # --- DS-v2 ground-truth seal: the eval dataset's own regenerate-and-assert -
-  # Closes the audit defect where the seal lived only in the tree (pinned
-  # tree_hash values in benchmarks/datasource/ds2/ground_truth/manifest.json)
-  # with no CI leg: the attrs pin had been minted over the authoring machine's
-  # untracked .ruff_cache noise, and nothing caught the drift until a
-  # fresh-clone run failed. This job runs the dataset's own verifier, which
-  # builds FRESH graphs over both vendored corpora, resolves every one of the
-  # 558 expectations tier-1-exact, and cross-checks the corpus tree_hash pins
-  # + authoring build facts. Like the T1/T2 pins in the bench job, this is a
-  # deterministic content check, not a timing -- a real gate. The verifier's
-  # imports (cairn.eval / cairn.bench.datasource / cairn.graph.builder) are
-  # all core dependencies; tree_hash prunes build-noise caches, so a clean
-  # runner reproduces the pins exactly. Local runtime ~1s post-install.
-  ds2-seal:
-    name: Verify DS-v2 seal
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-
-      - name: Install (with dev extras)
-        run: uv sync --extra dev
-
-      - name: Verify DS-v2 ground-truth seal (558 expectations, both corpora)
-        run: uv run --no-sync python benchmarks/datasource/ds2/verify_dataset.py
 
   # Packaging canary, MAIN PUSHES ONLY: verifies `python -m build` (sdist +
   # wheel) stays green on every merge so packaging breakage surfaces between
@@ -376,30 +294,11 @@ jobs:
           name: dist
           path: dist/
 
-  # --- Bench: advisory perf baseline comparison -----------------------------
-  # Runs `cairn bench` on a fixed deterministic synthetic corpus (seeded
-  # generator + dep-free hash embed backend) and uploads the JSON result as
-  # a workflow artifact. COMPARISON TARGET (rolling, attributable): every
-  # push to main mints the run's payload into the actions/cache under a
-  # SHA-unique key; PR runs restore the most recent main-minted entry via
-  # prefix restore-keys and compare same-class (CI vs CI). The SHA-unique
-  # exact key is the deliberate inversion of the OLD rolling design's bug
-  # (run-id keys that "always missed" made misses unattributable): now the
-  # exact key always misses BY DESIGN, the prefix supplies the newest
-  # main baseline, and the bench-baseline.sha sidecar names the commit it
-  # was minted on. The committed benchmarks/baselines/DS-v1/ artifact
-  # (D-007/T016) remains the cold-start fallback and the local default --
-  # cross-machine vs the CI runner, so its deltas carry machine-profile
-  # noise (D-005: warn, never normalize; the CLI's mismatch check buckets
-  # same-pool runner_class/os at class level so CI-vs-CI renders clean).
-  # Every bench step is continue-on-error: a timing regression (bench exits
-  # 2 past the 15% threshold) -- or a noisy shared runner -- can never redden
-  # CI. "Advisory first, gate later if stable" (observability-telemetry
-  # plan, Phase 2).
   container:
     name: Container build (Dockerfile smoke)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The image compiles the rust engine from source (no cargo cache in docker build).
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Build the image
@@ -429,170 +328,3 @@ jobs:
           if [ "$ok" -ne 1 ]; then echo "::error::healthz never came up"; docker logs cairn-keyed | tail -5; docker rm -f cairn-keyed; exit 1; fi
           grep -q '"status"' /tmp/hz.json
           docker rm -f cairn-keyed
-
-  bench:
-    name: Bench (advisory baseline comparison)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      pull-requests: write  # post the advisory comparison comment
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-
-      # Restore the newest main-minted rolling baseline (same hosted runner
-      # class). The exact key embeds the run id so it always misses by
-      # design; restore-keys' prefix match yields the most recently created
-      # main entry. Cold start (no entry yet): nothing restores, and the
-      # run step falls back to the committed DS-v1 artifact.
-      - name: Restore rolling bench baseline
-        continue-on-error: true
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            bench-baseline.json
-            bench-baseline.sha
-          key: bench-rolling-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
-          restore-keys: |
-            bench-rolling-v1-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Install
-        run: uv sync
-
-      # T1 content pin (FR-001/AC2): regenerate the corpus from the manifest
-      # recipe and assert the pinned tree-hash + counts. This is the one
-      # deliberate exception to the continue-on-error rule above -- a
-      # deterministic content check, not a noisy timing measurement.
-      # Size 300 = the perf default `cairn bench` itself uses (--n-files);
-      # the full 5000 pin would burn CI minutes for no extra signal here.
-      - name: Verify benchmark datasource (T1 content pin)
-        run: uv run --no-sync python scripts/verify_datasource.py --size 300
-
-      # T2 checks (FR-002/AC3+AC4). The size-budget half needs NO extra step:
-      # since T007, verify_datasource.py measures both budget scopes (t2/ <=
-      # 3 MB, the whole datasource/ tree <= 5 MB, exit 3 on breach) on EVERY
-      # invocation, so the step above already carries it. The smoke half
-      # below builds a graph over the vendored snapshot and answers pinned
-      # queries (TC-013/TC-014) -- like the T1 pin, a deterministic content
-      # check (the deliberate exception to the continue-on-error rule above),
-      # not a timing, so it is a real gate. The bench job otherwise installs
-      # bare `pip install -e .`, so pytest rides the [test] extra; tests/ is
-      # path-scoped and pyproject's testpaths additionally protects bare runs
-      # from collecting the vendored upstream's own test files.
-      - name: T2 smoke test (vendored snapshot build+query)
-        run: |
-          uv sync --extra test
-          uv run --no-sync pytest tests/ -q -k t2
-
-      # Rolling comparison: prefer the restored main-minted baseline
-      # (same hosted class, deltas meaningful); cold start falls back to
-      # the committed DS-v1 artifact (cross-machine -- the CLI's mismatch
-      # warning fires and bench_compare marks the comment COLD START).
-      # `--compare`/`--baseline` compose with `--save` (payload saved
-      # first, then the table). Exit contract: 0 clean; 1 baseline/file
-      # error; 2 regressions past 15%. A machine-profile mismatch only
-      # WARNS and keeps the exit code at whatever the comparison alone
-      # decides (D-005). The PR step absorbs timing failures; the advisory
-      # PR-comment comparison lives in bench_compare.py.
-      - name: Run bench (fixed corpus, PR advisory)
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        run: |
-          if [ -f bench-baseline.json ]; then
-            BASE="--compare bench-baseline.json"
-          else
-            BASE="--baseline DS-v1"
-          fi
-          uv run --no-sync cairn bench --suite perf --embed-backend hash --repeats 3 \
-            --json --save bench-current.json \
-            --budgets benchmarks/baselines/perf_p95_budgets.json --budget-mode advise \
-            $BASE
-
-      - name: Run bench (fixed corpus, main/merge-group budgets)
-        if: github.event_name != 'pull_request'
-        run: |
-          uv run --no-sync cairn bench --suite perf --embed-backend hash --repeats 3 \
-            --json --save bench-current.json \
-            --budgets benchmarks/baselines/perf_p95_budgets.json --budget-mode enforce
-
-      # Mint the rolling baseline from THIS run (main pushes only -- PR
-      # runs never write cache entries, so a PR's numbers can't become the
-      # baseline) and save it under a SHA-unique key: never collides with
-      # an existing entry, and the prefix restore above picks up the newest.
-      # The sidecar SHA gives every comparison its attribution.
-      - name: Mint rolling baseline (main only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          cp bench-current.json bench-baseline.json
-          echo "${{ github.sha }}" > bench-baseline.sha
-
-      - name: Save rolling baseline cache (main only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            bench-baseline.json
-            bench-baseline.sha
-          key: bench-rolling-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
-
-      # Renders the advisory step summary + PR comment from bench-current.json
-      # and whichever baseline applies (rolling first, committed fallback);
-      # never exits non-zero.
-      - name: Compare vs baseline (advisory summary)
-        if: always()
-        continue-on-error: true
-        run: uv run --no-sync python .github/scripts/bench_compare.py
-
-      - name: Upload bench result
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: bench-result
-          path: bench-current.json
-
-      - name: Post advisory PR comment
-        if: always() && github.event_name == 'pull_request'
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            if (!fs.existsSync('bench-comment.md')) {
-              core.info('no bench-comment.md; skipping');
-              return;
-            }
-            const body = fs.readFileSync('bench-comment.md', 'utf8');
-            const marker = '<!-- cairn-bench-advisory -->';
-            const issue_number = context.issue.number;
-            if (!issue_number) {
-              core.info('no PR number in context; skipping');
-              return;
-            }
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number,
-            });
-            const existing = comments.find(
-              (c) => c.body && c.body.includes(marker)
-            );
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number,
-                body,
-              });
-            }

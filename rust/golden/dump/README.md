@@ -8,8 +8,15 @@
   canonical dump must reproduce it byte-for-byte.
 - `corner-store.mapped.canonical.txt` — same with
   `--map-path '/Users/x=<HOME>'`.
+- `self-corpus.norm.txt` — the G2 base-leg reference: `kg_dump.py --map-path
+  <workspace>=<WORKSPACE>` + `kg_normalize.py` output over a `build-graph`
+  store of the pinned parity corpus (`rust/golden/stores/self/corpus`).
+  Frozen; the Rust `build-graph` dump of the same corpus (staged, marker file
+  restored) must be content-equal to it (`g2_check.sh`). Regenerate by
+  replaying those steps over a staged corpus copy and writing the normalized
+  dump here.
 
-Regenerate all three with:
+Regenerate the corner-store trio with:
 
 ```sh
 .venv/bin/python scripts/rust_migration/make_corner_store.py rust/golden/dump/corner-store.kg

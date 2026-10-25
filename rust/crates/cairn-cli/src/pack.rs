@@ -382,9 +382,15 @@ fn blast_radius_line(
     symbol_id: &str,
     limit: usize,
 ) -> String {
-    let blast =
-        cairn_query::graph::impact_analysis_seeded(conn, qualified_name, symbol_id, 2, limit)
-            .unwrap_or_default();
+    let blast = cairn_query::graph::impact_analysis_seeded(
+        conn,
+        qualified_name,
+        symbol_id,
+        2,
+        limit,
+        false,
+    )
+    .unwrap_or_default();
     let mut by_depth = [0usize; 3];
     let mut top: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();

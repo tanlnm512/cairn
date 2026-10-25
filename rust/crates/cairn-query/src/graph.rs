@@ -8,13 +8,14 @@ pub use impact::{
 };
 pub use lexical::{is_fts_prefix_pattern, lexical_search_symbols, pattern_to_fts};
 pub use taint::{
-    PathHop, SymbolPath, TaintHop, TaintPath, find_paths, find_paths_registry, find_symbol_paths,
-    format_taint_warning, intersect_seeds, merged_registry, resolve_pattern_symbols,
+    PathHop, SymbolPath, TaintHop, TaintPath, TaintRegistryTables, find_paths, find_paths_registry,
+    find_symbol_paths, format_taint_warning, intersect_seeds, intersect_seeds_registry,
+    merged_registry, resolve_pattern_symbols,
 };
-pub use trace::{FlowNode, trace_flow};
+pub use trace::{FlowNode, trace_flow, trace_flow_opts};
 pub use viz::{
     Graph, get_deps_graph, get_impact_graph, get_module_graph, get_repo_graph, get_symbol_graph,
-    get_symbol_neighbors, get_symbol_overview, to_dot, to_json, to_mermaid,
+    get_symbol_neighbors, get_symbol_overview, to_dot, to_html, to_json, to_mermaid, viz_embed,
 };
 
 /// Structural edges are followed by default; service edges require opt-in.
@@ -388,7 +389,7 @@ mod lexical {
 
 // --- impact -----------------------------------------------------------------
 
-mod impact {
+pub(crate) mod impact {
     //! Recursive caller traversal with cycle detection, closure fast path.
 
     use std::collections::{HashMap, HashSet};
@@ -416,7 +417,7 @@ mod impact {
         pub truncated: bool,
     }
 
-    fn closure_available(conn: &Connection) -> bool {
+    pub(crate) fn closure_available(conn: &Connection) -> bool {
         conn.query_row("SELECT 1 FROM transitive_edges LIMIT 1", [], |r| {
             r.get::<_, i64>(0)
         })
@@ -534,8 +535,10 @@ mod impact {
         seed_id: &str,
         max_depth: i64,
         limit: usize,
+        fuzzy: bool,
     ) -> Result<ImpactResult, rusqlite::Error> {
-        if max_depth < CLOSURE_MAX_DEPTH
+        if !fuzzy
+            && max_depth < CLOSURE_MAX_DEPTH
             && closure_available(conn)
             && !closure_has_seed_cycle(conn, std::slice::from_ref(&seed_id.to_string()))
             && let Some(result) = impact_from_closure(
@@ -549,7 +552,7 @@ mod impact {
         }
         let mut state = DfsState {
             conn,
-            fuzzy: false,
+            fuzzy,
             max_depth,
             limit,
             seeded: true,
@@ -795,7 +798,9 @@ mod trace {
         branches: Vec<(String, Vec<String>)>,
         leaves: Vec<String>,
         cycles: Vec<(String, i64)>,
-        cycles_seen: HashSet<String>,
+        /// Index into `cycles` per id, kept at the shallowest re-entry.
+        cycle_at: HashMap<String, usize>,
+        branched: HashSet<String>,
         truncated: bool,
         callees_memo: HashMap<String, Vec<CalleeRow>>,
         defn_memo: HashMap<String, Option<super::SymbolRow>>,
@@ -835,8 +840,12 @@ mod trace {
                 return;
             }
             if self.on_path.contains(sym_id) {
-                if self.cycles_seen.insert(sym_id.to_string()) {
-                    self.cycles.push((sym_name.to_string(), depth));
+                match self.cycle_at.get(sym_id) {
+                    Some(&i) => self.cycles[i].1 = self.cycles[i].1.min(depth),
+                    None => {
+                        self.cycle_at.insert(sym_id.to_string(), self.cycles.len());
+                        self.cycles.push((sym_name.to_string(), depth));
+                    }
                 }
                 return;
             }
@@ -896,11 +905,19 @@ mod trace {
                     self.walk(&cid, &cname, depth + 1, max_depth);
                 } else if self.on_path.contains(&cid) {
                     // Back-edge into the active DFS path: re-entering walk()
-                    // records the cycle; fully-explored ids are never re-walked.
+                    // records the cycle.
+                    self.walk(&cid, &cname, depth + 1, max_depth);
+                } else if let Some(node) = self.visited.get_mut(&cid)
+                    && depth + 1 < node.depth
+                {
+                    // Shorter route to an explored id: re-walk so its subtree
+                    // gets the full max_depth budget from its shortest depth.
+                    node.depth = depth + 1;
+                    node.parent = Some(sym_name.to_string());
                     self.walk(&cid, &cname, depth + 1, max_depth);
                 }
             }
-            if outgoing.len() > 1 {
+            if outgoing.len() > 1 && self.branched.insert(sym_id.to_string()) {
                 self.branches.push((sym_name.to_string(), outgoing));
             }
             self.on_path.remove(sym_id);
@@ -909,7 +926,20 @@ mod trace {
 
     /// Downward structural callee walk with cycles, leaves, and depth cutoffs.
     pub fn trace_flow(conn: &Connection, entry: &str, max_depth: i64) -> Flow {
-        let entry_row = find_definition(conn, entry, 1).unwrap_or_default();
+        trace_flow_opts(conn, entry, max_depth, None)
+    }
+
+    /// `trace_flow` with an optional symbol id for collision-safe entry resolution.
+    pub fn trace_flow_opts(
+        conn: &Connection,
+        entry: &str,
+        max_depth: i64,
+        entry_id: Option<&str>,
+    ) -> Flow {
+        let entry_row: Vec<_> = match entry_id {
+            Some(id) => find_definition_by_id(conn, id).into_iter().collect(),
+            None => find_definition(conn, entry, 1).unwrap_or_default(),
+        };
         let entry_file = entry_row
             .first()
             .map(|r| r.file_path.clone())
@@ -935,7 +965,8 @@ mod trace {
             branches: Vec::new(),
             leaves: Vec::new(),
             cycles: Vec::new(),
-            cycles_seen: HashSet::new(),
+            cycle_at: HashMap::new(),
+            branched: HashSet::new(),
             truncated: false,
             callees_memo: HashMap::new(),
             defn_memo: HashMap::new(),
@@ -1414,13 +1445,30 @@ mod taint {
         seeds: &HashSet<String>,
         fuzzy: bool,
     ) -> Result<Vec<TaintPath>, rusqlite::Error> {
+        let (sources, sinks) = merged_registry(&[], &[]);
+        intersect_seeds_registry(conn, &(sources, sinks), seeds, fuzzy)
+    }
+
+    /// `intersect_seeds` under an explicit config-merged registry.
+    pub fn intersect_seeds_registry(
+        conn: &Connection,
+        registry: &TaintRegistryTables,
+        seeds: &HashSet<String>,
+        fuzzy: bool,
+    ) -> Result<Vec<TaintPath>, rusqlite::Error> {
         if seeds.is_empty() {
             return Ok(vec![]);
         }
-        let sources = default_sources();
-        let sinks = default_sinks();
-        let from_names: Vec<String> = flatten(&sources).iter().map(|s| s.to_string()).collect();
-        let to_names: Vec<String> = flatten(&sinks).iter().map(|s| s.to_string()).collect();
+        let from_names: Vec<String> = registry
+            .0
+            .iter()
+            .flat_map(|(_, names)| names.iter().cloned())
+            .collect();
+        let to_names: Vec<String> = registry
+            .1
+            .iter()
+            .flat_map(|(_, names)| names.iter().cloned())
+            .collect();
         let paths = discover_paths(conn, &from_names, &to_names, fuzzy, CLOSURE_MAX_DEPTH)?;
         Ok(paths
             .into_iter()
@@ -2055,6 +2103,72 @@ mod viz {
         serde_json::to_string_pretty(graph).unwrap_or_default()
     }
 
+    /// Wrap Mermaid output in an OKF-compatible markdown block (`viz --embed`).
+    pub fn viz_embed(graph: &Graph) -> String {
+        let meta = &graph["metadata"];
+        let focus = ["symbol", "module", "repo"]
+            .iter()
+            .find_map(|key| meta[*key].as_str())
+            .unwrap_or("");
+        let title = format!("{}: {}", meta["scope"].as_str().unwrap_or("graph"), focus);
+        let ts = utc_today();
+        let mut out = format!("## {title}\n\n```mermaid\n");
+        out.push_str(to_mermaid(graph).trim_end());
+        out.push_str("\n```\n\n");
+        out.push_str(&format!("*Generated by `cairn viz` on {ts}*"));
+        out.push('\n');
+        out
+    }
+
+    /// One self-contained HTML document (the dashboard's local vis-network
+    /// viewer, the graph JSON, and the Mermaid source; no network assets).
+    /// `graph_json` is the compact python-separators serialization of `graph`.
+    pub fn to_html(graph: &Graph, viewer_js: &str, graph_json: &str) -> String {
+        let meta = &graph["metadata"];
+        let focus = ["symbol", "module", "repo"]
+            .iter()
+            .find_map(|key| meta[*key].as_str())
+            .unwrap_or("");
+        let scope = meta["scope"].as_str().unwrap_or("graph");
+        let title = if focus.is_empty() {
+            format!("cairn viz — {scope}")
+        } else {
+            format!("cairn viz — {scope}: {focus}")
+        };
+        let html_title = html_escape(&title);
+        let mermaid = to_mermaid(graph);
+        let mut out = String::new();
+        for line in [
+            "<!doctype html>",
+            "<html lang=\"en\">",
+            "<head>",
+            "<meta charset=\"utf-8\">",
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        ] {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str(&format!("<title>{html_title}</title>\n"));
+        out.push_str(&format!("<style>{HTML_CSS}</style>\n"));
+        out.push_str("</head>\n<body>\n");
+        out.push_str(&format!("<h1>{html_title}</h1>\n"));
+        out.push_str("<div id=\"cairn-graph\" aria-label=\"Selected graph scope\"></div>\n");
+        out.push_str("<details>\n<summary>Mermaid source</summary>\n");
+        out.push_str(&format!(
+            "<pre class=\"mermaid-source\">{}</pre>\n",
+            html_text(&mermaid)
+        ));
+        out.push_str("</details>\n");
+        out.push_str("<script type=\"application/json\" id=\"cairn-graph-data\">\n");
+        out.push_str(&script_json(graph_json));
+        out.push_str("\n</script>\n<script>\n");
+        out.push_str(viewer_js);
+        out.push_str("\n</script>\n");
+        out.push_str(&format!("<script>{HTML_BOOTSTRAP}</script>\n"));
+        out.push_str("</body>\n</html>\n");
+        out
+    }
+
     fn empty(scope: &str, name: &str) -> Graph {
         json!({
             "nodes": [], "edges": [],
@@ -2674,5 +2788,45 @@ mod viz {
             "edges": edges,
             "metadata": {"scope": "deps", "node_count": nodes.len(), "edge_count": edges.len()},
         }))
+    }
+
+    const HTML_CSS: &str = "\n:root { color-scheme: light dark; }\nbody { margin: 0; padding: 1rem; font: 14px/1.5 system-ui, sans-serif; }\n#cairn-graph { height: 75vh; border: 1px solid #888; border-radius: 8px; }\ndetails { margin-top: 1rem; }\npre { overflow-x: auto; padding: 0.75rem; border: 1px solid #888; border-radius: 8px; }\n";
+
+    const HTML_BOOTSTRAP: &str = "\n(function () {\n  var payload = JSON.parse(\n    document.getElementById(\"cairn-graph-data\").textContent\n  );\n  var nodes = payload.nodes.map(function (n) {\n    var tip = n.kind ? n.id + \" (\" + n.kind + \")\" : n.id;\n    return { id: n.id, label: n.id, title: tip };\n  });\n  var edges = payload.edges\n    .filter(function (e) { return e.source && e.target; })\n    .map(function (e) {\n      return {\n        from: e.source,\n        to: e.target,\n        label: e.label || e.kind || undefined,\n        arrows: \"to\",\n      };\n    });\n  new vis.Network(\n    document.getElementById(\"cairn-graph\"),\n    { nodes: nodes, edges: edges },\n    { interaction: { hover: true } }\n  );\n})();\n";
+
+    fn html_escape(text: &str) -> String {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#x27;")
+    }
+
+    /// Escape for an HTML text node while keeping `-->` readable.
+    fn html_text(text: &str) -> String {
+        text.replace('&', "&amp;").replace('<', "&lt;")
+    }
+
+    /// The pre-serialized graph JSON escaped for a `<script>` element.
+    fn script_json(graph_json: &str) -> String {
+        graph_json.replace('<', "\\u003c")
+    }
+
+    fn utc_today() -> String {
+        let days = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() / 86_400)
+            .unwrap_or(0);
+        let z = days as i64 + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z.rem_euclid(146_097);
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = if m <= 2 { y + 1 } else { y };
+        format!("{y:04}-{m:02}-{d:02}")
     }
 }

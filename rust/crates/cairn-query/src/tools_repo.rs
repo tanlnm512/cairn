@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use rusqlite::Connection;
+use serde_json::{Value, json};
 
 use crate::tools_km::ToolError;
 
@@ -14,22 +15,22 @@ const DOMINANT_SEGMENT_SHARE: f64 = 0.60;
 // --- projection --------------------------------------------------------------
 
 #[derive(Clone)]
-struct SymbolRow {
+pub(crate) struct SymbolRow {
     repo: String,
     path: String,
-    qualified_name: String,
-    incoming: i64,
-    outgoing: i64,
+    pub(crate) qualified_name: String,
+    pub(crate) incoming: i64,
+    pub(crate) outgoing: i64,
 }
 
-struct Projection {
-    symbols: Vec<SymbolRow>,
+pub(crate) struct Projection {
+    pub(crate) symbols: Vec<SymbolRow>,
     /// Repo ids in sorted order (Python iterates a sorted dict).
     repos: Vec<String>,
     paths: BTreeMap<String, BTreeSet<String>>,
 }
 
-fn projection(conn: &Connection) -> Result<Projection, rusqlite::Error> {
+pub(crate) fn projection(conn: &Connection) -> Result<Projection, rusqlite::Error> {
     let mut stmt = conn.prepare(
         "SELECT \
             repos.id AS repo_id, \
@@ -228,7 +229,12 @@ struct RepoMap {
     dropped_hotspots: i64,
 }
 
-fn build_repo_map(conn: &Connection) -> Result<RepoMap, rusqlite::Error> {
+fn build_repo_map_capped(
+    conn: &Connection,
+    cluster_cap: usize,
+    hub_cap: usize,
+    hotspot_cap: usize,
+) -> Result<RepoMap, rusqlite::Error> {
     let proj = projection(conn)?;
     let mut by_repo: BTreeMap<String, Vec<SymbolRow>> = BTreeMap::new();
     for repo in &proj.repos {
@@ -242,8 +248,7 @@ fn build_repo_map(conn: &Connection) -> Result<RepoMap, rusqlite::Error> {
     for (repo_id, rows) in &by_repo {
         let empty = BTreeSet::new();
         let paths = proj.paths.get(repo_id).unwrap_or(&empty);
-        let (clusters_, dropped_clusters) =
-            clusters(rows, paths, DEFAULT_HUB_CAP, DEFAULT_CLUSTER_CAP);
+        let (clusters_, dropped_clusters) = clusters(rows, paths, hub_cap, cluster_cap);
         scopes.push(RepoScope {
             repo: repo_id.clone(),
             clusters: clusters_,
@@ -264,7 +269,7 @@ fn build_repo_map(conn: &Connection) -> Result<RepoMap, rusqlite::Error> {
         repos: scopes,
         hotspots: hotspots
             .iter()
-            .take(DEFAULT_HOTSPOT_CAP)
+            .take(hotspot_cap)
             .map(|r| Hotspot {
                 repo: r.repo.clone(),
                 path: r.path.clone(),
@@ -272,8 +277,64 @@ fn build_repo_map(conn: &Connection) -> Result<RepoMap, rusqlite::Error> {
                 incoming: r.incoming,
             })
             .collect(),
-        dropped_hotspots: (hotspot_count - DEFAULT_HOTSPOT_CAP as i64).max(0),
+        dropped_hotspots: (hotspot_count - hotspot_cap as i64).max(0),
     })
+}
+
+fn build_repo_map(conn: &Connection) -> Result<RepoMap, rusqlite::Error> {
+    build_repo_map_capped(
+        conn,
+        DEFAULT_CLUSTER_CAP,
+        DEFAULT_HUB_CAP,
+        DEFAULT_HOTSPOT_CAP,
+    )
+}
+
+pub const CLI_DEFAULT_CLUSTER_CAP: usize = DEFAULT_CLUSTER_CAP;
+pub const CLI_DEFAULT_HUB_CAP: usize = DEFAULT_HUB_CAP;
+pub const CLI_DEFAULT_HOTSPOT_CAP: usize = DEFAULT_HOTSPOT_CAP;
+
+/// The `cairn map` JSON payload (python `build_repo_map` dict shape/order).
+pub fn repo_map_payload(
+    conn: &Connection,
+    cluster_cap: usize,
+    hub_cap: usize,
+    hotspot_cap: usize,
+) -> Result<Value, rusqlite::Error> {
+    let result = build_repo_map_capped(conn, cluster_cap, hub_cap, hotspot_cap)?;
+    let mut repos = Vec::new();
+    for scope in &result.repos {
+        let mut clusters_json = Vec::new();
+        for cluster in &scope.clusters {
+            clusters_json.push(json!({
+                "path": cluster.path,
+                "files": cluster.files,
+                "symbols": cluster.symbols,
+                "edges": cluster.edges,
+                "hubs": cluster.hubs.iter().map(|(qualified_name, path, incoming)| json!({
+                    "qualified_name": qualified_name,
+                    "path": path,
+                    "incoming": incoming,
+                })).collect::<Vec<_>>(),
+                "dropped_hubs": cluster.dropped_hubs,
+            }));
+        }
+        repos.push(json!({
+            "repo": scope.repo,
+            "clusters": clusters_json,
+            "dropped_clusters": scope.dropped_clusters,
+        }));
+    }
+    Ok(json!({
+        "repos": repos,
+        "hotspots": result.hotspots.iter().map(|h| json!({
+            "repo": h.repo,
+            "qualified_name": h.qualified_name,
+            "path": h.path,
+            "incoming": h.incoming,
+        })).collect::<Vec<_>>(),
+        "dropped_hotspots": result.dropped_hotspots,
+    }))
 }
 
 /// `repo_map`: deterministic orientation map as bounded prose.

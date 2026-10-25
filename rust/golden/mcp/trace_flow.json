@@ -30,7 +30,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "captured_at": "2026-10-19T15:28:28.822629+00:00"
+    "captured_at": "2026-10-24T20:27:36.194915+00:00"
   },
   "normalization": {
     "rules": [
@@ -65,62 +65,5 @@
     }
   },
   "replay_store": "rust/golden/stores/self/store.kg",
-  "replay_workspace": "rust/golden/stores/self/corpus",
-  "cases": [
-    {
-      "arguments": {
-        "entry": "kickoff"
-      },
-      "sort_lines": false,
-      "response": {
-        "isError": false,
-        "content": [
-          {
-            "type": "text",
-            "text": "Traced 13 step(s) from 'kickoff' (3 branches, 1 terminals):\n- `kickoff` (function)\n  - `a` (function)\n  - `recurse` (function)\n  - `run_pipeline` (function)\n    - `b` (function)\n    - `dispatch` (function)\n    - `read_config` (function)\n      - `run_query` (function)\n        - `cursor` (method)\n        - `execute` (method)\n        - `get_db` (function)\n          - `Cur` (class)\n          - `Db` (class)\n\nBranch points:\n  `run_query` -> `get_db`, `cursor`, `execute`\n  `run_pipeline` -> `dispatch`, `read_config`\n  `kickoff` -> `a`, `run_pipeline`, `recurse`\n\nTerminal calls: `execute`\n\nCyclic calls: `a`, `recurse`"
-          }
-        ],
-        "structuredContent": {
-          "result": "Traced 13 step(s) from 'kickoff' (3 branches, 1 terminals):\n- `kickoff` (function)\n  - `a` (function)\n  - `recurse` (function)\n  - `run_pipeline` (function)\n    - `b` (function)\n    - `dispatch` (function)\n    - `read_config` (function)\n      - `run_query` (function)\n        - `cursor` (method)\n        - `execute` (method)\n        - `get_db` (function)\n          - `Cur` (class)\n          - `Db` (class)\n\nBranch points:\n  `run_query` -> `get_db`, `cursor`, `execute`\n  `run_pipeline` -> `dispatch`, `read_config`\n  `kickoff` -> `a`, `run_pipeline`, `recurse`\n\nTerminal calls: `execute`\n\nCyclic calls: `a`, `recurse`"
-        }
-      }
-    },
-    {
-      "arguments": {
-        "entry": "main",
-        "max_depth": 1
-      },
-      "sort_lines": false,
-      "response": {
-        "isError": false,
-        "content": [
-          {
-            "type": "text",
-            "text": "Traced 3 step(s) from 'main' (1 branches, 0 terminals):\n- `main` (function)\n  - `fetch_user` (function)\n  - `save_user` (function)\n\nBranch points:\n  `main` -> `fetch_user`, `save_user`"
-          }
-        ],
-        "structuredContent": {
-          "result": "Traced 3 step(s) from 'main' (1 branches, 0 terminals):\n- `main` (function)\n  - `fetch_user` (function)\n  - `save_user` (function)\n\nBranch points:\n  `main` -> `fetch_user`, `save_user`"
-        }
-      }
-    },
-    {
-      "arguments": {
-        "entry": "recurse"
-      },
-      "sort_lines": false,
-      "response": {
-        "isError": false,
-        "content": [
-          {
-            "type": "text",
-            "text": "No outgoing calls traced from 'recurse'."
-          }
-        ],
-        "structuredContent": {
-          "result": "No outgoing calls traced from 'recurse'."
-        }
-      }
-    }
-  ]
+  "replay_workspace": "rust/golden/stores/self/corpus"
 }

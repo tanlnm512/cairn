@@ -1,4 +1,4 @@
-//! Embedded agent-integration templates, byte-identical to the Python package tree.
+//! Embedded agent-integration templates (the crate's `templates/agent_integration` tree).
 
 /// Relative path within the `agent_integration` tree, and its file content.
 pub const TEMPLATES: &[(&str, &str)] = &[
@@ -129,25 +129,5 @@ mod tests {
     fn read_resolves_known_and_rejects_unknown() {
         assert!(read("cursor/cairn.mdc").is_some());
         assert!(read("skill/missing.md").is_none());
-    }
-
-    #[test]
-    fn vendored_tree_matches_the_python_package() {
-        // Drift guard for contract C-5: the embedded templates must stay
-        // byte-identical to src/cairn/agent_integration while both trees exist.
-        let python_tree = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../src/cairn/agent_integration");
-        let Ok(_) = std::fs::read_dir(&python_tree) else {
-            return; // source tree not present (post-flip checkout); nothing to diff
-        };
-        for (rel, content) in TEMPLATES {
-            let expected = std::fs::read(python_tree.join(rel))
-                .unwrap_or_else(|e| panic!("python template {rel} unreadable: {e}"));
-            assert_eq!(
-                content.as_bytes(),
-                expected,
-                "vendored {rel} drifted from the python package"
-            );
-        }
     }
 }

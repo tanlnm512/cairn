@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Check that every checkable link in the docs set resolves to a real file.
 
-Scope: ``docs/**/*.md`` (recursive), the repo-root ``README.md``, and
-``benchmarks/README.md``. An enumerated scope file that does not exist yet
-is reported and skipped, not failed on -- a missing file is not a broken
-link.
+Scope: ``docs/**/*.md`` (recursive) and the repo-root ``README.md``. An
+enumerated scope file that does not exist yet is reported and skipped, not
+failed on -- a missing file is not a broken link.
 
 Algorithm (order matters -- stripping code spans before extraction is what
 keeps inline-code placeholders such as ``[-> postmortem](postmortems/...)``
@@ -18,12 +17,11 @@ from counting as rendered links):
 4. split any ``#fragment`` off, resolve the rest relative to the containing
    file, and require the resolved path to exist.
 
-Back-link report (advisory): every top-level ``docs/*.md`` page other than
-the ``docs/README.md`` index itself should carry at least one link that
-*resolves* to ``docs/README.md``. The test is resolution, not string
-matching, so ``../README.md`` -- the repo root -- never satisfies it by
-accident. Pages without such a link are listed under a warning heading;
-the listing does not affect the exit code.
+Back-link report (advisory): every top-level ``docs/*.md`` page should carry
+at least one link that *resolves* to the repo-root ``README.md`` (its
+Documentation table is the docs index). The test is resolution, not string
+matching, so a link has to reach that file. Pages without such a link are
+listed under a warning heading; the listing does not affect the exit code.
 
 Output is deterministic: one line per broken link, then ``TOTAL broken: N``.
 
@@ -43,9 +41,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_DIR = REPO_ROOT / "docs"
-DOCS_INDEX = DOCS_DIR / "README.md"
+DOCS_INDEX = REPO_ROOT / "README.md"
 
-EXTRA_SCOPE = (REPO_ROOT / "README.md", REPO_ROOT / "benchmarks" / "README.md")
+EXTRA_SCOPE = (REPO_ROOT / "README.md",)
 
 # Targets that point off-repo or within a page: not checkable on disk.
 UNRESOLVABLE_PREFIXES = ("http", "mailto:", "#")
@@ -96,8 +94,6 @@ def main() -> int:
 
     no_backlink = []
     for page in sorted(DOCS_DIR.glob("*.md")):
-        if page == DOCS_INDEX:
-            continue
         targets = link_targets(page.read_text())
         if not any(resolve_target(page, t) == DOCS_INDEX for t in targets):
             no_backlink.append(os.path.relpath(page, REPO_ROOT))
@@ -105,7 +101,7 @@ def main() -> int:
         print(
             "warning (advisory, does not affect exit): "
             f"{len(no_backlink)} docs/ page(s) have no link resolving to "
-            "docs/README.md:"
+            "the repo README.md:"
         )
         for page in no_backlink:
             print(f"  {page}")

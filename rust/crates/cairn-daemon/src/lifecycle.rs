@@ -678,7 +678,9 @@ pub fn healthz_json(port: u16, host: &str) -> Option<Value> {
 
 // --- impl selection -----------------------------------------------------------
 
-/// Daemon implementation a start launches: CAIRN_DAEMON_IMPL when set, else rust when a Rust binary is present, else python.
+/// Implementation a start launches: CAIRN_DAEMON_IMPL when set, else `rust`
+/// when the Rust daemon binary is available, else `python` (the PyPI
+/// launcher, which execs the same Rust engine).
 pub fn daemon_impl() -> &'static str {
     let chosen = std::env::var(DAEMON_IMPL_ENV)
         .unwrap_or_default()

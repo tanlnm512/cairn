@@ -2,7 +2,8 @@
 """Regenerate sample.scip: a small synthetic SCIP index exercising every
 importer join shape. Dev-only; the checked-in bytes are produced by the
 Python reference runtime (cairn.parsers._scip_pb2), so the Rust prost
-decoder must consume them unchanged.
+decoder must consume them unchanged. That runtime is not in this tree:
+regenerate from a checkout that still carries src/cairn/parsers/_scip_pb2.py.
 
 Run from the repo root:
     .venv/bin/python rust/crates/cairn-build/tests/fixtures/scip/make_fixture.py

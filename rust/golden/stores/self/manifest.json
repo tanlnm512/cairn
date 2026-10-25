@@ -4,8 +4,8 @@
   "cap_files": 100,
   "corpus_files": 101,
   "corpus_bytes": 1183307,
-  "db_bytes": 12259328,
-  "total_bytes": 14300416,
+  "db_bytes": 12431360,
+  "total_bytes": 14472666,
   "store_counts": {
     "repos": 1,
     "files": 100,
@@ -13,7 +13,7 @@
     "edges": 14781
   },
   "knowledge_files": 540,
-  "knowledge_bundle_seeded_files": 537,
+  "knowledge_bundle_seeded_files": 540,
   "env_pins": {
     "CAIRN_EMBED_BACKEND": "hash",
     "CAIRN_RERANK": "0",

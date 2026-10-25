@@ -1,6 +1,6 @@
 # MCP Tools
 
-← [Docs index](README.md)
+← [README](../README.md)
 
 Read this when you need the tool surface: what the 26 tools are, how they're
 grouped, and how the server behaves. For per-tool empirical quirks, see the
@@ -9,30 +9,29 @@ agent session loads it.
 
 ## Server
 
-- Implementation: FastMCP, singleton in `src/cairn/mcp_server/_server_core.py`.
+- Implementation: the `cairn-daemon` crate on the official `rmcp` SDK
+  (`server.rs`, tool dispatch in `tools.rs` over the `cairn-query` tool
+  modules).
 - Transport: Streamable HTTP daemon on `:9876` — one shared process serves
   every client (`cairn connect` ensures it is running; `cairn serve
   start|stop|status|restart` manage it, `run` for the foreground daemon).
-  Read-write by default; `--read-only` disables the watcher and write tools.
-- Boot sequence (`server.py:run`): verify exactly 26 tools registered →
-  boot catch-up reindex (`ensure_fresh_force`) → memory decay → live file
-  watcher (`[watch]` extra).
+  Read-write by default; `--read-only` opens the store read-only so the
+  write tools fail instead of landing. Bearer-key auth gates every path but
+  `GET /healthz` on non-loopback binds (see [deployment.md](deployment.md)).
 - Every tool call is instrumented into `tool_metrics` (duration, status,
   payload sizes) — this is what `/history` and `/tokens` on the dashboard show.
-- `CAIRN_READ_ONLY=1` makes the server refuse write tools.
-- Resource `cairn://status` exposes live server status.
+- Each call opens its own SQLite connection — read-only for the pure read
+  tools, writable for the ones that may land rows (`explore`'s memory credit,
+  `recall_memory`'s read-through refs, `record_memory`, `knowledge_delete`,
+  `generate_flow`). `knowledge_add` and `knowledge_status` write the OKF
+  bundle directly (no SQLite connection) and are refused in read-only mode;
+  `wiki_generate` reads over a read-only connection and writes pages to the
+  bundle.
 
 ## The 26 tools by layer
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="diagrams/c4-components-dark.png">
-  <img src="diagrams/c4-components.png" alt="MCP server components: boot and lifecycle verifies the 25-tool FastMCP surface; four tool groups dispatch to the graph engine, hybrid retrieval, and knowledge and memory">
-</picture>
-
-Open [diagrams/c4-components.html](diagrams/c4-components.html) for the
-full-size version.
-
-**L1 — Graph** (`tools_graph.py`, 12):
+**L1 — Graph** (`cairn-query` `tools_nav.rs`, `tools_repo.rs`,
+`tools_search.rs`, `tools_flow.rs`; 12):
 
 | Tool | Purpose |
 |---|---|
@@ -40,7 +39,7 @@ full-size version.
 | `find_definition` | locate a symbol's definition |
 | `get_callers` / `get_callees` | direct call relationships (precise by default, `fuzzy=True` for candidates) |
 | `impact_analysis` | recursive blast radius (precise; pair with `cross_repo_deps` for public APIs) |
-| `semantic_search` | the hybrid pipeline from [retrieval.md](retrieval.md) |
+| `semantic_search` | the hybrid pipeline: BM25 + dense vectors fused by RRF; vectors come from the configured `CAIRN_EMBED_BACKEND` (hash by default, or an OpenAI-compatible embeddings server) |
 | `search_symbols` | FTS5 name search (wildcards, substrings, camelCase) |
 | `repo_map` | deterministic repository orientation with counts, hubs, hotspots, and dropped counts |
 | `file_api` | body-free symbol records for one indexed file; `signature` is null when unavailable |
@@ -48,13 +47,13 @@ full-size version.
 | `visualize_graph` | Mermaid/DOT/JSON rendering of a subgraph |
 | `path` | shortest structural path between two symbols over the live graph (same hop chain the `cairn path` CLI prints) |
 
-**L1 — Federation** (`tools_federation.py`, 1):
+**L1 — Federation** (`tools_federation.rs`, 1):
 
 | Tool | Purpose |
 |---|---|
 | `federated_search` | one query across every registered workspace store: merged ranking, per-workspace attribution, lexical fallback for embedding-less stores, dropped stores named; `shared_embed=true` opt-in serves stamp-compatible stores from one embedding backend |
 
-**L2/L3 — Knowledge base + Compass** (`tools_compass.py`, 5):
+**L2/L3 — Knowledge base + Compass** (`tools_km.rs`, `tools_flow.rs`; 5):
 
 | Tool | Purpose |
 |---|---|
@@ -64,7 +63,7 @@ full-size version.
 | `trace_flow` | execution-order trace through the graph |
 | `generate_flow` | write a flow compass (the one non-read-only tool here) |
 
-**L4 — Memory** (`tools_memory.py`, 2):
+**L4 — Memory** (`tools_km.rs`, 2):
 
 | Tool | Purpose |
 |---|---|
@@ -74,7 +73,7 @@ full-size version.
 Lifecycle verbs are CLI-only: `cairn memory <verb>` where verb is
 `digest`, `evolve`, `promote`, `demote`, `forget` (delete), or `decay`.
 
-**L5 — Knowledge documents** (`tools_knowledge.py` + `tools_wiki.py`, 6):
+**L5 — Knowledge documents** (`tools_km.rs` + `tools_wiki.rs`, 6):
 
 | Tool | Purpose |
 |---|---|
@@ -129,7 +128,9 @@ finish the wiki through the task queue:
 along its known limits (recursive callers → `impact_analysis`; execution
 order → `trace_flow`; why/decisions → `ask_compass` / `recall_memory`;
 synonyms → `semantic_search`). The full decision tree ships inside the
-installed skill (`src/cairn/agent_integration/skill/references/decision-tree.md`).
+installed skill
+(`rust/crates/cairn-cli/templates/agent_integration/skill/references/decision-tree.md`,
+written by `cairn install-agents`).
 
 ## CLI fallback
 

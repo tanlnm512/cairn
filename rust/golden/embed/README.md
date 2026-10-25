@@ -8,7 +8,7 @@
   term_df content (embedded_at excluded), per-model vec0 row counts,
   and sample vec0 KNN hits for the fixed probe queries.
 
-Regenerate with `.venv/bin/python scripts/rust_migration/embed_golden.py`.
-The Rust side is `crates/cairn-build/tests/embeddings_parity.rs`; it
-embeds a copy of `embed-corpus.kg` and must reproduce every exported
-value ((floats within 1e-6).
+Frozen: the bytes are the spec of record (the Python recorder is retired).
+Verify with `cargo test --manifest-path rust/Cargo.toml -p cairn-build
+--test embeddings_parity`; it embeds a copy of `embed-corpus.kg` and must
+reproduce every exported value (floats within 1e-6).

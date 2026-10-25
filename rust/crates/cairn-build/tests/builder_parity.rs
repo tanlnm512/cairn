@@ -145,3 +145,189 @@ fn all_skipped_scan_refuses_to_replace_a_populated_store() {
     assert!(err.contains("refusing to replace"), "{err}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// Two-repo workspace (`alpha`, `beta`), each with one python module.
+fn two_repo_workspace(tag: &str) -> PathBuf {
+    let dir = temp_dir(tag);
+    for (repo, body) in [
+        (
+            "alpha",
+            "def a():\n    return b()\n\n\ndef b():\n    return 1\n",
+        ),
+        ("beta", "def c():\n    return 2\n"),
+    ] {
+        fs::create_dir_all(dir.join(repo).join(".git")).expect("repo marker");
+        write(&dir, &format!("{repo}/mod.py"), body);
+    }
+    dir
+}
+
+fn count(db: &Path, sql: &str) -> i64 {
+    let conn = cairn_store::conn::open_read_only(db).expect("open store");
+    conn.query_row(sql, [], |r| r.get(0)).expect("count")
+}
+
+#[test]
+fn full_rebuild_replaces_a_populated_store() {
+    let dir = two_repo_workspace("rebuild");
+    let ws = dir.to_str().expect("ws");
+    let db = dir.join("store.kg");
+    let db_str = db.to_str().expect("db");
+    build_graph(ws, db_str, None, Some(1)).expect("first build");
+    let graph_tables = ["symbols", "edges", "imports"];
+    let first = dump_tables(&db, &graph_tables);
+    {
+        let conn = cairn_store::schema::open_initialized(&db).expect("open");
+        conn.execute(
+            "INSERT INTO build_runs (kind, started_at) VALUES ('build', 1.0)",
+            [],
+        )
+        .expect("seed telemetry");
+    }
+
+    let (rebuilt, _) =
+        build_graph(ws, db_str, None, Some(1)).expect("rebuild over a populated store");
+    assert_eq!(rebuilt.parse_errors, 0);
+    assert_eq!(dump_tables(&db, &graph_tables), first);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM build_runs"), 1);
+
+    fs::remove_dir_all(dir.join("beta")).expect("drop repo");
+    build_graph(ws, db_str, None, Some(1)).expect("rebuild without beta");
+    assert_eq!(
+        count(&db, "SELECT COUNT(*) FROM files WHERE repo_id = 'beta'"),
+        0
+    );
+    assert!(!dir.join("store.kg.tmp").exists());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn repo_rebuild_replaces_only_that_repo_in_place() {
+    let dir = two_repo_workspace("repo-rebuild");
+    let ws = dir.to_str().expect("ws");
+    let db = dir.join("store.kg");
+    let db_str = db.to_str().expect("db");
+    build_graph(ws, db_str, None, Some(1)).expect("full build");
+    let beta_before = count(&db, "SELECT COUNT(*) FROM files WHERE repo_id = 'beta'");
+
+    write(&dir, "alpha/extra.py", "def d():\n    return 3\n");
+    let (summary, _) = build_graph(ws, db_str, Some("alpha"), Some(1)).expect("repo rebuild");
+    assert_eq!(summary.files, 2);
+    assert_eq!(
+        count(&db, "SELECT COUNT(*) FROM files WHERE repo_id = 'alpha'"),
+        2
+    );
+    assert_eq!(
+        count(&db, "SELECT COUNT(*) FROM files WHERE repo_id = 'beta'"),
+        beta_before
+    );
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM edges e JOIN symbols s ON e.target_id = s.id \
+             WHERE e.kind = 'calls' AND e.resolution = 'exact' AND s.name = 'b'"
+        ),
+        1
+    );
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM repo_build_state"), 0);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn repo_rebuild_never_reuses_ids_of_the_rows_it_replaced() {
+    let dir = two_repo_workspace("repo-ids");
+    let ws = dir.to_str().expect("ws");
+    let db = dir.join("store.kg");
+    let db_str = db.to_str().expect("db");
+    build_graph(ws, db_str, None, Some(1)).expect("full build");
+    let top_beta_symbol: String = {
+        let conn = cairn_store::schema::open_initialized(&db).expect("open");
+        let id: String = conn
+            .query_row(
+                "SELECT MAX(s.id) FROM symbols s JOIN files f ON s.file_id = f.id \
+                 WHERE f.repo_id = 'beta'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("top beta symbol");
+        conn.execute(
+            "INSERT INTO transitive_edges (source_id, target_name, distance) VALUES (?, 'x', 1)",
+            [&id],
+        )
+        .expect("seed closure row");
+        id
+    };
+
+    build_graph(ws, db_str, Some("beta"), Some(1)).expect("repo rebuild");
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM transitive_edges t JOIN symbols s ON s.id = t.source_id"
+        ),
+        0,
+        "stale closure row for {top_beta_symbol} resolves to a live symbol"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn edge_source_is_the_enclosing_same_named_owner() {
+    let dir = temp_dir("owner");
+    write(
+        &dir,
+        "src/jobs.py",
+        concat!(
+            "class A:\n    def run(self):\n        foo()\n\n",
+            "class B:\n    def run(self):\n        bar()\n\n",
+            "try:\n    class Impl:\n        @property\n        def value(self):\n            one()\n\n",
+            "        @value.setter\n        def value(self, v):\n            two()\n",
+            "except ImportError:\n    class Impl:\n        def run(self):\n            baz()\n",
+            "\ndef combo():\n    @cache\n    def combo():\n        pass\n    return combo\n",
+            "\ndef m():\n    @route\n    class C:\n        def m(self):\n            pass\n",
+        ),
+    );
+    let db = dir.join("store.kg");
+    build_graph(
+        dir.to_str().expect("ws"),
+        db.to_str().expect("db"),
+        None,
+        None,
+    )
+    .expect("build");
+    let conn = cairn_store::conn::open_read_only(&db).expect("open store");
+    let owner_line = |kind: &str, target: &str| -> i64 {
+        conn.query_row(
+            "SELECT src.line_start FROM edges e JOIN symbols src ON e.source_id = src.id
+             LEFT JOIN symbols tgt ON e.kind = 'contains' AND e.target_id = tgt.id
+             WHERE e.kind = ?1 AND COALESCE(CAST(tgt.line_start AS TEXT), e.target_name) = ?2",
+            [kind, target],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|e| panic!("{kind} {target}: {e}"))
+    };
+    let calls: Vec<i64> = ["foo", "bar", "one", "two", "baz"]
+        .iter()
+        .map(|t| owner_line("calls", t))
+        .collect();
+    assert_eq!(calls, vec![2, 6, 12, 16, 20]);
+    assert_eq!(owner_line("contains", "20"), 19);
+    assert_eq!(owner_line("decorates", "setter"), 16);
+    // A decorated definition nested in a same-named outer one owns its
+    // decorator, not the outer.
+    assert_eq!(owner_line("decorates", "cache"), 25);
+    // A decorator above a differently named definition binds to the
+    // same-named definition that appears later, not the enclosing one.
+    let route = conn
+        .prepare(
+            "SELECT src.line_start FROM edges e JOIN symbols src ON e.source_id = src.id
+             WHERE e.kind = 'decorates' AND e.target_name = 'route' ORDER BY src.line_start",
+        )
+        .expect("route stmt")
+        .query_map([], |r| r.get(0))
+        .expect("route rows")
+        .collect::<Result<Vec<i64>, _>>()
+        .expect("route ids");
+    assert_eq!(route, vec![31, 32]);
+    drop(conn);
+    let _ = fs::remove_dir_all(&dir);
+}

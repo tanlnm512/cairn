@@ -1,175 +1,138 @@
 # Architecture
 
-← [Docs index](README.md)
+← [README](../README.md)
 
 Read this when you need the system shape: what the pieces are, where state
-lives, and which module owns which job.
+lives, and which crate owns which job.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="diagrams/system-architecture-dark.png">
-  <img src="diagrams/system-architecture.png" alt="System architecture diagram">
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/readme-architecture-dark.png">
+  <img src="diagrams/readme-architecture.png" alt="cairn architecture: AI agents query the MCP server and CLI, which read one local SQLite store; an LLM task queue runs off-path, admitted only through a critic gate">
 </picture>
-
-Open [diagrams/system-architecture.html](diagrams/system-architecture.html)
-for the full-size version.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="diagrams/c4-containers-dark.png">
-  <img src="diagrams/c4-containers.png" alt="C4 container view: the MCP server, CLI, and dashboard surfaces drive the graph engine, knowledge and memory, and hybrid retrieval over one SQLite store; the LLM runs off-path">
-</picture>
-
-The same system as a [C4 container view](diagrams/c4-containers.html); the
-full [C4 model](diagrams/c4.html) adds the [system
-context](diagrams/c4-context.html) and the MCP server's
-[components](diagrams/c4-components.html).
 
 ## What cairn is
 
-Cairn is a local codebase-intelligence system for AI coding agents,
-installable as a single `cairn` binary or as the `cairn-intel` PyPI package
-(both ship during the transition window; see [cli-reference.md](cli-reference.md)
-for the coverage split). It parses a workspace into a SQLite symbol/call
-graph, layers hybrid semantic retrieval on top, and keeps durable knowledge
-(documents, memories, compass/wiki guides) in an Open Knowledge Format (OKF)
-bundle. Everything is local; no LLM is called in-process — LLM-quality
-synthesis runs through a decoupled task queue.
+Cairn is a local codebase-intelligence system for AI coding agents, shipped
+as one static `cairn` binary (Homebrew tap, `cargo binstall`, release
+tarball, or bundled inside the `cairn-intel` PyPI wheel, whose console script
+execs it). It parses a workspace into a SQLite symbol/call graph, layers
+hybrid retrieval on top, and keeps durable knowledge (documents, memories,
+compass/wiki guides) in an Open Knowledge Format (OKF) bundle. Everything is
+local; no LLM is called in-process — LLM-quality synthesis runs through a
+decoupled task queue.
 
 ## The three tiers
 
 ### Surfaces — how agents and humans reach cairn
 
-| Surface | Python module | Rust crate | Facts |
-|---|---|---|---|
-| MCP server | `src/cairn/mcp_server/` | `rust/crates/cairn-daemon` | Streamable HTTP daemon on `:9876` (one shared process, read-write default; `cairn connect` ensures it is running); exactly 26 tools (verified at boot); `cairn://status` resource; `/healthz` payload consumed by the connect reuse-guard |
-| CLI | `src/cairn/cli/` | `rust/crates/cairn-cli` | entry point `cairn`; the coverage split between the two builds is documented in [cli-reference.md](cli-reference.md) |
-| Dashboard | `src/cairn/dashboard/` | `rust/crates/cairn-cli` (`src/dashboard/` + `dashboard-assets/`, minijinja) | loopback-only `127.0.0.1:8765`; views use read-only SQLite connections, the Settings page persists to `~/.cairn/config.json`; knowledge views — `/knowledge` catalog, `/knowledge/{family}/{slug}` detail with relationship panels, `/knowledge/graph` relationship canvas — render from the OKF bundle + derived `knowledge_edges` index |
+| Surface | Crate | Facts |
+|---|---|---|
+| MCP server | `cairn-daemon` | Streamable HTTP daemon on `:9876` (one shared process, read-write default; `cairn connect` ensures it is running); exactly 26 tools; bearer-key middleware on non-loopback binds; `/healthz` payload consumed by the connect reuse-guard |
+| CLI | `cairn-cli` | entry point `cairn`; the clap command tree in `cmds_*.rs`, documented in [cli-reference.md](cli-reference.md) |
+| Dashboard | `cairn-cli` (`src/dashboard/` + `dashboard-assets/`, minijinja) | loopback-only `127.0.0.1:8765`; views use read-only SQLite connections, the Settings page persists the embedding knobs to `~/.cairn/config.json`; knowledge views — `/knowledge` catalog, `/knowledge/{family}/{slug}` detail with relationship panels, `/knowledge/graph` relationship canvas — render from the OKF bundle + derived `knowledge_edges` index |
 
 ### Core engines
 
-| Engine | Python modules | Rust crates | Job |
-|---|---|---|---|
-| Graph engine | `src/cairn/graph/` (`builder.py`, `scanner.py`, `resolver.py`, `schema.py`, `incremental.py`, `dataflow.py`) | `cairn-store` (schema + connection factory), `cairn-build` (scanner, rayon builder, resolver, incremental/graft, streaming closure), `cairn-parse` (per-language tree-sitter extraction) | scan → parse → resolve → persist the symbol/call graph; see [indexing.md](indexing.md) |
-| Retrieval | `src/cairn/retrieval/`, `src/cairn/graph/` (`semantic.py`, `lexical.py`, `fusion.py`, `reranker.py`, `prf.py`, `query_enrich.py`, `embed_ladder.py`) | `cairn-query` (FTS5 search, definition lookup, callers/callees, impact, `explore`, `trace_flow`, taint, pack), `cairn-daemon` (`tools.rs`, `search.rs`) | always-on 3-stage hybrid (vectors + BM25 + RRF) with a gated rerank 4th stage; `embed_ladder.py` adds the parity-verified embedding-server fallback ladder; see [retrieval.md](retrieval.md) |
-| Knowledge & memory | `src/cairn/knowledge/`, `src/cairn/memory/`, `src/cairn/okf/` | `cairn-cli` (`cmds_knowledge.rs`) | OKF document store, staged doc ingestion, tiered agent memory; see [knowledge-and-memory.md](knowledge-and-memory.md) |
-| Compass & wiki | `src/cairn/compass/`, `src/cairn/wiki/`, `src/cairn/llm/tasks.py` | `cairn-cli` (`cmds_knowledge.rs`) | navigation guides and architecture summaries; LLM work runs via the task queue, fact-checked by a deterministic critic |
+| Engine | Crates | Job |
+|---|---|---|
+| Graph engine | `cairn-store` (schema + connection factory), `cairn-build` (scanner, rayon builder, resolver, incremental/graft, streaming closure, SCIP import), `cairn-parse` (per-language tree-sitter extraction) | scan → parse → resolve → persist the symbol/call graph; see [indexing.md](indexing.md) |
+| Retrieval | `cairn-query` (`tools_search.rs`: FTS5/BM25 + dense vectors fused by RRF over `vec0` ANN tables; `tools_nav.rs`, `tools_flow.rs`, `tools_repo.rs`: definition lookup, callers/callees, impact, `explore`, `trace_flow`, taint, pack) | the hybrid query path; dense vectors come from the `hash` embedder or an OpenAI-compatible embeddings server — no local inference and no reranker ship in the binary |
+| Knowledge & memory | `cairn-query` (`tools_km.rs`, `ingest.rs`, `tasks.rs`), dispatched by `cairn-cli` `cmds_knowledge.rs` | OKF document store, staged doc ingestion, tiered agent memory with bi-temporal validity and per-agent sharing, the LLM task queue |
+| Compass & wiki | `cairn-query` (`tools_wiki.rs`, `tools_flow.rs`, `skillgen.rs`) | navigation guides, architecture pages, generated skills; LLM work runs via the task queue, fact-checked by a deterministic critic |
 
-Both implementations read and write the same `.kg` schema and `.knowledge`
-bundle; `CAIRN_DAEMON_IMPL` selects which daemon serves (see
-[deployment.md](deployment.md)).
+### Launcher and sidecars (`src/cairn/`)
 
-### Optional precision, Rust, and worktree behavior
+| Module | Purpose |
+|---|---|
+| `console.py` | the PyPI `cairn` console script: execs the discovered binary with the original argv, exporting its interpreter as `CAIRN_SIDECAR_PYTHON` |
+| `paths.py` | binary discovery: `CAIRN_RUST_BIN` → the binary bundled in the wheel (`_bin/`) → `PATH` |
+| `communities.py` | the `[graph-analytics]` sidecar: seeded networkx Louvain over the store (`cairn communities` runs it in-process from the launcher) |
+| `ingest_convert.py` | the `[ingest]` sidecar: PDF/DOCX → markdown on stdout, invoked by the binary's `knowledge ingest --file` |
 
-- `cairn build` runs a pyright pass for ambiguous Python call edges by
-  default (budget-capped; `--lsp` unbounded, `--no-lsp` off). A
-  unique definition that maps to one stored Python symbol upgrades that edge to
-  `exact`; missing or failing pyright is a noticed no-op, and exact edges never
-  downgrade.
-- Rust uses the generic tree-sitter tier with a pinned grammar dependency. It
+### Resolution tiers, Rust sources, and worktree behavior
+
+- The resolver labels every call edge `exact` / `ambiguous` / `unresolved`
+  (see [indexing.md](indexing.md)); `cairn build --lsp` is accepted for
+  compatibility but no pyright upgrade pass runs in this build.
+- Rust sources use the generic tree-sitter tier with a pinned grammar. It
   records definitions and spans, keeps call edges `unresolved`, and records
   `.rs` files as parser-unavailable skips when the grammar cannot load.
 - `cairn.json` `include_nested_repos` defaults to false. When true, initialized
   submodules and nested child repositories are indexed once under
   parent-prefixed repo ids.
-- A linked worktree without a store is seeded by a read-only SQLite snapshot of
-  the main graph, then refreshed for worktree drift. The main store is never
-  mutated.
 
 ### Storage — where state lives
 
 ```
 ~/.cairn/                        (CAIRN_HOME overrides)
   workspaces.json                workspace abs path → store key registry
-  lib/                           shared heavy deps (torch etc.), per-ABI dirs
+  config.json                    persisted knobs (embedding backend, written by the dashboard Settings page)
   <sha256(path)[:16]>/           one store per workspace
     .kg                          SQLite: graph + FTS5 + embeddings + telemetry
     .knowledge/                  OKF bundle: concepts as frontmatter markdown
 ```
 
-Path resolution (`src/cairn/paths.py:resolve_store`) priority:
-`CAIRN_DB` / `CAIRN_KNOWLEDGE` overrides → workspace registry → cwd
-auto-register. CLI flags `--db` / `--workspace` win over env in-process.
+Path resolution (`cairn-cli` `store_paths.rs`): the workspace is the explicit
+`--workspace`, else `CAIRN_WORKSPACE`, else the nearest registered ancestor of
+the cwd, else the cwd; `CAIRN_DB` / `CAIRN_KNOWLEDGE` override the store
+files inside it, and `--db` wins over everything in-process.
 
 ## Module map
 
-### Cargo workspace (`rust/crates/`)
-
 | Crate | Purpose |
 |---|---|
-| `cairn-store` | `.kg` schema DDL, connection factory (bundled SQLite + FTS5 + sqlite-vec), vec0 helpers, canonical dump for parity diffs (`conn.rs`, `schema.rs`, `vec0.rs`, `dump.rs`) |
-| `cairn-query` | read path: FTS5 search, definition lookup, precise/fuzzy callers/callees, recursive impact, `explore` aggregation, flow/taint/pack/federation tools (`tools_*.rs`) |
-| `cairn-parse` | per-language tree-sitter symbol/edge extraction |
-| `cairn-build` | scanner, rayon builder, resolver, incremental/graft + watcher, streaming closure, embeddings build, SCIP import |
+| `cairn-store` | `.kg` schema DDL, connection factory (bundled SQLite + FTS5 + sqlite-vec), vec0 helpers, the build lock and staged-swap primitives, canonical dump for parity diffs (`conn.rs`, `schema.rs`, `vec0.rs`, `swap.rs`, `dump.rs`) |
+| `cairn-query` | read path: FTS5 search, definition lookup, precise/fuzzy callers/callees, recursive impact, `explore` aggregation, flow/taint/pack/federation tools (`tools_*.rs`); the knowledge, memory, wiki, task-queue and skill layers; the `[ingest]` sidecar bridge (`sidecar.rs`) |
+| `cairn-parse` | per-language tree-sitter symbol/edge extraction (15 languages; the Dart grammar is vendored and Kotlin is pinned to an upstream commit) |
+| `cairn-build` | scanner, rayon builder, resolver, incremental/graft, streaming closure, embeddings build, SCIP import |
 | `cairn-daemon` | streamable-HTTP MCP server, bearer auth, `/healthz`, the launchd/reuse lifecycle (`server.rs`, `auth.rs`, `healthz.rs`, `lifecycle.rs`) |
-| `cairn-cli` | the `cairn` binary: clap command tree (`cmds_*.rs`), dashboard server, agent-install templates |
-
-### Python package (`src/cairn/`)
-
-| Subpackage | Purpose |
-|---|---|
-| `agent_install/` | wires cairn into AI clients (MCP config, skills, commands, subagents, hooks) |
-| `agent_integration/` | template assets shipped as package data (SKILL.md, references, commands) |
-| `bench/` | performance/scalability benchmark suites (stdlib-only) + the pinned SWE-bench arm (`swe_bench.py` loader, `swe_bench_suite.py` two-arm runner; `datasets` rides the `bench` extra) |
-| `cli/` | all `cairn` commands (Click) |
-| `compass/` | module navigation guides (deterministic or LLM-assisted via task queue) |
-| `dashboard/` | read-only local web dashboard; `routes/editor.py` serves the frozen editor JSON contract consumed by the VS Code extension |
-| `graph/` | layer-1 code graph: build, query, resolve, embeddings, ANN; `taint.py` (source/sink registry + propagation) and `federation.py` (cross-store fan-out/RRF fusion) |
-| `hooks/` | git hooks and lifecycle hooks |
-| `knowledge/` | document knowledge: staged ingestion (`knowledge/ingest/`) + semantic retrieval |
-| `llm/` | agent-decoupled LLM task queue |
-| `mcp_server/` | the 25-tool MCP surface |
-| `memory/` | tiered agent memory (raw → drafts → tribal → archived) with bi-temporal validity and per-agent sharing (`agent_symbols`) |
-| `okf/` | Open Knowledge Format concept model and bundle |
-| `pack.py` / `pack_enrich.py` | the `cairn pack` pipeline (seed/expand/rank/fit) and its enrichment renderers |
-| `parsers/` | tree-sitter parsers (15 languages) |
-| `retrieval/` | retrieval protocols + the batched vector scan (the Retriever / Fusion / Reranker stages live in `graph/`) |
-| `review/` | the review loop engine: diff packs, pre-submit guard, comment-to-symbol capture |
-| `telemetry/` | best-effort local telemetry sink + optional OTLP export |
-| `skillgen/` | graph-grounded `SKILL.md` generation, critic gate, and task-queue polish |
-| `utils/` | shared helpers (git inspection, logging) |
-| `viz/` | Mermaid / DOT / JSON / self-contained HTML graph renderers |
-| `wiki/` | the wiki's page-plan pipeline (plan → refine → queue) and the lifecycle module that derives promotion/state/staleness from the two stored kinds (plan manifest + promoted articles) |
-
-Standalone modules: `eval.py`, `paths.py` (store resolution + the `~/.cairn/config.json` layer), `refs.py`.
+| `cairn-cli` | the `cairn` binary: clap command tree (`cmds_*.rs`), dashboard server, agent-install templates and hook runner |
 
 `cairn viz --export FILE` writes one self-contained HTML file.
 
 ## Key data model facts
 
-The `.kg` SQLite database (`src/cairn/graph/schema.py`, mirrored by
-`rust/crates/cairn-store/src/schema.rs`) holds:
+The `.kg` SQLite database (`rust/crates/cairn-store/src/schema.rs`) holds:
 
 - **Core graph**: `repos`, `files`, `symbols`, `edges` (with
-  `resolution` = `exact` / `ambiguous` / `unresolved`), `imports`.
+  `resolution` = `exact` / `ambiguous` / `unresolved`, plus the resolver
+  signal columns `ref_name` / `receiver_type` / `call_arity`), `imports`.
 - **Search**: `symbols_fts` (FTS5 over symbols, trigger-synced), `term_df`
   (IDF stats for query enrichment).
 - **Vectors**: `embeddings`, `embeddings_mv` (multi-vector), plus
   `knowledge_embeddings`, `memory_embeddings`. ANN lives in `vec0` virtual
-  tables (`vec_*`, `vecmv_*`) via the `sqlite-vec` extension, same file.
+  tables (`vec_*`, `vecmv_*`) via the statically linked `sqlite-vec`
+  extension, same file.
 - **Derived**: `dataflow` (precomputed impact), `transitive_edges` (O(1)
-  multi-hop calls).
+  multi-hop calls), `rationale` (marker-comment records), `communities` /
+  `symbol_communities` (written by the Louvain sidecar).
 - **Knowledge relationships**: `knowledge_edges` (doc↔doc rows:
   `doc_id`, `related_id`, `relation`, `kind` = `extracted`/`inferred`/
   `derived`, `provenance`, `created_at` — supersede pairs store both
   directions) and `knowledge_doc_refs` (doc→code refs with
   `ref_kind` = `file`/`symbol` and a `verified` flag). Both are rebuilt
   from OKF frontmatter by `cairn knowledge rebuild`; the frontmatter is
-  the durable record, these tables a rebuildable index (see
-  [knowledge-and-memory.md](knowledge-and-memory.md)).
+  the durable record, these tables a rebuildable index.
+- **Memory bookkeeping**: `memory_refs`, `memory_validity` (bi-temporal
+  intervals), `agent_symbols` (per-agent sharing), `memory_failure_signatures`.
 - **Ops/telemetry**: `build_runs`, `tool_metrics`, `events`, `skipped_files`,
-  `parse_errors`, `pending_sync`, `repo_build_state`, `repo_deps`,
-  `schema_meta`, `memory_refs`.
+  `parse_errors`, `pending_sync`, `repo_build_state`, `schema_meta`.
 
 ## Runtime model
 
-- The daemon implementation is selected at start: `CAIRN_DAEMON_IMPL=rust`
-  (or `cairn connect --impl rust`) launches the Rust daemon; the default
-  launches the Python daemon. `cairn doctor` reports which one is serving
-  (see [deployment.md](deployment.md)).
-- The Python MCP daemon boots with: tool-count verification → background
-  model warm-up → boot catch-up reindex (`ensure_fresh_force`) → memory
-  decay → live file watcher (`[watch]` extra).
-- One writer at a time: builds take `build_lock` (flock, non-blocking) around
-  the write phase; full-workspace builds write to a temp DB and atomically
-  swap (`swap_db_file`).
-- Telemetry is local and best-effort (buffered sink, 30s flush); OTLP export
-  is opt-in via `CAIRN_OTEL_ENDPOINT` and synchronous by design.
+- One daemon per machine serves every registered workspace store over
+  loopback; `cairn connect` starts it on first dial and reuses a healthy one
+  via `/healthz`. Each tool call opens its own SQLite connection — read-only
+  for reads, writable for the write tools — so a read-only daemon
+  (`--read-only`) cannot land writes.
+- One writer at a time: builds, incremental writers and `sync` repair take
+  the `build_lock` (flock, non-blocking); `cairn build --staging` writes to
+  `<db>.tmp` and atomically swaps it in under that lock, carrying the
+  telemetry tables across.
+- Freshness: CLI read commands refresh drifted files before answering and
+  defer with a stale-graph banner while a build holds the lock; `cairn
+  update` (git-diff driven, also run by the git and agent hooks) is the
+  incremental path. A `pending_sync` row surfaces as a staleness banner on
+  results until the update lands.
+- Telemetry is local and best-effort (`tool_metrics`, `events`);
+  `CAIRN_TELEMETRY=off` disables it. Nothing leaves the machine.

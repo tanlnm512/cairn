@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Structural validation runner for the skill eval specs.
 
-The evals in ``src/cairn/agent_integration/skill/evals/*.md`` are scenario
-descriptions (prose), not executable assertions. This runner turns them into a
-CI-checkable artifact by validating the *structured frontmatter* each spec
-declares at its top:
+The evals in ``rust/crates/cairn-cli/templates/agent_integration/skill/evals/*.md``
+are scenario descriptions (prose), not executable assertions. This runner turns
+them into a CI-checkable artifact by validating the *structured frontmatter*
+each spec declares at its top:
 
   1. every spec has the required frontmatter keys;
   2. every ``expected_calls`` / ``wrong_calls`` entry has its required fields;
-  3. every referenced ``tool`` is a real registered MCP tool
-     (``@mcp.tool()`` in ``src/cairn/mcp_server/tools_*.py``), a real ``cairn``
-     CLI command (scraped from ``src/cairn/cli/*.py``), or a shipped script
-     under ``scripts/`` / ``src/cairn/agent_integration/skill/scripts/``.
+  3. every referenced ``tool`` is a real registered MCP tool (the daemon's
+     ``catalog()`` in ``rust/crates/cairn-daemon/src/tools.rs``), a real
+     ``cairn`` CLI command (the clap subcommand enums in
+     ``rust/crates/cairn-cli/src/cmds_*.rs``), or a shipped script under
+     ``scripts/`` / the skill template's ``scripts/``.
 
 It is a STRUCTURAL validator only -- it does not (cannot, cheaply) run an agent
 and grade its behavior. Its value is catching drift: a spec whose frontmatter
@@ -31,27 +32,25 @@ import re
 import sys
 from pathlib import Path
 
-# PyYAML is a core dependency (see pyproject.toml ``pyyaml>=6.0``), but guard
-# anyway so a minimal environment gets a clear, actionable message rather than
-# an ImportError deep in the stack.
 try:
     import yaml
 except ImportError as exc:  # pragma: no cover
     sys.stderr.write(
-        "ERROR: PyYAML is required to parse eval frontmatter, but it is not "
-        "installed. It is listed as a core dependency in pyproject.toml "
-        "(``pyyaml>=6.0``); install it with ``pip install pyyaml`` or "
-        "``pip install -e .`` then re-run.\n"
+        "ERROR: PyYAML is required to parse eval frontmatter; install it with "
+        "``pip install pyyaml`` then re-run.\n"
     )
     raise SystemExit(2) from exc
 
 
 # Repo root = parent of this scripts/ directory.
 ROOT = Path(__file__).resolve().parent.parent
-EVALS_DIR = ROOT / "src" / "cairn" / "agent_integration" / "skill" / "evals"
-MCP_TOOLS_GLOB = ROOT / "src" / "cairn" / "mcp_server" / "tools_*.py"
-CLI_DIR = ROOT / "src" / "cairn" / "cli"
-SCRIPTS_DIRS = [ROOT / "scripts", ROOT / "src" / "cairn" / "agent_integration" / "skill" / "scripts"]
+SKILL_DIR = ROOT / "rust" / "crates" / "cairn-cli" / "templates" / "agent_integration" / "skill"
+EVALS_DIR = SKILL_DIR / "evals"
+MCP_TOOLS_FILE = ROOT / "rust" / "crates" / "cairn-daemon" / "src" / "tools.rs"
+CLI_DIR = ROOT / "rust" / "crates" / "cairn-cli" / "src"
+# The clap families cli.rs flattens into the top level.
+TOP_LEVEL_ENUMS = ("CoreCommand", "KnowledgeCommand", "SystemCommand")
+SCRIPTS_DIRS = [ROOT / "scripts", SKILL_DIR / "scripts"]
 
 # Frontmatter schema. ``expected_calls`` and ``wrong_calls`` are lists of dicts.
 REQUIRED_KEYS = ["id", "rule", "title", "scenario", "expected_calls", "wrong_calls"]
@@ -63,66 +62,78 @@ WRONG_CALL_FIELDS = ["tool", "why"]
 # Discovery: scrape the universe of real tool / command names from source.
 # ---------------------------------------------------------------------------
 
-_MCP_DECOR_RE = re.compile(r"^@mcp\.tool\(.*\)\s*$")
-_DEF_RE = re.compile(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+# Every registered MCP tool is one `text_tool(` entry in the daemon catalog,
+# its name on the next line.
+_TOOL_ENTRY_RE = re.compile(r'\b\w+_tool\(\s*\n\s*"([a-z_]+)"')
 
 
 def discover_mcp_tools() -> set[str]:
-    """Names of every ``@mcp.tool()``-registered function across tools_*.py.
-
-    The decorator is always immediately followed (after zero or more plain
-    decorators like ``@instrument``) by the ``def name(...)`` line; we scan
-    forward a few lines to find it.
-    """
-    names: set[str] = set()
-    for path in sorted(MCP_TOOLS_GLOB.parent.glob("tools_*.py")):
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for i, line in enumerate(lines):
-            if not _MCP_DECOR_RE.match(line):
-                continue
-            for j in range(i + 1, min(i + 4, len(lines))):
-                m = _DEF_RE.match(lines[j])
-                if m:
-                    names.add(m.group(1))
-                    break
-    return names
+    """Names of every tool the daemon's ``catalog()`` registers."""
+    return set(_TOOL_ENTRY_RE.findall(MCP_TOOLS_FILE.read_text(encoding="utf-8")))
 
 
-# Decorator forms we recognize when scraping the click CLI:
-#   @main.command()                 -> top-level command (name = func name)
-#   @main.command(name="foo")       -> top-level command, explicit name
-#   @main.group()                   -> group definition (name = func name)
-#   @<grp>.command()                -> subcommand (name = func name, prefix stripped)
-#   @<grp>.command("foo")           -> subcommand, positional name
-#   @<grp>.command(name="foo")      -> subcommand, keyword name
-_GROUP_DEF_RE = re.compile(r"^@main\.group\(\s*\)\s*$")
-_MAIN_CMD_RE = re.compile(r'^@main\.command\(\s*(?:name="([^"]+)")?\s*\)\s*$')
-_SUB_CMD_RE = re.compile(
-    r'^@([A-Za-z_][A-Za-z0-9_]*)\.command\(\s*(?:"([^"]+)"|name="([^"]+)")?\s*\)\s*$'
-)
+_ENUM_RE = re.compile(r"^pub enum (\w+)\s*\{", re.M)
+_VARIANT_RE = re.compile(r"^\s{4}([A-Z]\w*)\s*(\(|\{|,)")
+_NAME_ATTR_RE = re.compile(r'#\[command\([^\]]*name\s*=\s*"([^"]+)"')
+_SUBCOMMAND_RE = re.compile(r"#\[command\(subcommand\)\]\s*(?:pub\s+)?\w+:\s*(?:Option<)?(\w+)")
 
 
-def _peek_def(lines: list[str], i: int) -> str | None:
-    # Scan forward past any intervening decorators (``@click.option(...)`` etc.)
-    # and their continuation lines to the first ``def``. Decorators can span
-    # multiple physical lines (e.g. ``@click.option("-v", "--verbose",\n  help=...)``),
-    # so we keep going while we see decorator lines (start with ``@``) or
-    # indented continuation lines (leading whitespace, not a ``def``).
-    for j in range(i + 1, min(i + 60, len(lines))):
-        line = lines[j]
-        if line.startswith("@"):  # another decorator line
-            continue
-        m = _DEF_RE.match(line)
+def _brace_body(text: str, open_idx: int) -> str:
+    """Text between the brace at ``open_idx`` and its match."""
+    depth = 0
+    for i in range(open_idx, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1:i]
+    raise ValueError("unbalanced braces")
+
+
+def _enum_bodies() -> dict[str, str]:
+    bodies: dict[str, str] = {}
+    for path in sorted(CLI_DIR.glob("cmds_*.rs")):
+        text = path.read_text(encoding="utf-8")
+        for m in _ENUM_RE.finditer(text):
+            bodies[m.group(1)] = _brace_body(text, m.end() - 1)
+    return bodies
+
+
+def _kebab(ident: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "-", ident).lower()
+
+
+def _variants(body: str) -> list[tuple[str, str | None]]:
+    """``(command name, subcommand enum)`` per variant of one clap enum body."""
+    out: list[tuple[str, str | None]] = []
+    pending_attrs: list[str] = []
+    pos = 0
+    while pos < len(body):
+        nl = body.find("\n", pos)
+        line = body[pos:] if nl == -1 else body[pos:nl]
+        stripped = line.strip()
+        if stripped.startswith("#["):
+            pending_attrs.append(stripped)
+        m = _VARIANT_RE.match(line)
         if m:
-            return m.group(1)
-        if line.startswith(" ") or line.startswith("\t"):
-            # indented continuation of a multi-line decorator / option
-            continue
-        # A non-indented, non-def, non-blank line means we've passed the def
-        # position without finding it -- give up.
-        if line.strip():
-            break
-    return None
+            ident, opener = m.group(1), m.group(2)
+            explicit = next((n.group(1) for n in map(_NAME_ATTR_RE.search, pending_attrs) if n), None)
+            sub_enum = None
+            if opener == "{":
+                variant_body = _brace_body(body, pos + line.index("{"))
+                sub = _SUBCOMMAND_RE.search(variant_body)
+                sub_enum = sub.group(1) if sub else None
+                pos += line.index("{") + len(variant_body) + 2
+                pending_attrs = []
+                out.append((explicit or _kebab(ident), sub_enum))
+                continue
+            pending_attrs = []
+            out.append((explicit or _kebab(ident), None))
+        elif not stripped.startswith("///"):
+            pending_attrs = [a for a in pending_attrs if stripped.startswith("#[")]
+        pos = len(body) if nl == -1 else nl + 1
+    return out
 
 
 def discover_cli_commands() -> dict[str, set[str]]:
@@ -133,33 +144,17 @@ def discover_cli_commands() -> dict[str, set[str]]:
     ``commands["dataflow"] == {"build", "lookup"}`` and ``cairn update`` as
     ``"update" in commands["main"]``.
     """
+    bodies = _enum_bodies()
     commands: dict[str, set[str]] = {"main": set()}
-    for path in sorted(CLI_DIR.glob("*.py")):
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for i, line in enumerate(lines):
-            if _GROUP_DEF_RE.match(line):
-                gname = _peek_def(lines, i)
-                if gname:
-                    commands.setdefault(gname, set())
-                continue
-            msub = _SUB_CMD_RE.match(line)
-            if msub and msub.group(1) != "main":
-                grp = msub.group(1)
-                explicit = msub.group(2) or msub.group(3)
-                fname = explicit or _peek_def(lines, i)
-                if not fname:
-                    continue
-                # default name: strip a leading "<group>_" prefix from the func
-                if not explicit and fname.startswith(grp + "_"):
-                    fname = fname[len(grp) + 1 :]
-                commands.setdefault(grp, set()).add(fname)
-                continue
-            mmain = _MAIN_CMD_RE.match(line)
-            if mmain:
-                explicit = mmain.group(1)
-                fname = explicit or _peek_def(lines, i)
-                if fname:
-                    commands["main"].add(fname)
+
+    def walk(enum_name: str, bucket: str) -> None:
+        for name, sub_enum in _variants(bodies[enum_name]):
+            commands.setdefault(bucket, set()).add(name)
+            if sub_enum and sub_enum in bodies:
+                walk(sub_enum, name)
+
+    for enum_name in TOP_LEVEL_ENUMS:
+        walk(enum_name, "main")
     return commands
 
 
@@ -221,7 +216,7 @@ def resolve_tool(
             return True, f"MCP tool name (documented-as-nonexistent: {tail})"
         return False, (
             f"unregistered MCP tool: {t!r} (tail {tail!r} matches no "
-            f"registered @mcp.tool(); expected_calls must name real tools)"
+            f"catalog tool; expected_calls must name real tools)"
         )
 
     # Bare MCP tool name.

@@ -1,6 +1,6 @@
 # Deployment: HTTP serving
 
-← [Docs index](README.md)
+← [README](../README.md)
 
 Read this when you want to serve one cairn store to MCP clients over HTTP —
 locally, across a network, or from a container.
@@ -10,16 +10,7 @@ HTTP with bearer-key auth, read-write by default. The stdio and SSE
 transports are gone — stdio/SSE-specific options (including any
 `--transport` value) exit non-zero with a message naming the HTTP
 replacement. `cairn connect` ensures the daemon is running and prints its
-URL.
-
-During the transition window the daemon implementation is selectable; both
-serve the same store, port, and contracts:
-
-- `CAIRN_DAEMON_IMPL=rust` (or `cairn connect --impl rust`) starts the
-  Rust daemon — `cairn serve run` in the binary is itself the Rust daemon.
-- The default resolves to the Python daemon (the PyPI CLI's entry point,
-  overridable with `CAIRN_BIN`).
-- `cairn doctor` reports which implementation is serving.
+URL, and `cairn doctor`'s `daemon` check reports what is serving.
 
 ## Serve surface
 
@@ -31,13 +22,13 @@ All flags below work on both `cairn serve` and `cairn serve run`:
 | `--port` | listen port, default `9876` |
 | `--api-key` | bearer key; takes precedence over the `CAIRN_MCP_API_KEY` environment variable |
 | `--stateless` | no server-side session affinity — sequential session-less requests succeed independently, so a load balancer can distribute requests across replicas |
-| `--read-only` | the daemon is read-write by default (live watcher, memory writes); `--read-only` disables both |
+| `--read-only` | the daemon is read-write by default; `--read-only` opens the store read-only so the write tools cannot land |
 
 `cairn serve start\|stop\|status\|restart` manage the daemon — the macOS
-launchd LaunchAgent (the plist execs the binary the impl selection picked),
-or a daemonized background process elsewhere. `cairn connect` is the
-lighter entrypoint: it starts the daemon on first dial and reuses a healthy
-one (its reuse-guard reads `/healthz`).
+launchd LaunchAgent (the plist execs the `cairn` binary), or a daemonized
+background process elsewhere. `cairn connect` is the lighter entrypoint: it
+starts the daemon on first dial and reuses a healthy one (its reuse-guard
+reads `/healthz`).
 
 ## Key policy
 
@@ -121,7 +112,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 ENTRYPOINT ["cairn", "serve", "--host", "0.0.0.0"]
 ```
 
-**The checked-in Dockerfile** builds the PyPI package:
+**The checked-in Dockerfile** builds the binary from the `rust/` workspace
+in a `rust` build stage and ships it alone on `debian:bookworm-slim`:
 
 ```
 docker build -t cairn .
@@ -131,11 +123,11 @@ docker run -d --name cairn -p 9876:9876 \
   cairn
 ```
 
-The checked-in image is `python:3.12-slim`, runs as a dedicated non-root
-user, and its entrypoint is `cairn serve --host 0.0.0.0` with
-`CAIRN_HOME=/data` and `EXPOSE 9876`. The key comes from the environment:
-a keyless container on the wildcard entrypoint exits nonzero at boot
-instead of serving unprotected.
+The image runs as a dedicated non-root user, its entrypoint is
+`cairn serve --host 0.0.0.0` with `CAIRN_HOME=/data` and `EXPOSE 9876`, and
+its `HEALTHCHECK` curls `/healthz`. The key comes from the environment: a
+keyless container on the wildcard entrypoint exits nonzero at boot instead
+of serving unprotected.
 
 - The store lives under `CAIRN_HOME=/data`; mount a **local** volume, or
   point `CAIRN_DB` / `CAIRN_KNOWLEDGE` at existing store files. Never mount

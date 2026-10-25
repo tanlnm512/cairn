@@ -1,7 +1,7 @@
 //! Embeddings build path: chunking, stale re-embedding, multivector, orphan
 //! reap, and term-df refresh for the hash and embeddings-server backends.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 
 use rusqlite::Connection;
@@ -682,6 +682,317 @@ fn embed_mv_kinds(
     Ok(embedded)
 }
 
+// --- knowledge corpus -----------------------------------------------------------
+
+/// Counts reported by one knowledge-embed pass (`embed_knowledge` summary).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnowledgeEmbedSummary {
+    pub model: String,
+    pub embedded: usize,
+    pub skipped: usize,
+    pub total: usize,
+}
+
+/// The backend stamp for embedding passes (`current_model()`).
+pub fn current_model() -> Result<String, String> {
+    Ok(resolve_embed_env()?.model)
+}
+
+/// Embed knowledge concepts missing under the current model.
+pub fn embed_knowledge(
+    conn: &Connection,
+    bundle: &cairn_query::tools_km::Bundle,
+    batch_size: usize,
+    mut progress: impl FnMut(usize, usize),
+) -> Result<KnowledgeEmbedSummary, String> {
+    if batch_size == 0 {
+        return Err("batch_size must be >= 1".to_string());
+    }
+    let env = resolve_embed_env()?;
+    let cids = bundle.list_concepts(Some("knowledge/"));
+    if cids.is_empty() {
+        return Ok(KnowledgeEmbedSummary {
+            model: env.model,
+            embedded: 0,
+            skipped: 0,
+            total: 0,
+        });
+    }
+    let mut existing: HashSet<String> = HashSet::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT doc_id FROM knowledge_embeddings \
+                 WHERE model = ?1 AND chunk_index = 0",
+            )
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([&env.model], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        for row in mapped {
+            existing.insert(row.map_err(|e| e.to_string())?);
+        }
+    }
+    let to_embed: Vec<String> = cids
+        .iter()
+        .filter(|cid| !existing.contains(*cid))
+        .cloned()
+        .collect();
+
+    let total = to_embed.len();
+    let mut embedded = 0usize;
+    let now = now_iso();
+    for (i, batch) in to_embed.chunks(batch_size).enumerate() {
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for cid in batch {
+            let Ok(concept) = bundle.read_concept(cid) else {
+                continue;
+            };
+            let chunk = [concept.title, concept.description, Some(concept.body)]
+                .into_iter()
+                .flatten()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !chunk.trim().is_empty() {
+                pairs.push((cid.clone(), chunk));
+            }
+        }
+        if pairs.is_empty() {
+            continue;
+        }
+        let texts: Vec<String> = pairs.iter().map(|(_, c)| c.clone()).collect();
+        let (blobs, _dim) = embed_texts(&env, &texts)?;
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        for ((cid, chunk), blob) in pairs.iter().zip(&blobs) {
+            let dim = (blob.len() / 4) as i64;
+            // Rowid-stable upsert keeps the vec0 ANN index aligned across re-embeds.
+            tx.execute(
+                "INSERT INTO knowledge_embeddings \
+                 (doc_id, chunk_index, model, dim, vec, chunk, embedded_at) \
+                 VALUES (?, 0, ?, ?, ?, ?, ?) \
+                 ON CONFLICT(doc_id, chunk_index, model) DO UPDATE SET \
+                 dim=excluded.dim, vec=excluded.vec, chunk=excluded.chunk, \
+                 embedded_at=excluded.embedded_at",
+                rusqlite::params![cid, env.model, dim, blob, chunk, now],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        embedded += pairs.len();
+        progress(std::cmp::min((i + 1) * batch_size, total), total);
+    }
+
+    Ok(KnowledgeEmbedSummary {
+        model: env.model,
+        embedded,
+        skipped: total - embedded,
+        total,
+    })
+}
+
+// --- memory corpus (graph/embeddings.py memory family port) ---------------------
+
+/// Cap on how many chunks one memory body contributes.
+const MAX_MEMORY_CHUNKS: usize = 5;
+
+/// Split a titled memory body into bounded embeddable chunks (`chunk_memory_body`).
+pub fn chunk_memory_body(concept: &cairn_query::tools_km::Concept) -> Vec<String> {
+    let body = concept.body.as_str();
+    // re.split(r"\n(?=Why:|How to apply:)"): a part boundary before each
+    // Why:/How to apply: line (the newline is consumed by the split).
+    let lines: Vec<&str> = body.split('\n').collect();
+    let mut parts: Vec<String> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 && (line.starts_with("Why:") || line.starts_with("How to apply:")) {
+            parts.push(current.join("\n"));
+            current.clear();
+        }
+        current.push(line);
+    }
+    parts.push(current.join("\n"));
+    let mut parts: Vec<String> = parts.into_iter().filter(|p| !p.trim().is_empty()).collect();
+    if parts.len() < 2 {
+        parts = body
+            .split("\n\n")
+            .map(str::to_string)
+            .filter(|p| !p.trim().is_empty())
+            .collect();
+    }
+    if parts.is_empty() {
+        parts = vec![body.to_string()];
+    }
+    let header = concept.title.clone().unwrap_or_default();
+    let mut chunks: Vec<String> = Vec::new();
+    for (i, part) in parts.iter().take(MAX_MEMORY_CHUNKS).enumerate() {
+        let text = if i == 0 {
+            format!("{header} {part}").trim().to_string()
+        } else {
+            part.trim().to_string()
+        };
+        if !text.is_empty() {
+            chunks.push(text);
+        }
+    }
+    if chunks.is_empty() && !header.is_empty() {
+        chunks.push(header);
+    }
+    chunks
+}
+
+/// Embed selected memory concepts in one batch and replace their rows
+/// (`embed_memory_concepts`).
+pub fn embed_memory_concepts(
+    conn: &Connection,
+    bundle: &cairn_query::tools_km::Bundle,
+    concept_ids: &[String],
+) -> Result<usize, String> {
+    let env = resolve_embed_env()?;
+    let model = env.model.clone();
+    let now = now_iso();
+    let mut plan: Vec<(String, Vec<String>)> = Vec::new();
+    for cid in concept_ids {
+        let Ok(concept) = bundle.read_concept(cid) else {
+            continue; // deleted/moved since being queued -- nothing to embed
+        };
+        let chunks = chunk_memory_body(&concept);
+        if !chunks.is_empty() {
+            plan.push((cid.clone(), chunks));
+        }
+    }
+    if plan.is_empty() {
+        return Ok(0);
+    }
+    let all_chunks: Vec<String> = plan
+        .iter()
+        .flat_map(|(_, chunks)| chunks.iter().cloned())
+        .collect();
+    let (blobs, _dim) = embed_texts(&env, &all_chunks)?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let mut offset = 0usize;
+    let mut embedded = 0usize;
+    for (cid, chunks) in &plan {
+        tx.execute(
+            "DELETE FROM memory_embeddings WHERE doc_id = ?1 AND model = ?2",
+            rusqlite::params![cid, model],
+        )
+        .map_err(|e| e.to_string())?;
+        for (idx, (chunk, blob)) in chunks
+            .iter()
+            .zip(&blobs[offset..offset + chunks.len()])
+            .enumerate()
+        {
+            let dim = (blob.len() / 4) as i64;
+            tx.execute(
+                "INSERT INTO memory_embeddings \
+                 (doc_id, chunk_index, model, dim, vec, chunk, embedded_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![cid, idx as i64, model, dim, blob, chunk, now],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        offset += chunks.len();
+        embedded += 1;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(embedded)
+}
+
+/// Backfill memory concepts missing embeddings under the current model.
+pub fn embed_memory(
+    conn: &Connection,
+    bundle: &cairn_query::tools_km::Bundle,
+    batch_size: usize,
+) -> Result<KnowledgeEmbedSummary, String> {
+    let env = resolve_embed_env()?;
+    let model = env.model.clone();
+    let cids = bundle.list_concepts(Some("memory/"));
+    if cids.is_empty() {
+        return Ok(KnowledgeEmbedSummary {
+            model,
+            embedded: 0,
+            skipped: 0,
+            total: 0,
+        });
+    }
+    let mut existing: HashSet<String> = HashSet::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT doc_id FROM memory_embeddings \
+                 WHERE model = ?1 AND chunk_index = 0",
+            )
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([&model], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        for row in mapped {
+            existing.insert(row.map_err(|e| e.to_string())?);
+        }
+    }
+    let to_embed: Vec<String> = cids
+        .iter()
+        .filter(|cid| !existing.contains(*cid))
+        .cloned()
+        .collect();
+    let total = to_embed.len();
+    let mut embedded = 0usize;
+    for batch in to_embed.chunks(batch_size.max(1)) {
+        embedded += embed_memory_concepts(conn, bundle, batch)?;
+    }
+    Ok(KnowledgeEmbedSummary {
+        model,
+        embedded,
+        skipped: total - embedded,
+        total,
+    })
+}
+
+/// Delete memory embeddings whose concepts are gone, skipping unreadable ones.
+pub fn reap_orphaned_memory_embeddings(
+    conn: &Connection,
+    bundle: &cairn_query::tools_km::Bundle,
+) -> Result<usize, String> {
+    let mut doc_ids: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT doc_id FROM memory_embeddings")
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        mapped
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+    doc_ids.sort();
+    let mut orphaned: Vec<String> = Vec::new();
+    for cid in &doc_ids {
+        // Only a missing file reads as absent; unreadable concepts are kept.
+        let Ok(path) = bundle.concept_file(cid) else {
+            continue;
+        };
+        if !path.exists() {
+            orphaned.push(cid.clone());
+        }
+    }
+    if orphaned.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let mut deleted = 0usize;
+    for cid in &orphaned {
+        deleted += tx
+            .execute(
+                "DELETE FROM memory_embeddings WHERE doc_id = ?1",
+                rusqlite::params![cid],
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(deleted)
+}
+
 // --- orphan reap -----------------------------------------------------------------
 
 fn purge_embedding_rows(conn: &Connection, where_sql: &str) -> Result<usize, String> {
@@ -1027,5 +1338,89 @@ mod tests {
             })
             .expect("query");
         mapped.map(|r| r.expect("row")).collect()
+    }
+
+    fn mem_concept(cid: &str, title: &str, body: &str) -> cairn_query::tools_km::Concept {
+        cairn_query::tools_km::Concept {
+            type_: "Tribal-decision".into(),
+            title: Some(title.into()),
+            concept_id: cid.into(),
+            body: body.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn chunk_memory_body_splits_headers_and_caps_chunks() {
+        let c = mem_concept(
+            "memory/tribal/x",
+            "Titled",
+            "Intro\nWhy: the reason\nHow to apply: the rule\n",
+        );
+        assert_eq!(
+            chunk_memory_body(&c),
+            vec!["Titled Intro", "Why: the reason", "How to apply: the rule"]
+        );
+        let long = "p0\n".to_string() + &["Why: p\n"; 8].concat();
+        assert_eq!(chunk_memory_body(&mem_concept("m", "H", &long)).len(), 5);
+        assert_eq!(
+            chunk_memory_body(&mem_concept("m", "Only Title", "")),
+            vec!["Only Title"]
+        );
+        assert!(chunk_memory_body(&mem_concept("m", "", "")).is_empty());
+    }
+
+    #[test]
+    fn embed_memory_backfills_and_reaps_orphans() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("cairn-mem-embed-{}-{nanos}", std::process::id()));
+        let root = dir.join(".knowledge");
+        std::fs::create_dir_all(root.join("memory/tribal")).expect("bundle");
+        let bundle = cairn_query::tools_km::Bundle::new(&root);
+        let mut concept = mem_concept(
+            "memory/tribal/live",
+            "live memory",
+            "Body with a Why: line\nWhy: reason\n",
+        );
+        bundle.write_concept(&mut concept).expect("write");
+        let conn = cairn_store::conn::open_writable(&dir.join("t.kg")).expect("open");
+        cairn_store::schema::apply_schema(&conn).expect("schema");
+        conn.execute(
+            "INSERT INTO memory_embeddings \
+             (doc_id, chunk_index, model, dim, vec, chunk, embedded_at) \
+             VALUES ('memory/tribal/gone', 0, 'hash-256-v1', 1, X'3F800000', 'x', 't')",
+            [],
+        )
+        .expect("orphan");
+
+        let reaped = reap_orphaned_memory_embeddings(&conn, &bundle).expect("reap");
+        assert_eq!(reaped, 1, "the gone concept's row is reaped");
+        let reaped_again = reap_orphaned_memory_embeddings(&conn, &bundle).expect("reap");
+        assert_eq!(reaped_again, 0);
+
+        let summary = embed_memory(&conn, &bundle, 64).expect("embed");
+        assert_eq!(summary.total, 1);
+        assert_eq!(summary.embedded, 1);
+        assert_eq!(summary.skipped, 0);
+        let model = summary.model;
+        let (chunks, c0): (i64, String) = conn
+            .query_row(
+                "SELECT COUNT(*), MAX(chunk) FROM memory_embeddings \
+                 WHERE doc_id = 'memory/tribal/live' AND model = ?1",
+                [&model],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("rows");
+        assert_eq!(chunks, 2, "one row per Why-split chunk");
+        assert_eq!(c0, "live memory Body with a Why: line");
+
+        let again = embed_memory(&conn, &bundle, 64).expect("embed again");
+        assert_eq!(again.total, 0, "already-embedded concepts are skipped");
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

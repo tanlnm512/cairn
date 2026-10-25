@@ -24,7 +24,7 @@ evals:
 # has. Catches non-hermetic tests (green locally only because of the dev
 # machine) BEFORE pushing. Mirrors .github/workflows/ci.yml job-by-job;
 # venv/pip/pre-commit caches persist under .cache/ci-local/ (gitignored).
-# Jobs: scripts/ci-local.sh [test|test-all|security|typecheck|precommit|build|bench]
+# Jobs: scripts/ci-local.sh [test|test-all|security|typecheck|precommit|build]
 # CI_LOCAL_ARCH=linux/amd64 runs the x86-64 image via Rosetta for runner parity.
 PYTHON_VERSION ?= 3.12
 ci-local:
@@ -48,14 +48,14 @@ verify-no-code-change:
 # Quality ratchets; module flags travel through ARGS because make consumes a
 # literal --json itself, so the JSON spelling is ARGS=--json.
 audit-status:
-	@uv run --no-sync python -m cairn.cli.system.audit_status $(ARGS)
+	@uv run --no-sync python scripts/audit_status.py $(ARGS)
 
 comment-style:
-	@uv run --no-sync python -m cairn.cli.system.comment_style $(ARGS)
+	@uv run --no-sync python scripts/comment_style.py $(ARGS)
 
 # Rewrites the comment baseline after cleanup; refuses growth.
 comment-style-shrink:
-	@uv run --no-sync python -m cairn.cli.system.comment_style --update $(ARGS)
+	@uv run --no-sync python scripts/comment_style.py --update $(ARGS)
 
 # Maintainer-only main protection check; gh needs admin-scoped auth.
 # Deliberately not wired into CI.

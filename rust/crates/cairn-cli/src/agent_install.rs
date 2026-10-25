@@ -96,7 +96,7 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
-fn which(name: &str) -> Option<PathBuf> {
+pub(crate) fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
         let cand = dir.join(name);
@@ -412,11 +412,29 @@ pub fn agents_instructions() -> String {
 
 // --- hooks ---------------------------------------------------------------------
 
-/// Interpreter for `python -m cairn.hooks.claude_hooks` hook commands.
-fn python_for_hooks() -> String {
-    which("python3")
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "python3".to_string())
+/// The `cairn` an installed hook command runs: the PATH entry (stable across
+/// upgrades), else this binary, else a bare name for the agent's shell.
+fn cairn_for_hooks() -> String {
+    if let Some(found) = which("cairn") {
+        return found.to_string_lossy().into_owned();
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if exe.file_name().is_some_and(|n| n == "cairn") {
+            return exe.to_string_lossy().into_owned();
+        }
+        // Prefer the cargo bin sibling over a test-harness exe so hook
+        // commands keep the `cairn hooks run` shape in any environment.
+        if let Some(bin) = exe
+            .parent()
+            .and_then(|deps| deps.parent())
+            .map(|dir| dir.join("cairn"))
+            && bin.is_file()
+        {
+            return bin.to_string_lossy().into_owned();
+        }
+        return exe.to_string_lossy().into_owned();
+    }
+    "cairn".to_string()
 }
 
 fn shell_quote(text: &str) -> String {
@@ -435,21 +453,29 @@ fn cairn_home_prefix() -> String {
 /// Quoted hook command for one entrypoint, with a non-default home prefix.
 pub fn claude_hook_command(entrypoint: &str) -> String {
     format!(
-        "{}{} -m cairn.hooks.claude_hooks {entrypoint}",
+        "{}{} hooks run {entrypoint}",
         cairn_home_prefix(),
-        shell_quote(&python_for_hooks())
+        shell_quote(&cairn_for_hooks())
     )
 }
 
+/// Substrings identifying a cairn-written hook command for `entrypoint`:
+/// the binary form plus the retired python-module forms.
+fn hook_command_markers(entrypoint: &str) -> [String; 4] {
+    [
+        format!("cairn' hooks run {entrypoint}"),
+        format!("cairn hooks run {entrypoint}"),
+        format!("cairn.hooks.claude_hooks {entrypoint}"),
+        format!("src.hooks.claude_hooks {entrypoint}"),
+    ]
+}
+
 fn hook_markers() -> Vec<&'static str> {
-    let mut markers = Vec::new();
-    for entrypoint in HOOK_ENTRYPOINTS {
-        markers.push(box_str(format!("cairn.hooks.claude_hooks {entrypoint}")));
-    }
-    for entrypoint in HOOK_ENTRYPOINTS {
-        markers.push(box_str(format!("src.hooks.claude_hooks {entrypoint}")));
-    }
-    markers
+    HOOK_ENTRYPOINTS
+        .iter()
+        .flat_map(|ep| hook_command_markers(ep))
+        .map(box_str)
+        .collect()
 }
 
 fn box_str(text: String) -> &'static str {
@@ -500,13 +526,29 @@ fn entry_commands(entry: &Map<String, Value>) -> Vec<String> {
     commands
 }
 
+/// Hook commands in `path` that still invoke the retired python module runner.
+pub(crate) fn retired_hook_commands(path: &Path) -> Vec<String> {
+    let Some(data) = load_json_or_none(path) else {
+        return Vec::new();
+    };
+    let Some(hooks) = data.get("hooks").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    hooks
+        .values()
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(Value::as_object)
+        .flat_map(entry_commands)
+        .filter(|cmd| cmd.contains(".hooks.claude_hooks "))
+        .collect()
+}
+
 fn entry_entrypoints(entry: &Map<String, Value>) -> Vec<&'static str> {
     let mut found = Vec::new();
     for cmd in entry_commands(entry) {
         for ep in HOOK_ENTRYPOINTS {
-            if cmd.contains(&format!("cairn.hooks.claude_hooks {ep}"))
-                || cmd.contains(&format!("src.hooks.claude_hooks {ep}"))
-            {
+            if hook_command_markers(ep).iter().any(|m| cmd.contains(m)) {
                 found.push(ep);
             }
         }
@@ -575,7 +617,14 @@ fn write_tree(dest_dir: &Path, force: bool, res: &mut InstallResult, dry_run: bo
     }
 }
 
-fn backup_to_bak(path: &Path, reason: &str, res: &mut InstallResult, dry_run: bool) -> Value {
+pub(crate) fn copy_to_backup(path: &Path, backup: &Path) -> bool {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| std::fs::write(backup, bytes).ok())
+        .is_some()
+}
+
+fn backup_to_bak(path: &Path, reason: &str, res: &mut InstallResult, dry_run: bool) -> bool {
     let mut backup = path.with_file_name(format!(
         "{}.bak",
         path.file_name().unwrap_or_default().to_string_lossy()
@@ -599,24 +648,23 @@ fn backup_to_bak(path: &Path, reason: &str, res: &mut InstallResult, dry_run: bo
             path.display(),
             backup.display()
         ));
-        return json!({});
+        return true;
     }
-    match std::fs::read(path)
-        .ok()
-        .and_then(|bytes| std::fs::write(&backup, bytes).ok())
-    {
-        Some(()) => res.written.push(format!(
+    if copy_to_backup(path, &backup) {
+        res.written.push(format!(
             "backed up {reason} {} -> {}",
             path.display(),
             backup.display()
-        )),
-        None => res.notes.push(format!(
-            "refusing to overwrite {reason} config {}: could not back it up. \
-             Fix or remove the file and re-run.",
+        ));
+        true
+    } else {
+        res.notes.push(format!(
+            "install failed: refusing to overwrite {reason} config {}: could not back it up; \
+             fix or remove the file and re-run. Other clients continued.",
             path.display()
-        )),
+        ));
+        false
     }
-    json!({})
 }
 
 fn merge_keys_non_object(existing: &Map<String, Value>, merger: &Map<String, Value>) -> bool {
@@ -632,28 +680,28 @@ fn merge_json_file(
     res: &mut InstallResult,
     config_key: &str,
     dry_run: bool,
-) {
+) -> bool {
     let mut existing = Map::new();
     if path.exists() {
         match load_json_or_none(path) {
             None => {
-                existing = backup_to_bak(path, "malformed", res, dry_run)
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default();
+                if !backup_to_bak(path, "malformed", res, dry_run) {
+                    return false;
+                }
             }
             Some(loaded @ Value::Object(_)) => {
                 let obj = loaded.as_object().expect("object");
-                if merge_keys_non_object(obj, merger.as_object().unwrap_or(obj)) {
-                    backup_to_bak(path, "non-object", res, dry_run);
+                if merge_keys_non_object(obj, merger.as_object().unwrap_or(obj))
+                    && !backup_to_bak(path, "non-object", res, dry_run)
+                {
+                    return false;
                 }
                 existing = obj.clone();
             }
             Some(_) => {
-                existing = backup_to_bak(path, "non-object", res, dry_run)
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default();
+                if !backup_to_bak(path, "non-object", res, dry_run) {
+                    return false;
+                }
             }
         }
     }
@@ -661,13 +709,13 @@ fn merge_json_file(
     let merger_obj = merger.as_object().cloned().unwrap_or_default();
     if already_installed(&existing, &merger_obj, config_key) && !force {
         res.add(path, true);
-        return;
+        return true;
     }
 
     if dry_run {
         res.written
             .push(format!("would merge into {}", path.display()));
-        return;
+        return true;
     }
 
     let merged = deep_merge(existing, merger_obj, config_key);
@@ -675,6 +723,7 @@ fn merge_json_file(
     if atomic_write_text(path, &body).is_ok() {
         res.add(path, false);
     }
+    true
 }
 
 fn note_mcp_merge(res: &mut InstallResult, path: &Path, detail: &str) {
@@ -1607,14 +1656,16 @@ fn install_claude(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
     };
 
     if scope == "workspace" {
-        merge_json_file(
+        if !merge_json_file(
             &base.join(".mcp.json"),
             &mcp_config_json(),
             force,
             &mut res,
             "mcpServers",
             dry_run,
-        );
+        ) {
+            return res;
+        }
     } else if dry_run {
         res.notes.push(
             "[dry-run] Would register MCP globally via `claude mcp add --scope user`.".into(),
@@ -1705,14 +1756,16 @@ fn install_claude(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
         &mut res,
         dry_run,
     );
-    merge_json_file(
+    if !merge_json_file(
         &base.join(".claude").join("settings.json"),
         &json!({ "hooks": claude_hooks_block() }),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
 
     if scope == "workspace" {
         let claude_md = workspace.join("CLAUDE.md");
@@ -1735,7 +1788,11 @@ struct CommandOutput {
 fn run_client_command(argv: &[String], timeout_secs: u64) -> Result<CommandOutput, String> {
     let mut command = std::process::Command::new(&argv[0]);
     command.args(&argv[1..]);
-    let output = spawn_with_timeout(&mut command, std::time::Duration::from_secs(timeout_secs))?;
+    let output = spawn_with_timeout(
+        &mut command,
+        std::time::Duration::from_secs(timeout_secs),
+        None,
+    )?;
     let message = if !output.stderr.trim().is_empty() {
         output.stderr.clone()
     } else {
@@ -1748,28 +1805,69 @@ fn run_client_command(argv: &[String], timeout_secs: u64) -> Result<CommandOutpu
     })
 }
 
-struct TimeoutOutput {
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
+pub(crate) struct TimeoutOutput {
+    pub(crate) code: Option<i32>,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
 }
 
-fn spawn_with_timeout(
+/// Run `command` to completion within `timeout` (killed past it), feeding
+/// `stdin` when given; stdin, stdout and stderr are each served by their own
+/// thread so a chatty child never deadlocks on a full pipe.
+pub(crate) fn spawn_with_timeout(
     command: &mut std::process::Command,
     timeout: std::time::Duration,
+    stdin: Option<&str>,
 ) -> Result<TimeoutOutput, String> {
+    use std::io::{Read, Write};
     use std::process::Stdio;
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command.stdin(if stdin.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
     let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let feed = stdin.and_then(|input| {
+        let input = input.to_owned();
+        child.stdin.take().map(|mut pipe| {
+            std::thread::spawn(move || {
+                let _ = pipe.write_all(input.as_bytes());
+            })
+        })
+    });
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            String::from_utf8_lossy(&buf).into_owned()
+        })
+    };
+    let stdout = drain(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let stderr = drain(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
     let deadline = std::time::Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let out = child.wait_with_output().map_err(|e| e.to_string())?;
+                if let Some(feed) = feed {
+                    let _ = feed.join();
+                }
                 return Ok(TimeoutOutput {
                     code: status.code(),
-                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                    stdout: stdout.join().unwrap_or_default(),
+                    stderr: stderr.join().unwrap_or_default(),
                 });
             }
             Ok(None) => {
@@ -1811,14 +1909,16 @@ fn install_cursor(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
     } else {
         workspace.to_path_buf()
     };
-    merge_json_file(
+    if !merge_json_file(
         &base.join(".cursor").join("mcp.json"),
         &mcp_config_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     write_file(
         &base.join(".cursor").join("rules").join("cairn.mdc"),
         &template("cursor/cairn.mdc"),
@@ -1846,14 +1946,16 @@ fn install_cursor(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
         &mut res,
         dry_run,
     );
-    merge_json_file(
+    if !merge_json_file(
         &base.join(".cursor").join("hooks.json"),
         &cursor_hooks_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     res.notes
         .push("Restart Cursor (or reload the window) to load the new MCP server.".into());
     res
@@ -1941,14 +2043,16 @@ fn install_droid(workspace: &Path, force: bool, dry_run: bool, _scope: &str) -> 
                     .push(format!("WARNING: `droid mcp add` failed ({e}).")),
             }
             if !registered {
-                merge_json_file(
+                if !merge_json_file(
                     &workspace.join(".factory").join("mcp.json"),
                     &mcp_config_json(),
                     force,
                     &mut res,
                     "mcpServers",
                     false,
-                );
+                ) {
+                    return res;
+                }
                 res.notes.push(
                     "Wrote .factory/mcp.json so the registration is present on \
                      the next droid run."
@@ -1957,14 +2061,16 @@ fn install_droid(workspace: &Path, force: bool, dry_run: bool, _scope: &str) -> 
             }
         }
     } else {
-        merge_json_file(
+        if !merge_json_file(
             &workspace.join(".factory").join("mcp.json"),
             &mcp_config_json(),
             force,
             &mut res,
             "mcpServers",
             dry_run,
-        );
+        ) {
+            return res;
+        }
         res.notes.push(
             "droid CLI not found; wrote .factory/mcp.json (registers on next \
              droid run)."
@@ -1989,14 +2095,16 @@ fn install_zcode(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> I
     } else {
         base.join(".zcode").join("config.json")
     };
-    merge_json_file(
+    if !merge_json_file(
         &mcp_path,
         &zcode_mcp_config_json(),
         force,
         &mut res,
         "zcode",
         dry_run,
-    );
+    ) {
+        return res;
+    }
 
     write_tree(
         &base.join(".zcode").join("skills").join("cairn"),
@@ -2049,14 +2157,16 @@ fn install_zcode(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> I
 fn install_agy(_workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("agy");
     let cfg = agy_config_path();
-    merge_json_file(
+    if !merge_json_file(
         &cfg,
         &agy_mcp_config_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     res.notes
         .push(format!("Global MCP config: {}", cfg.display()));
     if scope == "workspace" {
@@ -2085,14 +2195,16 @@ fn opencode_config_path(workspace: &Path, scope: &str) -> PathBuf {
 fn install_opencode(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("opencode");
     let p = opencode_config_path(workspace, scope);
-    merge_json_file(
+    if !merge_json_file(
         &p,
         &opencode_format_mcp_config_json(),
         force,
         &mut res,
         "opencode",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     note_mcp_merge(&mut res, &p, "under the `mcp` key (opencode's schema).");
     res.notes.push(
         "Skill (golden rules + tool-behaviors) reaches opencode via the \
@@ -2113,14 +2225,16 @@ fn kilo_config_path(workspace: &Path, scope: &str) -> PathBuf {
 fn install_kilo(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("kilo");
     let p = kilo_config_path(workspace, scope);
-    merge_json_file(
+    if !merge_json_file(
         &p,
         &opencode_format_mcp_config_json(),
         force,
         &mut res,
         "kilo",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     note_mcp_merge(&mut res, &p, "under the `mcp` key (kilo's schema).");
     res.notes.push(
         "Skill (golden rules + tool-behaviors) may reach kilo via the \
@@ -2149,14 +2263,16 @@ fn omp_agents_dir(workspace: &Path, scope: &str) -> PathBuf {
 fn install_omp(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("omp");
     let mcp_path = omp_mcp_path(workspace, scope);
-    merge_json_file(
+    if !merge_json_file(
         &mcp_path,
         &mcp_config_json(),
         force,
         &mut res,
         "mcpServers",
         dry_run,
-    );
+    ) {
+        return res;
+    }
     note_mcp_merge(&mut res, &mcp_path, "under the `mcpServers` key.");
     let agents_dir = omp_agents_dir(workspace, scope);
     write_file(
@@ -2656,6 +2772,9 @@ fn is_cairn_managed_hook(hook_path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Guidance shown when `hooks install` finds no git repositories.
+pub const NO_GIT_REPOS_GUIDANCE: &str = "No git repositories found in this workspace — cairn git hooks install into .git/hooks, so run `git init` in your repository root first.";
+
 /// Install post-commit/post-checkout hooks; Err carries the guard reason.
 pub fn install_git_hooks(repos: &[(String, PathBuf)]) -> Result<Vec<String>, String> {
     for (repo, _) in repos {
@@ -2710,6 +2829,27 @@ pub fn install_git_hooks(repos: &[(String, PathBuf)]) -> Result<Vec<String>, Str
         }
     }
     Ok(installed)
+}
+
+/// Remove cairn-managed post-commit/post-checkout hooks; user hooks stay.
+pub fn uninstall_git_hooks(repos: &[(String, PathBuf)]) -> Vec<String> {
+    let mut removed = Vec::new();
+    for (repo, root) in repos {
+        let Some(hooks_dir) = repo_hooks_dir(root) else {
+            continue;
+        };
+        let mut touched = false;
+        for hook_name in ["post-commit", "post-checkout"] {
+            let hook_path = hooks_dir.join(hook_name);
+            if is_cairn_managed_hook(&hook_path) && std::fs::remove_file(&hook_path).is_ok() {
+                touched = true;
+            }
+        }
+        if touched {
+            removed.push(repo.clone());
+        }
+    }
+    removed
 }
 
 // --- orchestration ---------------------------------------------------------------------
@@ -2990,6 +3130,7 @@ mod tests {
 
     #[test]
     fn zcode_merge_moves_the_server_under_mcp_dot_servers() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let existing = json!({
             "mcpServers": {"cairn": {"url": "stale"}},
             "mcp": {"servers": {"user": {"command": "u"}}},
@@ -3043,6 +3184,7 @@ mod tests {
 
     #[test]
     fn merge_json_file_backs_up_malformed_configs_instead_of_clobbering() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("malformed");
         let path = dir.join("mcp.json");
         std::fs::write(&path, b"{not json").expect("malformed seed");
@@ -3082,7 +3224,25 @@ mod tests {
     }
 
     #[test]
+    fn install_aborts_the_client_when_the_config_backup_fails() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tmp_dir("backup-fails");
+        let path = dir.join("opencode.json");
+        std::fs::write(&path, b"{not json").expect("seed");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        let res = install_opencode(&dir, false, false, "workspace");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        assert_eq!(std::fs::read(&path).expect("bytes"), b"{not json");
+        assert_eq!(res.notes.len(), 1, "{:?}", res.notes);
+        assert!(res.notes[0].starts_with("install failed: refusing to overwrite"));
+        assert!(res.written.is_empty() && res.skipped.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn merge_json_file_is_idempotent_without_force() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("idempotent");
         let path = dir.join("mcp.json");
         let mut res = InstallResult::new("claude");
@@ -3116,6 +3276,7 @@ mod tests {
 
     #[test]
     fn install_claude_workspace_writes_the_full_asset_set() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("claude-ws");
         let report = install(
             &dir,
@@ -3151,7 +3312,7 @@ mod tests {
             .as_str()
             .expect("hook command");
         assert!(
-            hook_command.contains("cairn.hooks.claude_hooks post_edit"),
+            hook_command.ends_with("' hooks run post_edit"),
             "{hook_command}"
         );
         // MCP registration carries the daemon URL.
@@ -3178,6 +3339,53 @@ mod tests {
                 .any(|p| p.contains("(nothing to remove)") || true)
                 || report.results[0].written.is_empty()
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_migrates_retired_python_module_hooks_to_the_binary_command() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
+        let dir = tmp_dir("claude-legacy-hooks");
+        let legacy = "'/usr/bin/python3' -m cairn.hooks.claude_hooks post_edit";
+        write_config(
+            &dir.join(".claude/settings.json"),
+            &json!({
+                "hooks": {
+                    "PostToolUse": [
+                        {"matcher": "Edit|Write|MultiEdit", "hooks": [
+                            {"type": "command", "command": legacy}
+                        ]},
+                        {"matcher": "Bash", "hooks": [
+                            {"type": "command", "command": "/usr/bin/user-hook"}
+                        ]},
+                    ],
+                },
+            }),
+        );
+        install(
+            &dir,
+            Some(&["claude".to_string()]),
+            false,
+            false,
+            false,
+            "workspace",
+        )
+        .expect("install");
+        let settings = read_config(&dir.join(".claude/settings.json"));
+        let commands: Vec<String> = settings["hooks"]["PostToolUse"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .flat_map(|entry| entry["hooks"].as_array().cloned().unwrap_or_default())
+            .filter_map(|h| h["command"].as_str().map(str::to_string))
+            .collect();
+        assert!(!commands.iter().any(|c| c == legacy), "{commands:?}");
+        assert!(commands.iter().any(|c| c == "/usr/bin/user-hook"));
+        let post_edit: Vec<&String> = commands
+            .iter()
+            .filter(|c| c.ends_with(" hooks run post_edit"))
+            .collect();
+        assert_eq!(post_edit.len(), 1, "{commands:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3234,22 +3442,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    static HOME_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// Swap HOME to a fresh dir for the detection/installed-state assertions
-    /// (serialized: process env is global).
+    /// Run with HOME pinned to a fresh dir (serialized: process env is global).
     fn with_fresh_home<T>(tag: &str, run: impl FnOnce(&Path) -> T) -> (PathBuf, T) {
-        let _guard = HOME_GUARD.lock().expect("home guard");
-        let dir = tmp_dir(tag);
-        let real_home = std::env::var("HOME").ok();
-        // SAFETY: single env writer under the guard; restored before returning.
-        unsafe { std::env::set_var("HOME", &dir) };
-        let outcome = run(&dir);
-        match real_home {
-            Some(home) => unsafe { std::env::set_var("HOME", home) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-        (dir, outcome)
+        let env = crate::test_env::EnvScope::new(tag);
+        let outcome = run(env.dir());
+        (env.dir().to_path_buf(), outcome)
     }
 
     #[test]
@@ -3306,6 +3503,7 @@ mod tests {
 
     #[test]
     fn omp_installs_flat_mcp_and_agents() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("omp");
         let report = install(
             &dir,
@@ -3335,6 +3533,7 @@ mod tests {
 
     #[test]
     fn cross_tool_tree_installs_and_uninstalls_by_template_bytes() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("cross");
         let report = install(
             &dir,
@@ -3358,6 +3557,7 @@ mod tests {
 
     #[test]
     fn git_hooks_render_with_the_marker_and_home_pin() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
         let dir = tmp_dir("hooks");
         let repo = dir.join("repo");
         std::fs::create_dir_all(repo.join(".git/hooks")).expect("repo");
@@ -3382,6 +3582,17 @@ mod tests {
             b"#!/bin/sh\necho user\n",
             "a user-owned post-checkout must be left in place"
         );
+        let removed = uninstall_git_hooks(&repos);
+        assert_eq!(removed, vec!["repo".to_string()]);
+        assert!(
+            !repo.join(".git/hooks/post-commit").exists(),
+            "cairn-managed hook must be removed"
+        );
+        assert_eq!(
+            std::fs::read(&user_hook).expect("user hook bytes"),
+            b"#!/bin/sh\necho user\n",
+            "a user-owned post-checkout must survive uninstall"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3401,7 +3612,7 @@ mod tests {
     }
 
     #[test]
-    fn instruction_files_embed_the_python_bodies() {
+    fn instruction_files_embed_the_shared_body() {
         // CLAUDE.md / AGENTS.md composition reuses the extracted instruction body.
         let claude = claude_instructions();
         assert!(claude.starts_with("# Codebase Intelligence (Cairn)"));
@@ -3409,21 +3620,7 @@ mod tests {
         let agents = agents_instructions();
         assert!(agents.starts_with("# Codebase Intelligence System"));
         assert!(agents.contains("- Name: `cairn` (auto-connected at session start)"));
-        // The vendored body tracks the Python source constant when present.
-        let common_py = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../src/cairn/agent_install/_common.py");
-        let Ok(source) = std::fs::read_to_string(&common_py) else {
-            return;
-        };
-        let marker = "_INSTRUCTIONS_BODY = \"\"\"";
-        let start = source.find(marker).expect("body marker") + marker.len();
-        let end = source[start..].find("\"\"\"").expect("closing quotes") + start;
-        let expected = &source[start..end];
-        assert_eq!(
-            instructions_body(),
-            expected,
-            "instruction body drifted from _common.py"
-        );
+        assert!(agents.contains(instructions_body().as_str()));
     }
 
     #[test]

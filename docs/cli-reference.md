@@ -1,60 +1,35 @@
 # CLI Reference
 
-← [Docs index](README.md)
+← [README](../README.md)
 
 Read this when MCP tools aren't available or you're scripting cairn. Every
 command runs through the `cairn` entry point. Pass `--db` / `--workspace`
 explicitly in scripts — `CAIRN_HOME` and friends are read at process start,
 not per call.
 
-Two builds provide the surface during the transition window:
-
-- **The `cairn` binary** (Homebrew tap / `cargo binstall` / release tarball)
-  ports the core graph commands (`init config build import-scip stats
-  checkpoint update def callers search callees impact deps federated-search
-  tree pack path taint`), the serving + wiring commands (`serve` with
-  `run|start|stop|status|restart`, `connect`, `dashboard`, `install-agents`,
-  `uninstall-agents`, `doctor`), and the knowledge-layer reads/writes
-  (`knowledge` minus `ingest`/`rebuild`/`embed`, `memory` minus the
-  `reflect`/`evolve`/`capture`/`embed`/`batch-critic`/`consolidate`
-  maintenance verbs, `wiki search`, `compass list|validate`). A command
-  outside its set exits non-zero with a named diagnostic.
-- **The PyPI CLI** (`pip install cairn-intel`) carries the complete surface
-  below and remains authoritative where the two differ.
+One engine serves every install channel: the `cairn` binary (Homebrew tap,
+`cargo binstall`, release tarball) is the whole surface below, and the PyPI
+package is a launcher whose `cairn` console script execs the binary bundled
+in the wheel. Two commands lean on Python sidecars shipped as PyPI extras —
+`communities` (`[graph-analytics]`) and the PDF/DOCX leg of
+`knowledge ingest` (`[ingest]`); everything else runs without an
+interpreter. `cairn --help` and `cairn <command> --help` are authoritative.
 
 Machine contracts (`config --json`/`--db`/`--mcp-config` shapes, stdout-pure
-JSON modes, exit codes) are identical across both.
+JSON modes, exit codes) are pinned by the frozen CLI goldens under
+`rust/golden/cli/`.
 
 ## Build & lifecycle
 
 | Command | Purpose |
 |---|---|
-| `cairn init [--with-hooks]` | interactive first-time setup (runs a build); `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)) |
-| `cairn build [--lsp]` | full workspace rebuild (see [indexing.md](indexing.md)) |
+| `cairn init [--with-hooks] [--no-build] [--import-docs]` | register the workspace and run a first build; `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)); `--import-docs` is accepted and retired — use `cairn knowledge import <dir>`; `--from-legacy <dir>` migrates an old in-repo store |
+| `cairn build [--staging] [--with-closure] [--repo R]` | full workspace rebuild (see [indexing.md](indexing.md)); `--staging` builds into a temp DB and atomic-swaps it under the build lock; `--lsp` is accepted for compatibility and performs no pass |
 | `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
 | `cairn stats` | graph statistics |
-| `cairn checkpoint` | snapshot the store |
-| `cairn config` | show effective configuration (`--json` emits `cairn_home`/`workspace`/`db`/`knowledge` as one JSON document — read-only, registers nothing; the scripting/probe surface) |
-| `cairn uninstall` | remove cairn integration artifacts |
-
-### `cairn build` pyright upgrade pass
-
-Python-build surface; the binary accepts `--lsp` and builds without the
-pass.
-
-- Runs `pyright --stdio` for ambiguous Python call edges by default when
-  pyright is on `PATH`, capped by a wall-clock budget (60 s default) and a
-  per-build edge budget (2,000 default) — configurable via `cairn.json`
-  (`lsp.budget_seconds`, `lsp.edge_budget`).
-- `--lsp` forces an unbounded pass; `--no-lsp` skips it entirely.
-- Candidates are Python call edges still marked `ambiguous` after normal
-  resolution. Exactly one definition location mapping inside one stored Python
-  symbol upgrades the edge to `exact`.
-- Budget stops report `budget_hit` and amortize: upgrades persist, so the next
-  build resumes from the remaining ambiguous edges.
-- Missing or failing pyright is a noticed no-op; failed passes roll back their
-  changes.
-- Existing `exact` edges are never selected or downgraded.
+| `cairn checkpoint` | checkpoint the WAL into the main file |
+| `cairn config` | show effective configuration (`--json` emits `cairn_home`/`workspace`/`db`/`knowledge` as one JSON document — read-only, registers nothing; `--db` prints only the DB path; `--mcp-config` prints the agent registration snippet; `--list` lists registered workspaces) |
+| `cairn uninstall` | remove cairn: agent wiring, hooks, graph store, and the binary (`--agents-only` / `--hooks-only` / `--graph-only` / `--package-only` narrow it; `--full` removes the whole `~/.cairn`; `--dry-run` previews) |
 
 ### `cairn update --diff-ref`
 
@@ -72,22 +47,18 @@ pass.
 
 ## Query
 
-Binary coverage in this section: `def`, `import-scip`, `callers`, `callees`,
-`search`, `impact`, `deps`, `federated-search`, `tree`, `pack`, `path`,
-`taint` — the remaining rows are PyPI-CLI commands.
-
 | Command | Purpose |
 |---|---|
 | `cairn def <symbol>` | find a definition |
-| `cairn import-scip <file>` | import an external SCIP index as an edges-only overlay (see [scip.md](scip.md)) |
-| `cairn callers <symbol>` | who calls this |
+| `cairn import-scip <file>` | import an external SCIP index as an edges-only overlay |
+| `cairn callers <symbol>` | who calls this (precise by default; `--fuzzy` adds name-matched sites) |
 | `cairn callees <symbol>` | what this calls |
-| `cairn search <query>` | symbol search (FTS5) |
-| `cairn semantic <query>` | hybrid semantic search |
+| `cairn search <query>` | symbol search (FTS5, `*` wildcards) |
+| `cairn semantic <query>` | hybrid semantic search (`--limit`, `--threshold`, `--include-callers`, `--json`) |
 | `cairn impact <symbol>` | what breaks if changed (within-repo) |
 | `cairn blast` | reverse-dependency radius of a git diff |
 | `cairn map` | deterministic repository orientation map |
-| `cairn communities` | Louvain subsystem clusters over the symbol graph (requires the `[graph-analytics]` extra) |
+| `cairn communities` | Louvain subsystem clusters over the symbol graph (the `[graph-analytics]` sidecar; see [below](#cairn-communities)) |
 | `cairn grep <pattern>` | span-grouped search over indexed files |
 | `cairn rationale` | `NOTE:`/`WHY:`/`HACK:` marker-comment records for a symbol or file (see [below](#cairn-rationale)) |
 | `cairn deps <repo>` | cross-repo dependency map |
@@ -98,8 +69,7 @@ Binary coverage in this section: `def`, `import-scip`, `callers`, `callees`,
 | `cairn path --from <pattern> --to <pattern>` | shortest structural path between symbols (`--fuzzy` adds ambiguous/unresolved hops; `--max-depth` caps the walk; `--limit` caps printed paths; patterns are case-insensitive substrings of a symbol or qualified name) |
 | `cairn taint --from <pattern> --to <pattern>` | inter-procedural taint path trace (`--fuzzy` adds ambiguous/unresolved hops; `--max-depth` caps the walk) |
 | `cairn review` | review loop: `--base <ref>` context pack, `--pre-submit [--gate]` memory guard, `--capture-event <file>` comment capture |
-| `cairn prs` | open-PR triage over gh: six-column list (CI + review state), per-PR graph impact (`--impact PR\|BRANCH`), merge-order risk (`--conflicts`), `--json` payload — read-only on both sides (see [below](#cairn-prs)) |
-| `cairn context <file>` | compass + memory context for a file |
+| `cairn context <file>` | compass + memory + wiki context for a file |
 
 ### `cairn blast`
 
@@ -126,9 +96,11 @@ Binary coverage in this section: `def`, `import-scip`, `callers`, `callees`,
 - Computes deterministic Louvain communities over structural edge kinds only
   and persists the partition plus per-community hubs to derived tables;
   prints the community count, global hubs, and per-community hubs.
-- Requires the `[graph-analytics]` extra (`pip install
-  'cairn[graph-analytics]'`); without it the command exits 1 with that hint
-  and the store is untouched.
+- Served by the PyPI launcher's sidecar: install
+  `pip install 'cairn-intel[graph-analytics]'` and run `cairn communities`
+  from that install. The bare binary exits 1 naming the sidecar, and a
+  launcher without the extra exits 1 with the install hint; the store is
+  untouched either way.
 - `--db` selects the store; `--top-k` caps the hub lists (default 10,
   minimum 1).
 - A store with no structural edges prints "no communities found".
@@ -163,67 +135,28 @@ Binary coverage in this section: `def`, `import-scip`, `callers`, `callees`,
   Tribal memory) when any matched symbol has rationale records, and omits
   it otherwise; the MCP tool count is unchanged.
 
-### `cairn prs`
-
-- One read-only triage command fusing GitHub PR state with the local graph.
-  The default view lists open PRs from `gh` over the workspace's remote as a
-  six-column table — `PR`, `Title`, `Branch`, `Author`, `CI`, `Review`. CI
-  is classified conservatively from `statusCheckRollup`
-  (`pass`/`fail`/`pending`/`none`); `Author` and `Review` print `-` when gh
-  reports none.
-- Strictly read-only on both sides: the store opens read-only with no
-  freshness refresh, and gh runs only as a subprocess with pinned read-only
-  argv (`pr list` / `pr view` / `pr diff`); no tokens are read, logged, or
-  passed beyond gh's own configuration.
-- gh missing, unauthenticated, timed out (30 s), or erroring produces one
-  actionable error carrying gh's message (a missing binary gets install +
-  `gh auth login` guidance) — the report is assembled before anything
-  renders, so a failure never prints a partial table.
-- `--impact PR|BRANCH` targets one open PR by number (optional `#`) or
-  branch name (a branch must not start with `-`), fetches the diff and base
-  ref via gh, and prints: the `Store: local index (built <age>|never)` line
-  (impact reflects the local index as-is, never a fresh build of the PR
-  branch), `Changed symbols:` with file spans, `Dependents:` with depth and
-  resolution, `Unindexed changed files:` for any changed file with no
-  indexed symbols, and `Deleted files:` (`repo:path`). Traversal reuses the
-  impact depth caps — no unbounded walk.
-- `--conflicts` ranks open-PR pairs by shared-community overlap of their
-  touched symbols (`#12 + #34: 3 shared (label-a, label-b)` lines, largest
-  overlap first, PR-number tie-break); it resolves every open PR's seeds,
-  so it costs one `gh pr diff` per PR. Community tables are consumed, never
-  built: absent or empty `communities`/`symbol_communities` print
-  `Merge-order risk: unavailable — community tables absent — run cairn
-  communities` instead of failing; with tables populated but no shared
-  labels the section reads `no shared-community PR pairs`.
-- `--json` emits the whole report as one document:
-  `{"store": {"index": "local", "built": "<age>"|null}, "prs": [{number,
-  title, head_ref, author, ci_state, review_decision}…], "impact": …|null,
-  "conflicts": {"pairs": [{a, b, shared, communities}], "hint": …}|null}` —
-  `impact` and `conflicts` are `null` unless `--impact`/`--conflicts` was
-  passed; `built` is the store-age string (`"3d old"`, `"just now"`) or
-  `null` when the store has no build runs.
-- `--db` selects the store.
-
 ## Embeddings & rerank
-
-PyPI-CLI commands (the binary reports them as not ported).
 
 | Command | Purpose |
 |---|---|
-| `cairn embed` | compute/refresh symbol embeddings (`--multivector`, `--build-index`, `--install-deps`, `--download-model`, `--adopt-server-model [ID]` to make a parity-verified server fallback permanent) |
-| `cairn download-reranker` | fetch the CrossEncoder reranker |
+| `cairn embed` | compute/refresh symbol embeddings with the configured backend (`--batch-size`, `--limit`, `--no-reap`, `--build-index` rebuilds the vec0 ANN index, `--no-multivector` stores one vector per symbol) |
+| `cairn download-reranker` | exits 2: this build ships no native cross-encoder reranker |
+
+The backend is `CAIRN_EMBED_BACKEND`: `local` (the default) resolves to the
+dep-free `hash-256-v1` embedder and `cairn embed` warns that the vectors are
+token-overlap only; `omlx`, `ollama`, or `server` + `CAIRN_EMBED_BASE_URL`
+embed through a local OpenAI-compatible server (`CAIRN_EMBED_SERVER_MODEL`,
+default `bge-m3`; `CAIRN_EMBED_API_KEY` optional). The retired
+local-inference flags `--install-deps`, `--download-model`, and
+`--adopt-server-model` exit 1 naming the replacement.
 
 ## Knowledge
 
 Group: `cairn knowledge …`
 
-Binary coverage: `add`, `import`, `islands`, `related`, `chain`, `search`,
-`list`, `impact`, `remove`, `status`, `export`, `workflow add|trace` —
-`ingest`, `rebuild`, `embed`, and `workflow sync` are PyPI-CLI commands.
-
 | Subcommand | Purpose |
 |---|---|
-| `ingest` | staged doc ingestion; `--file`/`--dir`/`--repo` sources, `--ingest` to execute, `--include-drafts`, `--outbox` (see [knowledge-and-memory.md](knowledge-and-memory.md)) |
+| `ingest` | staged doc ingestion; `--file`/`--dir`/`--repo` sources, `--ingest` to execute, `--include-drafts`, `--outbox`. Markdown converts natively; PDF/DOCX files go through the `[ingest]` sidecar (`python -m cairn.ingest_convert`, resolved via `CAIRN_SIDECAR_PYTHON`, then an interpreter beside the binary, then `PATH`) and are skipped with `cairn-intel[ingest] not installed` when no interpreter carries it |
 | `rebuild` | recompute the derived `knowledge_edges` / `knowledge_doc_refs` index tables from the bundle (runs automatically after `ingest --ingest`; idempotent); island detection then queues `doc-link` tasks for detached pair-units (deduped per member set) |
 | `islands` | list doc-graph islands (detached pair-units) and their `doc-link` task state |
 | `related <doc_id>` | stored relationship neighbors of one doc, one line per edge with relation (`relates-to`/`supersedes`/`superseded-by`/`references`), kind (`extracted`/`inferred`/`derived`), and direction; `--json` emits the full rows. Unknown ids exit non-zero with a named error |
@@ -237,11 +170,6 @@ Binary coverage: `add`, `import`, `islands`, `related`, `chain`, `search`,
 ## Memory
 
 Group: `cairn memory …`
-
-Binary coverage: `record`, `search` (incl. `--as-of`), `timeline`, `list`,
-`stats`, `digest`, `promote`, `decay`, `forget`, `demote`, `purge`, `share`,
-`check` — `reflect`, `evolve`, `capture`, `embed`, `batch-critic`, and
-`consolidate` are PyPI-CLI commands.
 
 | Subcommand | Purpose |
 |---|---|
@@ -280,16 +208,12 @@ contested).
 
 | Command | Purpose |
 |---|---|
-| `cairn serve run|start|stop|status|restart` | MCP daemon (Streamable HTTP `:9876`, read-write by default; `--read-only` disables the watcher and write tools; `run` is the foreground daemon). `start`/`stop`/`restart` manage the macOS launchd LaunchAgent, or the daemonized background daemon elsewhere; `start` embeds `CAIRN_HOME`/`CAIRN_WORKSPACE`/`CAIRN_DB`/`CAIRN_KNOWLEDGE` into the plist when a custom home is in effect. Stdio/SSE-specific options, including any `--transport` value, exit non-zero with a message naming the HTTP replacement. |
+| `cairn serve run|start|stop|status|restart` | MCP daemon (Streamable HTTP `:9876`, read-write by default; `--read-only` opens the store read-only so write tools fail instead of landing; `run` is the foreground daemon). `start`/`stop`/`restart` manage the macOS launchd LaunchAgent, or the daemonized background daemon elsewhere; `start` embeds `CAIRN_HOME`/`CAIRN_WORKSPACE`/`CAIRN_DB`/`CAIRN_KNOWLEDGE` into the plist when a custom home is in effect. Stdio/SSE-specific options, including any `--transport` value, exit non-zero with a message naming the HTTP replacement (see [deployment.md](deployment.md)). |
 | `cairn connect` | ensure the MCP daemon is running — start exactly one instance on first dial, reuse a healthy one — and print its URL |
 | `cairn dashboard [--db] [--port]` | loopback dashboard `:8765` (read-only views + Settings) |
-| `cairn install-agents` / `uninstall-agents` | wire cairn into AI clients (claude, droid, zcode, cursor, opencode, kilo, omp, agy). Every registration is a URL+key entry dialing the shared daemon, embedding the `CAIRN_MCP_API_KEY` generated at `cairn init`; each written registration is verified against the daemon's `/healthz` — the report shows per-client `verify: PASS/FAIL`. claude-desktop is detected and reported unsupported (no URL MCP surface; nothing written). Generated hook commands embed a custom `CAIRN_HOME` assignment; `--dry-run` writes nothing. |
+| `cairn install-agents` / `uninstall-agents` | wire cairn into AI clients (claude, droid, zcode, cursor, opencode, kilo, omp, agy). Every registration is a URL+key entry dialing the shared daemon, embedding the `CAIRN_MCP_API_KEY` generated at `cairn init`; each written registration is verified against the daemon's `/healthz` — the report shows per-client `verify: PASS/FAIL`. claude-desktop is detected and reported unsupported (no URL MCP surface; nothing written). `--client` overrides detection, `--scope workspace|global` picks the config location, `--git-hooks` also installs the git hooks, `--yes` skips the prompt, and `--dry-run` writes nothing. Generated hook commands call `cairn hooks run <entrypoint>` and embed a custom `CAIRN_HOME` assignment. |
 
 ## Compass / wiki / tasks / dataflow
-
-Binary coverage in this section: `wiki search` and `compass list|validate`
-— the wiki generation lifecycle, the task queue, `skill`, and `dataflow`
-are PyPI-CLI commands.
 
 | Command | Purpose |
 |---|---|
@@ -306,21 +230,16 @@ are PyPI-CLI commands.
 
 ## Health & ops
 
-Binary coverage in this section: `doctor` — the remaining rows are
-PyPI-CLI commands.
-
 | Command | Purpose |
 |---|---|
 | `cairn status` | build state, parse errors, resource health |
-| `cairn doctor` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). 11 checks: the 10 store-internal ones — including `memory_staleness` (WARN when tribal memories older than 30d have zero `memory_refs` in that window — write-only memory) — plus `environment` — store existence, client-registration consistency (FAIL on a provable wrong-store or unreachable daemon endpoint; cairn-owned stdio/SSE registrations are flagged and, under `--fix`, repointed to the URL+key form), platform supportability, binary coherence. Emitted last, also on the db-unavailable degraded path. |
-| `cairn metrics` / `report` | tool-metrics and health reports |
-| `cairn validate` / `validate-paths` / `verify` | store integrity checks |
-| `cairn bench` | performance suites |
-| `cairn eval` | retrieval evaluation |
-| `cairn viz [--export FILE]` | render graph diagrams; `--export` writes one self-contained HTML file |
-| `cairn hooks install|uninstall` | manage the cairn git hooks — post-commit + post-checkout (see [below](#cairn-hooks)) |
-| `cairn version` / `upgrade` | version and self-upgrade |
-| `cairn sync` | sync pending watcher edits |
+| `cairn doctor [--json] [--fix]` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). Store-internal checks (schema integrity, embedding backend, ANN index, embedding server, freshness, parse errors, resolver edge signals — WARN when reference edges predate the `edges` signal columns, run `cairn build` to rebuild — lock contention, tool health, memory staleness, effective config) plus `daemon` (which process serves `/mcp`), `environment` (store existence, client-registration consistency — FAIL on a provable wrong-store or unreachable daemon endpoint; cairn-owned stdio/SSE registrations are flagged and, under `--fix`, repointed to the URL+key form — platform supportability, binary coherence) and `agent_hooks` (agent hook files still naming the retired Python hook runner; `cairn install-agents` migrates them). The last three also run on the db-unavailable degraded path. |
+| `cairn metrics` / `report` | tool metrics (`--builds`/`--quality`/`--contention`/`--tasks` add telemetry sections) and the redacted diagnostic bundle (`--json`, `--out <file>`; never uploads) |
+| `cairn validate` / `validate-paths [--mark]` / `verify <doc>` | OKF conformance, stale file/symbol references, the deterministic critic on one document |
+| `cairn viz [--export FILE]` | render graph diagrams (`--format mermaid|dot|json`, `--scope symbol|module|impact|repo|deps`); `--export` writes one self-contained HTML file |
+| `cairn hooks install|uninstall|run <entrypoint>` | manage the cairn git hooks — post-commit + post-checkout (see [below](#cairn-hooks)) — and run an agent hook entrypoint (`post_edit`, `session_end`, `post_tool_failure`, `session_start`) over the JSON payload on stdin |
+| `cairn version` / `upgrade [--check]` | version; in-place upgrade of PyPI installs (`uv tool` / `pipx` / `pip` detected — other channels upgrade themselves) |
+| `cairn sync` | re-index size/mtime-drifted files |
 
 ### `cairn hooks`
 
@@ -337,11 +256,14 @@ PyPI-CLI commands.
 - post-checkout: on branch switches only, backgrounds
   `cairn update --diff-ref <old>..<new>`; file checkouts run nothing.
 - With a non-default `CAIRN_HOME`, installed hooks embed an
-  `export CAIRN_HOME` line (see [configuration.md](configuration.md)).
+  `export CAIRN_HOME` line.
 - `cairn init --with-hooks` installs both hooks with the same rules as
   `cairn hooks install` (opt-in, never interactive).
 - In a workspace with no git repository, `hooks install` prints guidance
   and exits 1; `init --with-hooks` prints the guidance as a warning and init
   still succeeds. Neither path writes partial hooks.
+- `cairn hooks run <entrypoint>` is the agent-hook runner that
+  `install-agents` writes into Claude/Cursor hook configs; `cairn doctor`'s
+  `agent_hooks` check flags configs still naming the retired Python runner.
 
 Global: `-v/--verbose` for debug logging.

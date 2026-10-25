@@ -30,7 +30,7 @@
       "CAIRN_RERANK": "0",
       "CAIRN_WATCH": "0"
     },
-    "captured_at": "2026-10-19T15:28:28.807633+00:00"
+    "captured_at": "2026-10-24T20:27:36.180985+00:00"
   },
   "normalization": {
     "rules": [
@@ -65,61 +65,5 @@
     }
   },
   "replay_store": "rust/golden/stores/self/store.kg",
-  "replay_workspace": "rust/golden/stores/self/corpus",
-  "cases": [
-    {
-      "arguments": {
-        "query": "fetch_user"
-      },
-      "sort_lines": false,
-      "response": {
-        "isError": false,
-        "content": [
-          {
-            "type": "text",
-            "text": "=== explore: \"fetch_user\" ===\n2 symbol(s) matched.\n\n=== Source (3 file(s), 11 line(s)) ===\napp/main.py\n  [function main  lines 7-10]\n   7  def main():\n   8      user = fetch_user(1)\n   9      save_user(user)\n  10      return user\n\napp/service.py\n  [module service  lines 1-1]\n  1  \"\"\"User service.\"\"\"\n  [function fetch_user  lines 5-7]\n  5  def fetch_user(uid):\n  6      raw = load_payload(uid)\n  7      return json.loads(raw)\n\ntests/test_service.py\n  [module test_service  lines 1-1]\n  1  \"\"\"Service tests.\"\"\"\n  [function test_fetch_user  lines 5-6]\n  5  def test_fetch_user():\n  6      assert fetch_user(1) is not None\n\n=== Call paths ===\n  fetch_user  <- called by  main  (main.py:8)  [exact]\n  fetch_user  <- called by  service  (service.py:5)  [exact]\n  fetch_user  <- called by  test_fetch_user  (test_service.py:6)  [exact]\n  test_fetch_user  <- called by  test_service  (test_service.py:5)  [exact]\n  fetch_user  -> calls  load_payload  (service.py:6)  [exact]\n  test_fetch_user  -> calls  fetch_user  (test_service.py:6)  [exact]\n\n=== Blast radius (depth 2) ===\n  fetch_user: 2 caller(s), 1 repo(s)\n    top: main, test_fetch_user\n  test_fetch_user: 0 caller(s)\n\n=== Ambiguous dispatch ===\n  (none \u2014 all call edges were precisely resolved)\n=== Tribal memory (0) ===\n  (none)\n=== Taint paths ===\nTaint path: app/service.py:fetch_user [exact]\nTaint path: app/service.py:fetch_user [exact] -> app/service.py:load_payload [exact]\n"
-          }
-        ],
-        "structuredContent": {
-          "result": "=== explore: \"fetch_user\" ===\n2 symbol(s) matched.\n\n=== Source (3 file(s), 11 line(s)) ===\napp/main.py\n  [function main  lines 7-10]\n   7  def main():\n   8      user = fetch_user(1)\n   9      save_user(user)\n  10      return user\n\napp/service.py\n  [module service  lines 1-1]\n  1  \"\"\"User service.\"\"\"\n  [function fetch_user  lines 5-7]\n  5  def fetch_user(uid):\n  6      raw = load_payload(uid)\n  7      return json.loads(raw)\n\ntests/test_service.py\n  [module test_service  lines 1-1]\n  1  \"\"\"Service tests.\"\"\"\n  [function test_fetch_user  lines 5-6]\n  5  def test_fetch_user():\n  6      assert fetch_user(1) is not None\n\n=== Call paths ===\n  fetch_user  <- called by  main  (main.py:8)  [exact]\n  fetch_user  <- called by  service  (service.py:5)  [exact]\n  fetch_user  <- called by  test_fetch_user  (test_service.py:6)  [exact]\n  test_fetch_user  <- called by  test_service  (test_service.py:5)  [exact]\n  fetch_user  -> calls  load_payload  (service.py:6)  [exact]\n  test_fetch_user  -> calls  fetch_user  (test_service.py:6)  [exact]\n\n=== Blast radius (depth 2) ===\n  fetch_user: 2 caller(s), 1 repo(s)\n    top: main, test_fetch_user\n  test_fetch_user: 0 caller(s)\n\n=== Ambiguous dispatch ===\n  (none \u2014 all call edges were precisely resolved)\n=== Tribal memory (0) ===\n  (none)\n=== Taint paths ===\nTaint path: app/service.py:fetch_user [exact]\nTaint path: app/service.py:fetch_user [exact] -> app/service.py:load_payload [exact]\n"
-        }
-      }
-    },
-    {
-      "arguments": {
-        "query": "read_config"
-      },
-      "sort_lines": false,
-      "response": {
-        "isError": false,
-        "content": [
-          {
-            "type": "text",
-            "text": "=== explore: \"read_config\" ===\n1 symbol(s) matched.\n\n=== Source (1 file(s), 8 line(s)) ===\napp/pipeline.py\n  [module pipeline  lines 1-1]\n  1  \"\"\"Pipeline: config read flows into query execution.\"\"\"\n  [function read_config  lines 5-9]\n  5  def read_config():\n  6      with open(\"cfg.json\") as fh:\n  7          cfg = fh.read()\n  8      dispatch(cfg)\n  9      return cfg\n  [function run_pipeline  lines 21-22]\n  21  def run_pipeline():\n  22      dispatch(read_config())\n\n=== Call paths ===\n  read_config  <- called by  pipeline  (pipeline.py:5)  [exact]\n  read_config  <- called by  run_pipeline  (pipeline.py:22)  [exact]\n  read_config  -> calls  dispatch  (pipeline.py:8)  [exact]\n\n=== Blast radius (depth 2) ===\n  read_config: 2 caller(s), 1 repo(s)\n    top: run_pipeline, kickoff\n\n=== Ambiguous dispatch ===\n  (none \u2014 all call edges were precisely resolved)\n=== Tribal memory (0) ===\n  (none)\n=== Taint paths ===\nTaint path: app/pipeline.py:read_config [exact]\nTaint path: app/pipeline.py:read_config [exact] -> app/pipeline.py:dispatch [exact] -> app/pipeline.py:run_query [exact]\n"
-          }
-        ],
-        "structuredContent": {
-          "result": "=== explore: \"read_config\" ===\n1 symbol(s) matched.\n\n=== Source (1 file(s), 8 line(s)) ===\napp/pipeline.py\n  [module pipeline  lines 1-1]\n  1  \"\"\"Pipeline: config read flows into query execution.\"\"\"\n  [function read_config  lines 5-9]\n  5  def read_config():\n  6      with open(\"cfg.json\") as fh:\n  7          cfg = fh.read()\n  8      dispatch(cfg)\n  9      return cfg\n  [function run_pipeline  lines 21-22]\n  21  def run_pipeline():\n  22      dispatch(read_config())\n\n=== Call paths ===\n  read_config  <- called by  pipeline  (pipeline.py:5)  [exact]\n  read_config  <- called by  run_pipeline  (pipeline.py:22)  [exact]\n  read_config  -> calls  dispatch  (pipeline.py:8)  [exact]\n\n=== Blast radius (depth 2) ===\n  read_config: 2 caller(s), 1 repo(s)\n    top: run_pipeline, kickoff\n\n=== Ambiguous dispatch ===\n  (none \u2014 all call edges were precisely resolved)\n=== Tribal memory (0) ===\n  (none)\n=== Taint paths ===\nTaint path: app/pipeline.py:read_config [exact]\nTaint path: app/pipeline.py:read_config [exact] -> app/pipeline.py:dispatch [exact] -> app/pipeline.py:run_query [exact]\n"
-        }
-      }
-    },
-    {
-      "arguments": {
-        "query": "render"
-      },
-      "sort_lines": false,
-      "response": {
-        "isError": false,
-        "content": [
-          {
-            "type": "text",
-            "text": "=== explore: \"render\" ===\n3 symbol(s) matched.\n\n=== Source (1 file(s), 7 line(s)) ===\napp/page.py\n  [module page  lines 1-1]\n  1  \"\"\"Page assembly with a split renderer.\"\"\"\n  [function render_text  lines 4-5]\n  4  def render_text(x):\n  5      return str(x)\n  [function render  lines 8-9]\n  8  def render(x):\n  9      return str(x)\n  [function render  lines 12-13]\n  12  def render(x):\n  13      return repr(x)\n\n=== Call paths ===\n  render  <- called by  page  (page.py:8)  [exact]\n  render  <- called by  page  (page.py:12)  [exact]\n  render_text  <- called by  page  (page.py:4)  [exact]\n\n=== Blast radius (depth 2) ===\n  render: 0 caller(s)\n  render_text: 0 caller(s)\n\n=== Ambiguous dispatch ===\n  \"render\" could dispatch to: page\n=== Tribal memory (0) ===\n  (none)"
-          }
-        ],
-        "structuredContent": {
-          "result": "=== explore: \"render\" ===\n3 symbol(s) matched.\n\n=== Source (1 file(s), 7 line(s)) ===\napp/page.py\n  [module page  lines 1-1]\n  1  \"\"\"Page assembly with a split renderer.\"\"\"\n  [function render_text  lines 4-5]\n  4  def render_text(x):\n  5      return str(x)\n  [function render  lines 8-9]\n  8  def render(x):\n  9      return str(x)\n  [function render  lines 12-13]\n  12  def render(x):\n  13      return repr(x)\n\n=== Call paths ===\n  render  <- called by  page  (page.py:8)  [exact]\n  render  <- called by  page  (page.py:12)  [exact]\n  render_text  <- called by  page  (page.py:4)  [exact]\n\n=== Blast radius (depth 2) ===\n  render: 0 caller(s)\n  render_text: 0 caller(s)\n\n=== Ambiguous dispatch ===\n  \"render\" could dispatch to: page\n=== Tribal memory (0) ===\n  (none)"
-        }
-      }
-    }
-  ]
+  "replay_workspace": "rust/golden/stores/self/corpus"
 }

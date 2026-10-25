@@ -1,5 +1,5 @@
 //! Incremental graft: per-file delete+reinsert with resolver repair, plus
-//! change detection (git diff, stat fallback) and boot catch-up. Embedding
+//! change detection (git listings unioned with stat drift) and boot catch-up. Embedding
 //! backends land with the 2f workstream; this module only purges stale rows.
 
 use std::collections::{BTreeSet, HashSet};
@@ -39,23 +39,14 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
             return result;
         }
     };
-    // Group queued signals by repo for the batched resolver re-run, and the
-    // names whose global candidate count changed for incoming-edge repair.
-    // Both stay insertion-ordered like the Python dicts.
+    // Queued signals grouped by repo (insertion-ordered like the Python dict)
+    // for the batched resolver re-run, plus the names whose global candidate
+    // count changed for incoming-edge repair.
     let mut repo_edges: RepoEdges = Vec::new();
-    let mut repo_changed_target_names: Vec<(String, BTreeSet<String>)> = Vec::new();
-    let mut seed_changed_names = |repo: &str, names: HashSet<String>| {
-        if names.is_empty() {
-            return;
-        }
-        match repo_changed_target_names
-            .iter_mut()
-            .find(|(r, _)| r == repo)
-        {
-            Some((_, set)) => set.extend(names),
-            None => repo_changed_target_names.push((repo.to_string(), names.into_iter().collect())),
-        }
-    };
+    let mut changed_target_names: BTreeSet<String> = BTreeSet::new();
+    // Consumer repos whose imports edges the delete-leg backfill nulls; they
+    // need a materialize pass even with no file of their own reindexed.
+    let mut imports_refresh_repos: Vec<String> = Vec::new();
 
     for abs_path in paths {
         let Some((repo, rel_to_repo)) = repo_relative_path(workspace, abs_path) else {
@@ -91,6 +82,22 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
         // Keep each file replacement atomic: the whole delete leg plus the
         // re-parse insert commit together or roll back together.
         if let Some(fid) = &file_id {
+            // Must run before the backfill nulls target_id: it decides which
+            // consumer repos join the imports refresh below.
+            if let Ok(mut stmt) = tx.prepare(
+                "SELECT DISTINCT f.repo_id FROM edges e \
+                 JOIN symbols s ON s.id = e.source_id \
+                 JOIN files f ON f.id = s.file_id \
+                 WHERE e.kind = 'imports' \
+                   AND e.target_id IN (SELECT id FROM symbols WHERE file_id = ?)",
+            ) && let Ok(rows) = stmt.query_map([fid], |r| r.get::<_, String>(0))
+            {
+                for repo in rows.flatten() {
+                    if !imports_refresh_repos.contains(&repo) {
+                        imports_refresh_repos.push(repo);
+                    }
+                }
+            }
             let legs: [(&str, &str); 4] = [
                 (
                     "DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file_id = ?)",
@@ -168,7 +175,7 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
             // DB is a no-op.
             if file_id.is_some() {
                 result.deleted += 1;
-                seed_changed_names(&stored_repo, deleted_names);
+                changed_target_names.extend(deleted_names);
             }
             let _ = tx.execute(
                 "DELETE FROM pending_sync WHERE path IN (?, ?)",
@@ -202,7 +209,7 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
             let committed = tx.commit();
             result.deleted += 1;
             if file_id.is_some() {
-                seed_changed_names(&stored_repo, deleted_names);
+                changed_target_names.extend(deleted_names);
             }
             if let Err(e) = committed {
                 result.errors.push(format!("{abs_path}: {e}"));
@@ -239,7 +246,7 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
                     }
                 }
                 let committed = tx.commit();
-                seed_changed_names(&stored_repo, changed_names);
+                changed_target_names.extend(changed_names);
                 if let Err(e) = committed {
                     result.errors.push(format!("{abs_path}: {e}"));
                 }
@@ -268,19 +275,22 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
 
     // Repair pass: incoming edges whose target symbol was deleted+recreated
     // with a new id would otherwise silently drop after an update.
-    for (repo, names) in &repo_changed_target_names {
-        if names.is_empty() {
-            continue;
-        }
-        let sorted: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-        if let Err(e) = crate::resolver::repair_incoming_edges(conn, repo, &sorted) {
-            result.errors.push(format!("repair/{repo}: {e}"));
+    if !changed_target_names.is_empty() {
+        let sorted: Vec<&str> = changed_target_names.iter().map(|s| s.as_str()).collect();
+        if let Err(e) = crate::resolver::repair_incoming_edges(conn, &sorted) {
+            result.errors.push(format!("repair: {e}"));
         }
     }
 
-    // Imports-edge refresh: recompute each touched repo's kind='imports'
-    // edges (delete+reinsert is materialize's idempotence contract).
-    let repos: Vec<String> = repo_edges.iter().map(|(r, _)| r.clone()).collect();
+    // Imports-edge refresh: recompute kind='imports' edges for every repo
+    // that had a file reindexed or an imports edge nulled by the backfill
+    // (delete+reinsert is materialize's idempotence contract).
+    let mut repos: Vec<String> = repo_edges.iter().map(|(r, _)| r.clone()).collect();
+    for repo in imports_refresh_repos {
+        if !repos.contains(&repo) {
+            repos.push(repo);
+        }
+    }
     for repo in repos {
         if let Err(e) = crate::builder::materialize_import_edges(conn, &mut ids, Some(&repo)) {
             result.errors.push(format!("imports-edges/{repo}: {e}"));
@@ -408,118 +418,182 @@ pub fn incremental_update(
             .map(|r| r.repo_id)
             .collect(),
     };
+    // The connection must be opened under the lock: one opened earlier keeps
+    // writing to the replaced file across a full-build swap.
+    let _lock = cairn_store::swap::build_lock(Path::new(db_path))?;
     let mut conn = cairn_store::schema::open_initialized(Path::new(db_path))
         .map_err(|e| format!("open store {db_path}: {e}"))?;
     let mut all_paths: Vec<String> = Vec::new();
+    let mut detect_errors: Vec<String> = Vec::new();
     for r in &repos {
         let repo_path = scanner::resolve_repo_path(workspace, r)?;
-        for rel in changed_source_files(workspace, &repo_path, Some(&conn), diff_ref) {
-            all_paths.push(repo_path.join(rel).to_string_lossy().into_owned());
+        match changed_source_files(workspace, &repo_path, Some(&conn), diff_ref) {
+            Ok(changed) => all_paths.extend(
+                changed
+                    .into_iter()
+                    .map(|rel| repo_path.join(rel).to_string_lossy().into_owned()),
+            ),
+            Err(e) => detect_errors.push(format!("detect/{r}: {e}")),
         }
     }
 
     let result = reindex_paths(&mut conn, workspace, &all_paths);
+    detect_errors.extend(result.errors);
     Ok(UpdateSummary {
         repos_scanned: repos.len(),
         files_reindexed: result.reindexed,
         files_deleted: result.deleted,
-        errors: result.errors,
+        errors: detect_errors,
     })
 }
 
-/// Changed source paths using git diff, or the stat fallback without git.
+/// The `diff_ref` range's paths (Err on git failure), else worktree diff,
+/// untracked files, and files-table stat drift.
 pub(crate) fn changed_source_files(
     workspace: &str,
     repo_path: &Path,
     conn: Option<&Connection>,
     diff_ref: Option<&str>,
-) -> Vec<String> {
+) -> Result<Vec<String>, String> {
     if let Some(diff_ref) = diff_ref {
-        return match run_git(&["diff", "--name-only", diff_ref], repo_path) {
-            None => Vec::new(),
-            Some(out) => filter_source_paths(out.lines()),
-        };
+        let paths = git_paths(&["diff", "-z", "--name-only", diff_ref], repo_path)?;
+        return Ok(filter_source_paths(paths));
     }
 
-    if let Some(out) = run_git(&["diff", "--name-only", "HEAD"], repo_path) {
-        // git diff never lists untracked files; ask for those separately.
-        let untracked = run_git(&["ls-files", "--others", "--exclude-standard"], repo_path)
-            .filter(|u| !u.is_empty());
-        let mut lines: Vec<&str> = out.lines().collect();
-        if let Some(untracked) = &untracked {
-            lines.extend(untracked.lines());
-        }
-        return filter_source_paths(lines.into_iter());
+    let mut paths: Vec<String> = Vec::new();
+    let listed = git_paths(&["diff", "-z", "--name-only", "HEAD"], repo_path).and_then(|diff| {
+        paths.extend(diff);
+        git_paths(
+            &["ls-files", "-z", "--others", "--exclude-standard"],
+            repo_path,
+        )
+    });
+    if let Ok(untracked) = listed {
+        paths.extend(untracked);
     }
-
-    match conn {
-        Some(conn) => changed_via_stat(workspace, repo_path, conn),
-        None => Vec::new(),
+    if let Some(conn) = conn {
+        paths.extend(changed_via_stat(workspace, repo_path, conn));
     }
+    Ok(filter_source_paths(paths))
 }
 
-fn filter_source_paths<'a, I: Iterator<Item = &'a str>>(lines: I) -> Vec<String> {
-    let mut changed: Vec<String> = Vec::new();
-    for line in lines {
-        let line = line.trim();
-        let mapped = Path::new(line)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| format!(".{e}"))
-            .and_then(|s| scanner::extension_language(&s));
-        if !line.is_empty() && mapped.is_some() && !changed.iter().any(|c| c == line) {
-            changed.push(line.to_string());
-        }
-    }
-    changed
+fn filter_source_paths(paths: Vec<String>) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    paths
+        .into_iter()
+        .filter(|path| {
+            let mapped = Path::new(path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .and_then(|s| scanner::extension_language(&s));
+            !path.is_empty() && mapped.is_some() && seen.insert(path.clone())
+        })
+        .collect()
 }
 
-fn run_git(args: &[&str], cwd: &Path) -> Option<String> {
+/// A NUL-separated git path listing; Err carries git's stderr.
+fn git_paths(args: &[&str], cwd: &Path) -> Result<Vec<String>, String> {
     let output = std::process::Command::new("git")
         .args(args)
         .current_dir(cwd)
         .output()
-        .ok()?;
+        .map_err(|e| format!("git {}: {e}", args.join(" ")))?;
     if !output.status.success() {
-        return None;
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("exit {}", output.status)
+        } else {
+            stderr
+        };
+        return Err(format!("git {}: {detail}", args.join(" ")));
     }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(output
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .map(|p| String::from_utf8_lossy(p).into_owned())
+        .collect())
+}
+
+/// Size-equal mtime drift only: content-unchanged (and the stored stat
+/// refreshed so the drift does not re-flag every pass) when the hash matches.
+fn unchanged_by_hash(
+    conn: &Connection,
+    file_id: &str,
+    path: &Path,
+    stored_hash: Option<&str>,
+    st: &std::fs::Metadata,
+) -> bool {
+    let Some(stored) = stored_hash.filter(|h| !h.is_empty()) else {
+        return false;
+    };
+    match scanner::file_sha256(path) {
+        Ok(current) if current == stored => {
+            let _ = conn.execute(
+                "UPDATE files SET size = ?, mtime = ? WHERE id = ?",
+                params![st.len() as i64, mtime_f64(st).unwrap_or(0.0), file_id],
+            );
+            true
+        }
+        _ => false,
+    }
+}
+
+/// One files-table stat row for drift detection.
+struct FileStatRow {
+    id: String,
+    path: String,
+    size: Option<i64>,
+    mtime: Option<f64>,
+    hash: Option<String>,
+}
+
+fn file_stat_rows(conn: &Connection, repo_id: &str) -> Option<Vec<FileStatRow>> {
+    let mut stmt = conn
+        .prepare("SELECT id, path, size, mtime, hash FROM files WHERE repo_id = ?")
+        .ok()?;
+    let rows = stmt
+        .query_map([repo_id], |r| {
+            Ok(FileStatRow {
+                id: r.get(0)?,
+                path: r.get(1)?,
+                size: r.get(2)?,
+                mtime: r.get(3)?,
+                hash: r.get(4)?,
+            })
+        })
+        .ok()?;
+    Some(rows.collect::<Result<Vec<_>, _>>().unwrap_or_default())
 }
 
 /// Size/mtime comparison against the files table (the `cairn sync` signal).
 fn changed_via_stat(workspace: &str, repo_path: &Path, conn: &Connection) -> Vec<String> {
     let repo_name = scanner::repository_id_for_path(workspace, repo_path);
-    let file_rows: Vec<(String, Option<i64>, Option<f64>)> = {
-        let mut stmt = match conn.prepare("SELECT path, size, mtime FROM files WHERE repo_id = ?") {
-            Ok(stmt) => stmt,
-            Err(_) => return Vec::new(),
-        };
-        match stmt.query_map([&repo_name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))) {
-            Ok(rows) => rows.collect::<Result<Vec<_>, _>>().unwrap_or_default(),
-            Err(_) => return Vec::new(),
-        }
+    let file_rows = match file_stat_rows(conn, &repo_name) {
+        Some(rows) => rows,
+        None => return Vec::new(),
     };
 
     let mut changed: Vec<String> = Vec::new();
     let mut existing_rel: HashSet<String> = HashSet::new();
-    for (stored_path, size, mtime) in file_rows {
-        existing_rel.insert(stored_path.clone());
-        let p = if Path::new(&stored_path).is_absolute() {
-            PathBuf::from(&stored_path)
+    for row in file_rows {
+        existing_rel.insert(row.path.clone());
+        let p = if Path::new(&row.path).is_absolute() {
+            PathBuf::from(&row.path)
         } else {
-            repo_path.join(&stored_path)
+            repo_path.join(&row.path)
         };
         let Ok(st) = std::fs::metadata(&p) else {
-            changed.push(stored_path); // deleted since last index
+            changed.push(row.path); // deleted since last index
             continue;
         };
-        if st.len() as i64 != size.unwrap_or(0) {
-            changed.push(stored_path);
-        } else {
-            let stored_mtime = mtime_f64(&st).unwrap_or(0.0);
-            if (stored_mtime - mtime.unwrap_or(0.0)).abs() > 0.5 {
-                changed.push(stored_path);
-            }
+        let size_changed = st.len() as i64 != row.size.unwrap_or(0);
+        let mtime_drifted = (mtime_f64(&st).unwrap_or(0.0) - row.mtime.unwrap_or(0.0)).abs() > 0.5;
+        if size_changed
+            || (mtime_drifted && !unchanged_by_hash(conn, &row.id, &p, row.hash.as_deref(), &st))
+        {
+            changed.push(row.path);
         }
     }
 
@@ -542,40 +616,33 @@ pub fn detect_changed(conn: &Connection, workspace: &str) -> Vec<String> {
     };
     for record in records {
         let repo_name = record.repo_id.as_str();
-        let file_rows: Vec<(String, Option<i64>, Option<f64>)> = {
-            let mut stmt =
-                match conn.prepare("SELECT path, size, mtime FROM files WHERE repo_id = ?") {
-                    Ok(stmt) => stmt,
-                    Err(_) => continue,
-                };
-            match stmt.query_map([repo_name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))) {
-                Ok(rows) => rows.collect::<Result<Vec<_>, _>>().unwrap_or_default(),
-                Err(_) => continue,
-            }
+        let Some(file_rows) = file_stat_rows(conn, repo_name) else {
+            continue;
         };
         // An unknown repo scope never falls back to every repo's rows.
         if file_rows.is_empty() {
             continue;
         }
 
-        for (stored_path, size, mtime) in &file_rows {
-            let p = scanner::resolve_file_path(workspace, repo_name, stored_path);
+        for row in &file_rows {
+            let p = scanner::resolve_file_path(workspace, repo_name, &row.path);
             let Ok(st) = std::fs::metadata(&p) else {
                 changed.push(p.to_string_lossy().into_owned()); // deleted/moved
                 continue;
             };
-            if st.len() as i64 != size.unwrap_or(0) {
+            let size_changed = st.len() as i64 != row.size.unwrap_or(0);
+            let mtime_drifted =
+                (mtime_f64(&st).unwrap_or(0.0) - row.mtime.unwrap_or(0.0)).abs() > 0.5;
+            if size_changed
+                || (mtime_drifted
+                    && !unchanged_by_hash(conn, &row.id, &p, row.hash.as_deref(), &st))
+            {
                 changed.push(p.to_string_lossy().into_owned());
-            } else {
-                let disk_mtime = mtime_f64(&st).unwrap_or(0.0);
-                if (disk_mtime - mtime.unwrap_or(0.0)).abs() > 0.5 {
-                    changed.push(p.to_string_lossy().into_owned());
-                }
             }
         }
 
         // New source files not yet in the DB; compare on both stored forms.
-        let existing: HashSet<&str> = file_rows.iter().map(|(p, ..)| p.as_str()).collect();
+        let existing: HashSet<&str> = file_rows.iter().map(|r| r.path.as_str()).collect();
         if let Ok((files, _)) = scanner::iter_files_and_skips(repo_name, &record.path) {
             for f in files {
                 if !existing.contains(f.rel_path.as_str()) && !existing.contains(f.path.as_str()) {

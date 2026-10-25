@@ -101,44 +101,52 @@ pub fn settings_context_full(
     })
 }
 
-/// Merge `values` into CONFIG_FILE atomically (tmp file + rename).
-pub fn set_config_values(values: &[(String, String)]) -> bool {
-    tools_search::cairn_home()
-        .map(|home| set_config_values_at(&home, values))
-        .unwrap_or(false)
+/// Merge `values` into CONFIG_FILE atomically (tmp file + rename); Err carries
+/// the parse or write failure reason for display.
+pub fn set_config_values(values: &[(String, String)]) -> Result<(), String> {
+    let result = tools_search::cairn_home()
+        .ok_or_else(|| "no CAIRN_HOME or HOME to locate config.json".to_string())
+        .and_then(|home| set_config_values_at(&home, values));
+    if let Err(reason) = &result {
+        eprintln!("cairn: could not save config.json: {reason}");
+    }
+    result
 }
 
-fn set_config_values_at(home: &std::path::Path, values: &[(String, String)]) -> bool {
+fn set_config_values_at(home: &std::path::Path, values: &[(String, String)]) -> Result<(), String> {
     let config = home.join("config.json");
-    let mut merged = match std::fs::read_to_string(&config)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-        .filter(Value::is_object)
-    {
-        Some(Value::Object(map)) => map,
-        _ => serde_json::Map::new(),
+    let existing = match std::fs::read_to_string(&config) {
+        Ok(raw) => match serde_json::from_str::<Value>(&raw) {
+            Ok(parsed) => parsed,
+            Err(err) => return Err(format!("not valid JSON ({err})")),
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Value::Object(serde_json::Map::new())
+        }
+        Err(err) => return Err(format!("unreadable ({err})")),
+    };
+    let Value::Object(mut merged) = existing else {
+        return Err("top-level value is not a JSON object".into());
     };
     for (key, value) in values {
         merged.insert(key.clone(), Value::from(value.clone()));
     }
     if let Err(err) = std::fs::create_dir_all(home) {
-        eprintln!("cairn: could not write {}: {err}", config.display());
-        return false;
+        return Err(format!("could not create the config directory ({err})"));
     }
     let tmp = home.join(format!(".config-{}.tmp", std::process::id()));
     let Ok(mut body) = serde_json::to_string_pretty(&Value::Object(merged)) else {
-        return false;
+        return Err("could not serialize the merged config".into());
     };
     body.push('\n');
-    if std::fs::write(&tmp, body).is_err() {
-        return false;
+    if let Err(err) = std::fs::write(&tmp, body) {
+        return Err(format!("could not write the staged config ({err})"));
     }
     match std::fs::rename(&tmp, &config) {
-        Ok(()) => true,
+        Ok(()) => Ok(()),
         Err(err) => {
             let _ = std::fs::remove_file(&tmp);
-            eprintln!("cairn: could not write {}: {err}", config.display());
-            false
+            Err(format!("could not replace the config ({err})"))
         }
     }
 }
@@ -446,7 +454,7 @@ mod tests {
         )
         .unwrap();
         let ok = set_config_values_at(&home, &[("CAIRN_EMBED_SERVER_MODEL".into(), "m1".into())]);
-        assert!(ok);
+        assert!(ok.is_ok(), "{ok:?}");
         let saved: Value =
             serde_json::from_str(&std::fs::read_to_string(home.join("config.json")).unwrap())
                 .unwrap();
@@ -456,6 +464,28 @@ mod tests {
             file_value_at(&home, "CAIRN_EMBED_SERVER_MODEL").as_deref(),
             Some("m1")
         );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn config_writes_refuse_to_replace_an_unparseable_config() {
+        let home = std::env::temp_dir().join(format!("cairn-cfg-bad-{}", std::process::id()));
+        for (seed, want) in [
+            ("{not json", "not valid JSON"),
+            ("[1, 2]", "not a JSON object"),
+        ] {
+            let _ = std::fs::remove_dir_all(&home);
+            std::fs::create_dir_all(&home).unwrap();
+            std::fs::write(home.join("config.json"), seed).unwrap();
+            let result =
+                set_config_values_at(&home, &[("CAIRN_EMBED_SERVER_MODEL".into(), "m1".into())]);
+            assert!(result.is_err(), "{seed}");
+            assert!(result.unwrap_err().contains(want), "{seed}");
+            assert_eq!(
+                std::fs::read_to_string(home.join("config.json")).unwrap(),
+                seed
+            );
+        }
         let _ = std::fs::remove_dir_all(&home);
     }
 

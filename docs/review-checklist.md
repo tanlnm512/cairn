@@ -1,6 +1,6 @@
 # PR Review Checklist
 
-← [Docs index](README.md)
+← [README](../README.md)
 
 > The review/audit gate for every change (feature, improvement, bugfix). Run by
 > the author before requesting review, and by the reviewer before approving.
@@ -67,10 +67,12 @@ they actually ran — not just that they were claimed:
       is built to avoid.
 - [ ] Tests are hermetic — no dependence on the dev machine's PATH/HOME/env
       (the suite-wide `_hermetic_env` fixture is the default; use
-      `@pytest.mark.real_env` only with justification); parse CLI output via
-      `result.stdout`, never `result.output` (interleaves stderr)
-- [ ] Tests added or updated to cover the change (`pytest -m core` for the fast
-      loop, then the full suite).
+      `@pytest.mark.real_env` only with justification); Rust tests that
+      touch the store build into a scratch path, never the live one.
+- [ ] Tests added or updated to cover the change — a Rust owner test under
+      `rust/` for engine behavior (`cargo test --manifest-path rust/Cargo.toml
+      -p <crate>` for the fast loop, then `--workspace`), pytest for the
+      launcher, sidecars and release wiring.
 - [ ] **Comment, doc & log brevity** — 1-line docstrings default, no commentary blocks,
       no decision logs in code, non-verbose logging (AGENTS.md §"Comment, doc, and log style").
 
@@ -91,10 +93,16 @@ they actually ran — not just that they were claimed:
 
 Enforced by Layers 0-1; if any is red, fix before requesting review:
 
-- pre-commit: `ruff`, `gitleaks`, yaml/toml/merge-conflict/large-file checks
-  (`.pre-commit-config.yaml`)
+- pre-commit: `ruff`, `gitleaks`, yaml/toml/merge-conflict/large-file checks,
+  the comment-length baseline, `cargo fmt --check` and `cargo clippy -D
+  warnings` (`.pre-commit-config.yaml`)
+- `rust.yml`: fmt, clippy, `cargo test --workspace`, cargo-deny (advisories +
+  licenses), release builds per target
 - pip-audit (hard gate) + conventional PR title (hard gate)
 - bandit / mypy (advisory — review any *new* findings they surface)
+- `rust-parity.yml`: the frozen oracles (`parity.py`, `cli_golden.py`,
+  `g2_check.sh`, `wheel_smoke.sh`) replay against the release binary on
+  `rust/**` PRs and nightly
 
 ---
 

@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 
-/// Base DDL mirroring `src/cairn/graph/schema.py` SCHEMA_SQL (column definitions
-/// and order are the C-1 contract; prose comments are not carried over).
+/// Base DDL; column definitions and their order are the C-1 store contract
+/// (the frozen canonical dumps under rust/golden pin them).
 pub const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS repos (
     id TEXT PRIMARY KEY,
@@ -334,7 +334,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 );
 "#;
 
-/// Additive migrations mirroring `schema.py` MIGRATIONS order, `(name, ALTER SQL)`.
+/// Additive migrations in application order, `(name, ALTER SQL)`.
 pub const MIGRATIONS: &[(&str, &str)] = &[
     (
         "edges.resolution",
@@ -408,6 +408,18 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "ALTER TABLE symbols ADD COLUMN arity INTEGER",
     ),
     ("edges.source", "ALTER TABLE edges ADD COLUMN source TEXT"),
+    (
+        "edges.ref_name",
+        "ALTER TABLE edges ADD COLUMN ref_name TEXT",
+    ),
+    (
+        "edges.receiver_type",
+        "ALTER TABLE edges ADD COLUMN receiver_type TEXT",
+    ),
+    (
+        "edges.call_arity",
+        "ALTER TABLE edges ADD COLUMN call_arity INTEGER",
+    ),
 ];
 
 const DATAFLOW_PK_MIGRATION: &str = "dataflow.pk_symbol_repo";
@@ -432,8 +444,52 @@ fn record_migration(conn: &Connection, key: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Create tables/indexes/FTS (idempotent) and apply additive migrations,
-/// mirroring `schema.py::_apply_schema`.
+fn dataflow_pk(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut stmt =
+        conn.prepare("SELECT name FROM pragma_table_info('dataflow') WHERE pk > 0 ORDER BY pk")?;
+    stmt.query_map([], |r| r.get(0))?.collect()
+}
+
+fn dataflow_needs_rebuild(conn: &Connection) -> rusqlite::Result<bool> {
+    let has_errors_column: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('dataflow') WHERE name = 'analysis_errors')",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(!has_errors_column || dataflow_pk(conn)? != ["symbol", "repo"])
+}
+
+fn migrate_dataflow_pk(conn: &Connection) -> rusqlite::Result<()> {
+    // Shape decides, not the marker: a stamped store may still hold a legacy table.
+    let rebuild = dataflow_needs_rebuild(conn)?;
+    if !rebuild && migration_applied(conn, DATAFLOW_PK_MIGRATION)? {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    if rebuild {
+        // ALTER cannot change a PK: rebuild and carry the rows over.
+        tx.execute_batch(
+            "DROP TABLE IF EXISTS dataflow_new;
+            CREATE TABLE dataflow_new (
+                symbol TEXT NOT NULL,
+                repo TEXT NOT NULL,
+                within_repo TEXT,
+                cross_repo TEXT,
+                analysis_errors TEXT,
+                updated TIMESTAMP,
+                PRIMARY KEY (symbol, repo)
+            );
+            INSERT INTO dataflow_new (symbol, repo, within_repo, cross_repo, updated)
+                SELECT symbol, repo, within_repo, cross_repo, updated FROM dataflow;
+            DROP TABLE dataflow;
+            ALTER TABLE dataflow_new RENAME TO dataflow;",
+        )?;
+    }
+    record_migration(&tx, DATAFLOW_PK_MIGRATION)?;
+    tx.commit()
+}
+
+/// Create tables/indexes/FTS (idempotent) and apply additive migrations.
 pub fn apply_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(SCHEMA_SQL)?;
     for (name, sql) in MIGRATIONS {
@@ -454,9 +510,7 @@ pub fn apply_schema(conn: &Connection) -> rusqlite::Result<()> {
             Err(e) => return Err(e),
         }
     }
-    if !migration_applied(conn, DATAFLOW_PK_MIGRATION)? {
-        record_migration(conn, DATAFLOW_PK_MIGRATION)?;
-    }
+    migrate_dataflow_pk(conn)?;
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_transitive_target_id ON transitive_edges(target_id)",
     )?;
@@ -540,6 +594,9 @@ mod tests {
                 "column",
                 "resolution",
                 "source",
+                "ref_name",
+                "receiver_type",
+                "call_arity",
             ]
         );
         assert_eq!(
@@ -622,6 +679,75 @@ mod tests {
         }
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(path.parent().expect("parent"));
+    }
+
+    fn stamped_store_with_legacy_dataflow(tag: &str) -> (std::path::PathBuf, Connection) {
+        let path = temp_db(tag);
+        let conn = Connection::open(&path).expect("open");
+        apply_schema(&conn).expect("fresh schema");
+        conn.execute_batch(
+            "DROP TABLE dataflow;
+            CREATE TABLE dataflow (
+                symbol TEXT PRIMARY KEY,
+                repo TEXT NOT NULL,
+                within_repo TEXT,
+                cross_repo TEXT,
+                updated TIMESTAMP
+            );
+            INSERT INTO dataflow (symbol, repo, within_repo, cross_repo, updated)
+                VALUES ('Shared', 'ra', '[\"x\"]', '[]', 0);",
+        )
+        .expect("legacy table");
+        (path, conn)
+    }
+
+    fn remove_store(path: &Path, conn: Connection) {
+        conn.close().expect("close");
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(path.parent().expect("parent"));
+    }
+
+    #[test]
+    fn legacy_dataflow_table_is_rebuilt_even_when_already_stamped() {
+        let (path, conn) = stamped_store_with_legacy_dataflow("dataflow-pk");
+
+        apply_schema(&conn).expect("apply");
+
+        assert_eq!(dataflow_pk(&conn).expect("pk"), ["symbol", "repo"]);
+        let (repo, within, errors): (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT repo, within_repo, analysis_errors FROM dataflow WHERE symbol = 'Shared'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("carried row");
+        assert_eq!(
+            (repo.as_str(), within.as_str(), errors),
+            ("ra", "[\"x\"]", None)
+        );
+        assert!(migration_applied(&conn, DATAFLOW_PK_MIGRATION).expect("marker"));
+        remove_store(&path, conn);
+    }
+
+    #[test]
+    fn failed_dataflow_rebuild_leaves_the_legacy_table_intact() {
+        let (path, conn) = stamped_store_with_legacy_dataflow("dataflow-atomic");
+        // A view on dataflow makes the final RENAME fail after the DROP.
+        conn.execute_batch(
+            "DELETE FROM schema_meta WHERE key = 'dataflow.pk_symbol_repo';
+            CREATE VIEW dataflow_symbols AS SELECT symbol FROM dataflow;",
+        )
+        .expect("failure setup");
+
+        assert!(apply_schema(&conn).is_err());
+
+        assert_eq!(dataflow_pk(&conn).expect("pk"), ["symbol"]);
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM dataflow", [], |r| r.get(0))
+            .expect("rows");
+        assert_eq!(rows, 1);
+        assert!(!migration_applied(&conn, DATAFLOW_PK_MIGRATION).expect("marker"));
+        remove_store(&path, conn);
     }
 
     #[test]

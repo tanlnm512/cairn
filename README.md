@@ -20,9 +20,10 @@ The precise call graph, without the guesswork · every answer re-derivable from 
 cairn parses your repos with tree-sitter into a **resolution-labeled structural
 graph** (15 languages), fuses it with **code-grounded tribal memory**, compass,
 and wiki, and serves all of it through one MCP server (26 tools) + a `cairn`
-CLI. The product is a **verification contract**: every `exact` edge is actually
-resolved, every symbol in a synthesized doc is graph-verified by a
-deterministic critic, and the LLM never sits in the query path.
+CLI — a single static Rust binary. The product is a **verification contract**:
+every `exact` edge is actually resolved, every symbol in a synthesized doc is
+graph-verified by a deterministic critic, and the LLM never sits in the query
+path.
 
 ## Contents
 
@@ -31,7 +32,7 @@ deterministic critic, and the LLM never sits in the query path.
 - [Why cairn?](#why-cairn)
 - [Key Features](#key-features)
 - [How It Works](#how-it-works)
-- [Measured Results](#measured-results)
+- [Self-demo](#self-demo)
 - [CLI Reference](#cli-reference)
 - [MCP Tools](#mcp-tools)
 - [Configuration](#configuration)
@@ -46,28 +47,28 @@ deterministic critic, and the LLM never sits in the query path.
 
 **1. Install the CLI**
 
-Two install channels, both supported:
+Every channel ships the same engine binary:
 
 ```bash
-pip install cairn-intel   # or: uv tool install / pipx install
-brew install tanlnm512/cairn/cairn                 # Python-free binary channel
+brew install tanlnm512/cairn/cairn                 # Homebrew tap
+pip install cairn-intel                            # or: uv tool install / pipx install
 cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli
 ```
 
-The PyPI package is the full-surface install: every command plus the
-Python-side extras (local embeddings, PDF/DOCX ingest). Future releases ship
-the rust engine inside the wheel (`specs/rust-migration/plan.md` §7), so
-pip/pipx/uv installs transition in place; `cairn upgrade` updates in place
-today (detects `uv tool` / `pipx` / `pip`; `--check` previews without
-changing anything).
+Release tarballs (aarch64 / x86_64 on macOS and Linux, musl-static on
+Linux) are on the [releases page](https://github.com/tanlnm512/cairn/releases),
+and `cargo install --path rust/crates/cairn-cli` builds from a clone. Release
+tags populate the tarballs, the wheels, the Homebrew formula, and the
+binstall metadata.
 
-The standalone binary is the Python-free alternative: release tarballs from
-the [releases page](https://github.com/tanlnm512/cairn/releases)
-(aarch64 / x86_64 on macOS and Linux, musl-static on Linux) or
-`cargo install --path rust/crates/cairn-cli` from a clone. Release tags
-populate the tarballs, the Homebrew formula, and the binstall metadata. The
-binary carries the core graph, daemon, and agent-wiring surface and exits
-non-zero with a named diagnostic for anything not yet ported.
+The PyPI package is a launcher, not a second implementation: the wheel
+bundles the platform binary, the `cairn` console script execs it, and the
+package declares no runtime dependencies. Its two extras are sidecars the
+binary drives — `[ingest]` (PDF/DOCX conversion for `cairn knowledge ingest`)
+and `[graph-analytics]` (`cairn communities`). `cairn upgrade` updates PyPI
+installs in place (detects `uv tool` / `pipx` / `pip`; `--check` previews
+without changing anything); Homebrew and cargo installs upgrade through their
+own channel.
 
 **2. Wire up your agent(s)**
 
@@ -101,10 +102,11 @@ cairn build          # parse the workspace, resolve edges (first run; ~4s on cai
 cairn update         # incremental reindex — only what changed since the last build
 ```
 
-With the optional `[watch]` extra, the running daemon watches the
-workspace and reindexes edits within a ~2s debounce window — no restart, no
-manual update. Pending files carry a staleness banner on results until the
-update lands.
+The hooks keep this automatic: `cairn install-agents` wires a `post_edit`
+agent hook that reindexes each edited file (`cairn hooks run post_edit`),
+and `cairn hooks install` (or `install-agents --git-hooks`) adds post-commit
+and post-checkout git hooks that run `cairn update --diff-ref` over the
+committed or checked-out range in the background.
 
 **Uninstall** — `cairn uninstall` removes agent wiring, hooks, and the graph
 store; `--dry-run` previews the scope; `cairn uninstall-agents` only removes
@@ -169,25 +171,22 @@ cairn impact invoke              # precise (default): real callers only — grou
 cairn impact invoke --fuzzy      # candidate list (name matches), each labelled unverified
 ```
 
-Measured on this repo: **82% of fuzzy results for common names are
-name-collision noise that precise mode excludes**. An empty precise
-result means "no *resolvable* callers," not "unused" — retry with `--fuzzy`
-before concluding a symbol is dead. And `explore` surfaces `ambiguous`
-dispatch hops — polymorphism that grep fundamentally cannot see.
+For common names, most of the fuzzy list is name-collision noise that precise
+mode excludes. An empty precise result means "no *resolvable* callers," not
+"unused" — retry with `--fuzzy` before concluding a symbol is dead. And
+`explore` surfaces `ambiguous` dispatch hops — polymorphism that grep
+fundamentally cannot see.
 
 ### Honest trade-offs
 
-- **Semantic retrieval is opt-in and mid-band.** On the hand-verified ground
-  truth, pooled recall/MRR sit at 0.4174 / 0.2862 — below the 0.50 / 0.33
-  shipping targets, which is exactly why the semantic stack is an extra, not
-  the default path; the structural tools carry the precision story.
-- **The `[semantic]` extra is heavy.** Real embeddings pull
-  sentence-transformers (+ torch on Linux); a one-time ~836 MB model download
-  lives in `~/.cairn/lib/` (scoped per Python version). The default install is
-  torch-free and network-free. Alternative with no download at all: point
-  `CAIRN_EMBED_BACKEND` at a local OpenAI-compatible embeddings server
-  (oMLX, Ollama, LM Studio) — same bge-m3 vectors, zero torch footprint
-  ([configuration.md](docs/configuration.md)).
+- **Semantic retrieval is mid-band and needs an embeddings server for real
+  vectors.** The binary ships no local inference: the default backend is a
+  dep-free hash embedder (token-overlap vectors; `cairn doctor` warns while
+  it is active), which is why the structural tools carry the precision story.
+  Point `CAIRN_EMBED_BACKEND` at a local OpenAI-compatible embeddings server
+  (`omlx`, `ollama`, or `server` + `CAIRN_EMBED_BASE_URL`) for bge-m3-class
+  vectors with no model download inside cairn. No cross-encoder reranker
+  ships in this build (`cairn download-reranker` says so).
 - **Synthesized docs need an LLM pass.** Compass/wiki generation runs through
   the task queue (`cairn task`) with the critic gate — deterministic, but it
   won't happen purely locally without any model access.
@@ -232,12 +231,12 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
   markdown / PDF / DOCX (repo doc-trees or fed files) through a reviewable
   dry-run manifest before anything lands in the store; classification,
   redaction, and collision-safe identities included.
-- **Always fresh** — incremental `cairn update` (git-diff-driven), optional
-  live watch with staleness banners, and `cairn doctor`'s 11 health checks
-  gating CI.
+- **Always fresh** — incremental `cairn update` (git-diff-driven), driven
+  automatically by the agent and git hooks, and `cairn doctor`'s health
+  checks gating CI.
 - **100% local** — one SQLite store under `~/.cairn`; no network calls, no
-  telemetry egress (OTLP export is opt-in and best-effort).
-- **Agent-first surfaces** — the same store backs 25 MCP tools and the CLI;
+  telemetry egress.
+- **Agent-first surfaces** — the same store backs 26 MCP tools and the CLI;
   `cairn install-agents` wires every detected client in one command. A VS
   Code extension (hover blast radius, code-lens counts, compass/memory
   panel, zero-config local server) installs from the `cairn-ext.vsix` on
@@ -269,84 +268,43 @@ dispatch hops — polymorphism that grep fundamentally cannot see.
 </picture>
 
 The query path is deterministic: tree-sitter parsing → SQLite graph →
-FTS5/BM25 fused with vectors (RRF, always on when embeddings exist) and a
-confidence-gated optional rerank → labeled results. The LLM
-only ever runs off-path, generating compass/wiki/memory candidates that the
-deterministic critic verifies symbol-by-symbol against the graph.
+FTS5/BM25 fused with vectors (RRF, always on when embeddings exist) →
+labeled results. The LLM only ever runs off-path, generating
+compass/wiki/memory candidates that the deterministic critic verifies
+symbol-by-symbol against the graph.
 
-Deep dives with diagrams: [architecture](docs/architecture.md) ·
-[indexing](docs/indexing.md) · [retrieval](docs/retrieval.md) ·
-[knowledge & memory](docs/knowledge-and-memory.md).
+Deep dives: [architecture](docs/architecture.md) ·
+[indexing](docs/indexing.md) · [MCP tools](docs/mcp-tools.md) ·
+[deployment](docs/deployment.md).
 
-## Measured Results
+## Self-demo
 
-**Agent effort vs a grep-and-read baseline** (`cairn bench --suite agent`;
-deterministic arms, no LLM, reproducible in CI — 300-file corpus, 7 task
-shapes, medians):
-
-| metric | grep-only baseline | with cairn | reduction |
-|--------|-------------------:|-----------:|----------:|
-| tokens / query | 429,600 | 1,479 | **99.7%** |
-| tool calls / query | 301 | 1 | **99.7%** |
-| wall-clock / query | 14.9 ms | 3.7 ms | 4.0× |
-
-Depth-3 blast radius is the extreme: **2 tool calls and 758 tokens vs 303
-calls and 429,600 tokens** — grep must read every name-collision hit; precise
-edges don't.
-
-**SWE-bench efficiency** (`cairn bench --suite swe-bench`; deterministic
-no-LLM arms over the pinned 50-task SWE-bench Lite subset,
-`benchmarks/datasource/swe-bench-subset.json` @ revision `6ec7bb89…`.
-Efficiency medians are their own metric class — not comparable to resolve-rate
-results like RepoGraph's +32.8%):
-
-| metric (median / task) | grep baseline | with cairn | reduction |
-|--------|-------------------:|-----------:|----------:|
-| tool calls | 19.5 | 3.0 | **84.6%** |
-| est. tokens | 151,007.5 | 1,555.5 | **99.0%** |
-
-Reproduce: `cairn bench --suite swe-bench --smoke` (first 2 pinned tasks,
-fast) or `cairn bench --suite swe-bench --json` (full pinned subset; the
-first run fetches the split, reruns run offline). Methodology, determinism
-and offline contracts, and the stamped result:
-[docs/benchmarks.md](docs/benchmarks.md).
-
-**Query latency** (`cairn bench --suite perf --repeats 10`, p95):
-`find_definition` 0.04 ms · `get_callers` 0.08 ms · `impact_analysis`
-0.13 ms · `search_symbols` 8.15 ms · `semantic_search` 122.03 ms (hash
-embeddings, brute-force fallback) · `explore` 194.14 ms.
-First-`semantic_search` latency after boot warm-up: **15.5 s cold →
-232.6 ms warm**.
-
-**Self-demo** — cairn indexes its own source in ~12s (~9,000 symbols /
-~58,000 edges, ~272 MB peak RSS), and CI re-runs the build + resolution
-invariant on every push
-(`tests/test_self_demo.py`), so the dogfood cannot silently rot. Reproduce:
+CI replays frozen parity goldens against the release binary — MCP fixtures,
+canonical `.kg` dumps, and CLI captures over the pinned self corpus (a
+captured snapshot of this repository), all under `rust/golden/` and driven by
+`scripts/rust_migration/` — so engine output cannot silently drift. Try it on
+a clone — the build takes seconds:
 
 ```bash
 git clone https://github.com/tanlnm512/cairn && cd cairn
 cairn build
-cairn def build_graph               # -> src/cairn/graph/builder.py
-cairn impact build_graph            # -> real transitive callers (non-empty)
+cairn def rust_bin                  # -> src/cairn/paths.py
+cairn impact rust_bin               # -> real transitive callers (non-empty)
 sqlite3 "$(cairn config --db)" \
   "SELECT COUNT(*) FROM edges WHERE resolution='exact' AND target_id IS NULL"   # -> 0
 ```
 
-Run the suites yourself: `cairn bench --help` and `cairn eval --help`.
-
 ## CLI Reference
 
-`cairn --help` (or `cairn <group> --help`) is authoritative. The PyPI CLI is
-the complete surface; the binary ports the core graph, daemon, and
-agent-wiring commands (coverage detail:
-[docs/cli-reference.md](docs/cli-reference.md)). The essentials:
+`cairn --help` (or `cairn <group> --help`) is authoritative; every install
+channel runs the same binary. The essentials:
 
 | Command | What it does |
 |---------|--------------|
 | `cairn serve` | Run the MCP daemon in the foreground (Streamable HTTP `:9876`, read-write by default; `--read-only` opts out) |
 | `cairn connect` | Ensure the MCP daemon is running (starts it on first dial) and print its URL |
 | `cairn dashboard` | Local web console, loopback :8765 (views + Settings) |
-| `cairn build [--lsp]` / `cairn update` | Full build (`--lsp` optionally upgrades ambiguous Python calls with pyright) / incremental reindex |
+| `cairn build` / `cairn update` | Full build / incremental reindex (`--staging` builds to a temp DB and atomic-swaps) |
 | `cairn def <symbol>` | Find a symbol's definition |
 | `cairn impact <symbol>` | Within-repo blast radius (precise default; `--fuzzy` to audit) |
 | `cairn blast` | Diff-based reverse-dependency radius (`--base <ref>`, text/markdown/mermaid/json, precise default with `--fuzzy` opt-in; empty radius exits 0, unknown base reports fetch-depth guidance) |
@@ -357,13 +315,12 @@ agent-wiring commands (coverage detail:
 | `cairn pack --task "<text>" --budget <N>` | One-shot token-budgeted context block: ranked sources, blast lines, compass excerpt, memories |
 | `cairn taint --from <src> --to <sink>` | Trace inter-procedural taint paths over precise call edges (`--fuzzy` opt-in, depth-capped) |
 | `cairn review` | Diff-scoped review pack (`--base`), pre-submit memory guard (`--pre-submit [--gate]`), comment capture (`--capture-event`) |
-| `cairn prs` | Open-PR triage fusing gh with the local graph: CI/review list, per-PR graph impact (`--impact PR\|BRANCH`), merge-order risk (`--conflicts`), `--json`; read-only on both sides |
 | `cairn context <file>` | Compass + memory + wiki context for a file |
 | `cairn memory / compass / wiki / task / knowledge …` | The layered stores + LLM task queue (memory: `share`/`check` multi-agent verbs, `timeline <symbol>`, `search --as-of <date>`) |
+| `cairn communities` | Louvain subsystem clusters — the `[graph-analytics]` PyPI sidecar; the binary alone names it |
 | `cairn install-agents` / `cairn uninstall` | Wire / remove agent integration |
-| `cairn upgrade` | In-place update from PyPI (`--check` to preview; PyPI CLI) |
-| `cairn eval` / `cairn bench` | Retrieval-quality / performance harnesses |
-| `cairn doctor` | 11 health checks (PASS/WARN/FAIL; exit code gates CI) |
+| `cairn upgrade` | In-place update for PyPI installs (`--check` to preview) |
+| `cairn doctor` | Health checks (PASS/WARN/FAIL; exit code gates CI) |
 | `cairn report` | Redacted diagnostic bundle for bug reports (never uploads) |
 
 Deep reference: [docs/cli-reference.md](docs/cli-reference.md).
@@ -385,61 +342,56 @@ Per-tool shapes and examples: [docs/mcp-tools.md](docs/mcp-tools.md).
 
 Workspace `cairn.json` may set `"include_nested_repos": true` to index
 initialized submodules and nested child repositories under prefixed repo ids;
-the default is `false`. A linked worktree without a store is seeded from the
-main checkout graph and then refreshed for worktree drift; the main store is
-never mutated.
+the default is `false`. `"exclude"` globs drop paths from indexing (this
+repository's own `cairn.json` excludes `rust/`).
 
-The default install is dependency-light and network-free. Extras are a
-PyPI-package concept — the binary ships without them; opt in with the PyPI
-install:
+The engine is dependency-light and network-free. The two PyPI extras are
+sidecars the binary drives; binary-only installs (tap / binstall / tarball)
+run everything else without them:
 
-| Extra | Adds | Key env var |
-|-------|------|-------------|
-| `[semantic]` | `sentence-transformers` — real embeddings and rerank (torch-based, large) | `CAIRN_RERANK=1`/`=0`; `CAIRN_FUSION` (default on) |
-| `[ann]` | `sqlite-vec` — explicit ANN install (core since 0.14) | `CAIRN_ANN_BACKEND=sqlite-vec` |
-| `[scip]` | `protobuf` — SCIP index import/generation runtime | `cairn.json` `scip` key |
-| `[ingest]` | `pymupdf4llm` + `mammoth` + `markdownify` — PDF/DOCX conversion for `cairn knowledge ingest` | `cairn.json` `ingest` key (classification rules) |
-| `[watch]` | `watchdog` — live rebuilds in the running daemon | `CAIRN_WATCH=0` disables |
-| `[otlp]` | OpenTelemetry export of local telemetry events | `CAIRN_OTEL_ENDPOINT` (unset = off) |
-| `[bench]` | `datasets` — pinned SWE-bench task loading | `cairn bench --suite swe-bench` |
+| Extra | Adds | Used by |
+|-------|------|---------|
+| `[ingest]` | `pymupdf4llm` + `mammoth` + `markdownify` — PDF/DOCX conversion | `cairn knowledge ingest --file` (`cairn.json` `ingest` key holds the classification rules) |
+| `[graph-analytics]` | `networkx` — seeded Louvain partitioning | `cairn communities` |
 
-Also: `CAIRN_HOME` (store location, default `~/.cairn`), `CAIRN_TELEMETRY=off`
-(master kill switch). Full reference:
-[docs/configuration.md](docs/configuration.md).
+Key environment knobs (`cairn doctor`'s `config` check prints every
+effective value and where it came from):
+
+| Variable | Effect |
+|----------|--------|
+| `CAIRN_HOME` | store location (default `~/.cairn`) |
+| `CAIRN_EMBED_BACKEND` | `local` (default; resolves to the dep-free hash embedder), or an OpenAI-compatible embeddings server: `omlx`, `ollama`, or `server` + `CAIRN_EMBED_BASE_URL` (`CAIRN_EMBED_SERVER_MODEL`, `CAIRN_EMBED_API_KEY` optional) |
+| `CAIRN_ANN_BACKEND` | `sqlite-vec` (default, statically linked) or `off` for the brute-force scan |
+| `CAIRN_FUSION` | RRF fusion of BM25 + vectors (default on; `0` disables) |
+| `CAIRN_WORKERS` | parse-pool size (default: CPU count) |
+| `CAIRN_READ_ONLY=1` | open the store read-only, skipping the pre-query freshness refresh (what `cairn serve --read-only` sets for the daemon) |
+| `CAIRN_TELEMETRY=off` | master kill switch for the local telemetry tables |
+| `CAIRN_RUST_BIN` | PyPI launcher only: exec this binary instead of the bundled one |
 
 ## Supported Platforms & Agents
 
-- **Platforms** — binary: macOS aarch64 / x86_64 and Linux aarch64 / x86_64
-  (static musl); Python package: anywhere Python ≥ 3.10 runs, CI tests
-  3.10–3.14 (macOS + Linux; `make ci-local` replicates CI in a clean Linux
-  container).
+- **Platforms** — macOS aarch64 / x86_64 and Linux aarch64 / x86_64 (static
+  musl). The PyPI wheels cover macOS arm64 and manylinux x86_64 / aarch64
+  and need Python ≥ 3.10 only to launch the bundled binary and run the
+  sidecars; `make ci-local` replicates CI in a clean Linux container. There
+  is no Windows build.
 - **Agents** — Claude Code, Cursor, ZCode, Droid, opencode, agy, kilo, omp —
   wired by `cairn install-agents`, or any MCP client via the
   manual JSON block above.
 
 ## Documentation
 
-Full index: [docs/README.md](docs/README.md). The short map:
-
 | Read | For |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | system shape, storage layout, module map |
+| [docs/architecture.md](docs/architecture.md) | system shape, storage layout, crate map |
 | [docs/indexing.md](docs/indexing.md) | how `cairn build` / `update` work, resolver tiers |
-| [docs/retrieval.md](docs/retrieval.md) | the hybrid query pipeline and its knobs |
-| [docs/knowledge-and-memory.md](docs/knowledge-and-memory.md) | doc ingestion, memory tiers, task queue, critic |
 | [docs/mcp-tools.md](docs/mcp-tools.md) · [docs/cli-reference.md](docs/cli-reference.md) | the two tool surfaces |
-| [docs/configuration.md](docs/configuration.md) | `cairn.json`, env vars, install extras |
-| [docs/benchmarks.md](docs/benchmarks.md) | benchmark suites, methodology, reproducing published numbers |
-
-Visual overviews (standalone HTML) live in
-[docs/diagrams/](docs/diagrams): system architecture, the C4 model, indexing,
-retrieval, and doc-ingestion pipelines. Contribution and release procedures:
-[docs/review-checklist.md](docs/review-checklist.md) ·
-[docs/release-checklist.md](docs/release-checklist.md).
+| [docs/deployment.md](docs/deployment.md) | HTTP serving: key policy, networked and container deployment |
+| [docs/review-checklist.md](docs/review-checklist.md) · [docs/release-checklist.md](docs/release-checklist.md) | contribution and release procedures |
 
 ## Troubleshooting
 
-- `cairn doctor` — 11 health checks with PASS/WARN/FAIL each; non-zero exit
+- `cairn doctor` — health checks with PASS/WARN/FAIL each; non-zero exit
   means an active degradation (agents can gate on it).
 - `cairn report` — redacted diagnostic bundle for bug reports; it never
   uploads anything.
@@ -447,22 +399,13 @@ retrieval, and doc-ingestion pipelines. Contribution and release procedures:
   mode: retry `--fuzzy` / `fuzzy=True`; the name-matches list is labelled.
 - `cairn update` did nothing on a fresh clone → that's correct (clean tree,
   no diff); run `cairn build` first.
+- `semantic_search` hits look like token matches → the hash backend is
+  active; point `CAIRN_EMBED_BACKEND` at an embeddings server (see
+  [Configuration](#configuration)) and re-run `cairn embed`.
 
 ## Development
 
-Python:
-
-```bash
-pip install -e ".[dev]"   # full review gate: pytest, ruff, mypy, bandit,
-                            # pip-audit, pre-commit, commitizen
-                            # (compiles the vendored Kotlin grammar — needs a C toolchain)
-pytest -m core            # fast <3s smoke subset (one test per core function)
-pytest                    # full suite (default gate + infra tier; CI splits them)
-pytest -m infra           # bench/dataset/soak tier alone (CI runs it on main pushes)
-make ci-local             # clean-room CI replication in a Linux container
-```
-
-Rust workspace (`rust/`):
+The engine is the Rust workspace under `rust/`:
 
 ```bash
 cargo fmt --manifest-path rust/Cargo.toml --all
@@ -470,20 +413,31 @@ cargo clippy --manifest-path rust/Cargo.toml --workspace -- -D warnings
 cargo test --manifest-path rust/Cargo.toml --workspace
 ```
 
-`pytest -m core` includes the **cairn-on-cairn self-demo**: cairn indexes its
-own source in an isolated temp DB and asserts the core queries return correct
-results for known symbols — and that the resolution invariant holds on the
-verifier's own code. Releases are cut by tagging `vX.Y.Z` (tag-triggered
-workflow; see [docs/release-checklist.md](docs/release-checklist.md)).
+The Python side is the wheel launcher and sidecars (`src/cairn/`) plus the
+frozen-oracle replay scripts (`scripts/rust_migration/`); pytest covers
+them:
+
+```bash
+uv sync --extra dev
+uv run pytest -m "not infra"   # default gate: launcher, sidecars, release wiring
+uv run pytest -m infra         # oracle replay against the release binary (main pushes)
+make ci-local                  # clean-room CI replication in a Linux container
+```
+
+Releases are cut by tagging `vX.Y.Z`: the tag-triggered workflows build the
+wheels, the platform binaries, the Homebrew formula, and the crates.io
+publish (see [docs/release-checklist.md](docs/release-checklist.md)).
 Contributions follow [docs/review-checklist.md](docs/review-checklist.md).
 
 ## Dependency Licenses
 
-MIT-licensed; dependencies are all permissive (MIT, BSD, Apache-2.0, MPL-2.0,
-PSF) — see [NOTICE](NOTICE). The optional `[semantic]` extra resolves `torch`
-(+ NVIDIA CUDA components on Linux, under their own licenses) at install
-time; the `BAAI/bge-m3` embedding model (MIT) downloads on demand to
-`~/.cairn/lib/cp<version>/` and is not redistributed with cairn.
+MIT-licensed. The binary links only permissive crates (MIT, Apache-2.0,
+BSD, ISC, Zlib, Unicode-3.0, CC0-1.0); `rust/Cargo.lock` is the
+authoritative inventory and cargo-deny gates it against that allow-list on
+every change — see [NOTICE](NOTICE). The `[ingest]` and `[graph-analytics]`
+sidecar extras resolve their own permissively licensed Python packages at
+install time. An embeddings server configured through `CAIRN_EMBED_BACKEND`
+stays outside cairn's dependency tree entirely.
 
 ## Status
 

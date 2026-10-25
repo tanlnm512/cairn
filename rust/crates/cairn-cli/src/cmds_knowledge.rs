@@ -2,13 +2,19 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Instant;
 
 use clap::Subcommand;
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use yaml_rust2::Yaml;
 
+use cairn_query::ingest;
+use cairn_query::skillgen;
+use cairn_query::tasks::{self, DanglingPointer};
 use cairn_query::tools_km::{self, Bundle, Concept, KnowledgeHit, RelatedDoc, WorkflowStep};
+use cairn_query::tools_search::{self, EffectiveBackend};
+use cairn_query::tools_wiki::{self, PipelineError};
 use cairn_store::{conn as store_conn, schema as store_schema};
 
 use crate::display;
@@ -16,6 +22,7 @@ use crate::py_json;
 use crate::store_paths::resolve_store;
 
 const IMPORT_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+const WRITE_FAILED_MSG: &str = "failed to write the wiki manifest; queued tasks are not recorded";
 const MEMORY_TYPES: &[&str] = &["decision", "pattern", "mistake", "workaround"];
 
 #[derive(Subcommand)]
@@ -51,12 +58,35 @@ pub enum KnowledgeCommand {
         command: TaskGroup,
     },
     /// Check OKF conformance of the .knowledge/ bundle.
-    Validate,
+    Validate {
+        /// Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge).
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
     /// Check all concepts for stale file/symbol references.
     #[command(name = "validate-paths")]
-    ValidatePaths,
+    ValidatePaths {
+        /// SQLite DB path (default: the resolved store).
+        #[arg(long)]
+        db: Option<String>,
+        /// Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge).
+        #[arg(long)]
+        knowledge: Option<String>,
+        /// Mark stale concepts (set stale=true in extensions).
+        #[arg(long)]
+        mark: bool,
+    },
     /// Run the deterministic critic on one knowledge document.
-    Verify,
+    Verify {
+        /// Concept id relative to .knowledge/ without the .md suffix.
+        doc_path: String,
+        /// SQLite DB path (default: the resolved store).
+        #[arg(long)]
+        db: Option<String>,
+        /// Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge).
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -106,7 +136,26 @@ pub enum KnowledgeGroup {
         affects: String,
     },
     /// Ingest sources into the knowledge bundle.
-    Ingest,
+    Ingest {
+        /// Fed markdown file (repeatable).
+        #[arg(long = "file", value_name = "FILE")]
+        files: Vec<String>,
+        /// Fed markdown directory (repeatable).
+        #[arg(long = "dir", value_name = "DIRECTORY")]
+        dirs: Vec<String>,
+        /// Repository root to scan for docs (repeatable).
+        #[arg(long = "repo", value_name = "PATH")]
+        repos: Vec<String>,
+        /// Approve: write staged manifest rows into the store, then embed.
+        #[arg(long = "ingest")]
+        do_ingest: bool,
+        /// Ingest drafts tagged 'draft' instead of skipping.
+        #[arg(long = "include-drafts")]
+        include_drafts: bool,
+        /// Staging directory (default: <workspace>/.cairn/ingest-outbox).
+        #[arg(long)]
+        outbox: Option<String>,
+    },
     /// Rebuild the knowledge index tables.
     Rebuild {
         #[arg(long)]
@@ -261,7 +310,8 @@ pub enum WorkflowGroup {
         #[arg(long = "dry-run")]
         dry_run: bool,
         /// Cap workflow steps.
-        #[arg(long = "max-steps", default_value_t = 20)]
+        #[arg(long = "max-steps", default_value_t = 20,
+              value_parser = clap::value_parser!(i64).range(1..))]
         max_steps: i64,
         #[arg(long)]
         db: Option<String>,
@@ -492,7 +542,36 @@ pub enum MemoryGroup {
 #[derive(Subcommand)]
 pub enum WikiGroup {
     /// Plan the wiki and queue page-writing tasks.
-    Generate,
+    Generate {
+        /// Repo name (all repos if omitted).
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long, default_value = None)]
+        db: Option<String>,
+        #[arg(long, default_value = None)]
+        knowledge: Option<String>,
+        /// Run generation + the critic and print each verdict; write nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Print the critic errors/warnings for each generated concept.
+        #[arg(long = "show-rejections")]
+        show_rejections: bool,
+        /// Queue one wiki-page task per planned page for agent-decoupled writing.
+        #[arg(long = "llm")]
+        llm: bool,
+        /// With --llm, max pages to plan, overview included.
+        #[arg(long, default_value_t = 10)]
+        pages: i64,
+        /// With --llm, instruct writers to include Mermaid diagrams.
+        #[arg(long)]
+        diagrams: bool,
+        /// With --llm, queue a wiki-catalog refinement task first.
+        #[arg(long = "refine-catalog")]
+        refine_catalog: bool,
+        /// With --llm, re-queue every planned page even when unchanged and promoted.
+        #[arg(long)]
+        force: bool,
+    },
     /// Search promoted wiki pages.
     Search {
         /// Query text.
@@ -627,22 +706,89 @@ pub enum CompassGroup {
 
 #[derive(Subcommand)]
 pub enum SkillGroup {
-    /// Generate skill files from the graph.
-    Generate,
+    /// Generate a SKILL.md from SELECTORS (module, directory prefix, or symbol list).
+    Generate {
+        /// Module, directory prefix, or symbol list.
+        #[arg(required = true)]
+        selectors: Vec<String>,
+        /// Target directory (default: <workspace>/.agents/skills/cairn-<slug>/).
+        #[arg(long)]
+        output: Option<String>,
+        /// Maximum symbols packaged.
+        #[arg(long = "top-k", default_value_t = 20, value_parser = clap::value_parser!(i64).range(1..))]
+        top_k: i64,
+        /// Maximum memories packaged.
+        #[arg(long = "top-n", default_value_t = 5, value_parser = clap::value_parser!(i64).range(1..))]
+        top_n: i64,
+        /// SQLite DB path (default: resolved store).
+        #[arg(long)]
+        db: Option<String>,
+        /// Queue a polish task through the LLM task queue; the completed
+        /// result replaces SKILL.md only after the critic gate accepts it.
+        #[arg(long)]
+        polish: bool,
+        /// Knowledge bundle backing the --polish task queue.
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
 pub enum TaskGroup {
     /// List queued tasks.
-    List,
+    List {
+        /// pending|in-progress|done|failed|dropped
+        #[arg(long)]
+        status: Option<String>,
+        /// Filter by task kind.
+        #[arg(long)]
+        kind: Option<String>,
+        /// Filter by task kind prefix (e.g. wiki-page).
+        #[arg(long = "kind-prefix")]
+        kind_prefix: Option<String>,
+        /// Knowledge bundle (default: CAIRN_KNOWLEDGE or the store-adjacent .knowledge).
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
     /// Show one task.
-    Show,
+    Show {
+        task_id: String,
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
     /// Claim a task.
-    Claim,
+    Claim {
+        task_id: String,
+        /// Who/what is claiming this task.
+        #[arg(long = "as", default_value = "")]
+        assigned_to: String,
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
     /// Complete a claimed task with a result file.
-    Complete,
+    Complete {
+        task_id: String,
+        /// Result text (alternative to --result-file).
+        #[arg(long)]
+        result: Option<String>,
+        /// Read result from this file.
+        #[arg(long = "result-file")]
+        result_file: Option<String>,
+        /// Claimer identity; must match the task's --as at claim time.
+        #[arg(long = "as", default_value = "")]
+        claimer: String,
+        /// SQLite DB path (default: the resolved store).
+        #[arg(long)]
+        db: Option<String>,
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
     /// Drop a claimed task.
-    Drop,
+    Drop {
+        task_id: String,
+        #[arg(long)]
+        knowledge: Option<String>,
+    },
 }
 
 /// Run a knowledge-layer command.
@@ -652,17 +798,37 @@ pub fn run(command: KnowledgeCommand) -> ExitCode {
         KnowledgeCommand::Memory { command } => run_memory(command),
         KnowledgeCommand::Wiki { command } => run_wiki(command),
         KnowledgeCommand::Compass { command } => run_compass(command),
-        KnowledgeCommand::Skill { command } => not_ported(match command {
-            SkillGroup::Generate => "skill generate",
-        }),
-        KnowledgeCommand::Task { command } => not_ported(match command {
-            TaskGroup::List => "task list",
-            TaskGroup::Show => "task show",
-            TaskGroup::Claim => "task claim",
-            TaskGroup::Complete => "task complete",
-            TaskGroup::Drop => "task drop",
-        }),
-        other => not_ported(other.name()),
+        KnowledgeCommand::Skill { command } => match command {
+            SkillGroup::Generate {
+                selectors,
+                output,
+                top_k,
+                top_n,
+                db,
+                polish,
+                knowledge,
+            } => skill_generate(
+                &selectors,
+                output.as_deref(),
+                top_k,
+                top_n,
+                db.as_deref(),
+                polish,
+                knowledge.as_deref(),
+            ),
+        },
+        KnowledgeCommand::Task { command } => run_task(command),
+        KnowledgeCommand::Validate { knowledge } => validate_cmd(knowledge.as_deref()),
+        KnowledgeCommand::ValidatePaths {
+            db,
+            knowledge,
+            mark,
+        } => validate_paths_cmd(db.as_deref(), knowledge.as_deref(), mark),
+        KnowledgeCommand::Verify {
+            doc_path,
+            db,
+            knowledge,
+        } => verify_cmd(&doc_path, db.as_deref(), knowledge.as_deref()),
     }
 }
 
@@ -697,6 +863,23 @@ fn run_knowledge(group: KnowledgeGroup) -> ExitCode {
             tags,
             affects,
         } => knowledge_import(&dir_path, &doc_type, &tags, &affects),
+        KnowledgeGroup::Ingest {
+            files,
+            dirs,
+            repos,
+            do_ingest,
+            include_drafts,
+            outbox,
+        } => knowledge_ingest(
+            &files,
+            &dirs,
+            &repos,
+            do_ingest,
+            include_drafts,
+            outbox.as_deref(),
+        ),
+        KnowledgeGroup::Rebuild { db } => knowledge_rebuild(db.as_deref()),
+        KnowledgeGroup::Embed { db, batch_size } => knowledge_embed(db.as_deref(), batch_size),
         KnowledgeGroup::Islands { as_json, db } => knowledge_islands(as_json, db.as_deref()),
         KnowledgeGroup::Related {
             doc_id,
@@ -733,7 +916,6 @@ fn run_knowledge(group: KnowledgeGroup) -> ExitCode {
         KnowledgeGroup::Status { doc_id, new_status } => knowledge_status(&doc_id, &new_status),
         KnowledgeGroup::Export { out } => knowledge_export(&out),
         KnowledgeGroup::Workflow { command } => run_workflow(command),
-        other => not_ported(other.name()),
     }
 }
 
@@ -757,7 +939,21 @@ fn run_workflow(group: WorkflowGroup) -> ExitCode {
             &resource,
         ),
         WorkflowGroup::Trace { reference, as_json } => workflow_trace(&reference, as_json),
-        WorkflowGroup::Sync { .. } => not_ported("knowledge workflow sync"),
+        WorkflowGroup::Sync {
+            reference,
+            all,
+            dry_run,
+            max_steps,
+            db,
+            knowledge,
+        } => workflow_sync(
+            reference.as_deref(),
+            all,
+            dry_run,
+            max_steps,
+            db.as_deref(),
+            knowledge.as_deref(),
+        ),
     }
 }
 
@@ -866,14 +1062,94 @@ fn run_memory(group: MemoryGroup) -> ExitCode {
             db,
         } => memory_share(memory_id.as_deref(), &agent, &symbols, db.as_deref()),
         MemoryGroup::Check { agent, symbols, db } => memory_check(&agent, &symbols, db.as_deref()),
-        other => not_ported(other.name()),
+        MemoryGroup::Reflect { db, knowledge } => {
+            memory_reflect(db.as_deref(), knowledge.as_deref())
+        }
+        MemoryGroup::Evolve {
+            memory_path,
+            title,
+            body,
+            db,
+            knowledge,
+        } => memory_evolve(
+            &memory_path,
+            title.as_deref(),
+            body.as_deref(),
+            db.as_deref(),
+            knowledge.as_deref(),
+        ),
+        MemoryGroup::Capture {
+            session_transcript,
+            session_transcript_stdin,
+            session_id,
+            db,
+            knowledge,
+        } => memory_capture(
+            session_transcript.as_deref(),
+            session_transcript_stdin,
+            &session_id,
+            db.as_deref(),
+            knowledge.as_deref(),
+        ),
+        MemoryGroup::Embed {
+            db,
+            knowledge,
+            batch_size,
+            reap,
+        } => memory_embed(db.as_deref(), knowledge.as_deref(), batch_size, reap),
+        MemoryGroup::BatchCritic { db, knowledge } => {
+            memory_batch_critic(db.as_deref(), knowledge.as_deref())
+        }
+        MemoryGroup::Consolidate { db, knowledge } => {
+            memory_consolidate(db.as_deref(), knowledge.as_deref())
+        }
     }
 }
 
 fn run_wiki(group: WikiGroup) -> ExitCode {
     match group {
+        WikiGroup::Generate {
+            repo,
+            db,
+            knowledge,
+            dry_run,
+            show_rejections,
+            llm,
+            pages,
+            diagrams,
+            refine_catalog,
+            force,
+        } => wiki_generate(
+            repo.as_deref(),
+            db.as_deref(),
+            knowledge.as_deref(),
+            dry_run,
+            show_rejections,
+            llm,
+            pages,
+            diagrams,
+            refine_catalog,
+            force,
+        ),
         WikiGroup::Search { query, knowledge } => wiki_search(&query, knowledge.as_deref()),
-        other => not_ported(other.name()),
+        WikiGroup::Status { repo, knowledge } => wiki_status(repo.as_deref(), knowledge.as_deref()),
+        WikiGroup::Retry { repo, knowledge } => wiki_retry(repo.as_deref(), knowledge.as_deref()),
+        WikiGroup::Export {
+            out_dir,
+            force,
+            knowledge,
+        } => wiki_export(&out_dir, force, knowledge.as_deref()),
+        WikiGroup::Enrich {
+            page_id,
+            repo,
+            all,
+            knowledge,
+        } => wiki_enrich(
+            page_id.as_deref(),
+            repo.as_deref(),
+            all,
+            knowledge.as_deref(),
+        ),
     }
 }
 
@@ -883,18 +1159,308 @@ fn run_compass(group: CompassGroup) -> ExitCode {
         CompassGroup::Validate { db, knowledge } => {
             compass_validate(db.as_deref(), knowledge.as_deref())
         }
-        other => not_ported(other.name()),
+        CompassGroup::Generate {
+            module,
+            repo,
+            use_llm,
+            db,
+            knowledge,
+            dry_run,
+            show_rejections,
+        } => compass_generate(
+            &module,
+            repo.as_deref(),
+            db.as_deref(),
+            knowledge.as_deref(),
+            use_llm,
+            dry_run,
+            show_rejections,
+        ),
+        CompassGroup::Gaps { db, knowledge } => compass_gaps(db.as_deref(), knowledge.as_deref()),
+        CompassGroup::Flow {
+            entry,
+            db,
+            knowledge,
+            dry_run,
+            as_workflow,
+            max_steps,
+            use_llm,
+            entry_id,
+        } => compass_flow(
+            &entry,
+            db.as_deref(),
+            knowledge.as_deref(),
+            dry_run,
+            as_workflow,
+            max_steps,
+            use_llm,
+            entry_id.as_deref(),
+        ),
+        CompassGroup::FlowGaps {
+            min_edges,
+            generate,
+            limit,
+            dry_run,
+            db,
+            knowledge,
+        } => compass_flow_gaps(
+            min_edges,
+            generate,
+            limit,
+            dry_run,
+            db.as_deref(),
+            knowledge.as_deref(),
+        ),
     }
 }
 
-// --- shared output/store helpers -------------------------------------------------
-
-fn not_ported(name: &str) -> ExitCode {
-    display::error(&format!(
-        "cairn {name} is not implemented in the Rust CLI yet"
-    ));
-    ExitCode::FAILURE
+fn run_task(group: TaskGroup) -> ExitCode {
+    match group {
+        TaskGroup::List {
+            status,
+            kind,
+            kind_prefix,
+            knowledge,
+        } => task_list(
+            status.as_deref(),
+            kind.as_deref(),
+            kind_prefix.as_deref(),
+            knowledge.as_deref(),
+        ),
+        TaskGroup::Show { task_id, knowledge } => task_show(&task_id, knowledge.as_deref()),
+        TaskGroup::Claim {
+            task_id,
+            assigned_to,
+            knowledge,
+        } => task_claim(&task_id, &assigned_to, knowledge.as_deref()),
+        TaskGroup::Complete {
+            task_id,
+            result,
+            result_file,
+            claimer,
+            db,
+            knowledge,
+        } => task_complete(
+            &task_id,
+            result.as_deref(),
+            result_file.as_deref(),
+            &claimer,
+            db.as_deref(),
+            knowledge.as_deref(),
+        ),
+        TaskGroup::Drop { task_id, knowledge } => task_drop(&task_id, knowledge.as_deref()),
+    }
 }
+
+// --- task queue (cli/task.py port) ------------------------------------------------
+
+/// The --knowledge default for the task group: the resolved store's bundle.
+fn task_bundle(knowledge: Option<&str>) -> Bundle {
+    resolve_bundle(&knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from))
+}
+
+fn task_list(
+    status: Option<&str>,
+    kind: Option<&str>,
+    kind_prefix: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let bundle = task_bundle(knowledge);
+    let tasks = match tasks::list_tasks(&bundle, status, kind, kind_prefix) {
+        Ok(tasks) => tasks,
+        Err(e) => return cli_err(&e.0),
+    };
+    if tasks.is_empty() {
+        println!("No tasks.");
+        return ExitCode::SUCCESS;
+    }
+    for t in tasks {
+        println!(
+            "  [{:<11}] {:<20} {}  {}",
+            t.status, t.task_kind, t.id, t.resource
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn task_show(task_id: &str, knowledge: Option<&str>) -> ExitCode {
+    let bundle = task_bundle(knowledge);
+    let task = match tasks::get_task(&bundle, task_id) {
+        Ok(task) => task,
+        Err(e) => return cli_err(&e.0),
+    };
+    let Some(t) = task else {
+        eprintln!("No task '{task_id}'.");
+        return ExitCode::FAILURE;
+    };
+    println!("# Task {}", t.id);
+    println!(
+        "kind: {}   status: {}   attempt: {}",
+        t.task_kind, t.status, t.attempt
+    );
+    println!("resource: {}", t.resource);
+    println!();
+    if !t.facts.is_empty() {
+        println!("## Facts");
+        for (key, val) in &t.facts {
+            println!("  {}: {}", tasks::py_display(key), tasks::py_display(val));
+        }
+    }
+    println!();
+    if t.status == "done" {
+        if let Some(result) = tasks::read_result(&bundle, task_id) {
+            println!("## Result");
+            println!("{result}");
+        }
+    } else {
+        println!("To process: `cairn task claim {task_id}`");
+    }
+    ExitCode::SUCCESS
+}
+
+fn task_claim(task_id: &str, assigned_to: &str, knowledge: Option<&str>) -> ExitCode {
+    let bundle = task_bundle(knowledge);
+    match tasks::claim_task(&bundle, task_id, assigned_to) {
+        Ok(Some(_)) => {
+            println!("Claimed {task_id}. Write your result, then:");
+            let mut hint = format!("  cairn task complete {task_id} --result-file <path>");
+            if !assigned_to.is_empty() {
+                hint.push_str(&format!(" --as {assigned_to}"));
+            }
+            println!("{hint}");
+            ExitCode::SUCCESS
+        }
+        Ok(None) => {
+            eprintln!("Could not claim '{task_id}' (not pending or not found).");
+            ExitCode::FAILURE
+        }
+        Err(e) => cli_err(&e.0),
+    }
+}
+
+fn task_complete(
+    task_id: &str,
+    result: Option<&str>,
+    result_file: Option<&str>,
+    claimer: &str,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let bundle = task_bundle(knowledge);
+    let result = if let Some(path) = result_file {
+        match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("Cannot read result file: {}", py_oserror_text(&e, path));
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        result.unwrap_or_default().to_string()
+    };
+    if result.is_empty() {
+        eprintln!("No result provided. Use --result or --result-file.");
+        return ExitCode::FAILURE;
+    }
+    let paths = resolve_store(None);
+    // get_db refuses a missing store parent; never fabricate one
+    let db_file = match require_db_dir(db) {
+        Ok(path) => path,
+        Err(code) => return code,
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let outcome = match tasks::complete_task(
+        &bundle,
+        task_id,
+        &result,
+        Some(&conn),
+        Some(claimer),
+        Some(&paths.workspace),
+    ) {
+        Ok(outcome) => outcome,
+        Err(e) => return cli_err(&e.0),
+    };
+    if outcome.refused {
+        let reasons = if outcome.errors.is_empty() {
+            "unknown".to_string()
+        } else {
+            outcome.errors.join("; ")
+        };
+        eprintln!("Task {task_id} was not completed: {reasons}.");
+        return ExitCode::FAILURE;
+    }
+    if outcome.dropped {
+        eprintln!(
+            "Task {task_id} dropped after {} failed attempts.",
+            tasks::MAX_REVISE_CYCLES
+        );
+        for err in &outcome.errors {
+            eprintln!("  Error: {err}");
+        }
+        return ExitCode::FAILURE;
+    }
+    if outcome.revised {
+        println!("Task {task_id} had errors. A revise task has been spawned.");
+        eprintln!("Errors:");
+        for err in &outcome.errors {
+            eprintln!("  - {err}");
+        }
+        println!("Quality score: {:.2}", outcome.quality);
+    } else if outcome.promoted {
+        println!("Task {task_id} completed and promoted.");
+    } else if !outcome.errors.is_empty() {
+        eprintln!(
+            "Task {task_id} was not completed; it remains in-progress and can be completed again."
+        );
+        for err in &outcome.errors {
+            eprintln!("  Error: {err}");
+        }
+        return ExitCode::FAILURE;
+    } else {
+        println!("Task {task_id} completed. Result stored.");
+        println!("Quality score: {:.2}", outcome.quality);
+    }
+    ExitCode::SUCCESS
+}
+
+/// Python OSError str(): "[Errno <n>] <message>: '<path>'".
+fn py_oserror_text(e: &std::io::Error, path: &str) -> String {
+    let message = e
+        .to_string()
+        .trim_end_matches(&format!(
+            " (os error {})",
+            e.raw_os_error().unwrap_or_default()
+        ))
+        .to_string();
+    match e.raw_os_error() {
+        Some(code) => format!("[Errno {code}] {message}: '{path}'"),
+        None => format!("{message}: '{path}'"),
+    }
+}
+
+fn task_drop(task_id: &str, knowledge: Option<&str>) -> ExitCode {
+    let bundle = task_bundle(knowledge);
+    let outcome = match tasks::drop_task(&bundle, task_id) {
+        Ok(outcome) => outcome,
+        Err(e) => return cli_err(&e.0),
+    };
+    if !outcome.dropped {
+        let joined = outcome.errors.join("; ");
+        let reasons = if joined.is_empty() {
+            "not droppable".to_string()
+        } else {
+            joined
+        };
+        eprintln!("Could not drop '{task_id}': {reasons}");
+        return ExitCode::FAILURE;
+    }
+    println!("Dropped {task_id}.");
+    ExitCode::SUCCESS
+}
+
+// --- shared output/store helpers -------------------------------------------------
 
 fn cli_err(msg: &str) -> ExitCode {
     eprintln!("Error: {msg}");
@@ -1047,24 +1613,6 @@ fn has_word(hay_lower: &str, symbol_lower: &str) -> bool {
 }
 
 /// Python str.title(): alpha chars after any non-alpha boundary capitalize.
-fn py_title(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut prev_alpha = false;
-    for c in s.chars() {
-        if c.is_alphabetic() {
-            if prev_alpha {
-                out.extend(c.to_lowercase());
-            } else {
-                out.extend(c.to_uppercase());
-            }
-        } else {
-            out.push(c);
-        }
-        prev_alpha = c.is_alphabetic();
-    }
-    out
-}
-
 /// Import-collision slug: "(repo)" style suffix, numbered past the first.
 fn unique_slug(base: &str, repo: &str, seen: &mut std::collections::HashSet<String>) -> String {
     const SLUG_MAX: usize = 60;
@@ -1196,7 +1744,7 @@ fn knowledge_import(dir_path: &str, doc_type: &str, tags: &str, affects: &str) -
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
-        let title = py_title(&stem.replace(['-', '_'], " "));
+        let title = tools_km::py_title(&stem.replace(['-', '_'], " "));
         let slug = unique_slug(
             &tools_km::slugify(&title),
             dir_name(&md_file).as_str(),
@@ -1218,6 +1766,8 @@ fn knowledge_import(dir_path: &str, doc_type: &str, tags: &str, affects: &str) -
             None,
             "imported",
             Some(&slug),
+            None,
+            None,
         ) {
             Ok(cid) => imported.push(cid),
             Err(_) => continue,
@@ -1635,7 +2185,20 @@ fn knowledge_export(out_path: &str) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if out_path.ends_with(".tar.gz") || out_path.ends_with(".tgz") || out_path.ends_with(".tar") {
-        return not_ported("knowledge export --out <tarball>");
+        let dst = PathBuf::from(out_path);
+        if let Some(parent) = dst.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let written = if out_path.ends_with("gz") {
+            crate::targz::write_tar_gz(&kn_dir, ".knowledge", &dst)
+        } else {
+            crate::targz::write_tar(&kn_dir, ".knowledge", &dst)
+        };
+        if written.is_err() {
+            return cli_err("could not write the tarball");
+        }
+        println!("Exported knowledge bundle tarball to {}", dst.display());
+        return ExitCode::SUCCESS;
     }
     let dst = PathBuf::from(out_path);
     if std::fs::create_dir_all(&dst).is_err() {
@@ -1664,6 +2227,678 @@ fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+// --- validate / validate-paths / verify (cli/validate.py port) -----------------
+
+/// The --knowledge default: CAIRN_KNOWLEDGE-aware resolved store bundle.
+fn knowledge_path_arg(knowledge: Option<&str>) -> PathBuf {
+    knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from)
+}
+
+fn validate_cmd(knowledge: Option<&str>) -> ExitCode {
+    let knowledge_path = knowledge_path_arg(knowledge);
+    let errors = tools_km::check_bundle(&knowledge_path);
+    if errors.is_empty() {
+        println!(
+            "OKF bundle at {} is conformant (0 errors).",
+            knowledge_path.display()
+        );
+        return ExitCode::SUCCESS;
+    }
+    println!("{} conformance errors:", errors.len());
+    for e in &errors {
+        println!("  {e}");
+    }
+    // Exit non-zero so CI/scripts can detect conformance failure.
+    ExitCode::FAILURE
+}
+
+fn set_extension(ext: &mut Vec<(String, Yaml)>, key: &str, value: Yaml) {
+    match ext.iter_mut().find(|(k, _)| k == key) {
+        Some(slot) => slot.1 = value,
+        None => ext.push((key.to_string(), value)),
+    }
+}
+
+fn validate_paths_cmd(db: Option<&str>, knowledge: Option<&str>, mark: bool) -> ExitCode {
+    let bundle = resolve_bundle(&knowledge_path_arg(knowledge));
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let stale = tools_km::validate_paths_stale(&conn, &bundle);
+    if stale.is_empty() {
+        println!("All concepts have valid references (0 stale).");
+        return ExitCode::SUCCESS;
+    }
+
+    let now = tools_km::iso_utc_now();
+    let mut marked = 0usize;
+    for entry in &stale {
+        println!(
+            "  [STALE] {}  (verified: {})",
+            entry.concept_id,
+            py_round3_text(entry.verified)
+        );
+        if !mark {
+            continue;
+        }
+        // read_concept keys the concept by its resolved file path; restore the
+        // bundle-relative id so the validity projection upserts the existing row.
+        match (|| -> Result<(), String> {
+            let mut concept = bundle.read_concept(&entry.concept_id).map_err(|e| e.0)?;
+            concept.concept_id = entry.concept_id.clone();
+            set_extension(&mut concept.extensions, "stale", Yaml::Boolean(true));
+            if entry.concept_id.starts_with("memory/") {
+                // Memory records auto-invalidate at build time; an existing
+                // interval or successor link is preserved.
+                let successor = concept
+                    .ext_str("successor_symbol")
+                    .map(str::to_string)
+                    .or_else(|| tools_km::resolve_successor(&conn, &concept.body));
+                let valid_from = concept
+                    .ext_str("valid_from")
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| concept.timestamp.clone())
+                    .unwrap_or_else(|| now.clone());
+                let valid_until = concept
+                    .ext_str("valid_until")
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| now.clone());
+                tools_km::write_validity(
+                    &mut concept,
+                    &valid_from,
+                    Some(valid_until.as_str()),
+                    successor.as_deref(),
+                    Some(&bundle),
+                    Some(&conn),
+                )
+                .map_err(|e| e.0)
+            } else {
+                bundle.write_concept(&mut concept).map_err(|e| e.0)
+            }
+        })() {
+            Ok(()) => marked += 1,
+            Err(e) => println!("    (mark failed: {e})"),
+        }
+    }
+
+    let action = if mark { "marked" } else { "found" };
+    let count = if mark { marked } else { stale.len() };
+    println!("\n{action} {count} stale concept(s).");
+    // Exit non-zero so CI/scripts can detect stale concepts.
+    ExitCode::FAILURE
+}
+
+fn verify_cmd(doc_path: &str, db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let bundle = resolve_bundle(&knowledge_path_arg(knowledge));
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let concept = match bundle.concept_file(doc_path) {
+        Err(e) => {
+            eprintln!("Could not read concept '{doc_path}': {}", e.0);
+            return ExitCode::from(2);
+        }
+        Ok(path) => match std::fs::read_to_string(&path) {
+            Err(e) => {
+                eprintln!(
+                    "Could not read concept '{doc_path}': {}",
+                    py_oserror_text(&e, path.to_string_lossy().as_ref())
+                );
+                return ExitCode::from(2);
+            }
+            Ok(text) => {
+                Concept::from_text(&text, path.with_extension("").to_string_lossy().to_string())
+            }
+        },
+    };
+    let result = match tools_km::critic_concept(&concept, &conn) {
+        Ok(result) => result,
+        Err(e) => return cli_err(&e.0),
+    };
+    let status = if result.passed { "OK" } else { "FAIL" };
+    println!(
+        "[{status}] {doc_path} (quality={:.2})",
+        result.quality_score
+    );
+    for e in &result.errors {
+        println!("  ERROR: {e}");
+    }
+    for w in &result.warnings {
+        println!("  warn: {w}");
+    }
+    // Non-zero exit on blocking errors so scripts/CI can detect a failed verify.
+    if !result.passed {
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+// --- knowledge rebuild / embed (cli/knowledge.py port) --------------------------
+
+/// Python's dangling-pointer warning rendering (index/executor shared).
+fn echo_dangling_warnings(items: &[DanglingPointer]) {
+    for item in items {
+        match &item.candidates {
+            Some(candidates) => println!(
+                "  warning: {} declares relates_to '{}' matching multiple knowledge \
+                 documents ({}); ambiguous pointer, kept in frontmatter, not indexed.",
+                item.doc_id,
+                item.concept_id,
+                candidates.join(", ")
+            ),
+            None => println!(
+                "  warning: {} declares relates_to '{}' matching no knowledge document \
+                 or resource path; kept in frontmatter, not indexed.",
+                item.doc_id, item.concept_id
+            ),
+        }
+    }
+}
+
+fn knowledge_rebuild(db: Option<&str>) -> ExitCode {
+    let paths = resolve_store(None);
+    if paths.ensure().is_err() {
+        return cli_err("could not create the store directories");
+    }
+    let bundle = resolve_bundle(&paths.knowledge);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let report = match tasks::rebuild_knowledge_index(&conn, &bundle) {
+        Ok(report) => report,
+        Err(e) => return cli_err(&e.0),
+    };
+    println!(
+        "Rebuilt knowledge index: {} doc(s), {} edge(s) ({} derived), {} ref(s).",
+        report.docs, report.edges, report.derived, report.doc_refs
+    );
+    echo_dangling_warnings(&report.dangling);
+    let queued = tasks::queue_doc_link_tasks(&conn, &bundle);
+    println!("Island detection: queued {queued} doc-link task(s).");
+    ExitCode::SUCCESS
+}
+
+/// The plain-text progress bar's 0.5s draw throttle (display.py contract).
+struct ThrottledBar {
+    description: &'static str,
+    unit: &'static str,
+    t0: Instant,
+    last_draw: Instant,
+}
+
+impl ThrottledBar {
+    fn new(description: &'static str, unit: &'static str) -> Self {
+        let now = Instant::now();
+        Self {
+            description,
+            unit,
+            t0: now,
+            last_draw: now,
+        }
+    }
+
+    fn draw(&mut self, completed: usize, total: usize) {
+        crate::cmds_lifecycle::plain_progress_draw(
+            self.description,
+            completed,
+            total,
+            self.t0.elapsed().as_secs_f64(),
+            self.unit,
+        );
+    }
+
+    fn maybe_draw(&mut self, completed: usize, total: usize) {
+        if self.last_draw.elapsed().as_secs_f64() >= 0.5 {
+            self.last_draw = Instant::now();
+            self.draw(completed, total);
+        }
+    }
+}
+
+fn knowledge_embed(db: Option<&str>, batch_size: i64) -> ExitCode {
+    let env = tools_search::semantic_env(None);
+    if env.backend == EffectiveBackend::Unavailable {
+        display::error("Semantic backend unavailable");
+        display::dim(&tools_search::install_hint());
+        return ExitCode::FAILURE;
+    }
+    let paths = resolve_store(None);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    if paths.ensure().is_err() {
+        return cli_err("could not create the store directories");
+    }
+    let bundle = resolve_bundle(&paths.knowledge);
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let model = match cairn_build::embeddings::current_model() {
+        Ok(model) => model,
+        Err(e) => return cli_err(&e),
+    };
+    display::info(&format!("Embedding knowledge docs with {model}"));
+
+    let timer = Instant::now();
+    let mut bar = ThrottledBar::new("Embedding docs", "docs");
+    bar.draw(0, 0);
+    let mut state = (0usize, 0usize);
+    let summary = match cairn_build::embeddings::embed_knowledge(
+        &conn,
+        &bundle,
+        batch_size.max(1) as usize,
+        |done, total| {
+            state = (done, total);
+            bar.maybe_draw(done, total);
+        },
+    ) {
+        Ok(summary) => summary,
+        Err(message) => {
+            // A deliberate embed abort is a CLI error, not a traceback.
+            display::error(&message);
+            return ExitCode::FAILURE;
+        }
+    };
+    let _ = state;
+    bar.draw(state.0, state.1);
+    println!();
+    let elapsed = timer.elapsed().as_secs_f64();
+    crate::rail::summary_panel(
+        &format!(
+            "Embedded {} docs in {elapsed:.1}s",
+            crate::cmds_core::fmt_int(summary.embedded as i64)
+        ),
+        &[
+            (
+                "embedded",
+                crate::cmds_core::fmt_int(summary.embedded as i64),
+            ),
+            ("skipped", crate::cmds_core::fmt_int(summary.skipped as i64)),
+        ],
+        None,
+    );
+    ExitCode::SUCCESS
+}
+
+// --- knowledge ingest (cli/knowledge.py port) -----------------------------------
+
+/// A relationship entry's field as text.
+fn rel_field(entry: &Yaml, key: &str) -> String {
+    match entry {
+        Yaml::Hash(h) => h
+            .get(&tools_km::ys(key))
+            .and_then(|v| match v {
+                Yaml::String(s) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn knowledge_ingest(
+    files: &[String],
+    dirs: &[String],
+    repos: &[String],
+    do_ingest: bool,
+    include_drafts: bool,
+    outbox: Option<&str>,
+) -> ExitCode {
+    if files.is_empty() && dirs.is_empty() && repos.is_empty() {
+        eprintln!("Error: --file, --dir, or --repo required.");
+        return ExitCode::FAILURE;
+    }
+    for repo in repos {
+        if !Path::new(repo).exists() {
+            return usage_error(
+                "knowledge ingest [OPTIONS]",
+                &format!("Invalid value for '--repo': Path '{repo}' does not exist."),
+            );
+        }
+    }
+    let workspace = crate::store_paths::resolve_workspace(None);
+    let file_paths: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
+    let dir_paths: Vec<PathBuf> = dirs.iter().map(PathBuf::from).collect();
+    let repo_paths: Vec<PathBuf> = repos.iter().map(PathBuf::from).collect();
+    let manifest = match ingest::run_ingest(
+        &workspace,
+        &file_paths,
+        &dir_paths,
+        &repo_paths,
+        outbox.map(Path::new),
+        include_drafts,
+    ) {
+        Ok(manifest) => manifest,
+        Err(e) => {
+            eprintln!("Error: {e}.");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let dangling: Vec<DanglingPointer> = if do_ingest {
+        let paths = resolve_store(None);
+        if paths.ensure().is_err() {
+            return cli_err("could not create the store directories");
+        }
+        let Ok(conn) = open_db_writable(&paths.db) else {
+            return ExitCode::FAILURE;
+        };
+        let bundle = resolve_bundle(&paths.knowledge);
+        let embed_available =
+            tools_search::semantic_env(None).backend != EffectiveBackend::Unavailable;
+        let embed_pass = |conn: &Connection, bundle: &Bundle| -> Result<usize, String> {
+            cairn_build::embeddings::embed_knowledge(conn, bundle, 32, |_, _| {})
+                .map(|summary| summary.embedded)
+        };
+        let embed: Option<&ingest::EmbedPass> = embed_available.then_some(&embed_pass);
+        let report = match ingest::execute_manifest(&manifest, &conn, &bundle, embed) {
+            Ok(report) => report,
+            Err(e) => return cli_err(&e.0),
+        };
+        let dangling = report.dangling_pointers.clone();
+        let embed_note = report
+            .embedded
+            .map(|n| format!(", embedded {n}"))
+            .unwrap_or_default();
+        println!(
+            "Wrote {} document(s) to the store{embed_note}.",
+            report.written.len()
+        );
+        // Verify legs in the report's insertion order; any False leg fails.
+        let legs: Vec<(&str, String, bool)> = vec![
+            ("index_edges", report.index_edges.to_string(), false),
+            ("index_doc_refs", report.index_doc_refs.to_string(), false),
+            ("verified_refs", report.verified_refs.to_string(), false),
+            ("doc_link_tasks", report.doc_link_tasks.to_string(), false),
+            ("store_count", report.store_count.to_string(), false),
+            ("expected_count", report.expected_count.to_string(), false),
+            (
+                "count_ok",
+                py_bool(report.count_ok).to_string(),
+                !report.count_ok,
+            ),
+            (
+                "smoke_search_hit",
+                py_bool(report.smoke_search_hit).to_string(),
+                !report.smoke_search_hit,
+            ),
+            (
+                "validate_ok",
+                py_bool(report.validate_ok).to_string(),
+                !report.validate_ok,
+            ),
+            ("validate_errors", report.validate_errors.to_string(), false),
+            ("validate_message", report.validate_message.clone(), false),
+        ];
+        let mut legs = legs;
+        if let Some(err) = &report.embed_error {
+            legs.insert(4, ("embed_error", err.clone(), false));
+        }
+        let mut failed: Vec<&str> = Vec::new();
+        for (key, value, is_false) in &legs {
+            println!("  {key}: {value}");
+            if *is_false {
+                failed.push(key);
+            }
+        }
+        if !failed.is_empty() {
+            eprintln!(
+                "Error: post-ingest verification failed ({}).",
+                failed.join(", ")
+            );
+            return ExitCode::FAILURE;
+        }
+        dangling
+    } else {
+        // Dry run: predict pointers that will never index before writing.
+        let bundle = knowledge_bundle();
+        ingest::predict_dangling(&bundle, &manifest)
+    };
+
+    println!(
+        "Staged {} document(s), skipped {}.",
+        manifest.accepted, manifest.skipped
+    );
+    for row in &manifest.rows {
+        match row {
+            ingest::ManifestRow::Skipped(s) => {
+                println!("  skipped: {} ({})", s.source_path, s.skip);
+            }
+            ingest::ManifestRow::Staged(r) => {
+                println!("  staged: {} -> {}", r.source_path, r.concept_id);
+                for rel in &r.relationships {
+                    println!(
+                        "    {}: {} ({})",
+                        rel_field(rel, "relation"),
+                        rel_field(rel, "concept_id"),
+                        rel_field(rel, "kind")
+                    );
+                }
+            }
+        }
+    }
+    echo_dangling_warnings(&dangling);
+    println!("Outbox: {}", manifest.workspace.display());
+    ExitCode::SUCCESS
+}
+
+// --- skill generate (cli/skill.py port) -----------------------------------------
+
+fn skill_generate(
+    selectors: &[String],
+    output: Option<&str>,
+    top_k: i64,
+    top_n: i64,
+    db: Option<&str>,
+    polish: bool,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let resolution = skillgen::resolve_selector(&conn, &selectors.join(" "));
+    if !resolution.unmatched.is_empty() || resolution.candidates.is_empty() {
+        let listed = if resolution.unmatched.is_empty() {
+            "no candidates resolved".to_string()
+        } else {
+            resolution.unmatched.join(", ")
+        };
+        eprintln!("Error: Unresolved selector: {listed}; no skill written.");
+        return ExitCode::FAILURE;
+    }
+    let assembly_bundle = resolve_bundle(&skillgen::knowledge_path_for(
+        &conn,
+        &resolve_store(None).knowledge,
+    ));
+    let draft = match skillgen::assemble_draft(
+        &conn,
+        &assembly_bundle,
+        &resolution,
+        top_k as usize,
+        top_n as usize,
+    ) {
+        Ok(draft) => draft,
+        Err(e) => return cli_err(&e.0),
+    };
+
+    let stem = if draft.module.is_empty() {
+        selectors[0].clone()
+    } else {
+        draft.module.clone()
+    };
+    let slug = {
+        let slug = skillgen::slugify(&stem);
+        if slug.is_empty() {
+            "skill".to_string()
+        } else {
+            slug
+        }
+    };
+    let target = match output {
+        Some(output) => PathBuf::from(output),
+        None => match skillgen::landing_dir(&crate::store_paths::resolve_workspace(None), &slug) {
+            Ok(target) => target,
+            Err(e) => return cli_err(&e),
+        },
+    };
+    let mut sections: Vec<(&str, String)> = Vec::new();
+    if !draft.compass_body.is_empty() {
+        sections.push(("Module Compass", draft.compass_body.clone()));
+    }
+    if !draft.symbols.is_empty() {
+        sections.push((
+            "Key Symbols",
+            draft
+                .symbols
+                .iter()
+                .map(|s| format!("- {s}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ));
+    }
+    if !draft.memories.is_empty() {
+        sections.push(("Module Memory", draft.memories.join("\n")));
+    }
+    let section_refs: Vec<(&str, &str)> = sections
+        .iter()
+        .map(|(heading, markdown)| (*heading, markdown.as_str()))
+        .collect();
+    let (inline, references) =
+        skillgen::split_references(&section_refs, skillgen::REFERENCE_SPLIT_CHARS);
+    let description = format!(
+        "Module context for {stem}. Load when asked about {stem} structure, call \
+         graphs, or blast radius before editing its files."
+    );
+    let inline_refs: Vec<(&str, &str)> = inline
+        .iter()
+        .map(|(heading, markdown)| (heading.as_str(), markdown.as_str()))
+        .collect();
+    let rendered =
+        match skillgen::render_skill(&format!("cairn-{slug}"), &description, &inline_refs) {
+            Ok(rendered) => rendered,
+            Err(e) => return cli_err(&e),
+        };
+    // Critic gate on the exact bytes destined for disk; rejection writes nothing.
+    let gate = skillgen::verify_draft(&conn, &rendered);
+    if !gate.ok {
+        eprintln!(
+            "Error: Unverified references: {}; no skill written.",
+            gate.failing_refs.join(", ")
+        );
+        return ExitCode::FAILURE;
+    }
+    for (_, content) in &references {
+        let gate = skillgen::verify_draft(&conn, content);
+        if !gate.ok {
+            eprintln!(
+                "Error: Unverified references: {}; no skill written.",
+                gate.failing_refs.join(", ")
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+    let mut polish_outcome = None;
+    if polish {
+        let polish_bundle =
+            resolve_bundle(&knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from));
+        match skillgen::run_polish_stage(
+            &polish_bundle,
+            &conn,
+            &slug,
+            &rendered,
+            &target.join("SKILL.md").to_string_lossy(),
+        ) {
+            Ok(outcome) => polish_outcome = Some(outcome),
+            Err(e) => {
+                // Polish is optional; its failure must not suppress the write.
+                eprintln!(
+                    "Polish stage unavailable ({}); the deterministic skill stands.",
+                    e.0
+                );
+            }
+        }
+    }
+
+    if std::fs::create_dir_all(&target).is_err() {
+        return cli_err("could not create the skill directory");
+    }
+    if std::fs::write(target.join("SKILL.md"), &rendered).is_err() {
+        return cli_err("could not write SKILL.md");
+    }
+    for (filename, content) in &references {
+        let path = target.join(filename);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if std::fs::write(&path, content).is_err() {
+            return cli_err("could not write the reference file");
+        }
+    }
+    println!("Wrote SKILL.md: {}", target.join("SKILL.md").display());
+    if let Some(outcome) = polish_outcome {
+        settle_polish(outcome, &target);
+    }
+    ExitCode::SUCCESS
+}
+
+fn settle_polish(outcome: skillgen::PolishOutcome, target: &Path) {
+    match outcome.state.as_str() {
+        "applied" => {
+            let _ = std::fs::write(target.join("SKILL.md"), &outcome.rendered);
+            println!(
+                "Applied polished SKILL.md (task {} passed the critic gate).",
+                outcome.task_id
+            );
+        }
+        "queued" => {
+            println!(
+                "Queued polish task {}; any agent with the cairn skill can process it:",
+                outcome.task_id
+            );
+            println!("  cairn task list --kind skill-polish --status pending");
+            println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
+            println!("Rerun 'cairn skill generate --polish' after completion to apply the result.");
+        }
+        "pending" => {
+            println!(
+                "Polish task {} is still in flight; rerun 'cairn skill generate --polish' once it \
+                 completes.",
+                outcome.task_id
+            );
+        }
+        // rejected | unavailable: the deterministic skill stands.
+        _ => {
+            let mut detail = outcome.reason.clone();
+            if !outcome.failing_refs.is_empty() {
+                let listed = outcome.failing_refs.join(", ");
+                detail = if detail.is_empty() {
+                    listed
+                } else {
+                    format!("{detail}; unverified references: {listed}")
+                };
+            }
+            eprintln!(
+                "Polish task {} not applied ({detail}); the deterministic skill stands.",
+                outcome.task_id
+            );
+        }
+    }
 }
 
 // --- knowledge workflow subgroup ---------------------------------------------
@@ -1836,6 +3071,167 @@ fn workflow_trace(reference: &str, as_json: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn stale_issues(d: &tools_km::StaleStep) -> String {
+    let mut issues = Vec::new();
+    if !d.symbol_ok {
+        issues.push(format!("symbol '{}' not found", d.symbol));
+    }
+    if !d.file_ok {
+        issues.push(format!("file '{}' not found", d.file));
+    }
+    issues.join(", ")
+}
+
+fn workflow_sync(
+    reference: Option<&str>,
+    all: bool,
+    dry_run: bool,
+    max_steps: i64,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    if reference.is_some() && all {
+        eprintln!("Error: pass a workflow ref or --all, not both.");
+        return ExitCode::FAILURE;
+    }
+    if reference.is_none() && !all {
+        eprintln!("Error: provide a workflow ref or use --all.");
+        return ExitCode::FAILURE;
+    }
+    let store = resolve_store(None);
+    let knowledge_path = knowledge.map_or_else(|| store.knowledge.clone(), PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    let db_file = db_path(db);
+    // No workflows exist without the bundle; guard before the DB is opened.
+    if !bundle.root.exists() || !db_file.parent().is_some_and(Path::exists) {
+        println!("No workflows to sync.");
+        return ExitCode::SUCCESS;
+    }
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let max_steps = max_steps.max(1) as usize;
+
+    if dry_run {
+        if all {
+            let reports = match tools_km::check_all_workflows(&conn, &bundle) {
+                Ok(reports) => reports,
+                Err(e) => return cli_err(&e.0),
+            };
+            if reports.is_empty() {
+                println!("All workflows are up to date (no stale steps found).");
+                return ExitCode::SUCCESS;
+            }
+            println!("{} workflow(s) with stale steps:", reports.len());
+            for r in &reports {
+                println!();
+                println!("  {} ({})", r.title, r.concept_id);
+                println!("    {}/{} steps stale:", r.stale_count(), r.total_steps);
+                for d in r.stale_details.iter().take(8) {
+                    println!("      {}: {}", d.step, stale_issues(d));
+                }
+                if r.stale_details.len() > 8 {
+                    println!("      ... and {} more", r.stale_details.len() - 8);
+                }
+            }
+        } else {
+            let reference = reference.expect("ref or --all validated");
+            let report = match tools_km::check_workflow_staleness(&conn, &bundle, reference) {
+                Ok(report) => report,
+                Err(e) => return cli_err(&e.0),
+            };
+            let Some(report) = report else {
+                eprintln!("No workflow found matching '{reference}'.");
+                return ExitCode::FAILURE;
+            };
+            if report.stale_count() == 0 {
+                println!(
+                    "'{}' is up to date ({} steps, no staleness).",
+                    report.title, report.total_steps
+                );
+                return ExitCode::SUCCESS;
+            }
+            println!("'{}' ({})", report.title, report.concept_id);
+            println!(
+                "  {}/{} steps stale:",
+                report.stale_count(),
+                report.total_steps
+            );
+            for d in &report.stale_details {
+                println!("    {}: {}", d.step, stale_issues(d));
+            }
+            println!();
+            println!("Run without --dry-run to sync.");
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    if all {
+        let workflows = tools_km::list_documents(&bundle, Some("workflow"), None, None);
+        if workflows.is_empty() {
+            println!("No workflows to sync.");
+            return ExitCode::SUCCESS;
+        }
+        println!("Syncing {} workflow(s)...", workflows.len());
+        let mut synced = 0usize;
+        let mut errors = 0usize;
+        for w in &workflows {
+            let cid = tools_km::normalize_doc_id(&bundle, &w.concept_id);
+            let result = match tools_km::sync_workflow(&conn, &bundle, &cid, max_steps) {
+                Ok(result) => result,
+                Err(e) => return cli_err(&e.0),
+            };
+            let Some(result) = result else {
+                continue;
+            };
+            if let Some(error) = &result.error {
+                println!("  SKIP  {}: {}", result.title, error);
+                errors += 1;
+            } else {
+                println!(
+                    "  OK    {}: {} -> {} steps (+{}, -{})",
+                    result.title,
+                    result.old_step_count,
+                    result.new_step_count,
+                    result.added.len(),
+                    result.removed.len()
+                );
+                synced += 1;
+            }
+        }
+        println!();
+        println!("Sync complete: {synced} synced, {errors} skipped.");
+    } else {
+        let reference = reference.expect("ref or --all validated");
+        let result = match tools_km::sync_workflow(&conn, &bundle, reference, max_steps) {
+            Ok(result) => result,
+            Err(e) => return cli_err(&e.0),
+        };
+        let Some(result) = result else {
+            eprintln!("No workflow found matching '{reference}'.");
+            return ExitCode::FAILURE;
+        };
+        if let Some(error) = &result.error {
+            println!("Could not sync '{}': {}", result.title, error);
+            return ExitCode::FAILURE;
+        }
+        println!("Synced '{}' ({})", result.title, result.concept_id);
+        println!(
+            "  steps: {} -> {}",
+            result.old_step_count, result.new_step_count
+        );
+        if !result.added.is_empty() {
+            let shown: Vec<&str> = result.added.iter().take(8).map(String::as_str).collect();
+            println!("  added: {}", shown.join(", "));
+        }
+        if !result.removed.is_empty() {
+            let shown: Vec<&str> = result.removed.iter().take(8).map(String::as_str).collect();
+            println!("  removed: {}", shown.join(", "));
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 // --- memory group ------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
@@ -1879,6 +3275,7 @@ fn memory_record(
         if body.is_empty() { title } else { body },
         resource,
         confidence,
+        None,
         stance,
     ) {
         Ok(result) => result,
@@ -1895,7 +3292,7 @@ fn memory_record(
 
 /// note_failure_signature: prior occurrence count (0 = first, capture skipped).
 fn note_failure_signature(conn: &Connection, sig: &str, tool_name: &str) -> i64 {
-    let now = iso_utc_micros_offset();
+    let now = tools_km::iso_utc_micros();
     let _ = conn.execute(
         "INSERT INTO memory_failure_signatures (sig, tool_name, occurrences, first_seen, last_seen) \
          VALUES (?, ?, 1, ?, ?) \
@@ -1910,35 +3307,6 @@ fn note_failure_signature(conn: &Connection, sig: &str, tool_name: &str) -> i64 
     )
     .map(|n| n - 1)
     .unwrap_or(0)
-}
-
-fn iso_utc_micros_offset() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    let micros = now.subsec_micros();
-    let days = secs / 86_400;
-    let rem = secs % 86_400;
-    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let civil = civil_from_days(days as i64);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}+00:00",
-        civil.0, civil.1, civil.2, h, m, s, micros
-    )
-}
-
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 fn parse_symbol_list(symbols: &str) -> Result<Vec<String>, ExitCode> {
@@ -2169,6 +3537,10 @@ fn memory_stats(knowledge: Option<&str>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The whole `memory digest` output for an empty store; the session_start hook
+/// suppresses exactly this line.
+pub(crate) const EMPTY_DIGEST: &str = "No tribal memories yet.";
+
 fn memory_digest(limit: i64, db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
     if limit < 0 {
         return usage_error(
@@ -2176,6 +3548,24 @@ fn memory_digest(limit: i64, db: Option<&str>, knowledge: Option<&str>) -> ExitC
             &format!("limit must be non-negative, got {limit}"),
         );
     }
+    match digest_lines(limit, db, knowledge) {
+        Ok(lines) => {
+            for line in lines {
+                println!("{line}");
+            }
+        }
+        Err(msg) => return cli_err(&msg),
+    }
+    ExitCode::SUCCESS
+}
+
+/// The digest lines: the top `limit` tribal memories by score, the unembedded
+/// hint when a store is open, or `EMPTY_DIGEST` alone.
+fn digest_lines(
+    limit: i64,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> Result<Vec<String>, String> {
     let bundle = memory_bundle(knowledge);
     let mut mems = tools_km::list_memories(&bundle, Some("tribal"), None);
     mems.sort_by(|a, b| {
@@ -2186,33 +3576,30 @@ fn memory_digest(limit: i64, db: Option<&str>, knowledge: Option<&str>) -> ExitC
     });
     mems.truncate(limit.max(0) as usize);
     if mems.is_empty() {
-        println!("No tribal memories yet.");
-        return ExitCode::SUCCESS;
+        return Ok(vec![EMPTY_DIGEST.to_string()]);
     }
     let db_file = db_path(db);
     let conn = if db_file.exists() {
-        match open_db_read_only(&db_file) {
-            Ok(conn) => Some(conn),
-            Err(e) => {
-                return cli_err(&format!(
-                    "--db '{}' is not a valid cairn database: {e}",
-                    db_file.display()
-                ));
-            }
-        }
+        Some(open_db_read_only(&db_file).map_err(|e| {
+            format!(
+                "--db '{}' is not a valid cairn database: {e}",
+                db_file.display()
+            )
+        })?)
     } else {
         None
     };
-    for c in &mems {
-        println!("{}", memory_line(c, conn.as_ref(), false, false));
-    }
+    let mut lines: Vec<String> = mems
+        .iter()
+        .map(|c| memory_line(c, conn.as_ref(), false, false))
+        .collect();
     if let Some(conn) = &conn
         && let Ok(hint) = tools_km::unembedded_memory_hint(conn, &bundle)
         && !hint.is_empty()
     {
-        println!("{hint}");
+        lines.push(hint);
     }
-    ExitCode::SUCCESS
+    Ok(lines)
 }
 
 fn memory_promote(path: &str, db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
@@ -2434,6 +3821,284 @@ fn memory_check(agent_id: &str, symbols: &str, db: Option<&str>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Best-effort embed of freshly saved memories; failures defer to `memory embed`.
+fn embed_saved_memories(conn: &Connection, bundle: &Bundle, paths: &[String]) {
+    if cairn_build::embeddings::embed_memory_concepts(conn, bundle, paths).is_err() {
+        eprintln!(
+            "Embedding failed; memories saved without vectors \
+             (run `cairn memory embed` to backfill)."
+        );
+    }
+}
+
+fn memory_reflect(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let bundle = memory_bundle(knowledge);
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    match tools_km::reflect_store(&bundle, &conn) {
+        Ok(summary) => {
+            println!(
+                "Reflected {} memory(ies): {} changed, {} unchanged, {} contested.",
+                summary.changed + summary.unchanged,
+                summary.changed,
+                summary.unchanged,
+                summary.contested
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => cli_err(&format!("reflect failed: {}", e.0)),
+    }
+}
+
+fn memory_evolve(
+    memory_path: &str,
+    title: Option<&str>,
+    body: Option<&str>,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let bundle = memory_bundle(knowledge);
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    let result = match tools_km::evolve_memory(&conn, &bundle, memory_path, title, body) {
+        Ok(result) => result,
+        Err(e) => return cli_err(&e.0),
+    };
+    let Some(result) = result else {
+        eprintln!("Memory not found: '{memory_path}'.");
+        return ExitCode::FAILURE;
+    };
+    embed_saved_memories(&conn, &bundle, std::slice::from_ref(&result.path));
+    println!(
+        "Evolved '{memory_path}' -> {} (score={}, tier={}, superseded {})",
+        result.path,
+        py_float_text(result.score),
+        result.tier,
+        result.superseded
+    );
+    ExitCode::SUCCESS
+}
+
+/// JSON-object lines from a backend transcript extraction (`_parse_extract_lines`).
+fn extract_candidates(cli: &str, transcript: &str) -> Vec<serde_json::Value> {
+    let transcript = tools_km::strip_private_data(transcript);
+    let facts = serde_json::json!({ "transcript": transcript });
+    let prompt = format!(
+        "[cairn task: memory-extract]\n\nUse the cairn skill to process this. \
+         Facts (graph-grounded):\n{}\n\n## Output spec\n{}\n\nOutput ONLY the \
+         result content, nothing else.",
+        serde_json::to_string_pretty(&facts).unwrap_or_default(),
+        tasks::output_spec("memory-extract", &yaml_rust2::yaml::Hash::new()),
+    );
+    let argv: Vec<String> = match cli {
+        "claude" => vec![
+            cli.to_string(),
+            "-p".into(),
+            prompt,
+            "--allowedTools".into(),
+            "Read,Glob,Grep".into(),
+        ],
+        "droid" => vec![cli.to_string(), "exec".into(), prompt],
+        _ => vec![cli.to_string(), "exec".into(), "--prompt".into(), prompt],
+    };
+    let Ok(output) = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if !line.starts_with('{') {
+                return None;
+            }
+            serde_json::from_str(line).ok()
+        })
+        .collect()
+}
+
+fn memory_capture(
+    session_transcript: Option<&str>,
+    session_transcript_stdin: bool,
+    session_id: &str,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    let bundle = memory_bundle(knowledge);
+    let transcript = if session_transcript_stdin {
+        use std::io::Read;
+        let mut buf = String::new();
+        if std::io::stdin().read_to_string(&mut buf).is_err() {
+            return cli_err("could not read the session transcript from stdin");
+        }
+        buf
+    } else {
+        session_transcript
+            .filter(|t| !t.is_empty())
+            .unwrap_or("[]")
+            .to_string()
+    };
+
+    let backend = std::env::var("CAIRN_LLM_BACKEND")
+        .unwrap_or_default()
+        .to_lowercase();
+    let candidates = if !backend.is_empty() && crate::agent_install::which(&backend).is_none() {
+        eprintln!("LLM backend '{backend}' not found on PATH; queueing memory-extract task.");
+        Vec::new()
+    } else if matches!(backend.as_str(), "droid" | "opencode" | "claude") {
+        extract_candidates(&backend, &transcript)
+    } else {
+        Vec::new()
+    };
+
+    let mut recorded = 0usize;
+    let mut failed = 0usize;
+    let mut captured_paths: Vec<String> = Vec::new();
+    for cand in &candidates {
+        let cand_type = cand
+            .get("type")
+            .and_then(|v| v.as_str())
+            .filter(|t| MEMORY_TYPES.contains(t))
+            .unwrap_or("decision");
+        let title = cand
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("untitled");
+        let body = cand.get("body").and_then(|v| v.as_str()).unwrap_or("");
+        let confidence = match cand.get("confidence") {
+            None => Ok(0.6),
+            Some(serde_json::Value::Number(n)) => n.as_f64().ok_or(()),
+            Some(serde_json::Value::String(s)) => s.parse::<f64>().map_err(|_| ()),
+            Some(_) => Err(()),
+        };
+        let Ok(confidence) = confidence else {
+            failed += 1;
+            continue;
+        };
+        match tools_km::capture_memory(
+            &conn,
+            &bundle,
+            cand_type,
+            title,
+            body,
+            None,
+            confidence,
+            Some(session_id),
+            None,
+        ) {
+            Ok(result) => {
+                captured_paths.push(result.path);
+                recorded += 1;
+            }
+            Err(_) => failed += 1,
+        }
+    }
+    if !captured_paths.is_empty() {
+        embed_saved_memories(&conn, &bundle, &captured_paths);
+    }
+    if recorded > 0 {
+        println!("Captured {recorded} memories from session {session_id}.");
+    }
+    if failed > 0 {
+        eprintln!("Skipped {failed} unrecordable candidate(s) from session {session_id}.");
+    }
+    if recorded == 0 {
+        let mut facts = yaml_rust2::yaml::Hash::new();
+        let scrubbed = tools_km::strip_private_data(&transcript);
+        let truncated: String = scrubbed.chars().take(8000).collect();
+        facts.insert(Yaml::String("transcript".into()), Yaml::String(truncated));
+        facts.insert(
+            Yaml::String("session_id".into()),
+            Yaml::String(session_id.to_string()),
+        );
+        match tasks::create_task(
+            &bundle,
+            "memory-extract",
+            &format!("session-{session_id}"),
+            facts,
+            0,
+        ) {
+            Ok(task) => println!(
+                "No agent available; queued memory-extract task {}.",
+                task.id
+            ),
+            Err(e) => return cli_err(&e.0),
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn memory_embed(
+    db: Option<&str>,
+    knowledge: Option<&str>,
+    batch_size: i64,
+    reap: bool,
+) -> ExitCode {
+    let bundle = memory_bundle(knowledge);
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    if reap {
+        match cairn_build::embeddings::reap_orphaned_memory_embeddings(&conn, &bundle) {
+            Ok(reaped) if reaped > 0 => println!("Reaped {reaped} orphaned embedding row(s)."),
+            Ok(_) => {}
+            Err(e) => return cli_err(&e),
+        }
+    }
+    match cairn_build::embeddings::embed_memory(&conn, &bundle, batch_size.max(1) as usize) {
+        Ok(summary) => {
+            println!(
+                "Embedded {} memory concept(s) with {} \
+                 ({} already up to date, {} total).",
+                summary.embedded, summary.model, summary.skipped, summary.total
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => cli_err(&e),
+    }
+}
+
+fn memory_batch_critic(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let bundle = memory_bundle(knowledge);
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    match tools_km::batch_critic(&conn, &bundle) {
+        Ok(result) => {
+            println!(
+                "Processed {} drafts: {} -> tribal, {} dropped, {} remain drafts.",
+                result.processed, result.tribal, result.dropped, result.remaining_drafts
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => cli_err(&e.0),
+    }
+}
+
+fn memory_consolidate(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let bundle = memory_bundle(knowledge);
+    let Ok(conn) = open_db_writable(&db_path(db)) else {
+        return ExitCode::FAILURE;
+    };
+    match tools_km::consolidate_memories(&bundle, Some(&conn)) {
+        Ok(count) => {
+            println!("Consolidated {count} raw memories into tribal knowledge.");
+            ExitCode::SUCCESS
+        }
+        Err(e) => cli_err(&e.0),
+    }
+}
+
 // --- compass group -----------------------------------------------------------
 
 fn compass_list(knowledge: Option<&str>) -> ExitCode {
@@ -2511,10 +4176,823 @@ fn compass_validate(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn critic_verdict_lines(result: &tools_km::CriticResult) {
+    println!(
+        "  passed: {}  quality: {:.2}  errors: {}  warnings: {}",
+        py_bool(result.passed),
+        result.quality_score,
+        result.errors.len(),
+        result.warnings.len()
+    );
+    for e in &result.errors {
+        println!("  ERROR: {e}");
+    }
+    for w in &result.warnings {
+        println!("  warn: {w}");
+    }
+}
+
+fn module_error_exit(module: &str, e: &tools_km::ModuleResolutionError) -> ExitCode {
+    println!("Cannot generate compass for '{module}': {}", e.0);
+    ExitCode::FAILURE
+}
+
+/// SubprocessBackend exec: run the agent CLI, killed at the 120s timeout.
+fn exec_agent(argv: &[String]) -> String {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    const EXEC_TIMEOUT_S: u64 = 120;
+    let Ok(mut child) = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return String::new();
+    };
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stdout.read_to_string(&mut buf);
+        buf
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(EXEC_TIMEOUT_S);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = reader.join().unwrap_or_default();
+                return if status.success() { out } else { String::new() };
+            }
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return String::new();
+            }
+        }
+    }
+}
+
+/// FileQueueBackend fallback: queue the task and poll it for the result.
+fn queue_wait(
+    bundle: &Bundle,
+    kind: &str,
+    resource: &str,
+    facts: &yaml_rust2::yaml::Hash,
+    timeout_s: u64,
+) -> String {
+    const POLL_INTERVAL_S: u64 = 2;
+    const MAX_WAIT_S: u64 = 600;
+    let Ok(task) = tasks::create_task(bundle, kind, resource, facts.clone(), 0) else {
+        return String::new();
+    };
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(timeout_s.min(MAX_WAIT_S));
+    loop {
+        if let Ok(Some(t)) = tasks::get_task(bundle, &task.id) {
+            if t.status == "done" {
+                return tasks::read_result(bundle, &task.id).unwrap_or_default();
+            }
+            if t.status == "failed" || t.status == "dropped" {
+                return String::new();
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return String::new();
+        }
+        std::thread::sleep(std::time::Duration::from_secs(POLL_INTERVAL_S));
+    }
+}
+
+/// SubprocessBackend synthesize/revise: exec the agent, then the queue fallback.
+fn agent_backend_run(
+    cli: &str,
+    prompt_id: &str,
+    facts: &yaml_rust2::yaml::Hash,
+    bundle: &Bundle,
+) -> String {
+    let prompt = format!(
+        "[cairn task: {prompt_id}]\n\nUse the cairn skill to process this. \
+         Facts (graph-grounded):\n{}\n\n## Output spec\n{}\n\nOutput ONLY the \
+         result content, nothing else.",
+        py_json::dumps(&py_json::yaml_to_value(&Yaml::Hash(facts.clone()))),
+        tasks::output_spec(prompt_id, &yaml_rust2::yaml::Hash::new()),
+    );
+    let argv: Vec<String> = match cli {
+        "claude" => vec![
+            cli.to_string(),
+            "-p".into(),
+            prompt,
+            "--allowedTools".into(),
+            "Read,Glob,Grep".into(),
+        ],
+        "droid" => vec![cli.to_string(), "exec".into(), prompt],
+        _ => vec![cli.to_string(), "exec".into(), "--prompt".into(), prompt],
+    };
+    let out = exec_agent(&argv);
+    if !out.is_empty() {
+        return out;
+    }
+    let resource = match facts.get(&Yaml::String("resource".into())) {
+        Some(Yaml::String(s)) => s.clone(),
+        _ => prompt_id.to_string(),
+    };
+    queue_wait(bundle, prompt_id, &resource, facts, 120)
+}
+
+/// One generator->critic->revise outcome for the agent-sync path.
+struct CompassLlmOutcome {
+    concept: Concept,
+    mode: String,
+    cycles: usize,
+    fact_errors: Vec<String>,
+    trace: Vec<(usize, Vec<String>, f64)>,
+}
+
+fn generate_compass_with_llm(
+    conn: &Connection,
+    bundle: &Bundle,
+    module: &str,
+    repo: Option<&str>,
+    cli: &str,
+) -> Result<CompassLlmOutcome, tools_km::ModuleResolutionError> {
+    let facts = tools_km::gather_module_facts(conn, module, repo)?;
+    let resolved_repo = facts.repo.as_deref();
+    let facts_yaml = tools_km::compass_facts_yaml(&facts);
+    let mut trace: Vec<(usize, Vec<String>, f64)> = Vec::new();
+    let mut draft = String::new();
+    let mut fact_errors: Vec<String> = Vec::new();
+    for cycle in 0..=(tasks::MAX_REVISE_CYCLES as usize) {
+        draft = if cycle == 0 {
+            agent_backend_run(cli, "compass-synthesize", &facts_yaml, bundle)
+        } else {
+            let mut revise = facts_yaml.clone();
+            revise.insert(
+                Yaml::String("previous_draft".into()),
+                Yaml::String(draft.clone()),
+            );
+            revise.insert(
+                Yaml::String("errors".into()),
+                Yaml::Array(fact_errors.iter().map(tools_km::ys).collect()),
+            );
+            agent_backend_run(cli, "compass-revise", &revise, bundle)
+        };
+        if draft.is_empty() {
+            let concept = tools_km::generate_compass(conn, bundle, &facts.module, resolved_repo)?;
+            return Ok(CompassLlmOutcome {
+                concept,
+                mode: "deterministic-fallback".to_string(),
+                cycles: cycle,
+                fact_errors: vec!["llm unavailable".to_string()],
+                trace,
+            });
+        }
+        let tmp = Concept {
+            type_: "Compass".to_string(),
+            resource: Some(facts.module.clone()),
+            body: draft.clone(),
+            ..Default::default()
+        };
+        match tools_km::critic_concept(&tmp, conn) {
+            Ok(result) => {
+                fact_errors = result.errors.clone();
+                trace.push((cycle, result.errors, result.quality_score));
+            }
+            Err(e) => return Err(tools_km::ModuleResolutionError(e.0)),
+        }
+        if fact_errors.is_empty() {
+            break;
+        }
+    }
+    let concept =
+        tools_km::compass_concept_from_body(conn, bundle, &facts.module, resolved_repo, &draft)?;
+    Ok(CompassLlmOutcome {
+        concept,
+        mode: "llm".to_string(),
+        cycles: trace.len(),
+        fact_errors,
+        trace,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compass_generate(
+    module: &str,
+    repo: Option<&str>,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+    use_llm: bool,
+    dry_run: bool,
+    show_rejections: bool,
+) -> ExitCode {
+    let knowledge_path = knowledge.map_or_else(knowledge_default, PathBuf::from);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let bundle = resolve_bundle(&knowledge_path);
+    let backend = std::env::var("CAIRN_LLM_BACKEND")
+        .unwrap_or_else(|_| "file-queue".to_string())
+        .to_lowercase();
+
+    if use_llm && matches!(backend.as_str(), "droid" | "opencode" | "claude") {
+        let outcome = match generate_compass_with_llm(&conn, &bundle, module, repo, &backend) {
+            Ok(outcome) => outcome,
+            Err(e) => return module_error_exit(module, &e),
+        };
+        let concept = outcome.concept;
+        let Ok(result) = tools_km::critic_concept(&concept, &conn) else {
+            return cli_err("critic execution failed");
+        };
+        if show_rejections {
+            println!("--- critic trace ({} cycle(s)) ---", outcome.trace.len());
+            for (cycle, errors, quality) in &outcome.trace {
+                let verdict = if errors.is_empty() { "ok" } else { "REJECTED" };
+                println!(
+                    "  cycle {cycle}: quality={quality:.2} ({} error(s)) [{verdict}]",
+                    errors.len()
+                );
+                for e in errors.iter().take(3) {
+                    println!("    - {e}");
+                }
+            }
+            println!();
+        }
+        let fact_errors = &outcome.fact_errors;
+        if dry_run {
+            println!(
+                "Would write compass ({}): {}",
+                outcome.mode, concept.concept_id
+            );
+            println!("  revise cycles: {}", outcome.cycles);
+            println!(
+                "  critic verdict: passed={} quality={:.2} errors={} warnings={}",
+                py_bool(result.passed),
+                result.quality_score,
+                result.errors.len(),
+                result.warnings.len()
+            );
+            for e in fact_errors.iter().take(5) {
+                println!("    {e}");
+            }
+            println!("\n--- body (not written) ---\n");
+            println!("{}", concept.body);
+            return ExitCode::SUCCESS;
+        }
+        if !fact_errors.is_empty() {
+            println!(
+                "compass {}: NOT written — {} unresolved fact error(s) after {} revise cycle(s):",
+                concept.concept_id,
+                fact_errors.len(),
+                outcome.cycles
+            );
+            for e in fact_errors.iter().take(5) {
+                println!("    {e}");
+            }
+            return ExitCode::FAILURE;
+        }
+        if !result.passed {
+            println!(
+                "Compass rejected by critic (quality={:.2}, {} error(s)) — not written.",
+                result.quality_score,
+                result.errors.len()
+            );
+            for e in &result.errors {
+                println!("  ERROR: {e}");
+            }
+            for w in &result.warnings {
+                println!("  warn: {w}");
+            }
+            return ExitCode::FAILURE;
+        }
+        let mut concept = concept;
+        if let Err(e) = bundle.write_concept(&mut concept) {
+            return cli_err(&e.0);
+        }
+        println!(
+            "Generated compass ({}): {}",
+            outcome.mode, concept.concept_id
+        );
+        println!("  revise cycles: {}", outcome.cycles);
+        println!("  fact errors: {}", fact_errors.len());
+        for e in fact_errors.iter().take(5) {
+            println!("    {e}");
+        }
+        println!("\n--- body ---\n");
+        println!("{}", concept.body);
+        return ExitCode::SUCCESS;
+    }
+
+    if use_llm {
+        let facts = match tools_km::gather_module_facts(&conn, module, repo) {
+            Ok(facts) => facts,
+            Err(e) => return module_error_exit(module, &e),
+        };
+        if dry_run {
+            println!("--- dry-run: task not queued ---");
+            println!(
+                "Would queue compass-synthesize task for `{}` ({} symbols, {} key file(s)).",
+                facts.module,
+                facts.symbol_count,
+                facts.key_files.len()
+            );
+            println!("Re-run without --dry-run to enqueue it.");
+            return ExitCode::SUCCESS;
+        }
+        let task = match tasks::create_task(
+            &bundle,
+            "compass-synthesize",
+            &facts.module,
+            tools_km::compass_facts_yaml(&facts),
+            0,
+        ) {
+            Ok(task) => task,
+            Err(e) => return cli_err(&e.0),
+        };
+        println!("Queued compass task: {}", task.id);
+        println!("Any agent with the cairn skill can process it:");
+        println!(
+            "  cairn task show {}        # view the task + facts",
+            task.id
+        );
+        println!("  cairn task claim {}       # claim it", task.id);
+        println!(
+            "  cairn task complete {} --result-file <path>   # submit result",
+            task.id
+        );
+        println!("On completion, run: cairn compass validate  (deterministic critic)");
+        return ExitCode::SUCCESS;
+    }
+
+    let concept = match tools_km::generate_compass(&conn, &bundle, module, repo) {
+        Ok(concept) => concept,
+        Err(e) => return module_error_exit(module, &e),
+    };
+    let Ok(result) = tools_km::critic_concept(&concept, &conn) else {
+        return cli_err("critic execution failed");
+    };
+    if dry_run {
+        println!("--- critic verdict (dry-run; nothing written) ---");
+        critic_verdict_lines(&result);
+        println!("\n--- body (not written) ---\n");
+        println!("{}", concept.body);
+        return ExitCode::SUCCESS;
+    }
+    if !result.passed {
+        println!(
+            "Compass rejected by critic (quality={:.2}, {} error(s)) — not written.",
+            result.quality_score,
+            result.errors.len()
+        );
+        for e in &result.errors {
+            println!("  ERROR: {e}");
+        }
+        for w in &result.warnings {
+            println!("  warn: {w}");
+        }
+        println!(
+            "\nThe deterministic generator is graph-sourced, so this usually means \
+             a stale graph (run `cairn build`) or a generator bug."
+        );
+        return ExitCode::FAILURE;
+    }
+    let mut concept = concept;
+    if let Err(e) = bundle.write_concept(&mut concept) {
+        return cli_err(&e.0);
+    }
+    println!("Generated compass: {}", concept.concept_id);
+    println!(
+        "  quality: {:.2}, errors: {}",
+        result.quality_score,
+        result.errors.len()
+    );
+    for e in &result.errors {
+        println!("  ERROR: {e}");
+    }
+    println!("\n--- body ---\n");
+    println!("{}", concept.body);
+    ExitCode::SUCCESS
+}
+
+fn compass_gaps(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let knowledge_path = knowledge.map_or_else(knowledge_default, PathBuf::from);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let bundle = resolve_bundle(&knowledge_path);
+    let gaps = tools_km::detect_gaps(&conn, &bundle);
+    if gaps.is_empty() {
+        println!("No coverage gaps (all modules have compass files).");
+        return ExitCode::SUCCESS;
+    }
+    println!("{} modules without compass coverage:", gaps.len());
+    for g in &gaps {
+        println!("  {g}");
+    }
+    ExitCode::SUCCESS
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compass_flow(
+    entry: &str,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+    dry_run: bool,
+    as_workflow: bool,
+    max_steps: i64,
+    use_llm: bool,
+    entry_id: Option<&str>,
+) -> ExitCode {
+    let knowledge_path = knowledge.map_or_else(knowledge_default, PathBuf::from);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let bundle = resolve_bundle(&knowledge_path);
+
+    if entry_id.is_none() {
+        let defs: Vec<_> = cairn_query::graph::find_definition(&conn, entry, 50)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| d.name == entry || d.qualified_name.as_deref() == Some(entry))
+            .collect();
+        if defs.len() > 1 {
+            println!(
+                "`{entry}` is ambiguous: {} symbols share the name.",
+                defs.len()
+            );
+            for d in &defs {
+                println!("  {}  {} ({})", d.id, d.file_path, d.repo);
+            }
+            println!(
+                "Re-run with --entry-id <id>, or use `cairn compass flow-gaps --generate` \
+                 for the batch path."
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let facts = match tools_km::gather_flow_facts(&conn, entry, entry_id) {
+        Ok(facts) => facts,
+        Err(e) => return cli_err(&e.to_string()),
+    };
+    if facts.total_steps <= 1 {
+        println!("No outgoing calls traced from `{entry}` -- nothing to document.");
+        println!("Verify the symbol exists and has resolved callees (run `cairn build` first).");
+        return ExitCode::FAILURE;
+    }
+
+    if use_llm {
+        if dry_run {
+            println!("--- dry-run: task not queued ---");
+            println!(
+                "Would queue flow-synthesize task for `{entry}` ({} step(s)).",
+                facts.total_steps
+            );
+            println!("Re-run without --dry-run to enqueue it.");
+            return ExitCode::SUCCESS;
+        }
+        let key = match tools_km::flow_coverage_key(&conn, entry, entry_id, &facts) {
+            Ok(key) => key,
+            Err(e) => return cli_err(&e.to_string()),
+        };
+        let task = match tasks::create_task(
+            &bundle,
+            "flow-synthesize",
+            &key,
+            tools_km::flow_facts_yaml(&facts),
+            0,
+        ) {
+            Ok(task) => task,
+            Err(e) => return cli_err(&e.0),
+        };
+        println!(
+            "Traced {} step(s) from `{entry}` across {} module(s).",
+            facts.total_steps,
+            facts.modules.len()
+        );
+        println!("Queued flow task: {}", task.id);
+        println!("Any agent with the cairn skill can process it:");
+        println!(
+            "  cairn task show {}        # view the task + facts",
+            task.id
+        );
+        println!("  cairn task claim {}       # claim it", task.id);
+        println!(
+            "  cairn task complete {} --result-file <path>   # submit result",
+            task.id
+        );
+        let safe_id = key.replace(['/', '.', '#'], "-");
+        println!("On completion, the critic auto-promotes to compass/flow-{safe_id}.");
+        return ExitCode::SUCCESS;
+    }
+
+    println!(
+        "Traced {} step(s) from `{entry}` across {} module(s).",
+        facts.total_steps,
+        facts.modules.len()
+    );
+    if !facts.branches.is_empty() {
+        println!("  branch points: {}", facts.branches.len());
+    }
+    if !facts.leaves.is_empty() {
+        println!("  terminal calls: {}", facts.leaves.len());
+    }
+    println!();
+
+    let concept = match tools_km::generate_flow_compass(&conn, entry, entry_id, &facts, None, None)
+    {
+        Ok(concept) => concept,
+        Err(e) => return cli_err(&e.to_string()),
+    };
+    let Ok(result) = tools_km::critic_concept(&concept, &conn) else {
+        return cli_err("critic execution failed");
+    };
+
+    let mut steps = Vec::new();
+    if as_workflow {
+        steps = tools_km::flow_to_workflow(&facts, max_steps.max(0) as usize);
+        if dry_run {
+            println!("--- workflow steps (not written) ---");
+            for (i, step) in steps.iter().enumerate() {
+                println!("  {}. {}", i + 1, step.name.clone().unwrap_or_default());
+                if let Some(desc) = &step.description
+                    && !desc.is_empty()
+                {
+                    println!("     {desc}");
+                }
+            }
+            println!();
+        }
+    }
+
+    if dry_run {
+        println!("--- flow trace ---");
+        for line in &facts.chain_lines {
+            println!("  {line}");
+        }
+        println!("\n--- critic verdict (dry-run; nothing written) ---");
+        critic_verdict_lines(&result);
+        println!("\n--- body (not written) ---\n");
+        println!("{}", concept.body);
+        return ExitCode::SUCCESS;
+    }
+
+    if !result.passed {
+        println!(
+            "Flow compass rejected by critic (quality={:.2}, {} error(s)) -- not written.",
+            result.quality_score,
+            result.errors.len()
+        );
+        for e in &result.errors {
+            println!("  ERROR: {e}");
+        }
+        for w in &result.warnings {
+            println!("  warn: {w}");
+        }
+        println!(
+            "\nThe flow body is graph-sourced, so this usually means a stale graph \
+             (run `cairn build`) or a generator bug."
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let mut concept = concept;
+    if let Err(e) = bundle.write_concept(&mut concept) {
+        return cli_err(&e.0);
+    }
+    println!("Generated flow compass: {}", concept.concept_id);
+    println!(
+        "  quality: {:.2}, errors: {}",
+        result.quality_score,
+        result.errors.len()
+    );
+    println!("\n--- body ---\n");
+    println!("{}", concept.body);
+
+    if as_workflow {
+        let workflow_cid = match tools_km::generate_flow_workflow(
+            &bundle,
+            entry,
+            &facts,
+            max_steps.max(0) as usize,
+        ) {
+            Ok(cid) => cid,
+            Err(e) => return cli_err(&e.0),
+        };
+        println!(
+            "Generated flow workflow: {workflow_cid} ({} steps)",
+            steps.len()
+        );
+        println!("  Trace with: cairn knowledge workflow trace \"Flow: {entry}\"");
+    }
+    ExitCode::SUCCESS
+}
+
+/// pathlib `Path(suffix).parent/stem` rendering for a colliding flow title.
+fn flow_gap_suffix_stem(resource: &str, fname: &str) -> String {
+    let suffix = match resource.split_once('#') {
+        Some((_, s)) => s,
+        None => fname,
+    };
+    if suffix.contains('/') {
+        let path = Path::new(suffix);
+        let parent = path.parent().and_then(|p| p.to_str()).unwrap_or("");
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(suffix);
+        format!("{parent}/{stem}")
+    } else {
+        Path::new(suffix)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(suffix)
+            .to_string()
+    }
+}
+
+fn compass_flow_gaps(
+    min_edges: i64,
+    generate: bool,
+    limit: i64,
+    dry_run: bool,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    let knowledge_path = knowledge.map_or_else(knowledge_default, PathBuf::from);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let bundle = resolve_bundle(&knowledge_path);
+    let result = match tools_km::detect_flow_gaps(&conn, &bundle, min_edges) {
+        Ok(result) => result,
+        Err(e) => return cli_err(&e.0),
+    };
+    for cid in &result.unreadable {
+        println!("WARNING: unreadable flow compass file skipped: {cid}");
+    }
+    let uncovered = result.uncovered;
+    let covered = result.covered;
+    if uncovered.is_empty() && covered.is_empty() {
+        println!(
+            "No candidate flows found (min-edges={min_edges}). Run `cairn build` first, \
+             or lower --min-edges."
+        );
+        return ExitCode::SUCCESS;
+    }
+
+    if generate {
+        let targets: &[tools_km::FlowGapEntry] = if limit <= 0 {
+            &uncovered
+        } else {
+            let n = (limit as usize).min(uncovered.len());
+            &uncovered[..n]
+        };
+        println!(
+            "Generating {} flow compass(es) (min-edges={}, {} already documented)...",
+            targets.len(),
+            min_edges,
+            covered.len()
+        );
+        if dry_run {
+            println!("(dry-run: nothing will be written)");
+        }
+        println!();
+
+        let (mut generated, mut rejected, mut skipped, mut errors) =
+            (0usize, 0usize, 0usize, 0usize);
+        for entry in targets {
+            let fname = entry.file.rsplit('/').next().unwrap_or(&entry.file);
+            let display_title = if entry.colliding {
+                format!(
+                    "Flow: {} ({})",
+                    entry.name,
+                    flow_gap_suffix_stem(&entry.resource, fname)
+                )
+            } else {
+                format!("Flow: {}", entry.name)
+            };
+            let entry_id = Some(entry.id.as_str());
+            let facts = match tools_km::gather_flow_facts(&conn, &entry.name, entry_id) {
+                Ok(facts) => facts,
+                Err(e) => {
+                    println!("  ERROR {display_title} ({e})");
+                    errors += 1;
+                    continue;
+                }
+            };
+            if facts.total_steps <= 1 {
+                println!("  SKIP  {:40} (no outgoing calls)", entry.name);
+                skipped += 1;
+                continue;
+            }
+            let concept = match tools_km::generate_flow_compass(
+                &conn,
+                &entry.name,
+                entry_id,
+                &facts,
+                Some(&entry.resource),
+                Some(&display_title),
+            ) {
+                Ok(concept) => concept,
+                Err(e) => {
+                    println!("  ERROR {display_title} ({e})");
+                    errors += 1;
+                    continue;
+                }
+            };
+            let critic_result = match tools_km::critic_concept(&concept, &conn) {
+                Ok(result) => result,
+                Err(e) => {
+                    println!("  ERROR {display_title} ({})", e.0);
+                    errors += 1;
+                    continue;
+                }
+            };
+            if !critic_result.passed {
+                println!(
+                    "  REJECT {display_title} (quality={:.2})",
+                    critic_result.quality_score
+                );
+                rejected += 1;
+                continue;
+            }
+            if dry_run {
+                println!("  WOULD  {display_title}");
+                generated += 1;
+                continue;
+            }
+            let mut concept = concept;
+            if let Err(e) = bundle.write_concept(&mut concept) {
+                println!("  ERROR {display_title} ({})", e.0);
+                errors += 1;
+                continue;
+            }
+            println!(
+                "  OK    {display_title}  (steps={}, quality={:.2})",
+                facts.total_steps, critic_result.quality_score
+            );
+            generated += 1;
+        }
+
+        println!();
+        let action = if dry_run {
+            "would generate"
+        } else {
+            "generated"
+        };
+        println!(
+            "Batch complete: {action} {generated}, {rejected} rejected, {skipped} skipped, \
+             {errors} error(s)."
+        );
+        if !dry_run && (rejected > 0 || errors > 0) {
+            return ExitCode::FAILURE;
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    if !uncovered.is_empty() {
+        println!(
+            "{} undocumented flow(s) (min-edges={}, {} already documented):",
+            uncovered.len(),
+            min_edges,
+            covered.len()
+        );
+        for e in &uncovered {
+            let fname = e.file.rsplit('/').next().unwrap_or(&e.file);
+            println!("  {:40} out={:3}  {}", e.name, e.out_edges, fname);
+        }
+    } else {
+        println!(
+            "All candidate flows are documented ({} total).",
+            covered.len()
+        );
+    }
+    if !covered.is_empty() {
+        println!("\nAlready documented ({}):", covered.len());
+        for e in &covered {
+            let fname = e.file.rsplit('/').next().unwrap_or(&e.file);
+            println!("  {:40} out={:3}  {}  [DONE]", e.name, e.out_edges, fname);
+        }
+    }
+    ExitCode::SUCCESS
+}
+
 // --- wiki group --------------------------------------------------------------
 
 fn wiki_search(query: &str, knowledge: Option<&str>) -> ExitCode {
-    let knowledge_path = knowledge.map_or_else(knowledge_default, PathBuf::from);
+    let knowledge_path = knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from);
     let bundle = resolve_bundle(&knowledge_path);
     let Ok(results) = bundle.search(query, None) else {
         println!("No wiki matching '{query}'.");
@@ -2546,99 +5024,477 @@ fn wiki_search(query: &str, knowledge: Option<&str>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-impl KnowledgeCommand {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Knowledge { .. } => "knowledge",
-            Self::Memory { .. } => "memory",
-            Self::Wiki { .. } => "wiki",
-            Self::Compass { .. } => "compass",
-            Self::Skill { .. } => "skill",
-            Self::Task { .. } => "task",
-            Self::Validate => "validate",
-            Self::ValidatePaths => "validate-paths",
-            Self::Verify => "verify",
-        }
-    }
+/// Python str() of a bool.
+fn py_bool(b: bool) -> &'static str {
+    if b { "True" } else { "False" }
 }
 
-impl MemoryGroup {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Record { .. } => "memory record",
-            Self::Reflect { .. } => "memory reflect",
-            Self::Evolve { .. } => "memory evolve",
-            Self::Search { .. } => "memory search",
-            Self::Timeline { .. } => "memory timeline",
-            Self::Capture { .. } => "memory capture",
-            Self::List { .. } => "memory list",
-            Self::Stats { .. } => "memory stats",
-            Self::Digest { .. } => "memory digest",
-            Self::Promote { .. } => "memory promote",
-            Self::Decay { .. } => "memory decay",
-            Self::Embed { .. } => "memory embed",
-            Self::BatchCritic { .. } => "memory batch-critic",
-            Self::Forget { .. } => "memory forget",
-            Self::Demote { .. } => "memory demote",
-            Self::Purge { .. } => "memory purge",
-            Self::Consolidate { .. } => "memory consolidate",
-            Self::Share { .. } => "memory share",
-            Self::Check { .. } => "memory check",
-        }
-    }
+fn manifest_error_exit(msg: &str) -> ExitCode {
+    eprintln!("Wiki manifest error: {msg}");
+    ExitCode::FAILURE
 }
 
-impl KnowledgeGroup {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Add { .. } => "knowledge add",
-            Self::Import { .. } => "knowledge import",
-            Self::Ingest => "knowledge ingest",
-            Self::Rebuild { .. } => "knowledge rebuild",
-            Self::Islands { .. } => "knowledge islands",
-            Self::Related { .. } => "knowledge related",
-            Self::Chain { .. } => "knowledge chain",
-            Self::Search { .. } => "knowledge search",
-            Self::List { .. } => "knowledge list",
-            Self::Embed { .. } => "knowledge embed",
-            Self::Impact { .. } => "knowledge impact",
-            Self::Remove { .. } => "knowledge remove",
-            Self::Status { .. } => "knowledge status",
-            Self::Export { .. } => "knowledge export",
-            Self::Workflow { .. } => "knowledge workflow",
+#[allow(clippy::too_many_arguments)]
+fn wiki_generate(
+    repo: Option<&str>,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+    dry_run: bool,
+    show_rejections: bool,
+    llm: bool,
+    pages: i64,
+    diagrams: bool,
+    refine_catalog: bool,
+    force: bool,
+) -> ExitCode {
+    let paths = resolve_store(None);
+    let knowledge_path = knowledge.map_or_else(|| paths.knowledge.clone(), PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
+        return ExitCode::FAILURE;
+    };
+    let repos: Vec<String> = match repo {
+        Some(repo) => vec![repo.to_string()],
+        None => {
+            let Ok(rows) = conn.prepare("SELECT id FROM repos").and_then(|mut stmt| {
+                stmt.query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()
+            }) else {
+                return cli_err("failed to list repos");
+            };
+            rows
+        }
+    };
+    if llm {
+        if repos.is_empty() {
+            eprintln!("No repos indexed; run 'cairn build' first.");
+            return ExitCode::FAILURE;
+        }
+        let mut plans = Vec::new();
+        for r in &repos {
+            match tools_wiki::build_page_plan(&conn, r, pages.max(0) as usize) {
+                Ok(plan) => plans.push((r.clone(), plan)),
+                Err(PipelineError::Planner(msg)) => {
+                    eprintln!("Cannot plan wiki pages: {msg}");
+                    return ExitCode::FAILURE;
+                }
+                Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+                Err(PipelineError::Write) => {
+                    return manifest_error_exit(WRITE_FAILED_MSG);
+                }
+            }
+        }
+        if dry_run {
+            for (r, plan) in &plans {
+                println!("--- {r} (dry-run; nothing queued) ---");
+                for page in plan {
+                    println!(
+                        "  {}: {} [module {}]",
+                        page.page_id, page.title, page.module
+                    );
+                }
+            }
+            println!(
+                "Dry-run: planned {} wiki page(s); queued nothing.",
+                plans.iter().map(|(_, p)| p.len()).sum::<usize>()
+            );
+            return ExitCode::SUCCESS;
+        }
+        let live_ids = tools_wiki::live_generation_task_ids(&bundle);
+        let mut queued_total = 0usize;
+        let mut skipped_total = 0usize;
+        let mut adopted_total = 0usize;
+        let mut catalog_total = 0usize;
+        for r in &repos {
+            let result = match tools_wiki::run_wiki_generate(
+                &conn,
+                &bundle,
+                r,
+                pages.max(0) as usize,
+                force,
+                diagrams,
+                refine_catalog,
+            ) {
+                Ok(result) => result,
+                Err(PipelineError::Planner(msg)) => {
+                    eprintln!("Cannot plan wiki pages: {msg}");
+                    return ExitCode::FAILURE;
+                }
+                Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+                Err(PipelineError::Write) => return manifest_error_exit(WRITE_FAILED_MSG),
+            };
+            if let Some(catalog_id) = &result.catalog_task_id {
+                catalog_total += 1;
+                if result.catalog_pending {
+                    println!(
+                        "wiki-catalog task {catalog_id} still pending ({r}); the page tasks queue once it completes:"
+                    );
+                } else {
+                    println!(
+                        "Queued wiki-catalog task {catalog_id}: refine the wiki outline ({r})"
+                    );
+                    println!("Any agent with the cairn skill can process it:");
+                }
+                println!("  cairn task show {catalog_id}        # view the task + facts");
+                println!("  cairn task claim {catalog_id}       # claim it");
+                println!(
+                    "  cairn task complete {catalog_id} --result-file <path>   # submit result"
+                );
+                continue;
+            }
+            let queued_ids: std::collections::HashSet<&String> =
+                result.queued_task_ids.iter().collect();
+            let rows = match tools_wiki::load_manifest(&bundle) {
+                Ok(manifest) => manifest.get("pages").cloned().unwrap_or(json!({})),
+                Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+                Err(_) => return manifest_error_exit(WRITE_FAILED_MSG),
+            };
+            for page in &result.plan {
+                let key = format!("{}/{}", r, page.page_id);
+                let task_id = rows
+                    .get(&key)
+                    .and_then(|row| row.get("task_id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                if task_id.as_ref().is_some_and(|id| queued_ids.contains(id)) {
+                    queued_total += 1;
+                    println!(
+                        "Queued wiki-page task {}: {} ({r})",
+                        task_id.as_deref().unwrap_or_default(),
+                        page.title
+                    );
+                } else if task_id.as_ref().is_some_and(|id| live_ids.contains(id))
+                    && tools_wiki::read_page_concept(&bundle, r, &page.page_id).is_none()
+                {
+                    adopted_total += 1;
+                    println!(
+                        "Adopted live wiki-page task {}: {} ({r})",
+                        task_id.as_deref().unwrap_or_default(),
+                        page.title
+                    );
+                } else {
+                    skipped_total += 1;
+                    println!("Up to date, skipped: {} ({r})", page.title);
+                }
+            }
+        }
+        if catalog_total > 0 {
+            println!(
+                "Re-run 'cairn wiki generate --llm --refine-catalog' after the catalog task completes to queue the page tasks."
+            );
+            return ExitCode::SUCCESS;
+        }
+        let mut summary = format!("Queued {queued_total} new wiki-page task(s); ");
+        if adopted_total > 0 {
+            summary.push_str(&format!("{adopted_total} already in flight; "));
+        }
+        summary.push_str(&format!("{skipped_total} page(s) already up to date. "));
+        println!("{summary}Any agent with the cairn skill can process them:");
+        println!("  cairn task list --kind wiki-page --status pending");
+        println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
+        return ExitCode::SUCCESS;
+    }
+    let mut total = 0usize;
+    let mut seen = 0usize;
+    for r in &repos {
+        let reports =
+            match tools_wiki::generate_wiki_with_critic(&conn, &bundle, r, &paths.workspace) {
+                Ok(reports) => reports,
+                Err(e) => return cli_err(&e.0),
+            };
+        for report in reports {
+            seen += 1;
+            let result = &report.critic;
+            let concept = &report.concept;
+            if dry_run {
+                println!("--- {} (dry-run; not written) ---", concept.concept_id);
+                println!(
+                    "  passed: {}  quality: {:.2}  errors: {}  warnings: {}",
+                    py_bool(result.passed),
+                    result.quality_score,
+                    result.errors.len(),
+                    result.warnings.len()
+                );
+                for e in &result.errors {
+                    println!("    ERROR: {e}");
+                }
+                for w in &result.warnings {
+                    println!("    warn: {w}");
+                }
+                continue;
+            }
+            let mut concept = concept.clone();
+            if show_rejections || !result.passed {
+                println!(
+                    "  generated wiki: {} (quality={:.2}, errors={}, warnings={})",
+                    concept.concept_id,
+                    result.quality_score,
+                    result.errors.len(),
+                    result.warnings.len()
+                );
+                if !result.passed {
+                    for e in &result.errors {
+                        println!("    ERROR: {e}");
+                    }
+                    for w in &result.warnings {
+                        println!("    warn: {w}");
+                    }
+                }
+                if let Err(e) = bundle.write_concept(&mut concept) {
+                    return cli_err(&e.0);
+                }
+                total += 1;
+            } else {
+                if let Err(e) = bundle.write_concept(&mut concept) {
+                    return cli_err(&e.0);
+                }
+                total += 1;
+                println!("  generated wiki: {}", concept.concept_id);
+            }
         }
     }
+    if dry_run {
+        println!("Dry-run: examined {seen} wiki concept(s); wrote nothing.");
+    } else {
+        println!("Generated {total} wiki concepts.");
+    }
+    ExitCode::SUCCESS
 }
 
-impl WikiGroup {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Generate => "wiki generate",
-            Self::Search { .. } => "wiki search",
-            Self::Status { .. } => "wiki status",
-            Self::Retry { .. } => "wiki retry",
-            Self::Export { .. } => "wiki export",
-            Self::Enrich { .. } => "wiki enrich",
-        }
+fn wiki_status(repo: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let paths = resolve_store(None);
+    let knowledge_path = knowledge.map_or_else(|| paths.knowledge.clone(), PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    let manifest = match tools_wiki::load_manifest(&bundle) {
+        Ok(manifest) => manifest,
+        Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+        Err(_) => return manifest_error_exit(WRITE_FAILED_MSG),
+    };
+    let pages = manifest.get("pages").cloned().unwrap_or(json!({}));
+    if pages.as_object().is_none_or(|m| m.is_empty()) {
+        println!("No wiki pages planned; run 'cairn wiki generate --llm' first.");
+        return ExitCode::SUCCESS;
     }
+    let chains = tools_wiki::page_chains(&bundle);
+    let conn = open_db_read_only(&paths.db).ok();
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    let mut staleness_counts = std::collections::BTreeMap::<&str, usize>::new();
+    let mut heads: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    let mut shown = 0usize;
+    let mut keys: Vec<&String> = pages
+        .as_object()
+        .map(|m| m.keys().collect())
+        .unwrap_or_default();
+    keys.sort();
+    for key in keys {
+        let (page_repo, page_id) = tools_wiki::split_page_key(key);
+        if repo.is_some_and(|r| page_repo != r) {
+            continue;
+        }
+        let row = &pages[key];
+        let chain = chains.get(key).map(Vec::as_slice).unwrap_or(&[]);
+        let state = tools_wiki::derived_state(&bundle, &page_repo, &page_id, chain);
+        let head = match heads.get(&page_repo) {
+            Some(head) => head.clone(),
+            None => {
+                let head = tasks::repo_head(conn.as_ref(), Some(&paths.workspace), &page_repo);
+                heads.insert(page_repo.clone(), head.clone());
+                head
+            }
+        };
+        let page_staleness = tools_wiki::staleness(
+            tools_wiki::recorded_sha(&bundle, &page_repo, &page_id).as_deref(),
+            head.as_deref(),
+        );
+        shown += 1;
+        *counts.entry(state.clone()).or_default() += 1;
+        *staleness_counts.entry(page_staleness).or_default() += 1;
+        println!(
+            "  {:<36} {:<12} {:<8} queue_attempts={}",
+            key,
+            state,
+            page_staleness,
+            row.get("queue_attempts")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+        );
+    }
+    let totals = tools_wiki::DERIVED_STATES
+        .iter()
+        .map(|state| format!("{state}={}", counts.get(*state).copied().unwrap_or(0)))
+        .collect::<Vec<_>>()
+        .join("  ");
+    let freshness = ["fresh", "stale", "unknown"]
+        .iter()
+        .map(|s| format!("{s}={}", staleness_counts.get(s).copied().unwrap_or(0)))
+        .collect::<Vec<_>>()
+        .join("  ");
+    println!("Wiki pages: {shown}  {totals}  {freshness}");
+    ExitCode::SUCCESS
 }
 
-impl CompassGroup {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Generate { .. } => "compass generate",
-            Self::List { .. } => "compass list",
-            Self::Validate { .. } => "compass validate",
-            Self::Gaps { .. } => "compass gaps",
-            Self::Flow { .. } => "compass flow",
-            Self::FlowGaps { .. } => "compass flow-gaps",
-        }
+fn wiki_retry(repo: Option<&str>, knowledge: Option<&str>) -> ExitCode {
+    let knowledge_path = knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    let outcome = match tools_wiki::retry_failed_pages(&bundle, repo) {
+        Ok(outcome) => outcome,
+        Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+        Err(PipelineError::Planner(msg)) => return manifest_error_exit(&msg),
+        Err(PipelineError::Write) => return manifest_error_exit(WRITE_FAILED_MSG),
+    };
+    if outcome.no_pages {
+        println!("No wiki pages planned; run 'cairn wiki generate --llm' first.");
+        return ExitCode::SUCCESS;
     }
+    if outcome.requeued.is_empty() {
+        println!("Nothing to retry: no failed wiki pages.");
+        return ExitCode::SUCCESS;
+    }
+    for page in &outcome.requeued {
+        println!(
+            "Re-queued wiki-page task {}: {} (attempt {})",
+            page.task_id, page.key, page.attempt
+        );
+    }
+    if outcome.write_failed {
+        eprintln!(
+            "Failed to write the wiki manifest; the {} re-queued task(s) above are already live in the task queue — inspect them with 'cairn task list --kind wiki-page --status pending'.",
+            outcome.requeued.len()
+        );
+        return ExitCode::FAILURE;
+    }
+    println!(
+        "Re-queued {} failed wiki page(s). Any agent with the cairn skill can process them:",
+        outcome.requeued.len()
+    );
+    println!("  cairn task list --kind wiki-page --status pending");
+    println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
+    ExitCode::SUCCESS
+}
+
+/// Python non-strict `Path.resolve()`.
+fn resolve_lenient(path: &Path) -> PathBuf {
+    if let Ok(c) = path.canonicalize() {
+        return c;
+    }
+    let mut ancestor = path.parent();
+    while let Some(a) = ancestor {
+        if let Ok(base) = a.canonicalize() {
+            let mut resolved = base;
+            if let Ok(tail) = path.strip_prefix(a) {
+                resolved.extend(tail.components());
+            }
+            return resolved;
+        }
+        ancestor = a.parent();
+    }
+    path.to_path_buf()
+}
+
+fn wiki_export(out_dir: &str, force: bool, knowledge: Option<&str>) -> ExitCode {
+    let out_dir = Path::new(out_dir);
+    if out_dir.exists() && !out_dir.is_dir() {
+        eprintln!("Export target {} is not a directory.", out_dir.display());
+        return ExitCode::FAILURE;
+    }
+    if out_dir.is_dir()
+        && out_dir
+            .read_dir()
+            .is_ok_and(|mut entries| entries.next().is_some())
+        && !force
+    {
+        eprintln!(
+            "Refusing to export into non-empty directory {}; pass --force to overwrite.",
+            out_dir.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    let knowledge_path = knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    let manifest = match tools_wiki::load_manifest(&bundle) {
+        Ok(manifest) => manifest,
+        Err(PipelineError::Manifest(msg)) => return manifest_error_exit(&msg),
+        Err(_) => return manifest_error_exit(WRITE_FAILED_MSG),
+    };
+    let out_root = resolve_lenient(out_dir);
+    let mut exported = 0usize;
+    let pages = manifest.get("pages").cloned().unwrap_or(json!({}));
+    let mut keys: Vec<&String> = pages
+        .as_object()
+        .map(|m| m.keys().collect())
+        .unwrap_or_default();
+    keys.sort();
+    for key in keys {
+        let (page_repo, page_id) = tools_wiki::split_page_key(key);
+        let Some(concept) = tools_wiki::read_page_concept(&bundle, &page_repo, &page_id) else {
+            continue;
+        };
+        let target = resolve_lenient(&out_dir.join(&page_repo).join(format!("{page_id}.md")));
+        if !target.starts_with(&out_root) {
+            eprintln!("Skipped {key}: page key escapes the export directory.");
+            continue;
+        }
+        if let Err(e) = concept.to_file(&target) {
+            return cli_err(&format!("concept write failed: {e}"));
+        }
+        exported += 1;
+    }
+    println!("Exported {exported} page(s) to {}", out_dir.display());
+    ExitCode::SUCCESS
+}
+
+fn wiki_enrich(
+    page_id: Option<&str>,
+    repo: Option<&str>,
+    enrich_all: bool,
+    knowledge: Option<&str>,
+) -> ExitCode {
+    if page_id.is_some() && enrich_all {
+        eprintln!("Enrich one PAGE_ID or --all, not both.");
+        return ExitCode::FAILURE;
+    }
+    if page_id.is_none() && !enrich_all {
+        eprintln!("Enrich one PAGE_ID or --all.");
+        return ExitCode::FAILURE;
+    }
+    let knowledge_path = knowledge.map_or_else(|| resolve_store(None).knowledge, PathBuf::from);
+    let bundle = resolve_bundle(&knowledge_path);
+    if let Err(PipelineError::Manifest(msg)) = tools_wiki::load_manifest(&bundle) {
+        return manifest_error_exit(&msg);
+    }
+    let queued = match tools_wiki::queue_enrich_tasks(&bundle, repo, page_id) {
+        Ok(queued) => queued,
+        Err(e) => return cli_err(&e.0),
+    };
+    let scope = repo.map_or_else(String::new, |r| format!(" in repo '{r}'"));
+    if queued.is_empty() && !enrich_all {
+        eprintln!(
+            "Cannot enrich '{}': no wiki page to enrich for it{scope}.",
+            page_id.unwrap_or_default()
+        );
+        return ExitCode::FAILURE;
+    }
+    for task in &queued {
+        println!(
+            "Queued wiki-page-enrich task {}: {} ({})",
+            task.task_id, task.resource, task.repo
+        );
+    }
+    if queued.is_empty() {
+        println!("Nothing to enrich: no wiki pages to enrich{scope}.");
+        return ExitCode::SUCCESS;
+    }
+    println!(
+        "Queued {} wiki-page-enrich task(s). Any agent with the cairn skill can process them:",
+        queued.len()
+    );
+    println!("  cairn task list --kind wiki-page-enrich --status pending");
+    println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
+    ExitCode::SUCCESS
 }
 
 #[cfg(test)]
@@ -2663,16 +5519,103 @@ mod tests {
         tree::<WorkflowGroup>().debug_assert();
     }
 
+    fn files_under(root: &Path) -> usize {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .map(|e| {
+                if e.path().is_dir() {
+                    files_under(&e.path())
+                } else {
+                    1
+                }
+            })
+            .sum()
+    }
+
     #[test]
-    fn stub_exit_is_failure_with_diagnostic() {
-        assert_eq!(run(KnowledgeCommand::Verify), ExitCode::FAILURE);
+    fn memory_digest_empty_store_sentinel_is_pinned() {
+        // session_start suppresses exactly this line; the hook and the digest
+        // share the constant, and an empty store must produce nothing else.
+        let env = crate::test_env::EnvScope::new("digest-empty");
+        let root = env.dir().join("store");
+        let db = root.join("graph.db");
+        let knowledge = root.join("knowledge");
+        let lines = digest_lines(
+            5,
+            Some(db.to_str().expect("utf8")),
+            Some(knowledge.to_str().expect("utf8")),
+        )
+        .expect("digest");
+        assert_eq!(lines, vec![EMPTY_DIGEST.to_string()]);
+    }
+
+    #[test]
+    fn memory_record_recurrence_key_gates_capture_per_signature() {
+        let env = crate::test_env::EnvScope::new("recurrence");
+        let root = env.dir().join("store");
+        std::fs::create_dir_all(&root).expect("root");
+        let db = root.join("graph.db");
+        let knowledge = root.join("knowledge");
+        let record = |sig: &str| {
+            memory_record(
+                "mistake",
+                "Tool failure: Bash",
+                "Bash failed.\n\nWhy: hook.\n\nHow to apply: check first.",
+                None,
+                0.3,
+                Some(sig),
+                None,
+                Some(db.to_str().expect("utf8")),
+                Some(knowledge.to_str().expect("utf8")),
+            )
+        };
+        assert_eq!(record("aaaaaaaaaaaaaaaa"), ExitCode::SUCCESS);
+        assert_eq!(
+            files_under(&knowledge),
+            0,
+            "first occurrence registers quietly"
+        );
+        assert_eq!(record("bbbbbbbbbbbbbbbb"), ExitCode::SUCCESS);
+        assert_eq!(
+            files_under(&knowledge),
+            0,
+            "a different signature is its own first occurrence"
+        );
+        assert_eq!(record("aaaaaaaaaaaaaaaa"), ExitCode::SUCCESS);
+        assert!(
+            files_under(&knowledge) > 0,
+            "the second occurrence is captured"
+        );
+    }
+
+    #[test]
+    fn workflow_sync_requires_a_ref_or_all() {
+        let code = run(KnowledgeCommand::Knowledge {
+            command: KnowledgeGroup::Workflow {
+                command: WorkflowGroup::Sync {
+                    reference: None,
+                    all: false,
+                    dry_run: false,
+                    max_steps: 20,
+                    db: None,
+                    knowledge: None,
+                },
+            },
+        });
+        assert_eq!(code, ExitCode::FAILURE);
     }
 
     #[test]
     fn py_title_and_word_match_track_python() {
-        assert_eq!(py_title("golden-capture_rule"), "Golden-Capture_Rule");
-        assert_eq!(py_title("release notes v2"), "Release Notes V2");
-        assert_eq!(py_title("it's a title"), "It'S A Title");
+        assert_eq!(
+            tools_km::py_title("golden-capture_rule"),
+            "Golden-Capture_Rule"
+        );
+        assert_eq!(tools_km::py_title("release notes v2"), "Release Notes V2");
+        assert_eq!(tools_km::py_title("it's a title"), "It'S A Title");
         assert!(has_word("call main() to start", "main"));
         assert!(!has_word("domain", "main"));
         assert!(!has_word("mainframe", "main"));
@@ -2687,6 +5630,76 @@ mod tests {
         assert_eq!(
             unique_slug("release-notes", "cairn", &mut seen),
             "release-notes-cairn-2"
+        );
+    }
+
+    #[test]
+    fn task_complete_refuses_a_missing_store_without_fabricating_one() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let parent =
+            std::env::temp_dir().join(format!("cairn-task-nostore-{}-{nanos}", std::process::id()));
+        let db = parent.join("store.kg");
+        let code = task_complete(
+            "sometask",
+            Some("result"),
+            None,
+            "",
+            Some(&db.to_string_lossy()),
+            None,
+        );
+        assert_eq!(code, std::process::ExitCode::FAILURE);
+        assert!(!parent.exists(), "no store directory may be fabricated");
+    }
+
+    #[test]
+    fn validate_paths_mark_closes_the_stale_memory_interval() {
+        let env = crate::test_env::EnvScope::new("vp-mark");
+        let home = env.dir().to_path_buf();
+        let knowledge = home.join(".knowledge");
+        let db = home.join("store.kg");
+        // SAFETY: EnvScope holds ENV_LOCK and restores every pinned var on drop.
+        unsafe {
+            std::env::set_var("CAIRN_KNOWLEDGE", &knowledge);
+            std::env::set_var("CAIRN_DB", &db);
+        }
+        let memory = knowledge.join("memory/tribal");
+        std::fs::create_dir_all(&memory).expect("memory dir");
+        std::fs::write(
+            memory.join("dead-ref.md"),
+            "---\ntype: Memory\ntitle: dead ref\ntags: []\n---\n\nCites `NoSuchSymbol`.\n",
+        )
+        .expect("memory file");
+        {
+            let conn = cairn_store::conn::open_writable(&db).expect("db");
+            cairn_store::schema::apply_schema(&conn).expect("schema");
+        }
+
+        let code = validate_paths_cmd(None, None, true);
+        assert_eq!(code, ExitCode::FAILURE, "one stale concept -> exit 1");
+
+        let marked = std::fs::read_to_string(memory.join("dead-ref.md")).expect("reread");
+        assert!(
+            marked.contains("stale: true"),
+            "stale flag missing:\n{marked}"
+        );
+        assert!(
+            marked.contains("valid_until:"),
+            "marking must close the interval with valid_until=now:\n{marked}"
+        );
+        let conn = rusqlite::Connection::open(&db).expect("reopen");
+        let valid_until: Option<String> = conn
+            .query_row(
+                "SELECT valid_until FROM memory_validity WHERE concept_id = 'memory/tribal/dead-ref'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("validity row");
+        assert!(
+            valid_until.is_some(),
+            "memory_validity.valid_until must not be NULL"
         );
     }
 }

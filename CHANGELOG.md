@@ -12,10 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+
+## [0.23.1] - 2026-10-25
 ### Added
 - PyPI wheels bundle the rust engine binary (spec D-011, exec-shim binding): the daemon defaults to rust when the bundled binary is present (`CAIRN_RUST_BIN` env > bundled package path > PATH; the python fallback and `CAIRN_DAEMON_IMPL` precedence are unchanged), the release pipeline injects the per-platform binary into the wheel builds while the sdist stays binary-free, and `scripts/rust_migration/wheel_smoke.sh` proves the installed product end to end (fresh venv, C-4 machine contracts, binary discovery).
+- The Python engine is removed: the PyPI console script execs the bundled Rust binary for every command (the Python CLI runs only when no binary is present), the remaining CLI surface (task/wiki/hooks, lifecycle/ops, graph analytics, knowledge/workflow/memory/compass, ask/context/review) is ported to cairn-cli, and the parity oracles are frozen at the last Python capture (the Rust goldens are the spec of record).
 
 ### Fixed
+- Rust store migration rebuilds a legacy `dataflow` table to its `(symbol, repo)` key whenever its shape requires it, even when the migration marker is already recorded (repairs stores opened by 0.23.0 binaries), inside one transaction; the Rust daemon's writable tool connections apply the store pragmas (WAL, mmap, sqlite-vec).
+- Config files are never overwritten when they cannot be read or backed up: rust `install-agents` aborts a client whose existing config cannot be backed up (matching python), and saving dashboard settings refuses to replace an unparseable `config.json` and keeps its non-scalar keys (rust and python).
+- Rust `cairn build --staging` swaps the staged store into place under the build lock instead of leaving `<db>.tmp` behind; rebuilding into a populated store replaces it (full build) or only the named repo (`--repo`) instead of failing on id collisions; rust incremental writers and the watcher take the build lock.
+- Call, contains and decorator edges are attributed to the enclosing same-named owner instead of the first same-named symbol in the file; `trace_flow` reports each node and cycle at its shortest depth and explores its subtree from there (rust and python).
+- Incremental update detects files changed since the last index (not only uncommitted ones), reads git paths NUL-separated and reports git failures; incoming-edge repair keeps receiver and arity signals, spans repos, chunks large name sets, leaves LSP-upgraded edges alone and keeps closure/dataflow in sync, so incremental results match a fresh build (adds nullable `edges.ref_name`, `receiver_type`, `call_arity`); import-aware resolution no longer rewards deeper wrong-module matches (rust and python).
 - Flaky `flow_golden` rust test: TempStore scratch dirs named from wall-clock nanos collided under macOS parallel test threads; now named from a process-global counter.
 - `install-agents` client-schema conformance, verified against each agent's official docs: agy (Antigravity) workspace installs now write the documented `.agents/mcp_config.json` instead of ignoring workspace scope, its global path is `~/.gemini/config/` on every Unix (no XDG deviation), and its entry drops the undocumented `type` field; Cursor entries drop the `type` field (its remote schema documents `url`+`headers` only); the install probe and `cairn doctor` audit both new paths.
 

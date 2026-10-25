@@ -2,6 +2,7 @@
 //! the graph-read surface (def/callers/callees/search/impact/deps/tree/path/
 //! taint/federated-search/pack).
 
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -56,19 +57,13 @@ pub enum CoreCommand {
     #[command(name = "federated-search")]
     FederatedSearch(FederatedSearchArgs),
     /// Semantic (concept) search over symbols.
-    Semantic {
-        /// Query text.
-        query: String,
-    },
+    Semantic(SemanticArgs),
     /// Build the semantic embedding index over the symbol graph.
-    Embed,
+    Embed(EmbedArgs),
     /// Search indexed files and group matches by enclosing symbol.
-    Grep {
-        /// Pattern to search for.
-        pattern: String,
-    },
+    Grep(GrepArgs),
     /// Show directory clusters, hubs, and workspace hotspots.
-    Map,
+    Map(MapArgs),
     /// Directory/package structure of REPO with symbol counts.
     Tree(TreeArgs),
     /// Build a deterministic, token-budgeted context pack for a task.
@@ -77,49 +72,37 @@ pub enum CoreCommand {
     #[command(name = "path")]
     Path(PathArgs),
     /// Natural-language question across all layers.
-    Ask {
-        /// Question text.
-        question: String,
-    },
+    Ask(AskArgs),
     /// Load relevant context (compass + memory + wiki) for a file.
-    Context {
-        /// File to load context for.
-        file_path: String,
-    },
+    Context(ContextArgs),
     /// Trace inter-procedural taint paths from a source to a sink.
     Taint(TaintArgs),
     /// Show reverse dependents for symbols touched by a git diff.
-    Blast,
+    Blast(BlastArgs),
     /// Compute Louvain communities over structural edges.
-    Communities,
+    Communities(CommunitiesArgs),
     /// Precomputed dataflow index for public symbols.
     Dataflow {
         #[command(subcommand)]
         command: DataflowCommand,
     },
     /// Print rationale comments (NOTE/WHY/HACK), ordered by hotness.
-    Rationale,
+    Rationale(RationaleArgs),
     /// Review-context pack and review-loop hooks for a change.
-    Review,
-    /// List open PRs with CI and review state from gh.
-    Prs,
-    /// Run performance, scalability, or agent-effort benchmarks.
-    Bench,
-    /// Run retrieval evaluation harness across corpora.
-    Eval,
+    Review(ReviewArgs),
     /// Generate visual diagrams from the graph.
-    Viz,
+    Viz(VizArgs),
 }
 
 #[derive(Subcommand)]
 pub enum DataflowCommand {
     /// Build the dataflow index.
-    Build,
+    Build(DataflowBuildArgs),
     /// Look up a symbol's dataflow facts.
-    Lookup,
+    Lookup(DataflowLookupArgs),
 }
 
-/// Run a core command; unported surfaces keep the Phase 3a stub diagnostic.
+/// Run a core command.
 pub fn run(command: CoreCommand) -> ExitCode {
     match command {
         CoreCommand::Init(args) => init(args),
@@ -140,59 +123,21 @@ pub fn run(command: CoreCommand) -> ExitCode {
         CoreCommand::Pack(args) => pack::run(args),
         CoreCommand::Path(args) => path(args),
         CoreCommand::Taint(args) => taint(args),
-        CoreCommand::Dataflow { command } => not_ported(match command {
-            DataflowCommand::Build => "dataflow build",
-            DataflowCommand::Lookup => "dataflow lookup",
-        }),
-        other => not_ported(other.name()),
-    }
-}
-
-fn not_ported(name: &str) -> ExitCode {
-    display::error(&format!(
-        "cairn {name} is not implemented in the Rust CLI yet"
-    ));
-    ExitCode::FAILURE
-}
-
-impl CoreCommand {
-    /// The python-CLI command name for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Init { .. } => "init",
-            Self::Config { .. } => "config",
-            Self::Build { .. } => "build",
-            Self::ImportScip { .. } => "import-scip",
-            Self::Stats { .. } => "stats",
-            Self::Checkpoint { .. } => "checkpoint",
-            Self::Update { .. } => "update",
-            Self::Def { .. } => "def",
-            Self::Callers { .. } => "callers",
-            Self::Search { .. } => "search",
-            Self::Callees { .. } => "callees",
-            Self::Impact { .. } => "impact",
-            Self::Deps { .. } => "deps",
-            Self::FederatedSearch { .. } => "federated-search",
-            Self::Semantic { .. } => "semantic",
-            Self::Embed => "embed",
-            Self::Grep { .. } => "grep",
-            Self::Map => "map",
-            Self::Tree { .. } => "tree",
-            Self::Pack(_) => "pack",
-            Self::Path { .. } => "path",
-            Self::Ask { .. } => "ask",
-            Self::Context { .. } => "context",
-            Self::Taint { .. } => "taint",
-            Self::Blast => "blast",
-            Self::Communities => "communities",
-            Self::Dataflow { .. } => "dataflow",
-            Self::Rationale => "rationale",
-            Self::Review => "review",
-            Self::Prs => "prs",
-            Self::Bench => "bench",
-            Self::Eval => "eval",
-            Self::Viz => "viz",
-        }
+        CoreCommand::Semantic(args) => semantic(args),
+        CoreCommand::Embed(args) => embed(args),
+        CoreCommand::Grep(args) => grep(args),
+        CoreCommand::Map(args) => map(args),
+        CoreCommand::Blast(args) => blast(args),
+        CoreCommand::Communities(args) => communities(args),
+        CoreCommand::Dataflow { command } => match command {
+            DataflowCommand::Build(args) => dataflow_build(args),
+            DataflowCommand::Lookup(args) => dataflow_lookup(args),
+        },
+        CoreCommand::Rationale(args) => rationale(args),
+        CoreCommand::Viz(args) => viz(args),
+        CoreCommand::Ask(args) => ask(args),
+        CoreCommand::Context(args) => context(args),
+        CoreCommand::Review(args) => review(args),
     }
 }
 
@@ -221,7 +166,7 @@ fn fmt_pct(share: f64) -> String {
 }
 
 /// `_shorten`: strip the workspace root for display.
-fn shorten(path: &str) -> String {
+pub(crate) fn shorten(path: &str) -> String {
     let ws = store_paths::resolve_workspace(None);
     let ws = ws.to_string_lossy().to_string();
     let prefix = format!("{ws}/");
@@ -268,8 +213,16 @@ fn fresh_conn(db: &str, refresh: Option<bool>) -> Result<Connection, String> {
     Ok(conn)
 }
 
-/// Probe indexed files and repair drift before a read (watcher.refresh_for_query).
-fn refresh_conn(conn: &mut Connection, db: &str, repair: Option<bool>) -> Result<(), String> {
+/// Drift still present after a probe: repair disabled or lock contention.
+struct StaleDrift(String);
+
+/// Probe indexed files and repair drift (watcher.refresh_for_query); a failed
+/// strict repair is an error, unrepaired drift carries its banner text.
+fn refresh_probe(
+    conn: &mut Connection,
+    db: &str,
+    repair: Option<bool>,
+) -> Result<Option<StaleDrift>, String> {
     let repair = repair.unwrap_or_else(|| {
         !std::env::var("CAIRN_NO_REFRESH")
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
@@ -280,25 +233,45 @@ fn refresh_conn(conn: &mut Connection, db: &str, repair: Option<bool>) -> Result
     drifted.sort();
     drifted.dedup();
     if drifted.is_empty() || !repair {
-        banner_if_unrepaired(&drifted, false);
-        return Ok(());
+        return Ok(stale_banner(&drifted));
     }
-    cairn_build::incremental::repair_changed(conn, &workspace, &drifted, true).map(|_| ())
+    let _lock = match cairn_store::swap::build_lock(Path::new(db)) {
+        Ok(lock) => lock,
+        // Contention: a concurrent build owns the store; defer the repair and
+        // let the read proceed against the stale graph.
+        Err(_) => return Ok(stale_banner(&drifted)),
+    };
+    cairn_build::incremental::repair_changed(conn, &workspace, &drifted, true).map(|_| None)
 }
 
-fn banner_if_unrepaired(drifted: &[String], repaired: bool) {
-    if drifted.is_empty() || repaired {
-        return;
+fn stale_banner(drifted: &[String]) -> Option<StaleDrift> {
+    if drifted.is_empty() {
+        return None;
     }
     let shown: Vec<String> = drifted.iter().take(3).cloned().collect();
     let mut line = shown.join(", ");
     if drifted.len() > 3 {
         line.push_str(&format!(", +{} more", drifted.len() - 3));
     }
-    eprintln!(
+    Some(StaleDrift(format!(
         "Stale graph: {} file(s) not refreshed: {line}",
         drifted.len()
-    );
+    )))
+}
+
+/// Probe indexed files and repair drift before a read (watcher.refresh_for_query).
+fn refresh_conn(conn: &mut Connection, db: &str, repair: Option<bool>) -> Result<(), String> {
+    match refresh_probe(conn, db, repair)? {
+        Some(stale) => {
+            banner_if_unrepaired(&stale.0);
+            Ok(())
+        }
+        None => Ok(()),
+    }
+}
+
+fn banner_if_unrepaired(banner: &str) {
+    eprintln!("{banner}");
 }
 
 /// Registered workspace whose canonical store backs this db, else resolve_workspace.
@@ -437,10 +410,14 @@ fn init(args: crate::cmds_core::InitArgs) -> ExitCode {
     }
 
     if args.import_docs {
-        rail.warn("docs/ ingestion is not implemented in the Rust CLI yet; run the Python CLI for --import-docs");
+        rail.warn(
+            "--import-docs is retired: run `cairn knowledge import <dir>` for markdown import",
+        );
     }
-    if args.with_hooks {
-        rail.warn("git hook installation is not implemented in the Rust CLI yet; run the Python CLI for --with-hooks");
+    if args.with_hooks
+        && crate::cmds_system::run_hooks_install(args.ws_arg.clone()) != ExitCode::SUCCESS
+    {
+        rail.warn("git hooks not installed; run `cairn hooks install` for details");
     }
 
     rail.close("Done");
@@ -645,11 +622,11 @@ fn config(args: crate::cmds_core::ConfigArgs) -> ExitCode {
         backend => {
             if env.hash_fallback {
                 println!(
-                    "embed:      {}  ⚠ fallback (sentence-transformers not installed)",
+                    "embed:      {}  ⚠ hash fallback (token-overlap vectors)",
                     env.model
                 );
                 println!(
-                    "            for real embeddings: uv tool install 'cairn-intel[semantic]' --force"
+                    "            for real vectors: CAIRN_EMBED_BACKEND=omlx | ollama | server (+ CAIRN_EMBED_BASE_URL)"
                 );
             } else if backend == cairn_query::tools_search::EffectiveBackend::Hash {
                 println!("embed:      {}  (CAIRN_EMBED_BACKEND=hash)", env.model);
@@ -856,31 +833,52 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
     }
     let db = args.db.clone().unwrap_or_else(default_db);
     let workspace = args.workspace.clone().unwrap_or_else(|| ".".to_string());
-    let target_db = if args.staging {
-        format!("{db}.tmp")
-    } else {
-        db.clone()
-    };
     let started = Instant::now();
+    let checkpoint = |path: &Path| {
+        if let Ok(conn) = Connection::open(path) {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+    };
+    let closure = |path: &Path| -> Result<i64, String> {
+        Connection::open(path)
+            .map_err(|e| e.to_string())
+            .and_then(|mut conn| {
+                cairn_build::closure::build_transitive_closure(&mut conn, 4)
+                    .map(|outcome| outcome.rows as i64)
+            })
+            .map_err(|message| format!("closure build failed: {message}"))
+    };
+    let empty_refusal = format!(
+        "no source files found under {workspace} — refusing to swap an empty build over {db}"
+    );
+    let mut staged_closure_rows: Option<i64> = None;
 
     let mut rail = Rail::new("Building graph");
     rail.start("Scanning files");
-    match cairn_build::builder::build_graph(&workspace, &target_db, args.repo.as_deref(), None) {
-        Err(message) => {
-            if args.staging {
-                let _ = std::fs::remove_file(&target_db);
+    let built = if args.staging {
+        // Closure and checkpoint land in the staged store, under the lock, before the swap.
+        cairn_build::builder::build_graph_with(&workspace, &db, None, None, |staged, summary| {
+            if summary.files == 0 {
+                return Err(empty_refusal.clone());
             }
+            if args.with_closure {
+                staged_closure_rows = Some(closure(staged)?);
+            }
+            checkpoint(staged);
+            Ok(())
+        })
+    } else {
+        cairn_build::builder::build_graph(&workspace, &db, args.repo.as_deref(), None)
+    };
+    match built {
+        Err(message) => {
             rail.fail_close();
             command_error(&message)
         }
         Ok((summary, _timings)) => {
             if args.staging && summary.files == 0 {
-                let _ = std::fs::remove_file(&target_db);
                 rail.fail_close();
-                return command_error(&format!(
-                    "no source files found under {workspace} — refusing to swap \
-                     an empty build over {db}"
-                ));
+                return command_error(&empty_refusal);
             }
             rail.tick(&format!("{} found", fmt_int(summary.files as i64)));
             rail.finish(&format!("{} found", fmt_int(summary.files as i64)));
@@ -893,21 +891,20 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
 
             if args.with_closure {
                 rail.start("Transitive closure");
-                match Connection::open(&target_db)
-                    .map_err(|e| e.to_string())
-                    .and_then(|mut conn| {
-                        cairn_build::closure::build_transitive_closure(&mut conn, 4)
-                            .map(|outcome| outcome.rows as i64)
-                    }) {
+                let rows = match staged_closure_rows {
+                    Some(rows) => Ok(rows),
+                    None => closure(Path::new(&db)),
+                };
+                match rows {
                     Ok(rows) => rail.finish(&format!("{} edges", fmt_int(rows))),
                     Err(message) => {
                         rail.fail_close();
-                        return command_error(&format!("closure build failed: {message}"));
+                        return command_error(&message);
                     }
                 }
             }
-            if let Ok(conn) = Connection::open(&target_db) {
-                let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+            if !args.staging {
+                checkpoint(Path::new(&db));
             }
 
             let mut kv_pairs: Vec<(String, String)> = vec![
@@ -919,6 +916,18 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
             ];
             if summary.skipped > 0 {
                 kv_pairs.push(("skipped".into(), fmt_int(summary.skipped as i64)));
+            }
+            if let Some(scip) = &summary.scip
+                && scip.edges > 0
+            {
+                kv_pairs.push((
+                    "scip".into(),
+                    format!(
+                        "{} edges ({} disagreements)",
+                        fmt_int(scip.edges as i64),
+                        fmt_int(scip.disagreements as i64)
+                    ),
+                ));
             }
             let resolution = &summary.resolution;
             let total_edges = i64::max(summary.edges as i64, 1);
@@ -1165,7 +1174,7 @@ fn checkpoint(args: crate::cmds_core::CheckpointArgs) -> ExitCode {
 }
 
 /// `_human_bytes`: B/KB/MB/GB with no decimals, TB with one.
-fn human_bytes(mut n: f64) -> String {
+pub(crate) fn human_bytes(mut n: f64) -> String {
     for unit in ["B", "KB", "MB", "GB"] {
         if n < 1024.0 {
             return format!("{n:.0} {unit}");
@@ -2102,6 +2111,1490 @@ fn taint(args: crate::cmds_core::TaintArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+// --- cairn semantic / embed ----------------------------------------------------
+
+use cairn_query::tools_search::{self, EffectiveBackend};
+
+/// The `_exit_backend_unavailable` arms: server-family probes name the server;
+/// local backends name the install hint.
+fn exit_backend_unavailable() -> ExitCode {
+    let server_family = matches!(
+        tools_search::backend_name().as_str(),
+        "server" | "omlx" | "ollama"
+    );
+    if !server_family {
+        display::error("Semantic dependencies unavailable");
+        display::dim(&tools_search::install_hint());
+        return ExitCode::FAILURE;
+    }
+    display::error("Embedding server unavailable");
+    match tools_search::server_base_url(&tools_search::backend_name()) {
+        Ok(base) => {
+            let base = base.trim_end_matches('/');
+            display::dim(
+                format!(
+                "Availability probe failed: GET {base}/models must return 200 and list model '{}'.",
+                tools_search::server_model()
+            )
+            .as_str(),
+            );
+            display::dim(
+                format!(
+                "Start the embedding server at {base} (verify with `curl {base}/models`), then re-run; `cairn doctor` checks probe, parity, and latency."
+            )
+            .as_str(),
+            );
+        }
+        Err(message) => {
+            display::dim(&message);
+            display::dim("Run `cairn doctor` for embedding backend diagnostics.");
+        }
+    }
+    ExitCode::FAILURE
+}
+
+fn embed_count(conn: &Connection, model: &str) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM embeddings WHERE model = ?1",
+        rusqlite::params![model],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
+}
+
+/// semantic handler.
+fn semantic(args: crate::cmds_core::SemanticArgs) -> ExitCode {
+    let env = tools_search::semantic_env(None);
+    if env.backend == EffectiveBackend::Unavailable {
+        return exit_backend_unavailable();
+    }
+    let db = db_arg(&args.db);
+    let Ok(conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    if embed_count(&conn, &env.model) == 0 {
+        display::warning(&format!(
+            "Semantic index is empty under model '{}'. Run `cairn embed` once to index, then retry.",
+            env.model
+        ));
+        return ExitCode::FAILURE;
+    }
+    let rows = tools_search::semantic_search(&conn, &args.query, args.limit, args.threshold, &env);
+    let rows_json: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            let mut map = Map::new();
+            map.insert("id".into(), Value::from(row.id.clone()));
+            map.insert("name".into(), Value::from(row.name.clone()));
+            map.insert("kind".into(), Value::from(row.kind.clone()));
+            map.insert(
+                "qualified_name".into(),
+                row.qualified_name
+                    .clone()
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
+            map.insert("file_path".into(), Value::from(row.file_path.clone()));
+            map.insert("repo".into(), Value::from(row.repo.clone()));
+            map.insert("score".into(), number_value(row.score));
+            map.insert("chunk".into(), Value::from(row.chunk.clone()));
+            map.insert("provenance".into(), Value::from(row.provenance.clone()));
+            map.insert("reranked".into(), Value::from(row.reranked));
+            if row.reranked {
+                map.insert("rerank_score".into(), number_value(row.score));
+            }
+            if args.include_callers {
+                let callers = attach_neighbors(&conn, &row.name, true);
+                let callees = attach_neighbors(&conn, &row.name, false);
+                map.insert("callers".into(), Value::Array(callers));
+                map.insert("callees".into(), Value::Array(callees));
+            }
+            Value::Object(map)
+        })
+        .collect();
+    if args.as_json {
+        println!("{}", py_json::dumps(&Value::Array(rows_json)));
+        return ExitCode::SUCCESS;
+    }
+    if rows.is_empty() {
+        display::warning(&format!(
+            "No semantic matches for '{}' (threshold {})",
+            args.query, args.threshold
+        ));
+        return ExitCode::FAILURE;
+    }
+    let mut out = vec![format!(
+        "{} semantic match(es) for '{}':",
+        rows.len(),
+        args.query
+    )];
+    for row in &rows {
+        let short = row.file_path.rsplit('/').next().unwrap_or("");
+        let score_label = if row.reranked {
+            format!("rerank {:.2}", row.score)
+        } else {
+            format!("{:.2}", row.score)
+        };
+        out.push(format!(
+            "  [{score_label}] {} {}  ({short})",
+            row.kind,
+            row.qualified_name.as_deref().unwrap_or(&row.name),
+        ));
+    }
+    println!("{}", out.join("\n"));
+    ExitCode::SUCCESS
+}
+
+/// Python float json rendering (repr keeps shortest round-trip form).
+fn number_value(value: f64) -> Value {
+    serde_json::Number::from_f64(value)
+        .map(Value::Number)
+        .unwrap_or(Value::Null)
+}
+
+fn attach_neighbors(conn: &Connection, name: &str, callers: bool) -> Vec<Value> {
+    let caller_rows = callers
+        .then(|| cairn_query::graph::get_callers(conn, name, false, 5, None).unwrap_or_default());
+    let callee_rows = (!callers)
+        .then(|| cairn_query::graph::get_callees(conn, name, false, 5, None).unwrap_or_default());
+    let mut out = Vec::new();
+    if let Some(rows) = caller_rows {
+        for row in rows.iter().take(5) {
+            let mut map = Map::new();
+            map.insert("name".into(), Value::from(row.caller_name.clone()));
+            map.insert("kind".into(), Value::from(row.caller_kind.clone()));
+            map.insert("file_path".into(), Value::from(row.file_path.clone()));
+            out.push(Value::Object(map));
+        }
+    }
+    if let Some(rows) = callee_rows {
+        for row in rows.iter().take(5) {
+            let Some(callee_name) = &row.callee_name else {
+                continue;
+            };
+            let mut map = Map::new();
+            map.insert("name".into(), Value::from(callee_name.clone()));
+            map.insert("kind".into(), Value::from(row.callee_kind.clone()));
+            map.insert("file_path".into(), Value::from(row.file_path.clone()));
+            out.push(Value::Object(map));
+        }
+    }
+    out
+}
+
+/// A retired local-inference flag: exit 1 naming the shipped backends instead.
+fn retired_embed_flag(flag: &str) -> ExitCode {
+    display::error(&format!(
+        "{flag} is retired: this build ships no local inference. Set \
+         CAIRN_EMBED_BACKEND=omlx or ollama (or server + CAIRN_EMBED_BASE_URL, model via \
+         CAIRN_EMBED_SERVER_MODEL) to embed through an OpenAI-compatible server, or \
+         CAIRN_EMBED_BACKEND=hash for the dep-free backend."
+    ));
+    ExitCode::FAILURE
+}
+
+/// embed handler.
+fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
+    if args.install_deps {
+        return retired_embed_flag("--install-deps");
+    }
+    if args.download_model {
+        return retired_embed_flag("--download-model");
+    }
+    if args.adopt_server_model.is_some() {
+        return retired_embed_flag("--adopt-server-model");
+    }
+    let env = tools_search::semantic_env(None);
+    if env.backend == EffectiveBackend::Unavailable {
+        return exit_backend_unavailable();
+    }
+    if env.hash_fallback {
+        display::warning(
+            "Using the hash embedder (dep-free): token-overlap vectors only, so retrieval is \
+             degraded.",
+        );
+        display::dim(
+            "For real vectors point CAIRN_EMBED_BACKEND at a local OpenAI-compatible embeddings \
+             server:",
+        );
+        display::dim(
+            "  CAIRN_EMBED_BACKEND=omlx | ollama | server (server needs CAIRN_EMBED_BASE_URL), \
+             then re-run: cairn embed",
+        );
+        display::dim("Or set CAIRN_EMBED_BACKEND=hash explicitly to silence this warning.");
+    }
+    let db = db_arg(&args.db);
+    let workspace = store_paths::resolve_workspace(None);
+    let Ok(conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    let sym_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM symbols", [], |r| r.get(0))
+        .unwrap_or(0);
+    display::info(&format!(
+        "Embedding {} symbols with {}",
+        fmt_int(sym_count),
+        env.model
+    ));
+    let before = embed_count(&conn, &env.model);
+    let multivector = !args.no_multivector;
+
+    let build_ann = args.build_index || tools_search::ann_backend_enabled();
+    let timer = Instant::now();
+    crate::cmds_lifecycle::plain_progress_draw("Embedding", 0, 0, 0.0, "symbols");
+    let summary = match cairn_build::embeddings::embed_all(
+        &conn,
+        &workspace.to_string_lossy(),
+        args.batch_size,
+        args.limit,
+        !args.no_reap,
+        multivector,
+    ) {
+        Ok(summary) => summary,
+        Err(message) => return command_error(&message),
+    };
+    let ann_outcome = if build_ann {
+        // Python's bar force-draws the description change, then stop() draws
+        // again after the rebuild: two indeterminate `ANN index` segments.
+        crate::cmds_lifecycle::plain_progress_draw(
+            "ANN index",
+            0,
+            0,
+            timer.elapsed().as_secs_f64(),
+            "symbols",
+        );
+        let base = cairn_store::vec0::rebuild_index(
+            &conn,
+            &env.model,
+            cairn_store::vec0::VecSource::Embeddings,
+        )
+        .ok();
+        let mv = if multivector {
+            cairn_store::vec0::rebuild_index(
+                &conn,
+                &env.model,
+                cairn_store::vec0::VecSource::EmbeddingsMv,
+            )
+            .ok()
+        } else {
+            None
+        };
+        crate::cmds_lifecycle::plain_progress_draw(
+            "ANN index",
+            0,
+            0,
+            timer.elapsed().as_secs_f64(),
+            "symbols",
+        );
+        println!();
+        Some((base, mv))
+    } else {
+        crate::cmds_lifecycle::plain_progress_draw(
+            "Embedding",
+            summary.embedded,
+            summary.attempted,
+            timer.elapsed().as_secs_f64(),
+            "symbols",
+        );
+        println!();
+        None
+    };
+    let elapsed = timer.elapsed().as_secs_f64();
+    let after = embed_count(&conn, &env.model);
+
+    let mut kv_pairs: Vec<(&str, String)> = vec![
+        ("embedded", fmt_int(summary.embedded as i64)),
+        ("skipped", fmt_int(summary.skipped as i64)),
+        ("reaped", fmt_int(summary.reaped as i64)),
+        ("failed batches", fmt_int(summary.failed_batches as i64)),
+        ("model", summary.model.clone()),
+        (
+            "vectors",
+            format!("{} -> {}", fmt_int(before), fmt_int(after)),
+        ),
+    ];
+    if multivector {
+        kv_pairs.push((
+            "mv vectors",
+            fmt_int(summary.mv_embedded.unwrap_or(0) as i64),
+        ));
+    }
+    rail::summary_panel(
+        &format!(
+            "Embedded {} symbols in {elapsed:.1}s",
+            fmt_int(summary.embedded as i64)
+        ),
+        &kv_pairs,
+        None,
+    );
+
+    if let Some((base, mv)) = ann_outcome {
+        for (label, outcome) in [("ANN index", base), ("MV ANN index", mv)] {
+            match outcome {
+                Some(cairn_store::vec0::RebuildOutcome::Built {
+                    indexed,
+                    dim,
+                    model,
+                    ..
+                }) => {
+                    display::success(&format!(
+                        "{label} rebuilt: {} vectors, dim={dim}, model='{model}'",
+                        fmt_int(indexed)
+                    ));
+                }
+                Some(cairn_store::vec0::RebuildOutcome::Skipped { reason, .. }) => {
+                    display::warning(&format!("{label} not built: {reason}"));
+                }
+                None => {}
+            }
+        }
+    }
+
+    if std::env::var("CAIRN_TELEMETRY")
+        .map(|v| !v.trim().eq_ignore_ascii_case("off"))
+        .unwrap_or(true)
+    {
+        let started = std::time::SystemTime::now() - timer.elapsed();
+        crate::cmds_lifecycle::record_build_run(
+            &db,
+            "embed",
+            started,
+            elapsed,
+            None,
+            Some(summary.embedded as i64),
+            summary.skipped,
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+// --- cairn grep -----------------------------------------------------------------
+
+/// grep handler.
+fn grep(args: crate::cmds_core::GrepArgs) -> ExitCode {
+    let db = db_arg(&args.db);
+    let refresh = refresh_flag(args.refresh, args.no_refresh);
+    let Ok(conn) = fresh_conn(&db, refresh) else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    let workspace = store_paths::resolve_workspace(None);
+    let workspace_str = workspace.to_string_lossy().into_owned();
+    let payload = match cairn_query::grep::graph_grep(
+        &conn,
+        &args.pattern,
+        args.ignore_case,
+        args.fixed,
+        &args.path_prefix,
+        args.max_hits,
+        &|repo, stored| cairn_build::scanner::resolve_file_path(&workspace_str, repo, stored),
+    ) {
+        Ok(payload) => payload,
+        Err(message) => return usage_error(&message),
+    };
+    if args.as_json {
+        println!("{}", py_json::dumps(&payload));
+        return ExitCode::SUCCESS;
+    }
+    println!("{}", grep_text(&payload));
+    ExitCode::SUCCESS
+}
+
+fn grep_text(payload: &Value) -> String {
+    let mut lines = vec![format!(
+        "searched files: {}",
+        payload["searched_files"].as_i64().unwrap_or(0)
+    )];
+    let unreadable = payload["unreadable_files"].as_i64().unwrap_or(0);
+    if unreadable > 0 {
+        lines.push(format!("unreadable files: {unreadable}"));
+    }
+    for group in payload["groups"].as_array().unwrap_or(&Vec::new()) {
+        let name = group["qualified_name"].as_str().unwrap_or("<file>");
+        lines.push(format!(
+            "{}:{} {} (in-degree {})",
+            group["repo"].as_str().unwrap_or_default(),
+            group["path"].as_str().unwrap_or_default(),
+            name,
+            group["incoming"].as_i64().unwrap_or(0)
+        ));
+        for hit in group["hits"].as_array().unwrap_or(&Vec::new()) {
+            lines.push(format!(
+                "  {}:{} {}",
+                hit["line"].as_i64().unwrap_or(0),
+                hit["column"].as_i64().unwrap_or(0),
+                hit["text"].as_str().unwrap_or_default()
+            ));
+        }
+    }
+    lines.push(format!(
+        "dropped hits: {}",
+        payload["dropped_hits"].as_i64().unwrap_or(0)
+    ));
+    lines.push(format!(
+        "dropped groups: {}",
+        payload["dropped_groups"].as_i64().unwrap_or(0)
+    ));
+    if payload["truncated"].as_bool().unwrap_or(false) {
+        lines.push("scan stopped at the hit cap; dropped counts are lower bounds".to_string());
+    }
+    lines.join("\n")
+}
+
+// --- cairn map ------------------------------------------------------------------
+
+use cairn_query::tools_repo::{
+    CLI_DEFAULT_CLUSTER_CAP, CLI_DEFAULT_HOTSPOT_CAP, CLI_DEFAULT_HUB_CAP,
+};
+
+/// map handler.
+fn map(args: crate::cmds_core::MapArgs) -> ExitCode {
+    let db = db_arg(&args.db);
+    if !Path::new(&db).exists() {
+        return command_error(&format!("no graph DB at {db} — run `cairn build` first"));
+    }
+    let refresh = refresh_flag(args.refresh, args.no_refresh);
+    let Ok(conn) = fresh_conn(&db, refresh) else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    let payload = match cairn_query::tools_repo::repo_map_payload(
+        &conn,
+        args.max_clusters,
+        args.max_hubs,
+        args.max_hotspots,
+    ) {
+        Ok(payload) => payload,
+        Err(e) => return command_error(&e.to_string()),
+    };
+    if args.as_json {
+        println!("{}", py_json::dumps(&payload));
+        return ExitCode::SUCCESS;
+    }
+    println!("{}", map_text(&payload));
+    ExitCode::SUCCESS
+}
+
+fn map_text(payload: &Value) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for scope in payload["repos"].as_array().unwrap_or(&Vec::new()) {
+        lines.push(format!(
+            "Repository {}",
+            scope["repo"].as_str().unwrap_or_default()
+        ));
+        for cluster in scope["clusters"].as_array().unwrap_or(&Vec::new()) {
+            lines.push(format!(
+                "  {}: {} files, {} symbols, {} edges",
+                cluster["path"].as_str().unwrap_or_default(),
+                cluster["files"].as_i64().unwrap_or(0),
+                cluster["symbols"].as_i64().unwrap_or(0),
+                cluster["edges"].as_i64().unwrap_or(0),
+            ));
+            for hub in cluster["hubs"].as_array().unwrap_or(&Vec::new()) {
+                lines.push(format!(
+                    "    hub {} ({}, in-degree {})",
+                    hub["qualified_name"].as_str().unwrap_or_default(),
+                    hub["path"].as_str().unwrap_or_default(),
+                    hub["incoming"].as_i64().unwrap_or(0),
+                ));
+            }
+            lines.push(format!(
+                "    dropped hubs: {}",
+                cluster["dropped_hubs"].as_i64().unwrap_or(0)
+            ));
+        }
+        lines.push(format!(
+            "  dropped clusters: {}",
+            scope["dropped_clusters"].as_i64().unwrap_or(0)
+        ));
+    }
+    lines.push("Workspace hotspots".to_string());
+    for hotspot in payload["hotspots"].as_array().unwrap_or(&Vec::new()) {
+        lines.push(format!(
+            "  {}:{} {} (in-degree {})",
+            hotspot["repo"].as_str().unwrap_or_default(),
+            hotspot["path"].as_str().unwrap_or_default(),
+            hotspot["qualified_name"].as_str().unwrap_or_default(),
+            hotspot["incoming"].as_i64().unwrap_or(0),
+        ));
+    }
+    lines.push(format!(
+        "  dropped hotspots: {}",
+        payload["dropped_hotspots"].as_i64().unwrap_or(0)
+    ));
+    lines.join("\n")
+}
+
+// --- cairn rationale ---------------------------------------------------------------
+
+/// rationale handler.
+fn rationale(args: crate::cmds_core::RationaleArgs) -> ExitCode {
+    let db = db_arg(&args.db);
+    let conn = open_read_aware(&db);
+    let Ok(conn) = conn else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    let records =
+        match rationale_collect(&conn, args.symbol.as_deref(), args.file_pattern.as_deref()) {
+            Ok(records) => records,
+            Err(e) => return command_error(&e.to_string()),
+        };
+    if args.as_json {
+        println!("{}", py_json::dumps(&Value::Array(records)));
+        return ExitCode::SUCCESS;
+    }
+    if records.is_empty() {
+        println!("No rationale records found.");
+        return ExitCode::SUCCESS;
+    }
+    let text = records
+        .iter()
+        .map(|r| {
+            format!(
+                "{}:{} [{}] {}",
+                r["path"].as_str().unwrap_or_default(),
+                r["line"].as_i64().unwrap_or(0),
+                r["kind"].as_str().unwrap_or_default(),
+                r["text"].as_str().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    println!("{text}");
+    ExitCode::SUCCESS
+}
+
+/// Open honoring CAIRN_READ_ONLY without any refresh (get_db(read_only=...)).
+fn open_read_aware(db: &str) -> Result<Connection, String> {
+    let read_only = std::env::var("CAIRN_READ_ONLY")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    if read_only {
+        cairn_store::conn::open_read_only(Path::new(db)).map_err(|e| e.to_string())
+    } else {
+        cairn_store::schema::open_initialized(Path::new(db)).map_err(|e| e.to_string())
+    }
+}
+
+#[derive(Clone)]
+struct RationaleRecord {
+    file_id: String,
+    symbol_id: Option<String>,
+    line: i64,
+    kind: String,
+    text: String,
+    path: Option<String>,
+}
+
+impl RationaleRecord {
+    fn json(&self) -> Value {
+        let mut map = Map::new();
+        map.insert("file_id".into(), Value::from(self.file_id.clone()));
+        map.insert(
+            "symbol_id".into(),
+            self.symbol_id
+                .clone()
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+        );
+        map.insert("line".into(), Value::from(self.line));
+        map.insert("kind".into(), Value::from(self.kind.clone()));
+        map.insert("text".into(), Value::from(self.text.clone()));
+        map.insert(
+            "path".into(),
+            self.path.clone().map(Value::from).unwrap_or(Value::Null),
+        );
+        Value::Object(map)
+    }
+}
+
+fn rationale_collect(
+    conn: &Connection,
+    symbol: Option<&str>,
+    file_pattern: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    let file_ids = match_file_ids(conn, file_pattern)?;
+    let mut records: Vec<RationaleRecord> = if let Some(symbol) = symbol {
+        let symbol_ids: Vec<String> = cairn_query::graph::resolve_pattern_symbols(conn, symbol)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
+        let mut records = records_for_symbol_ids(conn, &symbol_ids)?;
+        if file_pattern.is_some() {
+            records.retain(|r| file_ids.contains(&r.file_id));
+        }
+        records
+    } else if let Some(_pattern) = file_pattern {
+        let mut records = Vec::new();
+        for fid in file_path_sorted_ids(conn, &file_ids)? {
+            records.extend(records_for_file(conn, &fid)?);
+        }
+        records
+    } else {
+        let mut records = Vec::new();
+        for fid in all_file_ids(conn)? {
+            records.extend(records_for_file(conn, &fid)?);
+        }
+        records
+    };
+    let paths = file_paths(conn, &records)?;
+    for record in &mut records {
+        record.path = paths.get(&record.file_id).cloned();
+    }
+    records.sort_by(|a, b| {
+        a.path
+            .as_deref()
+            .unwrap_or("")
+            .cmp(b.path.as_deref().unwrap_or(""))
+            .then_with(|| a.line.cmp(&b.line))
+            .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.text.cmp(&b.text))
+    });
+    Ok(records.iter().map(RationaleRecord::json).collect())
+}
+
+fn match_file_ids(conn: &Connection, pattern: Option<&str>) -> Result<HashSet<String>, String> {
+    let Some(pattern) = pattern else {
+        return Ok(HashSet::new());
+    };
+    let mut stmt = conn
+        .prepare("SELECT id FROM files WHERE instr(lower(path), lower(?1)) > 0 ORDER BY path")
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(rusqlite::params![pattern], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    mapped
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+fn file_path_sorted_ids(conn: &Connection, ids: &HashSet<String>) -> Result<Vec<String>, String> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for chunk in ids.iter().collect::<Vec<_>>().chunks(400) {
+        let placeholders = std::iter::once("?".to_string())
+            .cycle()
+            .take(chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("SELECT id, path FROM files WHERE id IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map(params.as_slice(), |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in mapped {
+            pairs.push(row.map_err(|e| e.to_string())?);
+        }
+    }
+    pairs.sort_by(|a, b| a.1.cmp(&b.1));
+    Ok(pairs.into_iter().map(|(id, _)| id).collect())
+}
+
+fn all_file_ids(conn: &Connection) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id FROM files ORDER BY path")
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    mapped.collect::<Result<_, _>>().map_err(|e| e.to_string())
+}
+
+fn records_for_file(conn: &Connection, file_id: &str) -> Result<Vec<RationaleRecord>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT file_id, symbol_id, line, kind, text FROM rationale \
+             WHERE file_id = ?1 ORDER BY line, kind",
+        )
+        .map_err(|e| e.to_string())?;
+    let mapped = stmt
+        .query_map(rusqlite::params![file_id], rationale_row)
+        .map_err(|e| e.to_string())?;
+    mapped.collect::<Result<_, _>>().map_err(|e| e.to_string())
+}
+
+fn records_for_symbol_ids(
+    conn: &Connection,
+    ids: &[String],
+) -> Result<Vec<RationaleRecord>, String> {
+    let mut rows: Vec<RationaleRecord> = Vec::new();
+    for chunk in ids.chunks(400) {
+        let placeholders = std::iter::once("?".to_string())
+            .cycle()
+            .take(chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT file_id, symbol_id, line, kind, text FROM rationale \
+             WHERE symbol_id IN ({placeholders}) ORDER BY line, symbol_id, kind"
+        );
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map(params.as_slice(), rationale_row)
+            .map_err(|e| e.to_string())?;
+        for row in mapped {
+            rows.push(row.map_err(|e| e.to_string())?);
+        }
+    }
+    rows.sort_by(|a, b| {
+        a.line
+            .cmp(&b.line)
+            .then_with(|| a.symbol_id.cmp(&b.symbol_id))
+            .then_with(|| a.kind.cmp(&b.kind))
+    });
+    Ok(rows)
+}
+
+fn rationale_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RationaleRecord> {
+    Ok(RationaleRecord {
+        file_id: r.get(0)?,
+        symbol_id: r.get(1)?,
+        line: r.get(2)?,
+        kind: r.get(3)?,
+        text: r.get(4)?,
+        path: None,
+    })
+}
+
+fn file_paths(
+    conn: &Connection,
+    records: &[RationaleRecord],
+) -> Result<HashMap<String, String>, String> {
+    let ids: HashSet<String> = records.iter().map(|r| r.file_id.clone()).collect();
+    let mut paths = HashMap::new();
+    for chunk in ids.iter().collect::<Vec<_>>().chunks(400) {
+        let placeholders = std::iter::once("?".to_string())
+            .cycle()
+            .take(chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("SELECT id, path FROM files WHERE id IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map(params.as_slice(), |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        for row in mapped {
+            let (id, path) = row.map_err(|e| e.to_string())?;
+            paths.insert(id, path);
+        }
+    }
+    Ok(paths)
+}
+
+// --- cairn blast -------------------------------------------------------------------
+
+/// Refresh drift and return the stale-graph banner ("" when current).
+/// Refresh between the deleted and live seed legs; returns the stale-graph
+/// banner ("" when current) and errors on a failed strict repair.
+fn refresh_with_banner(
+    conn: &mut Connection,
+    db: &str,
+    refresh: Option<bool>,
+) -> Result<String, String> {
+    match refresh_probe(conn, db, refresh)? {
+        Some(stale) => Ok(stale.0),
+        None => Ok(String::new()),
+    }
+}
+
+/// blast handler.
+fn blast(args: crate::cmds_core::BlastArgs) -> ExitCode {
+    let db = db_arg(&args.db);
+    let refresh = refresh_flag(args.refresh, args.no_refresh);
+    let ws = store_paths::resolve_workspace(None);
+    let config = load_config(ws.clone());
+    let registry = cairn_query::graph::merged_registry(&config.taint_sources, &config.taint_sinks);
+    let Ok(mut conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
+        return command_error(&format!("cannot read store {db}"));
+    };
+    let workspace_str = ws.to_string_lossy().into_owned();
+    let mut refresh_fn = |conn: &mut Connection| refresh_with_banner(conn, &db, refresh);
+    let result = match cairn_query::blast::compute_blast(
+        &mut conn,
+        &workspace_str,
+        args.base.as_deref(),
+        args.fuzzy,
+        500,
+        &registry,
+        &mut refresh_fn,
+    ) {
+        Ok(result) => result,
+        Err(message) => return command_error(&message),
+    };
+    let rendered = if matches!(args.output_format, BlastFormat::Json) {
+        py_json::dumps_sorted(&result.to_json())
+    } else {
+        let mut rendered = cairn_query::blast::render_blast(&result, args.output_format.as_str())
+            .unwrap_or_default();
+        if matches!(
+            args.output_format,
+            BlastFormat::Text | BlastFormat::Markdown
+        ) {
+            let warning = cairn_query::blast::taint_warning(&result.taint_paths);
+            if !warning.is_empty() {
+                rendered = format!("{rendered}\n{warning}\n");
+            }
+        }
+        rendered
+    };
+    match &args.output {
+        None => println!("{rendered}"),
+        Some(path) => {
+            if let Err(e) = std::fs::write(path, rendered.as_bytes()) {
+                return command_error(&format!("cannot write {path}: {e}"));
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+// --- cairn ask / context / review --------------------------------------------
+
+/// Click's UsageError shape: usage block, help hint, blank line, message.
+fn click_usage_error(usage: &str, command: &str, message: &str) -> ExitCode {
+    eprintln!("Usage: {usage}");
+    eprintln!("Try 'cairn {command} --help' for help.");
+    eprintln!();
+    eprintln!("Error: {message}");
+    ExitCode::from(2)
+}
+
+/// The route_query dict as `json.dumps(result, indent=2)` renders it.
+fn route_json(outcome: &cairn_query::tools_km::RouteOutcome) -> Value {
+    let mut results = Map::new();
+    for (layer, data) in &outcome.results {
+        results.insert(layer.clone(), py_json::yaml_to_value(data));
+    }
+    let mut object = Map::new();
+    object.insert("intent".into(), Value::from(outcome.intent));
+    object.insert("layer".into(), Value::from(outcome.layer));
+    object.insert(
+        "layers_queried".into(),
+        Value::Array(
+            outcome
+                .layers_queried
+                .iter()
+                .cloned()
+                .map(Value::from)
+                .collect(),
+        ),
+    );
+    object.insert("results".into(), Value::Object(results));
+    if outcome.degraded {
+        object.insert("degraded".into(), Value::from(true));
+    }
+    object.insert("empty".into(), Value::from(outcome.empty));
+    Value::Object(object)
+}
+
+/// `_echo_route_result`: intent header, layers, one section per layer.
+fn print_route(outcome: &cairn_query::tools_km::RouteOutcome) {
+    use yaml_rust2::Yaml;
+    println!("Intent: {} (routed to {})", outcome.intent, outcome.layer);
+    println!("Layers queried: {}", outcome.layers_queried.join(", "));
+    for (layer, data) in &outcome.results {
+        println!("\n--- {layer} ---");
+        match data {
+            Yaml::Hash(hash) => {
+                for (key, value) in hash {
+                    println!(
+                        "  {}: {}",
+                        cairn_query::tools_km::py_str(key),
+                        cairn_query::tools_km::py_str(value)
+                    );
+                }
+            }
+            Yaml::Array(items) => {
+                for item in items {
+                    println!("  {}", cairn_query::tools_km::py_str(item));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// ask handler: natural-language routing across the knowledge layers.
+fn ask(args: crate::cmds_core::AskArgs) -> ExitCode {
+    if args.question.trim().is_empty() {
+        return click_usage_error(
+            "cairn ask [OPTIONS] QUESTION",
+            "ask",
+            "Question must not be empty.",
+        );
+    }
+    if args.all_repos {
+        return ask_all_repos(&args);
+    }
+    let db = db_arg(&args.db);
+    let knowledge = args.knowledge.clone().unwrap_or_else(knowledge_default);
+    let Ok(conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    let bundle = cairn_query::tools_km::Bundle::new(knowledge);
+    let outcome = cairn_query::tools_km::route_query(&conn, &bundle, &args.question);
+    if args.as_json {
+        println!("{}", py_json::dumps(&route_json(&outcome)));
+        return ExitCode::SUCCESS;
+    }
+    print_route(&outcome);
+    ExitCode::SUCCESS
+}
+
+/// `--all-repos`: one attributed answer per reachable registered store; an
+/// unavailable store never aborts the query.
+fn ask_all_repos(args: &crate::cmds_core::AskArgs) -> ExitCode {
+    let mut answers: Vec<(String, cairn_query::tools_km::RouteOutcome)> = Vec::new();
+    let mut states: Vec<(String, String)> = Vec::new();
+    // The routing core is infallible, so per-store errors stay empty; the
+    // payload keeps the key because the CLI contract renders it.
+    let errors: Vec<(String, String)> = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
+    if let Some(home) = store_paths::cairn_home() {
+        for (ws_path, key) in store_paths::load_registry() {
+            let store_home = home.join(&key);
+            let db = store_home.join(".kg");
+            let mut state = classify_store(&store_home, &db).to_string();
+            if state == "ok" {
+                match cairn_store::conn::open_read_only(&db) {
+                    Err(_) => state = "locked".into(),
+                    Ok(conn) => {
+                        let bundle =
+                            cairn_query::tools_km::Bundle::new(store_home.join(".knowledge"));
+                        answers.push((
+                            ws_path.clone(),
+                            cairn_query::tools_km::route_query(&conn, &bundle, &args.question),
+                        ));
+                    }
+                }
+            }
+            if state != "ok" {
+                dropped.push(ws_path.clone());
+            }
+            states.push((ws_path, state));
+        }
+    }
+    if args.as_json {
+        let answers_map: Map<String, Value> = answers
+            .iter()
+            .map(|(ws, outcome)| (ws.clone(), route_json(outcome)))
+            .collect();
+        let to_map = |pairs: &[(String, String)]| -> Value {
+            Value::Object(
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Value::from(v.clone())))
+                    .collect::<Map<String, Value>>(),
+            )
+        };
+        let mut payload = Map::new();
+        payload.insert("answers".into(), Value::Object(answers_map));
+        payload.insert("states".into(), to_map(&states));
+        payload.insert("errors".into(), to_map(&errors));
+        payload.insert(
+            "dropped".into(),
+            Value::Array(dropped.iter().cloned().map(Value::from).collect()),
+        );
+        println!("{}", py_json::dumps(&Value::Object(payload)));
+        return ExitCode::SUCCESS;
+    }
+    if states.is_empty() {
+        println!("No stores are registered.");
+        return ExitCode::SUCCESS;
+    }
+    for (ws_path, outcome) in &answers {
+        println!("=== {ws_path} ===");
+        print_route(outcome);
+    }
+    if !dropped.is_empty() {
+        println!("\nDropped stores:");
+        for ws_path in &dropped {
+            let detail = errors
+                .iter()
+                .find(|(k, _)| k == ws_path)
+                .map(|(_, v)| format!(" ({v})"))
+                .unwrap_or_default();
+            let state = states
+                .iter()
+                .find(|(k, _)| k == ws_path)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            println!("  {state}: {ws_path}{detail}");
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// The default knowledge bundle path for the current context.
+fn knowledge_default() -> String {
+    store_paths::resolve_store(None)
+        .knowledge
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// context handler: compass + wiki + memory context for a file.
+fn context(args: crate::cmds_core::ContextArgs) -> ExitCode {
+    let store = store_paths::resolve_store(None);
+    let db = store.db.to_string_lossy().into_owned();
+    let refresh = refresh_flag(args.refresh, args.no_refresh);
+    if fresh_conn(&db, refresh).is_err() {
+        return command_error(&format!("cannot open {db}"));
+    }
+    let knowledge = args
+        .knowledge
+        .clone()
+        .unwrap_or_else(|| store.knowledge.to_string_lossy().into_owned());
+    let bundle = cairn_query::tools_km::Bundle::new(knowledge);
+    let file_path = &args.file_path;
+    let parts: Vec<&str> = file_path.split('/').filter(|p| !p.is_empty()).collect();
+    let module_guess = if parts.len() >= 4 {
+        parts[..4].join("/")
+    } else {
+        file_path.clone()
+    };
+    let mut out = vec![
+        format!("Context for {file_path}:"),
+        format!("  inferred module: {module_guess}"),
+    ];
+    for cid in bundle.list_concepts(Some("compass/")) {
+        let Ok(concept) = bundle.read_concept(&cid) else {
+            continue;
+        };
+        if let Some(resource) = concept.resource.as_deref().filter(|r| !r.is_empty())
+            && (file_path.contains(resource) || resource.contains(file_path))
+        {
+            out.push(format!(
+                "\n# Compass: {}\n{}",
+                concept.title.unwrap_or_default(),
+                concept.body
+            ));
+            break;
+        }
+    }
+    let seg = Path::new(file_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !seg.is_empty() {
+        for concept in bundle.search(&seg, Some(3)).unwrap_or_default() {
+            if concept.type_ == "Wiki-Article" || concept.type_ == "Wiki-Feature" {
+                out.push(format!(
+                    "\n# Wiki: {}\n{}...",
+                    concept.title.unwrap_or_default(),
+                    concept.body.chars().take(500).collect::<String>()
+                ));
+                break;
+            }
+        }
+        for concept in bundle.search(&seg, Some(3)).unwrap_or_default() {
+            if bundle
+                .relativize_id(&concept.concept_id)
+                .starts_with("memory/")
+            {
+                out.push(format!("\n# Memory: {}", concept.title.unwrap_or_default()));
+                if let Some(description) = concept.description.as_deref().filter(|d| !d.is_empty())
+                {
+                    out.push(format!("  {description}"));
+                }
+                break;
+            }
+        }
+    }
+    println!("{}", out.join("\n"));
+    ExitCode::SUCCESS
+}
+
+/// review handler: diff pack, pre-submit memory guard, or event capture.
+fn review(args: crate::cmds_core::ReviewArgs) -> ExitCode {
+    if let Some(event_path) = &args.capture_event {
+        let path = Path::new(event_path);
+        if path.is_dir() {
+            return click_usage_error(
+                "cairn review [OPTIONS]",
+                "review",
+                &format!(
+                    "Invalid value for '--capture-event': Path '{event_path}' is a directory."
+                ),
+            );
+        }
+        if !path.exists() {
+            return click_usage_error(
+                "cairn review [OPTIONS]",
+                "review",
+                &format!(
+                    "Invalid value for '--capture-event': File '{event_path}' does not exist."
+                ),
+            );
+        }
+    }
+    let given: Vec<&str> = [
+        ("--base", args.base.is_some()),
+        ("--pre-submit", args.pre_submit),
+        ("--capture-event", args.capture_event.is_some()),
+    ]
+    .into_iter()
+    .filter(|(_, present)| *present)
+    .map(|(flag, _)| flag)
+    .collect();
+    if given.len() > 1 {
+        return click_usage_error(
+            "cairn review [OPTIONS]",
+            "review",
+            &format!(
+                "{} are mutually exclusive; pass exactly one.",
+                given.join(", ")
+            ),
+        );
+    }
+    if given.is_empty() {
+        return click_usage_error(
+            "cairn review [OPTIONS]",
+            "review",
+            "Pass exactly one mode: --base <ref>, --pre-submit, or --capture-event <file>.",
+        );
+    }
+    if args.gate && !args.pre_submit {
+        return click_usage_error(
+            "cairn review [OPTIONS]",
+            "review",
+            "--gate requires --pre-submit.",
+        );
+    }
+    if args.capture_event.is_some() {
+        return review_capture_event(&args);
+    }
+    let ws = store_paths::resolve_workspace(None);
+    let workspace_str = ws.to_string_lossy().into_owned();
+    let db = db_arg(&args.db);
+    let Ok(mut conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
+        return command_error(&format!("cannot read store {db}"));
+    };
+    let bundle = cairn_query::tools_km::Bundle::new(knowledge_default());
+    let config = load_config(ws);
+    let registry = cairn_query::graph::merged_registry(&config.taint_sources, &config.taint_sinks);
+    let refresh = refresh_flag(args.refresh, args.no_refresh);
+    let mut refresh_fn = |conn: &mut Connection| refresh_with_banner(conn, &db, refresh);
+    if args.pre_submit {
+        let result = match cairn_query::review::build_pre_submit(
+            &mut conn,
+            &workspace_str,
+            &bundle,
+            args.fuzzy,
+            &registry,
+            &mut refresh_fn,
+        ) {
+            Ok(result) => result,
+            Err(message) => return command_error(&message),
+        };
+        match cairn_query::review::render_pre_submit(&result, args.output_format.as_str()) {
+            Ok(rendered) => {
+                if !rendered.is_empty() {
+                    println!("{rendered}");
+                }
+            }
+            Err(message) => return command_error(&message),
+        }
+        if args.gate {
+            if let Some(error) = &result.memories.error {
+                return command_error(&format!("pre-submit gate could not read memories: {error}"));
+            }
+            if cairn_query::review::has_blocking_matches(&result) {
+                return ExitCode::FAILURE;
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
+    let Some(base) = args.base.clone() else {
+        return ExitCode::SUCCESS;
+    };
+    let pack = match cairn_query::review::build_pack(
+        &mut conn,
+        &workspace_str,
+        &bundle,
+        &base,
+        args.fuzzy,
+        &registry,
+        &mut refresh_fn,
+    ) {
+        Ok(pack) => pack,
+        Err(message) => return command_error(&message),
+    };
+    match cairn_query::review::render_pack(&pack, args.output_format.as_str()) {
+        Ok(text) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(message) => command_error(&message),
+    }
+}
+
+/// The `--capture-event` arm: record one resolved-comment event as a memory.
+fn review_capture_event(args: &crate::cmds_core::ReviewArgs) -> ExitCode {
+    let event_path = args.capture_event.clone().unwrap_or_default();
+    let payload_text = match std::fs::read_to_string(Path::new(&event_path)) {
+        Ok(text) => text,
+        Err(e) => return command_error(&format!("cannot read event file {event_path}: {e}")),
+    };
+    let payload: Value = match serde_json::from_str(&payload_text) {
+        Ok(value) => value,
+        Err(e) => return command_error(&format!("cannot read event file {event_path}: {e}")),
+    };
+    let bundle = cairn_query::tools_km::Bundle::new(knowledge_default());
+    let db = db_arg(&args.db);
+    let Ok(conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
+        return command_error(&format!("cannot read store {db}"));
+    };
+    match cairn_query::review::capture_review_event(&conn, &bundle, &payload) {
+        Err(message) => command_error(&message),
+        Ok(outcome) => {
+            let path = outcome.path.clone().unwrap_or_default();
+            if outcome.recorded
+                && cairn_build::embeddings::embed_memory_concepts(
+                    &conn,
+                    &bundle,
+                    std::slice::from_ref(&path),
+                )
+                .is_err()
+            {
+                eprintln!(
+                    "Embedding failed; memories saved without vectors \
+                     (run `cairn memory embed` to backfill)."
+                );
+            }
+            if outcome.recorded {
+                println!(
+                    "Recorded {} '{}' -> {} (tier={})",
+                    outcome.type_.unwrap_or_default(),
+                    outcome.title.unwrap_or_default(),
+                    path,
+                    outcome.tier.unwrap_or_default()
+                );
+            } else {
+                println!("Comment is not resolved; nothing recorded.");
+            }
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+// --- cairn dataflow -----------------------------------------------------------------
+
+/// dataflow build handler.
+fn dataflow_build(args: crate::cmds_core::DataflowBuildArgs) -> ExitCode {
+    let db = db_arg(&args.db);
+    let workspace = store_paths::resolve_workspace(None);
+    let Ok(mut conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    let count = match cairn_build::dataflow::build_dataflow_index(
+        &mut conn,
+        &workspace.to_string_lossy(),
+        args.max_symbols,
+    ) {
+        Ok(count) => count,
+        Err(message) => return command_error(&message),
+    };
+    println!("Dataflow index built: {count} public symbols indexed.");
+    ExitCode::SUCCESS
+}
+
+/// dataflow lookup handler.
+fn dataflow_lookup(args: crate::cmds_core::DataflowLookupArgs) -> ExitCode {
+    let db = db_arg(&args.db);
+    let Ok(conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    let row = match cairn_build::dataflow::get_dataflow(&conn, &args.symbol) {
+        Ok(row) => row,
+        Err(message) => return command_error(&message),
+    };
+    let Some(row) = row else {
+        if cairn_build::dataflow::symbol_exists(&conn, &args.symbol) {
+            eprintln!(
+                "No dataflow entry for '{}': the index covers public symbols only.",
+                args.symbol
+            );
+        } else {
+            eprintln!(
+                "No dataflow entry for '{}'. Run `cairn dataflow build` first.",
+                args.symbol
+            );
+        }
+        return ExitCode::FAILURE;
+    };
+    if args.as_json {
+        let mut map = Map::new();
+        map.insert("symbol".into(), Value::from(row.symbol.clone()));
+        map.insert("repo".into(), Value::from(row.repo.clone()));
+        map.insert(
+            "within_repo".into(),
+            Value::Array(
+                row.within_repo
+                    .iter()
+                    .map(|s| Value::from(s.clone()))
+                    .collect(),
+            ),
+        );
+        map.insert(
+            "cross_repo".into(),
+            Value::Array(
+                row.cross_repo
+                    .iter()
+                    .map(|s| Value::from(s.clone()))
+                    .collect(),
+            ),
+        );
+        map.insert("updated".into(), number_value(row.updated));
+        if !row.analysis_errors.is_empty() {
+            map.insert(
+                "analysis_errors".into(),
+                Value::Array(
+                    row.analysis_errors
+                        .iter()
+                        .map(|s| Value::from(s.clone()))
+                        .collect(),
+                ),
+            );
+        }
+        if row.ambiguous {
+            map.insert("ambiguous".into(), Value::from(true));
+        }
+        println!("{}", py_json::dumps(&Value::Object(map)));
+        return ExitCode::SUCCESS;
+    }
+    println!("Symbol: {}  (repo: {})", row.symbol, row.repo);
+    if row.ambiguous {
+        println!(
+            "Note: '{}' is public in multiple repos; showing the {} row.",
+            row.symbol, row.repo
+        );
+    }
+    if !row.analysis_errors.is_empty() {
+        eprintln!("Analysis errors: {}", row.analysis_errors.join("; "));
+    }
+    if !row.within_repo.is_empty() {
+        println!("Within-repo impact ({} symbols):", row.within_repo.len());
+        for symbol in row.within_repo.iter().take(20) {
+            println!("  {symbol}");
+        }
+        if row.within_repo.len() > 20 {
+            println!("  ... and {} more", row.within_repo.len() - 20);
+        }
+    } else {
+        println!("Within-repo impact: (none)");
+    }
+    if !row.cross_repo.is_empty() {
+        println!("Cross-repo consumers: {}", row.cross_repo.join(", "));
+    } else {
+        println!("Cross-repo consumers: (none)");
+    }
+    ExitCode::SUCCESS
+}
+
+// --- cairn communities -------------------------------------------------------------
+
+/// communities handler: Louvain stays the Python [graph-analytics] sidecar.
+fn communities(_args: crate::cmds_core::CommunitiesArgs) -> ExitCode {
+    display::error(
+        "cairn communities is served by the Python [graph-analytics] sidecar (networkx Louvain): \
+         pip install 'cairn-intel[graph-analytics]' and run `cairn communities` from that install",
+    );
+    ExitCode::FAILURE
+}
+
+// --- cairn viz ---------------------------------------------------------------------
+
+/// viz handler.
+fn viz(args: crate::cmds_core::VizArgs) -> ExitCode {
+    if args.export_path.is_some() && args.output.is_some() {
+        return usage_error("--export and --output are mutually exclusive.");
+    }
+    let db = db_arg(&args.db);
+    let conn = open_read_aware(&db);
+    let Ok(conn) = conn else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    let graph_result: Result<cairn_query::graph::Graph, rusqlite::Error> = match args.scope {
+        VizScope::Symbol => {
+            cairn_query::graph::get_symbol_graph(&conn, args.symbol.as_deref().unwrap_or(""))
+        }
+        VizScope::Impact => cairn_query::graph::get_impact_graph(
+            &conn,
+            args.symbol.as_deref().unwrap_or(""),
+            args.depth,
+        ),
+        VizScope::Module => {
+            cairn_query::graph::get_module_graph(&conn, args.module.as_deref().unwrap_or(""), false)
+        }
+        VizScope::Repo => {
+            cairn_query::graph::get_repo_graph(&conn, args.repo.as_deref().unwrap_or(""))
+        }
+        VizScope::Deps => {
+            let ws = store_paths::resolve_workspace(None);
+            let env_raw = std::env::var("CAIRN_REPO_NAMESPACES").ok();
+            let namespaces = cairn_query::graph::resolve_namespaces(&ws, env_raw.as_deref());
+            cairn_query::graph::get_deps_graph(&conn, &namespaces)
+        }
+    };
+    let graph = match graph_result {
+        Ok(graph) => graph,
+        Err(e) => return command_error(&e.to_string()),
+    };
+    if let Some(export_path) = &args.export_path {
+        let viewer = viewer_js();
+        let graph_json = py_json::dumps_compact(&graph).replace('<', "\\u003c");
+        let html = cairn_query::graph::to_html(&graph, &viewer, &graph_json);
+        if let Err(e) = std::fs::write(export_path, html.as_bytes()) {
+            return command_error(&format!("cannot write {export_path}: {e}"));
+        }
+        println!("Wrote {export_path}");
+        return ExitCode::SUCCESS;
+    }
+    let out = match args.format {
+        VizFormat::Mermaid => {
+            if args.do_embed {
+                cairn_query::graph::viz_embed(&graph)
+            } else {
+                cairn_query::graph::to_mermaid(&graph)
+            }
+        }
+        VizFormat::Dot => cairn_query::graph::to_dot(&graph),
+        VizFormat::Json => py_json::dumps(&graph),
+    };
+    match &args.output {
+        None => println!("{out}"),
+        Some(path) => {
+            if let Err(e) = std::fs::write(path, out.as_bytes()) {
+                return command_error(&format!("cannot write {path}: {e}"));
+            }
+            println!("Wrote {path}");
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// The dashboard's bundled vis-network build without its source-map pointer.
+fn viewer_js() -> String {
+    crate::dashboard::assets::static_file("/vis-network.min.js")
+        .map(|bytes| {
+            String::from_utf8_lossy(bytes)
+                .lines()
+                .filter(|line| !line.starts_with("//# sourceMappingURL="))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
 // --- per-command argument structs --------------------------------------------
 
 #[derive(clap::Args)]
@@ -2115,7 +3608,7 @@ pub struct InitArgs {
     /// Register without building the graph.
     #[arg(long = "no-build", default_value_t = false)]
     pub no_build: bool,
-    /// Auto-discover and ingest docs/**/*.md as knowledge.
+    /// Retired: run `cairn knowledge import <dir>`; accepted and warns.
     #[arg(long = "import-docs", default_value_t = false)]
     pub import_docs: bool,
     /// Install cairn git hooks (post-commit, post-checkout) in discovered repos.
@@ -2156,7 +3649,7 @@ pub struct BuildArgs {
     /// Build to temp DB and atomic-swap for zero downtime.
     #[arg(long = "staging", default_value_t = false)]
     pub staging: bool,
-    /// Upgrade ambiguous Python calls with pyright (accepted; not yet ported).
+    /// Accepted for compatibility; no pyright pass runs in this build.
     #[arg(long = "lsp", num_args = 0..=1, require_equals = false, default_missing_value = "true")]
     pub lsp: Option<bool>,
     /// Materialize the transitive closure (skipped by default).
@@ -2404,4 +3897,465 @@ pub struct TaintArgs {
     /// Maximum printed paths.
     #[arg(long = "limit", default_value_t = DEFAULT_PATH_LIMIT)]
     pub limit: i64,
+}
+
+#[derive(clap::Args)]
+pub struct SemanticArgs {
+    /// Query text.
+    pub query: String,
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Max results.
+    #[arg(long = "limit", default_value_t = 20)]
+    pub limit: usize,
+    /// Min cosine similarity (0..1). Lower = more recall, more noise.
+    #[arg(long = "threshold", default_value_t = 0.3)]
+    pub threshold: f64,
+    /// Emit JSON.
+    #[arg(long = "json")]
+    pub as_json: bool,
+    /// Attach each hit's 1-hop callers/callees (precise-only, capped at 5 each).
+    #[arg(long = "include-callers")]
+    pub include_callers: bool,
+}
+
+#[derive(clap::Args)]
+pub struct EmbedArgs {
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Embedding batch size.
+    #[arg(long = "batch-size", default_value_t = 64)]
+    pub batch_size: usize,
+    /// Max symbols to embed (debug).
+    #[arg(long = "limit")]
+    pub limit: Option<usize>,
+    /// Skip deleting embedding rows for symbols that no longer exist.
+    #[arg(long = "no-reap")]
+    pub no_reap: bool,
+    /// Rebuild native ANN index after embedding.
+    #[arg(long = "build-index")]
+    pub build_index: bool,
+    /// Retired: no local-inference install ships; exits 1 naming the replacement.
+    #[arg(long = "install-deps")]
+    pub install_deps: bool,
+    /// Retired: no model download ships; exits 1 naming the replacement.
+    #[arg(long = "download-model")]
+    pub download_model: bool,
+    /// Store one vector per symbol (the single-vector build).
+    #[arg(long = "no-multivector", default_value_t = false)]
+    pub no_multivector: bool,
+    /// Retired: configure the server backend through CAIRN_EMBED_* instead; exits 1.
+    #[arg(long = "adopt-server-model", num_args = 0..=1, default_missing_value = "")]
+    pub adopt_server_model: Option<String>,
+}
+
+#[derive(clap::Args)]
+pub struct GrepArgs {
+    /// Pattern to search for.
+    pub pattern: String,
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Emit JSON.
+    #[arg(long = "json")]
+    pub as_json: bool,
+    /// Ignore case.
+    #[arg(long = "ignore-case", short = 'i')]
+    pub ignore_case: bool,
+    /// Treat PATTERN as a literal.
+    #[arg(long = "fixed")]
+    pub fixed: bool,
+    /// Only search repository-relative paths under this prefix.
+    #[arg(long = "in", default_value = "")]
+    pub path_prefix: String,
+    /// Maximum hits returned.
+    #[arg(long = "max-hits", default_value_t = cairn_query::grep::DEFAULT_MAX_HITS, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    pub max_hits: usize,
+    /// Reindex drifted files before answering.
+    #[arg(long = "refresh")]
+    pub refresh: bool,
+    /// Answer from the current graph without reindexing.
+    #[arg(long = "no-refresh")]
+    pub no_refresh: bool,
+}
+
+#[derive(clap::Args)]
+pub struct MapArgs {
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Emit JSON.
+    #[arg(long = "json")]
+    pub as_json: bool,
+    /// Maximum directory clusters per repository.
+    #[arg(long = "max-clusters", default_value_t = CLI_DEFAULT_CLUSTER_CAP, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    pub max_clusters: usize,
+    /// Maximum in-degree hubs per cluster.
+    #[arg(long = "max-hubs", default_value_t = CLI_DEFAULT_HUB_CAP, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    pub max_hubs: usize,
+    /// Maximum workspace-wide hotspots.
+    #[arg(long = "max-hotspots", default_value_t = CLI_DEFAULT_HOTSPOT_CAP, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    pub max_hotspots: usize,
+    /// Reindex drifted files before answering.
+    #[arg(long = "refresh")]
+    pub refresh: bool,
+    /// Answer from the current graph without reindexing.
+    #[arg(long = "no-refresh")]
+    pub no_refresh: bool,
+}
+
+/// The blast `--format` choices (click.Choice parity).
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum BlastFormat {
+    Text,
+    Markdown,
+    Mermaid,
+    Json,
+}
+
+impl BlastFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Markdown => "markdown",
+            Self::Mermaid => "mermaid",
+            Self::Json => "json",
+        }
+    }
+}
+
+#[derive(clap::Args)]
+pub struct BlastArgs {
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Compare against this ref's merge base.
+    #[arg(long = "base")]
+    pub base: Option<String>,
+    /// Output format.
+    #[arg(long = "format", default_value = "text")]
+    pub output_format: BlastFormat,
+    /// Also traverse unresolved name-only edges.
+    #[arg(long = "fuzzy", default_value_t = false)]
+    pub fuzzy: bool,
+    /// Reindex drifted files before diffing.
+    #[arg(long = "refresh")]
+    pub refresh: bool,
+    /// Answer from the current graph without reindexing.
+    #[arg(long = "no-refresh")]
+    pub no_refresh: bool,
+    /// Write to file instead of stdout.
+    #[arg(long = "output")]
+    pub output: Option<String>,
+}
+
+#[derive(clap::Args)]
+pub struct AskArgs {
+    /// Question text.
+    pub question: String,
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Knowledge bundle path.
+    #[arg(long = "knowledge")]
+    pub knowledge: Option<String>,
+    /// Emit JSON.
+    #[arg(long = "json")]
+    pub as_json: bool,
+    /// Route across every registered workspace store.
+    #[arg(long = "all-repos")]
+    pub all_repos: bool,
+}
+
+#[derive(clap::Args)]
+pub struct ContextArgs {
+    /// File to load context for.
+    pub file_path: String,
+    /// Knowledge bundle path.
+    #[arg(long = "knowledge")]
+    pub knowledge: Option<String>,
+    /// Reindex drifted files before answering.
+    #[arg(long = "refresh")]
+    pub refresh: bool,
+    /// Answer from the current graph without reindexing.
+    #[arg(long = "no-refresh")]
+    pub no_refresh: bool,
+}
+
+/// The review `--format` choices (click.Choice parity).
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum ReviewFormat {
+    Text,
+    Markdown,
+}
+
+impl ReviewFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Markdown => "markdown",
+        }
+    }
+}
+
+#[derive(clap::Args)]
+pub struct ReviewArgs {
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Build the review pack for the diff against this ref's merge base.
+    #[arg(long = "base")]
+    pub base: Option<String>,
+    /// Check the diff against recorded mistake and pattern memories.
+    #[arg(long = "pre-submit")]
+    pub pre_submit: bool,
+    /// Record a resolved review-comment event JSON as a memory.
+    #[arg(long = "capture-event")]
+    pub capture_event: Option<String>,
+    /// With --pre-submit, exit non-zero when a mistake or pattern matches the diff.
+    #[arg(long = "gate")]
+    pub gate: bool,
+    /// Pack rendering format.
+    #[arg(long = "format", default_value = "text")]
+    pub output_format: ReviewFormat,
+    /// Also traverse unresolved name-only edges.
+    #[arg(long = "fuzzy", default_value_t = false)]
+    pub fuzzy: bool,
+    /// Reindex drifted files before diffing.
+    #[arg(long = "refresh")]
+    pub refresh: bool,
+    /// Diff against the current graph without reindexing.
+    #[arg(long = "no-refresh")]
+    pub no_refresh: bool,
+}
+
+#[derive(clap::Args)]
+pub struct CommunitiesArgs {
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Top-K hubs listed globally and per community.
+    #[arg(long = "top-k", default_value_t = 10, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
+    pub top_k: usize,
+}
+
+#[derive(clap::Args)]
+pub struct DataflowBuildArgs {
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Cap on public symbols indexed per run (default: CAIRN_DATAFLOW_MAX_SYMBOLS, else 2000).
+    #[arg(long = "max-symbols", allow_negative_numbers = true)]
+    pub max_symbols: Option<i64>,
+}
+
+#[derive(clap::Args)]
+pub struct DataflowLookupArgs {
+    /// Symbol to look up.
+    pub symbol: String,
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Emit JSON.
+    #[arg(long = "json")]
+    pub as_json: bool,
+}
+
+#[derive(clap::Args)]
+pub struct RationaleArgs {
+    /// Symbol name or qualified-name substring (case-insensitive).
+    #[arg(long = "symbol")]
+    pub symbol: Option<String>,
+    /// File path substring (case-insensitive).
+    #[arg(long = "file")]
+    pub file_pattern: Option<String>,
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+    /// Emit JSON rows.
+    #[arg(long = "json")]
+    pub as_json: bool,
+}
+
+/// The viz `--format` choices (click.Choice parity).
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum VizFormat {
+    Mermaid,
+    Dot,
+    Json,
+}
+
+impl VizFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mermaid => "mermaid",
+            Self::Dot => "dot",
+            Self::Json => "json",
+        }
+    }
+}
+
+/// The viz `--scope` choices (click.Choice parity).
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum VizScope {
+    Symbol,
+    Module,
+    Impact,
+    Repo,
+    Deps,
+}
+
+impl VizScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Symbol => "symbol",
+            Self::Module => "module",
+            Self::Impact => "impact",
+            Self::Repo => "repo",
+            Self::Deps => "deps",
+        }
+    }
+}
+
+#[derive(clap::Args)]
+pub struct VizArgs {
+    /// Output format.
+    #[arg(long = "format", default_value = "mermaid")]
+    pub format: VizFormat,
+    /// Graph scope.
+    #[arg(long = "scope", default_value = "symbol")]
+    pub scope: VizScope,
+    /// Symbol name (scope=symbol/impact).
+    #[arg(long = "symbol")]
+    pub symbol: Option<String>,
+    /// Module path (scope=module).
+    #[arg(long = "module")]
+    pub module: Option<String>,
+    /// Repo name (scope=repo).
+    #[arg(long = "repo")]
+    pub repo: Option<String>,
+    /// Traversal depth (scope=impact).
+    #[arg(long = "depth", default_value_t = 3)]
+    pub depth: i64,
+    /// Write to file instead of stdout.
+    #[arg(long = "output")]
+    pub output: Option<String>,
+    /// Wrap in OKF markdown block.
+    #[arg(long = "embed")]
+    pub do_embed: bool,
+    /// Write one self-contained HTML file (overrides --format; not valid with --output).
+    #[arg(long = "export")]
+    pub export_path: Option<String>,
+    /// SQLite DB path.
+    #[arg(long = "db")]
+    pub db: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staging_build_swaps_the_temp_db_over_the_store() {
+        let dir = std::env::temp_dir().join(format!(
+            "cairn-staging-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join(".git")).expect("repo marker");
+        std::fs::write(dir.join("mod.py"), "def f():\n    return 1\n").expect("source");
+        let db = dir.join("store.kg");
+        let db_str = db.to_string_lossy().to_string();
+        {
+            let conn = cairn_store::schema::open_initialized(&db).expect("seed store");
+            conn.execute(
+                "INSERT INTO build_runs (kind, started_at) VALUES ('build', 1.0)",
+                [],
+            )
+            .expect("seed telemetry");
+        }
+
+        let code = build(BuildArgs {
+            repo: None,
+            workspace: Some(dir.to_string_lossy().to_string()),
+            db: Some(db_str.clone()),
+            verbose: false,
+            staging: true,
+            lsp: None,
+            with_closure: false,
+        });
+
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(!Path::new(&format!("{db_str}.tmp")).exists());
+        assert!(!Path::new(&format!("{db_str}.tmp.build.lock")).exists());
+        let conn = Connection::open(&db).expect("open store");
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).expect("count") };
+        assert_eq!(count("SELECT COUNT(*) FROM files"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM build_runs"), 1);
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refresh_repair_defers_while_a_build_holds_the_lock() {
+        let env = crate::test_env::EnvScope::new("refresh-lock");
+        let ws = env.dir().join("ws");
+        let repo = ws.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).expect("repo marker");
+        std::fs::write(repo.join("mod.py"), "def one():\n    return 1\n").expect("source");
+        let db = ws.join("store.kg");
+        let db_str = db.to_string_lossy().to_string();
+        let ws_str = ws.to_string_lossy().to_string();
+        cairn_build::builder::build_graph(&ws_str, &db_str, None, Some(1)).expect("full build");
+
+        let drifted = "def one():\n    return 1\n\n\ndef two():\n    return 2\n";
+        std::fs::write(repo.join("mod.py"), drifted).expect("drift fixture");
+
+        let saved = std::env::var_os("CAIRN_WORKSPACE");
+        // SAFETY: EnvScope holds the env lock for the rest of this test.
+        unsafe { std::env::set_var("CAIRN_WORKSPACE", &ws) };
+        let mut conn = cairn_store::schema::open_initialized(&db).expect("open store");
+        let stored_size = |conn: &Connection| -> i64 {
+            conn.query_row("SELECT size FROM files", [], |r| r.get(0))
+                .expect("files row")
+        };
+        let built_size = stored_size(&conn);
+
+        let held = cairn_store::swap::build_lock(&db).expect("hold build lock");
+        let deferred = refresh_conn(&mut conn, &db_str, Some(true));
+        let size_under_lock = stored_size(&conn);
+        drop(held);
+        let released = refresh_conn(&mut conn, &db_str, Some(true));
+        let size_after = stored_size(&conn);
+
+        // SAFETY: still holding the env lock.
+        unsafe {
+            match &saved {
+                Some(v) => std::env::set_var("CAIRN_WORKSPACE", v),
+                None => std::env::remove_var("CAIRN_WORKSPACE"),
+            }
+        }
+
+        assert_eq!(built_size, "def one():\n    return 1\n".len() as i64);
+        assert!(
+            deferred.is_ok(),
+            "read-path refresh must not fail on lock contention: {deferred:?}"
+        );
+        assert_eq!(
+            size_under_lock, built_size,
+            "repair wrote to the store while another build held the lock"
+        );
+        assert!(released.is_ok(), "{released:?}");
+        assert_eq!(
+            size_after,
+            drifted.len() as i64,
+            "repair must run once the lock frees"
+        );
+        let _ = std::fs::remove_dir_all(env.dir());
+    }
 }
