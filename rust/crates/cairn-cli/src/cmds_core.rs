@@ -90,12 +90,6 @@ pub enum CoreCommand {
     Rationale(RationaleArgs),
     /// Review-context pack and review-loop hooks for a change.
     Review(ReviewArgs),
-    /// List open PRs with CI and review state from gh.
-    Prs(PypiOnlyArgs),
-    /// Run performance, scalability, or agent-effort benchmarks.
-    Bench(PypiOnlyArgs),
-    /// Run retrieval evaluation harness across corpora.
-    Eval(PypiOnlyArgs),
     /// Generate visual diagrams from the graph.
     Viz(VizArgs),
 }
@@ -144,9 +138,6 @@ pub fn run(command: CoreCommand) -> ExitCode {
         CoreCommand::Ask(args) => ask(args),
         CoreCommand::Context(args) => context(args),
         CoreCommand::Review(args) => review(args),
-        CoreCommand::Prs(_) => pypi_only("prs"),
-        CoreCommand::Bench(_) => pypi_only("bench"),
-        CoreCommand::Eval(_) => pypi_only("eval"),
     }
 }
 
@@ -3516,17 +3507,6 @@ fn communities(_args: crate::cmds_core::CommunitiesArgs) -> ExitCode {
     ExitCode::FAILURE
 }
 
-// --- cairn prs / bench / eval ------------------------------------------------------
-
-/// prs/bench/eval handler: the developer-workflow surface stays on the PyPI CLI.
-fn pypi_only(name: &str) -> ExitCode {
-    display::error(&format!(
-        "cairn {name} is a developer-workflow command that stays on the PyPI CLI; \
-         run it there: pip install cairn-intel"
-    ));
-    ExitCode::FAILURE
-}
-
 // --- cairn viz ---------------------------------------------------------------------
 
 /// viz handler.
@@ -4155,13 +4135,6 @@ pub struct CommunitiesArgs {
     /// Top-K hubs listed globally and per community.
     #[arg(long = "top-k", default_value_t = 10, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
     pub top_k: usize,
-}
-
-/// Opaque arguments of a PyPI-only command, so the diagnostic fires whatever the caller passed.
-#[derive(clap::Args)]
-pub struct PypiOnlyArgs {
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
-    pub rest: Vec<std::ffi::OsString>,
 }
 
 #[derive(clap::Args)]

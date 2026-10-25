@@ -3537,6 +3537,10 @@ fn memory_stats(knowledge: Option<&str>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The whole `memory digest` output for an empty store; the session_start hook
+/// suppresses exactly this line.
+pub(crate) const EMPTY_DIGEST: &str = "No tribal memories yet.";
+
 fn memory_digest(limit: i64, db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
     if limit < 0 {
         return usage_error(
@@ -3544,6 +3548,24 @@ fn memory_digest(limit: i64, db: Option<&str>, knowledge: Option<&str>) -> ExitC
             &format!("limit must be non-negative, got {limit}"),
         );
     }
+    match digest_lines(limit, db, knowledge) {
+        Ok(lines) => {
+            for line in lines {
+                println!("{line}");
+            }
+        }
+        Err(msg) => return cli_err(&msg),
+    }
+    ExitCode::SUCCESS
+}
+
+/// The digest lines: the top `limit` tribal memories by score, the unembedded
+/// hint when a store is open, or `EMPTY_DIGEST` alone.
+fn digest_lines(
+    limit: i64,
+    db: Option<&str>,
+    knowledge: Option<&str>,
+) -> Result<Vec<String>, String> {
     let bundle = memory_bundle(knowledge);
     let mut mems = tools_km::list_memories(&bundle, Some("tribal"), None);
     mems.sort_by(|a, b| {
@@ -3554,33 +3576,30 @@ fn memory_digest(limit: i64, db: Option<&str>, knowledge: Option<&str>) -> ExitC
     });
     mems.truncate(limit.max(0) as usize);
     if mems.is_empty() {
-        println!("No tribal memories yet.");
-        return ExitCode::SUCCESS;
+        return Ok(vec![EMPTY_DIGEST.to_string()]);
     }
     let db_file = db_path(db);
     let conn = if db_file.exists() {
-        match open_db_read_only(&db_file) {
-            Ok(conn) => Some(conn),
-            Err(e) => {
-                return cli_err(&format!(
-                    "--db '{}' is not a valid cairn database: {e}",
-                    db_file.display()
-                ));
-            }
-        }
+        Some(open_db_read_only(&db_file).map_err(|e| {
+            format!(
+                "--db '{}' is not a valid cairn database: {e}",
+                db_file.display()
+            )
+        })?)
     } else {
         None
     };
-    for c in &mems {
-        println!("{}", memory_line(c, conn.as_ref(), false, false));
-    }
+    let mut lines: Vec<String> = mems
+        .iter()
+        .map(|c| memory_line(c, conn.as_ref(), false, false))
+        .collect();
     if let Some(conn) = &conn
         && let Ok(hint) = tools_km::unembedded_memory_hint(conn, &bundle)
         && !hint.is_empty()
     {
-        println!("{hint}");
+        lines.push(hint);
     }
-    ExitCode::SUCCESS
+    Ok(lines)
 }
 
 fn memory_promote(path: &str, db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
@@ -5498,6 +5517,78 @@ mod tests {
         tree::<SkillGroup>().debug_assert();
         tree::<TaskGroup>().debug_assert();
         tree::<WorkflowGroup>().debug_assert();
+    }
+
+    fn files_under(root: &Path) -> usize {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .map(|e| {
+                if e.path().is_dir() {
+                    files_under(&e.path())
+                } else {
+                    1
+                }
+            })
+            .sum()
+    }
+
+    #[test]
+    fn memory_digest_empty_store_sentinel_is_pinned() {
+        // session_start suppresses exactly this line; the hook and the digest
+        // share the constant, and an empty store must produce nothing else.
+        let env = crate::test_env::EnvScope::new("digest-empty");
+        let root = env.dir().join("store");
+        let db = root.join("graph.db");
+        let knowledge = root.join("knowledge");
+        let lines = digest_lines(
+            5,
+            Some(db.to_str().expect("utf8")),
+            Some(knowledge.to_str().expect("utf8")),
+        )
+        .expect("digest");
+        assert_eq!(lines, vec![EMPTY_DIGEST.to_string()]);
+    }
+
+    #[test]
+    fn memory_record_recurrence_key_gates_capture_per_signature() {
+        let env = crate::test_env::EnvScope::new("recurrence");
+        let root = env.dir().join("store");
+        std::fs::create_dir_all(&root).expect("root");
+        let db = root.join("graph.db");
+        let knowledge = root.join("knowledge");
+        let record = |sig: &str| {
+            memory_record(
+                "mistake",
+                "Tool failure: Bash",
+                "Bash failed.\n\nWhy: hook.\n\nHow to apply: check first.",
+                None,
+                0.3,
+                Some(sig),
+                None,
+                Some(db.to_str().expect("utf8")),
+                Some(knowledge.to_str().expect("utf8")),
+            )
+        };
+        assert_eq!(record("aaaaaaaaaaaaaaaa"), ExitCode::SUCCESS);
+        assert_eq!(
+            files_under(&knowledge),
+            0,
+            "first occurrence registers quietly"
+        );
+        assert_eq!(record("bbbbbbbbbbbbbbbb"), ExitCode::SUCCESS);
+        assert_eq!(
+            files_under(&knowledge),
+            0,
+            "a different signature is its own first occurrence"
+        );
+        assert_eq!(record("aaaaaaaaaaaaaaaa"), ExitCode::SUCCESS);
+        assert!(
+            files_under(&knowledge) > 0,
+            "the second occurrence is captured"
+        );
     }
 
     #[test]

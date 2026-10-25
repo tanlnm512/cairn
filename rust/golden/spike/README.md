@@ -1,8 +1,7 @@
 # P0-5 spike fixtures
 
-- `search-store.kg` — the cairn self-store corpus, capped by `SUBSET_FILE_CAP`
-  in `scripts/rust_migration/spike_golden.py` to an evenly spaced sample of
-  indexable files, built by `scripts/rust_migration/spike_golden.py`, pruned to
+- `search-store.kg` — the cairn self-store corpus, capped to an evenly spaced
+  sample of indexable files by the retired Python recorder, pruned to
   the tables `search_symbols` reads (`repos`, `files`, `symbols`,
   `symbols_fts`) and response-verified query-for-query against the full scratch
   store before check-in.
@@ -10,7 +9,6 @@
   response pairs this store must serve golden-equal; entry 0 duplicates the
   committed golden capture.
 
-Regenerate both with `.venv/bin/python scripts/rust_migration/spike_golden.py`
-(a corpus change can reorder bm25 ties; see the golden diff message, and pass
-`--record` to re-baseline). The Rust integration test
-(`crates/cairn-daemon/tests/spike_golden.rs`) reads only these checked-in bytes.
+Frozen: the bytes are the spec of record (the Python recorder is retired).
+Verify with `cargo test --manifest-path rust/Cargo.toml -p cairn-daemon
+--test spike_golden`, which reads only these checked-in bytes.

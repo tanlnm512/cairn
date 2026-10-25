@@ -4,6 +4,7 @@ and the heavy ground truth deterministically.
 
 Run from the repo root: uv run --no-sync python tests/fixtures/scip-indexing/generate_heavy.py
 The committed index must be regenerated this way, never edited by hand.
+cairn.parsers._scip_pb2 is not in this tree: regenerate from a checkout that still carries src/cairn/parsers/_scip_pb2.py.
 """
 from __future__ import annotations
 

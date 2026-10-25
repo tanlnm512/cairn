@@ -1,40 +1,17 @@
-"""Binary-document conversion behind cairn[ingest]."""
+"""Binary-document conversion sidecar behind cairn[ingest]."""
 from __future__ import annotations
 
 import sys
-import tempfile
+import zipfile
 from pathlib import Path
 
 import pytest
 
-pytest.importorskip("pymupdf4llm", reason="cairn[ingest] extra not installed")
-pytest.importorskip("mammoth", reason="cairn[ingest] extra not installed")
-
-from cairn.knowledge.ingest import run_ingest
-from cairn.knowledge.ingest.adapters import FedBinaryAdapter
-from cairn.knowledge.ingest.convert import _EXTRA_MISSING, convert_document
-
-
-@pytest.fixture
-def feed_root():
-    with tempfile.TemporaryDirectory() as tmp:
-        yield Path(tmp)
-
-
-def _text_pdf(path: Path, text: str) -> None:
-    import pymupdf
-
-    doc = pymupdf.open()
-    page = doc.new_page()
-    page.insert_text((72, 72), text, fontsize=12)
-    doc.save(str(path))
-    doc.close()
+from cairn.ingest_convert import _EXTRA_MISSING, convert_document, main
 
 
 def _minimal_docx(path: Path, text: str) -> None:
     """Hand-build the smallest valid .docx (OPC zip) mammoth accepts."""
-    import zipfile
-
     content_types = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -66,84 +43,56 @@ def _minimal_docx(path: Path, text: str) -> None:
         zf.writestr("word/document.xml", document)
 
 
-class TestConvertDocument:
-    def test_text_pdf_converts_to_markdown(self, feed_root):
-        pdf = feed_root / "spec.pdf"
-        _text_pdf(pdf, "Deploy the gateway")
-        markdown, reason = convert_document(pdf)
-        assert reason is None
-        assert "gateway" in markdown.lower()
-
-    def test_missing_extra_and_garbage_skip_with_reasons(self, feed_root, monkeypatch):
-        pdf = feed_root / "blank.pdf"
-        pdf.write_bytes(b"%PDF-1.4 not a real document")
-        markdown, reason = convert_document(pdf)
-        assert markdown is None
-        assert reason
-
-    def test_unsupported_suffix_skips(self, feed_root):
-        png = feed_root / "img.png"
-        png.write_bytes(b"\x89PNG")
-        markdown, reason = convert_document(png)
-        assert markdown is None
-        assert reason.startswith("unsupported binary type")
-
-    def test_missing_extra_degrades_to_skip_reason(self, feed_root, monkeypatch):
-        pdf = feed_root / "spec.pdf"
-        _text_pdf(pdf, "Deploy the gateway")
-        # A None entry makes `import pymupdf4llm` raise ImportError inside
-        # the converter, simulating the cairn[ingest] extra being absent;
-        # monkeypatch restores the module afterwards.
-        monkeypatch.setitem(sys.modules, "pymupdf4llm", None)
-        markdown, reason = convert_document(pdf)
-        assert markdown is None
-        assert reason == _EXTRA_MISSING
+def test_unsupported_suffix_skips(tmp_path):
+    png = tmp_path / "img.png"
+    png.write_bytes(b"\x89PNG")
+    markdown, reason = convert_document(png)
+    assert markdown is None
+    assert reason.startswith("unsupported binary type")
 
 
-class TestDocxConversion:
-    def test_docx_converts_to_markdown(self, feed_root):
-        docx = feed_root / "spec.docx"
-        _minimal_docx(docx, "Deploy the gateway")
-        markdown, reason = convert_document(docx)
-        assert reason is None
-        assert "gateway" in markdown.lower()
-
-    def test_garbage_docx_skips_with_reason(self, feed_root):
-        docx = feed_root / "blank.docx"
-        docx.write_bytes(b"not a zip at all")
-        markdown, reason = convert_document(docx)
-        assert markdown is None
-        assert reason.startswith("conversion failed")
-
-    def test_docx_stages_tagged_converted_with_resource(self, feed_root):
-        docx = feed_root / "spec.docx"
-        _minimal_docx(docx, "Deploy the gateway")
-        manifest = run_ingest(
-            files=[docx], dirs=[], outbox=feed_root / "outbox"
-        )
-        assert manifest["counts"]["accepted"] == 1
-        row = manifest["rows"][0]
-        assert "converted" in row["tags"]
-        assert "spec.docx" in row["resource"]
-        staged = feed_root / "outbox" / row["staged_path"]
-        assert staged.exists()
+def test_missing_extra_degrades_to_skip_reason(tmp_path, monkeypatch):
+    """A None sys.modules entry makes the lazy import raise: the extra is absent."""
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", None)
+    pdf = tmp_path / "spec.pdf"
+    pdf.write_bytes(b"%PDF-1.4 not a real document")
+    assert convert_document(pdf) == (None, _EXTRA_MISSING)
 
 
-class TestFedBinaryAdapter:
-    def test_converted_doc_carries_converted_origin(self, feed_root):
-        pdf = feed_root / "spec.pdf"
-        _text_pdf(pdf, "Deploy the gateway")
-        docs = list(FedBinaryAdapter([pdf]).iter_docs())
-        assert len(docs) == 1
-        repo, relpath, text, origin = docs[0]
-        assert origin == "converted"
-        assert "gateway" in text.lower()
-
-    def test_garbage_pdf_lands_in_skipped(self, feed_root):
-        pdf = feed_root / "blank.pdf"
-        pdf.write_bytes(b"%PDF-1.4 not a real document")
-        adapter = FedBinaryAdapter([pdf])
-        assert list(adapter.iter_docs()) == []
-        assert adapter.skipped and adapter.skipped[0][1]
+def test_cli_reports_skip_reason_on_stderr(tmp_path, monkeypatch, capsys):
+    """`python -m cairn.ingest_convert <path>`: exit 1 with the reason; stdout stays empty."""
+    monkeypatch.setitem(sys.modules, "mammoth", None)
+    docx = tmp_path / "spec.docx"
+    docx.write_bytes(b"not a zip at all")
+    assert main([str(docx)]) == 1
+    out, err = capsys.readouterr()
+    assert out == "" and _EXTRA_MISSING in err
+    assert main([]) == 2
 
 
+def test_docx_converts_to_markdown(tmp_path, capsys):
+    pytest.importorskip("mammoth", reason="cairn[ingest] extra not installed")
+    pytest.importorskip("markdownify", reason="cairn[ingest] extra not installed")
+    docx = tmp_path / "spec.docx"
+    _minimal_docx(docx, "Deploy the gateway")
+    markdown, reason = convert_document(docx)
+    assert reason is None and "gateway" in markdown.lower()
+    assert main([str(docx)]) == 0
+    assert "gateway" in capsys.readouterr().out.lower()
+
+    garbage = tmp_path / "blank.docx"
+    garbage.write_bytes(b"not a zip at all")
+    markdown, reason = convert_document(garbage)
+    assert markdown is None and reason.startswith("conversion failed")
+
+
+def test_text_pdf_converts_to_markdown(tmp_path):
+    pymupdf = pytest.importorskip("pymupdf", reason="cairn[ingest] extra not installed")
+    pytest.importorskip("pymupdf4llm", reason="cairn[ingest] extra not installed")
+    pdf = tmp_path / "spec.pdf"
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), "Deploy the gateway", fontsize=12)
+    doc.save(str(pdf))
+    doc.close()
+    markdown, reason = convert_document(pdf)
+    assert reason is None and "gateway" in markdown.lower()

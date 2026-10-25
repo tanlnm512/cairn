@@ -5,8 +5,9 @@
 # Probes (from the fresh venv, never the repo checkout):
 #   1. `cairn --version` exits 0;
 #   2. `cairn config --json` is stdout-pure JSON with the C-4 store keys;
-#   3. the bundled binary is discoverable: daemon_impl() defaults to rust and
-#      rust_bin() resolves to <site-packages>/cairn/_bin/cairn, which also runs.
+#   3. the bundled binary is discoverable: rust_bin() resolves to
+#      <site-packages>/cairn/_bin/cairn, which also runs; the wheel is tagged
+#      for the platform and carries only the launcher package.
 #   4. the console script execs the resolved binary: CAIRN_RUST_BIN pinned to
 #      a marker script, the original argv and exit code come back through it.
 #
@@ -34,6 +35,8 @@ cargo build --release --manifest-path "$REPO_ROOT/rust/Cargo.toml" -p cairn-cli 
 [ -f "$RS_BIN" ] || fail "release binary missing: $RS_BIN"
 
 # --- inject as package data + build the wheel ---------------------------------
+# A stale build/ tree would be copied into the wheel wholesale.
+rm -rf "$REPO_ROOT/build"
 mkdir -p "$BIN_DIR"
 cp "$RS_BIN" "$BIN_DST"
 "$PY" -m build --wheel --outdir "$WORK/dist" "$REPO_ROOT" \
@@ -72,16 +75,25 @@ EOF
 "$VENV_PY" - <<'EOF' || fail "bundled-binary discovery probe"
 import subprocess
 from cairn import paths
-from cairn.mcp_server import lifecycle
 
-impl = lifecycle.daemon_impl()
-assert impl == "rust", f"daemon_impl()={impl!r}, expected rust"
-bundled = lifecycle.rust_bin()
+bundled = paths.rust_bin()
 expected = str(paths.BUNDLED_BIN_DIR / "cairn")
 assert bundled == expected, f"rust_bin()={bundled!r}, expected {expected!r}"
 r = subprocess.run([bundled, "--version"], capture_output=True, text=True)
 assert r.returncode == 0, r.stderr
-print(f"discovery OK: impl=rust bundled binary runs ({r.stdout.strip() or bundled})")
+print(f"discovery OK: bundled binary runs ({r.stdout.strip() or bundled})")
+EOF
+
+"$PY" - "$WHEEL" <<'EOF' || fail "wheel is not a platform-tagged launcher"
+import sys, zipfile
+from pathlib import Path
+name = Path(sys.argv[1]).name
+assert "-py3-none-" in name and not name.endswith("-any.whl"), name
+names = zipfile.ZipFile(sys.argv[1]).namelist()
+modules = sorted(n for n in names if n.startswith("cairn/") and n.endswith(".py"))
+assert modules == ["cairn/__init__.py", "cairn/communities.py", "cairn/console.py",
+                   "cairn/ingest_convert.py", "cairn/paths.py"], modules
+print("launcher wheel OK:", name)
 EOF
 
 # --- console-script exec shim (4d-2) -------------------------------------------

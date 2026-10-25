@@ -22,13 +22,10 @@ repos:
     rev: v0.16.2
     hooks:
       - id: ruff
-        # Vendored benchmark corpora are tree_hash-pinned third-party data.
-        # Ruff's per-file config discovery applies the attrs tree's own
-        # pyproject (`select = ["ALL"]`, CPY001 et al.) to its files -- the
-        # root extend-exclude cannot reach them, so the hook itself must
-        # never hand them to ruff. Linting pinned data has no fixable
-        # finding, only a red gate over immutable bytes.
-        exclude: ^benchmarks/datasource/(t2/yarl|ds2/second-corpus)/|^rust/golden/stores/.*/corpus/
+        # The pinned parity-store corpus copies are third-party data whose
+        # own lint configs ruff would resolve nearest-first; linting pinned
+        # data has no fixable finding, only a red gate over immutable bytes.
+        exclude: ^rust/golden/stores/.*/corpus/
 
   # --- Secret scanning. Catches API keys / tokens / .env blobs before they
   # reach the remote. Cheap insurance for a repo that ships agent-integration
@@ -60,7 +57,7 @@ repos:
     hooks:
       - id: check-comment-lengths
         name: check comment/docstring lengths (shrink-only baseline)
-        entry: uv run --no-sync python -m cairn.cli.system.comment_style
+        entry: uv run --no-sync python scripts/comment_style.py
         language: system
         pass_filenames: false
         always_run: true

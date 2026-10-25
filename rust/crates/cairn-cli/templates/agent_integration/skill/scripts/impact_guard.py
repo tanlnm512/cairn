@@ -4,23 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 
 DEFAULT_THRESHOLD = 100
 
 
-def _cg_command() -> list[str]:
-    """Resolve a cairn invocation, preferring PATH over the CLI package module."""
-    if shutil.which("cairn"):
-        return ["cairn"]
-    return [sys.executable, "-m", "cairn.cli"]
-
-
 def run_cg(args: list[str]) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run([*_cg_command(), *args], capture_output=True, text=True, timeout=60)
+        return subprocess.run(["cairn", *args], capture_output=True, text=True, timeout=60)
     except FileNotFoundError:
         print("error: `cairn` not found on PATH", file=sys.stderr)
         sys.exit(1)

@@ -1072,8 +1072,21 @@ fn walk_md_files(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Binary conversion stays the Python [ingest] sidecar; binary-only installs skip.
+/// Binary conversion rides the Python [ingest] sidecar (`cairn.ingest_convert`);
+/// without an importable sidecar every binary document is skipped.
 fn fed_binary_docs(paths: &[PathBuf]) -> Result<(Vec<SourcedDoc>, AdapterSkips), String> {
+    if paths.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let python = crate::sidecar::python_with("cairn.ingest_convert");
+    fed_binary_docs_with(paths, python.as_deref())
+}
+
+fn fed_binary_docs_with(
+    paths: &[PathBuf],
+    sidecar: Option<&Path>,
+) -> Result<(Vec<SourcedDoc>, AdapterSkips), String> {
+    let mut docs = Vec::new();
     let mut skipped = Vec::new();
     for path in paths {
         if !path.exists() {
@@ -1086,12 +1099,48 @@ fn fed_binary_docs(paths: &[PathBuf]) -> Result<(Vec<SourcedDoc>, AdapterSkips),
         if !CONVERT_SUFFIXES.contains(&suffix.as_str()) {
             continue;
         }
-        skipped.push((
-            path.to_string_lossy().replace('\\', "/"),
-            "cairn[ingest] not installed".to_string(),
-        ));
+        let relpath = path.to_string_lossy().replace('\\', "/");
+        let outcome = match sidecar {
+            None => Err("cairn[ingest] not installed".to_string()),
+            Some(python) => convert_with_sidecar(python, path),
+        };
+        match outcome {
+            Ok(markdown) => docs.push((
+                FED_REPO.to_string(),
+                relpath,
+                markdown,
+                CONVERTED_ORIGIN.to_string(),
+            )),
+            Err(reason) => skipped.push((relpath, reason)),
+        }
     }
-    Ok((Vec::new(), skipped))
+    Ok((docs, skipped))
+}
+
+/// `python -m cairn.ingest_convert <path>`: markdown on stdout, or the skip
+/// reason on stderr with a non-zero exit.
+fn convert_with_sidecar(python: &Path, path: &Path) -> Result<String, String> {
+    let output = std::process::Command::new(python)
+        .args(["-m", "cairn.ingest_convert"])
+        .arg(path)
+        .output()
+        .map_err(|e| format!("conversion failed: {e}"))?;
+    if !output.status.success() {
+        let reason = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if reason.is_empty() {
+            format!(
+                "conversion failed: exit {}",
+                output.status.code().unwrap_or(-1)
+            )
+        } else {
+            reason
+        });
+    }
+    let markdown = String::from_utf8_lossy(&output.stdout).into_owned();
+    if markdown.trim().is_empty() {
+        return Err("conversion returned no markdown".to_string());
+    }
+    Ok(markdown)
 }
 
 const DEFAULT_DOC_DIRS: [&str; 4] = ["docs", "decisions", "adr", "adrs"];
@@ -2045,6 +2094,79 @@ pub fn predict_dangling(bundle: &Bundle, manifest: &IngestManifest) -> Vec<Dangl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("cairn-{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    /// A stand-in for `python -m cairn.ingest_convert <path>`: markdown on
+    /// stdout, or `reason` on stderr with exit 1.
+    fn fake_sidecar(dir: &Path, reason: Option<&str>) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let body = match reason {
+            None => "#!/bin/sh\nprintf '# converted %s' \"$(basename \"$3\")\"\n",
+            Some(reason) => &format!("#!/bin/sh\necho '{reason}' >&2\nexit 1\n"),
+        };
+        let script = dir.join("python3");
+        std::fs::write(&script, body).expect("script");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        script
+    }
+
+    #[test]
+    fn binary_docs_convert_through_the_ingest_sidecar() {
+        let dir = scratch("ingest-sidecar");
+        let pdf = dir.join("spec.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4").expect("pdf");
+        let note = dir.join("note.md");
+        std::fs::write(&note, b"# md").expect("md");
+        let python = fake_sidecar(&dir, None);
+
+        let (docs, skipped) =
+            fed_binary_docs_with(&[pdf.clone(), note], Some(&python)).expect("adapter");
+        assert!(skipped.is_empty(), "{skipped:?}");
+        assert_eq!(
+            docs,
+            vec![(
+                FED_REPO.to_string(),
+                pdf.to_string_lossy().to_string(),
+                "# converted spec.pdf".to_string(),
+                CONVERTED_ORIGIN.to_string(),
+            )]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn binary_docs_skip_with_the_sidecar_reason_or_the_missing_extra() {
+        let dir = scratch("ingest-sidecar-skip");
+        let docx = dir.join("spec.docx");
+        std::fs::write(&docx, b"PK").expect("docx");
+        let rel = docx.to_string_lossy().to_string();
+
+        let (docs, skipped) =
+            fed_binary_docs_with(std::slice::from_ref(&docx), None).expect("adapter");
+        assert!(docs.is_empty());
+        assert_eq!(
+            skipped,
+            vec![(rel.clone(), "cairn[ingest] not installed".to_string())]
+        );
+
+        let python = fake_sidecar(&dir, Some("conversion failed: not a zip"));
+        let (docs, skipped) = fed_binary_docs_with(&[docx], Some(&python)).expect("adapter");
+        assert!(docs.is_empty());
+        assert_eq!(
+            skipped,
+            vec![(rel, "conversion failed: not a zip".to_string())]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn sha1_hex8_matches_the_reference_vector() {

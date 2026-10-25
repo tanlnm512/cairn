@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -15,12 +16,12 @@ for _p in (str(Path(__file__).resolve().parent),):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import baseline  # reuse: the MCP client base + env pins
-
 SCHEMA = "cairn-rust-golden-mcp/1"
 DEFAULT_OUT_DIR = REPO_ROOT / "rust" / "golden" / "mcp"
+HTTP_TIMEOUT_S = 120.0
+PROTOCOL_VERSION = "2025-03-26"
 # CAIRN_WATCH=0 keeps the live watcher from reindexing the workspace mid-capture.
-ENV_PINS = {**baseline.ENV_PINS, "CAIRN_WATCH": "0"}
+ENV_PINS = {"CAIRN_EMBED_BACKEND": "hash", "CAIRN_RERANK": "0", "CAIRN_WATCH": "0"}
 _POP_KEYS = (
     "CAIRN_READ_ONLY", "CAIRN_MCP_API_KEY", "PYTEST_CURRENT_TEST",
     "CAIRN_DB", "CAIRN_KNOWLEDGE",
@@ -30,7 +31,108 @@ _POP_KEYS = (
 # --- client -------------------------------------------------------------------
 
 
-class GoldenClient(baseline.McpClient):
+class McpClient:
+    """Streamable-HTTP MCP session: initialize -> initialized -> tools/call over keep-alive."""
+
+    def __init__(self, url: str):
+        self.url = url
+        self.host, self.port_path = url[len("http://") :].split("/", 1)
+        self.path = "/" + self.port_path
+        self.conn: HTTPConnection | None = None
+        self.session_id: str | None = None
+        self._id = 0
+
+    def _post(self, payload: dict) -> tuple[dict, object]:
+        if self.conn is None:
+            self.conn = HTTPConnection(self.host, timeout=HTTP_TIMEOUT_S)
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if self.session_id:
+            headers["mcp-session-id"] = self.session_id
+        body = json.dumps(payload)
+        self.conn.request("POST", self.path, body=body, headers=headers)
+        resp = self.conn.getresponse()
+        raw = resp.read().decode()
+        messages = self._parse_messages(raw)
+        return messages, resp
+
+    @staticmethod
+    def _parse_messages(raw: str) -> list[dict]:
+        raw = raw.strip()
+        if raw.startswith("{"):
+            return [json.loads(raw)]
+        # rmcp inserts empty SSE keepalive data frames; python never does.
+        return [
+            json.loads(payload)
+            for line in raw.splitlines()
+            if line.startswith("data:")
+            for payload in (line[len("data:") :].strip(),)
+            if payload
+        ]
+
+    def _reconnect(self) -> None:
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            except OSError:
+                pass
+        self.conn = None
+
+    def _rpc(self, payload: dict) -> list[dict]:
+        for attempt in (1, 2):
+            try:
+                messages, _resp = self._post(payload)
+                return messages
+            except (OSError, http.client.HTTPException):
+                if attempt == 2:
+                    raise
+                self._reconnect()
+        raise OSError("unreachable")
+
+    def start(self) -> list[str]:
+        """Initialize the session and return the tools/list catalog."""
+        self._id = 0
+        messages, resp = self._post(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {"name": "rust-migration-baseline", "version": "0"},
+                },
+            }
+        )
+        self.session_id = resp.getheader("mcp-session-id")
+        if not self.session_id:
+            raise RuntimeError("initialize carried no mcp-session-id")
+        self._rpc({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        listing = self._rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        return [t["name"] for t in listing[0]["result"]["tools"]]
+
+    def call(self, tool: str, args: dict) -> tuple[bool, str]:
+        """One tools/call; returns (is_error, first_content_text_snippet)."""
+        self._id += 1
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self._id,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": args},
+        }
+        messages = self._rpc(payload)
+        msg = messages[0] if messages else {}
+        if "error" in msg:
+            return True, str(msg["error"])[:200]
+        result = msg.get("result") or {}
+        content = result.get("content") or []
+        text = content[0].get("text", "") if content else ""
+        return bool(result.get("isError")), text[:200]
+
+
+class GoldenClient(McpClient):
     """McpClient with bearer auth and full-fidelity result capture."""
 
     def __init__(self, url: str, api_key: str):
@@ -39,7 +141,7 @@ class GoldenClient(baseline.McpClient):
 
     def _post(self, payload: dict) -> tuple[list[dict], object]:
         if self.conn is None:
-            self.conn = HTTPConnection(self.host, timeout=baseline.HTTP_TIMEOUT_S)
+            self.conn = HTTPConnection(self.host, timeout=HTTP_TIMEOUT_S)
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",

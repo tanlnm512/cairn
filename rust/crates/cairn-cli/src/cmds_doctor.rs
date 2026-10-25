@@ -138,6 +138,7 @@ pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
             "store not found at {db} -- run `cairn init` + `cairn build` first"
         ));
         degraded.push(check_environment(db));
+        degraded.push(check_agent_hooks());
         return degraded;
     }
     let conn = match open_store(path) {
@@ -145,6 +146,7 @@ pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
         Err(e) => {
             let mut degraded = db_unavailable_results(&e.to_string());
             degraded.push(check_environment(db));
+            degraded.push(check_agent_hooks());
             return degraded;
         }
     };
@@ -159,6 +161,7 @@ pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
     results.push(check_config());
     results.push(check_daemon());
     results.push(check_environment(db));
+    results.push(check_agent_hooks());
     results
 }
 
@@ -1295,6 +1298,43 @@ fn check_daemon() -> CheckResult {
     }
 }
 
+// --- agent hooks (retired python runner) -------------------------------------------------------------
+
+/// Hook files whose cairn commands may still name the retired python module runner.
+fn agent_hook_files() -> Vec<PathBuf> {
+    let ws = crate::store_paths::resolve_workspace(None);
+    let home = home_dir();
+    vec![
+        ws.join(".claude").join("settings.json"),
+        home.join(".claude").join("settings.json"),
+        ws.join(".cursor").join("hooks.json"),
+        home.join(".cursor").join("hooks.json"),
+    ]
+}
+
+fn check_agent_hooks() -> CheckResult {
+    let stale: Vec<String> = agent_hook_files()
+        .into_iter()
+        .filter(|path| path.is_file())
+        .filter_map(|path| {
+            let count = crate::agent_install::retired_hook_commands(&path).len();
+            (count > 0).then(|| format!("{} ({count})", path.display()))
+        })
+        .collect();
+    if stale.is_empty() {
+        return result("agent_hooks", PASS, "no retired hook commands", None);
+    }
+    result(
+        "agent_hooks",
+        WARN,
+        format!(
+            "retired `python -m cairn.hooks.claude_hooks` commands in {}",
+            stale.join(", ")
+        ),
+        Some("run `cairn install-agents` to migrate them to `cairn hooks run`".to_string()),
+    )
+}
+
 // --- 11. environment wiring ---------------------------------------------------------------------------
 
 fn check_environment(db: &str) -> CheckResult {
@@ -2034,10 +2074,44 @@ mod tests {
         assert_eq!(report.status, PASS);
         assert!(
             report.detail.contains("no daemon serving at http://")
-                || report.detail.ends_with(" daemon serving at http://"),
+                || report.detail.contains(" daemon serving at http://"),
             "detail must name the serving impl or its absence: {}",
             report.detail
         );
+    }
+
+    #[test]
+    fn agent_hooks_check_flags_retired_python_hook_commands() {
+        let env = crate::test_env::EnvScope::new("doctor-hooks");
+        let ws = env.dir().join("ws");
+        std::fs::create_dir_all(ws.join(".claude")).expect("ws");
+        // SAFETY: EnvScope holds the env lock and restores CAIRN_WORKSPACE on drop.
+        unsafe { std::env::set_var("CAIRN_WORKSPACE", &ws) };
+        let settings = ws.join(".claude").join("settings.json");
+
+        let retired = json!({"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [
+            {"type": "command", "command": "'/usr/bin/python3' -m cairn.hooks.claude_hooks post_edit"}
+        ]}]}});
+        std::fs::write(&settings, retired.to_string()).expect("settings");
+        let report = check_agent_hooks();
+        assert_eq!(report.name, "agent_hooks");
+        assert_eq!(report.status, WARN, "{}", report.detail);
+        assert!(report.detail.contains("settings.json"), "{}", report.detail);
+        assert!(
+            report
+                .hint
+                .as_deref()
+                .is_some_and(|h| h.contains("cairn install-agents")),
+            "{:?}",
+            report.hint
+        );
+
+        let migrated = json!({"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [
+            {"type": "command", "command": "'/usr/local/bin/cairn' hooks run post_edit"}
+        ]}]}});
+        std::fs::write(&settings, migrated.to_string()).expect("settings");
+        let report = check_agent_hooks();
+        assert_eq!(report.status, PASS, "{}", report.detail);
     }
 
     #[test]

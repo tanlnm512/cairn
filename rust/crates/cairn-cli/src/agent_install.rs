@@ -412,11 +412,13 @@ pub fn agents_instructions() -> String {
 
 // --- hooks ---------------------------------------------------------------------
 
-/// Interpreter for `python -m cairn.hooks.claude_hooks` hook commands.
-fn python_for_hooks() -> String {
-    which("python3")
+/// The `cairn` an installed hook command runs: the PATH entry (stable across
+/// upgrades), else this binary, else a bare name for the agent's shell.
+fn cairn_for_hooks() -> String {
+    which("cairn")
+        .or_else(|| std::env::current_exe().ok())
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "python3".to_string())
+        .unwrap_or_else(|| "cairn".to_string())
 }
 
 fn shell_quote(text: &str) -> String {
@@ -435,21 +437,29 @@ fn cairn_home_prefix() -> String {
 /// Quoted hook command for one entrypoint, with a non-default home prefix.
 pub fn claude_hook_command(entrypoint: &str) -> String {
     format!(
-        "{}{} -m cairn.hooks.claude_hooks {entrypoint}",
+        "{}{} hooks run {entrypoint}",
         cairn_home_prefix(),
-        shell_quote(&python_for_hooks())
+        shell_quote(&cairn_for_hooks())
     )
 }
 
+/// Substrings identifying a cairn-written hook command for `entrypoint`:
+/// the binary form plus the retired python-module forms.
+fn hook_command_markers(entrypoint: &str) -> [String; 4] {
+    [
+        format!("cairn' hooks run {entrypoint}"),
+        format!("cairn hooks run {entrypoint}"),
+        format!("cairn.hooks.claude_hooks {entrypoint}"),
+        format!("src.hooks.claude_hooks {entrypoint}"),
+    ]
+}
+
 fn hook_markers() -> Vec<&'static str> {
-    let mut markers = Vec::new();
-    for entrypoint in HOOK_ENTRYPOINTS {
-        markers.push(box_str(format!("cairn.hooks.claude_hooks {entrypoint}")));
-    }
-    for entrypoint in HOOK_ENTRYPOINTS {
-        markers.push(box_str(format!("src.hooks.claude_hooks {entrypoint}")));
-    }
-    markers
+    HOOK_ENTRYPOINTS
+        .iter()
+        .flat_map(|ep| hook_command_markers(ep))
+        .map(box_str)
+        .collect()
 }
 
 fn box_str(text: String) -> &'static str {
@@ -500,13 +510,29 @@ fn entry_commands(entry: &Map<String, Value>) -> Vec<String> {
     commands
 }
 
+/// Hook commands in `path` that still invoke the retired python module runner.
+pub(crate) fn retired_hook_commands(path: &Path) -> Vec<String> {
+    let Some(data) = load_json_or_none(path) else {
+        return Vec::new();
+    };
+    let Some(hooks) = data.get("hooks").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    hooks
+        .values()
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(Value::as_object)
+        .flat_map(entry_commands)
+        .filter(|cmd| cmd.contains(".hooks.claude_hooks "))
+        .collect()
+}
+
 fn entry_entrypoints(entry: &Map<String, Value>) -> Vec<&'static str> {
     let mut found = Vec::new();
     for cmd in entry_commands(entry) {
         for ep in HOOK_ENTRYPOINTS {
-            if cmd.contains(&format!("cairn.hooks.claude_hooks {ep}"))
-                || cmd.contains(&format!("src.hooks.claude_hooks {ep}"))
-            {
+            if hook_command_markers(ep).iter().any(|m| cmd.contains(m)) {
                 found.push(ep);
             }
         }
@@ -1746,7 +1772,11 @@ struct CommandOutput {
 fn run_client_command(argv: &[String], timeout_secs: u64) -> Result<CommandOutput, String> {
     let mut command = std::process::Command::new(&argv[0]);
     command.args(&argv[1..]);
-    let output = spawn_with_timeout(&mut command, std::time::Duration::from_secs(timeout_secs))?;
+    let output = spawn_with_timeout(
+        &mut command,
+        std::time::Duration::from_secs(timeout_secs),
+        None,
+    )?;
     let message = if !output.stderr.trim().is_empty() {
         output.stderr.clone()
     } else {
@@ -1759,28 +1789,69 @@ fn run_client_command(argv: &[String], timeout_secs: u64) -> Result<CommandOutpu
     })
 }
 
-struct TimeoutOutput {
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
+pub(crate) struct TimeoutOutput {
+    pub(crate) code: Option<i32>,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
 }
 
-fn spawn_with_timeout(
+/// Run `command` to completion within `timeout` (killed past it), feeding
+/// `stdin` when given; stdin, stdout and stderr are each served by their own
+/// thread so a chatty child never deadlocks on a full pipe.
+pub(crate) fn spawn_with_timeout(
     command: &mut std::process::Command,
     timeout: std::time::Duration,
+    stdin: Option<&str>,
 ) -> Result<TimeoutOutput, String> {
+    use std::io::{Read, Write};
     use std::process::Stdio;
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command.stdin(if stdin.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
     let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let feed = stdin.and_then(|input| {
+        let input = input.to_owned();
+        child.stdin.take().map(|mut pipe| {
+            std::thread::spawn(move || {
+                let _ = pipe.write_all(input.as_bytes());
+            })
+        })
+    });
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            String::from_utf8_lossy(&buf).into_owned()
+        })
+    };
+    let stdout = drain(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let stderr = drain(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
     let deadline = std::time::Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let out = child.wait_with_output().map_err(|e| e.to_string())?;
+                if let Some(feed) = feed {
+                    let _ = feed.join();
+                }
                 return Ok(TimeoutOutput {
                     code: status.code(),
-                    stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                    stdout: stdout.join().unwrap_or_default(),
+                    stderr: stderr.join().unwrap_or_default(),
                 });
             }
             Ok(None) => {
@@ -3225,7 +3296,7 @@ mod tests {
             .as_str()
             .expect("hook command");
         assert!(
-            hook_command.contains("cairn.hooks.claude_hooks post_edit"),
+            hook_command.ends_with("' hooks run post_edit"),
             "{hook_command}"
         );
         // MCP registration carries the daemon URL.
@@ -3252,6 +3323,53 @@ mod tests {
                 .any(|p| p.contains("(nothing to remove)") || true)
                 || report.results[0].written.is_empty()
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_migrates_retired_python_module_hooks_to_the_binary_command() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
+        let dir = tmp_dir("claude-legacy-hooks");
+        let legacy = "'/usr/bin/python3' -m cairn.hooks.claude_hooks post_edit";
+        write_config(
+            &dir.join(".claude/settings.json"),
+            &json!({
+                "hooks": {
+                    "PostToolUse": [
+                        {"matcher": "Edit|Write|MultiEdit", "hooks": [
+                            {"type": "command", "command": legacy}
+                        ]},
+                        {"matcher": "Bash", "hooks": [
+                            {"type": "command", "command": "/usr/bin/user-hook"}
+                        ]},
+                    ],
+                },
+            }),
+        );
+        install(
+            &dir,
+            Some(&["claude".to_string()]),
+            false,
+            false,
+            false,
+            "workspace",
+        )
+        .expect("install");
+        let settings = read_config(&dir.join(".claude/settings.json"));
+        let commands: Vec<String> = settings["hooks"]["PostToolUse"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .flat_map(|entry| entry["hooks"].as_array().cloned().unwrap_or_default())
+            .filter_map(|h| h["command"].as_str().map(str::to_string))
+            .collect();
+        assert!(!commands.iter().any(|c| c == legacy), "{commands:?}");
+        assert!(commands.iter().any(|c| c == "/usr/bin/user-hook"));
+        let post_edit: Vec<&String> = commands
+            .iter()
+            .filter(|c| c.ends_with(" hooks run post_edit"))
+            .collect();
+        assert_eq!(post_edit.len(), 1, "{commands:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3478,7 +3596,7 @@ mod tests {
     }
 
     #[test]
-    fn instruction_files_embed_the_python_bodies() {
+    fn instruction_files_embed_the_shared_body() {
         // CLAUDE.md / AGENTS.md composition reuses the extracted instruction body.
         let claude = claude_instructions();
         assert!(claude.starts_with("# Codebase Intelligence (Cairn)"));
@@ -3486,21 +3604,7 @@ mod tests {
         let agents = agents_instructions();
         assert!(agents.starts_with("# Codebase Intelligence System"));
         assert!(agents.contains("- Name: `cairn` (auto-connected at session start)"));
-        // The vendored body tracks the Python source constant when present.
-        let common_py = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../src/cairn/agent_install/_common.py");
-        let Ok(source) = std::fs::read_to_string(&common_py) else {
-            return;
-        };
-        let marker = "_INSTRUCTIONS_BODY = \"\"\"";
-        let start = source.find(marker).expect("body marker") + marker.len();
-        let end = source[start..].find("\"\"\"").expect("closing quotes") + start;
-        let expected = &source[start..end];
-        assert_eq!(
-            instructions_body(),
-            expected,
-            "instruction body drifted from _common.py"
-        );
+        assert!(agents.contains(instructions_body().as_str()));
     }
 
     #[test]

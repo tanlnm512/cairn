@@ -8,6 +8,8 @@
 # (cairn.parsers._scip_pb2): build scip.Index / scip.Document /
 # scip.Occurrence values whose occurrence positions match the fixture
 # sources, then SerializeToString() -- regenerate the same way, never by hand.
+# That stub is not in this tree: regenerate from a checkout that still carries
+# src/cairn/parsers/_scip_pb2.py.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 

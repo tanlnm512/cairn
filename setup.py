@@ -1,24 +1,25 @@
-"""Build the vendored fwcd Kotlin grammar (vendor/tree-sitter-kotlin) as an
-in-tree cp310-abi3 extension inside the cairn package."""
+"""Tag the launcher wheel per platform: it bundles a platform-specific engine binary."""
 
-from setuptools import Extension, setup
+from setuptools import setup
+from setuptools.dist import Distribution
 
-setup(
-    ext_modules=[
-        Extension(
-            "cairn._tree_sitter_kotlin",
-            sources=[
-                "vendor/tree-sitter-kotlin/src/parser.c",
-                "vendor/tree-sitter-kotlin/src/scanner.c",
-                "src/cairn/_tree_sitter_kotlin_binding.c",
-            ],
-            include_dirs=["vendor/tree-sitter-kotlin/src"],
-            define_macros=[
-                ("Py_LIMITED_API", "0x030A0000"),
-                ("PY_SSIZE_T_CLEAN", None),
-            ],
-            py_limited_api=True,
-        ),
-    ],
-    options={"bdist_wheel": {"py_limited_api": "cp310"}},
-)
+try:
+    from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
+except ImportError:  # older setuptools ships bdist_wheel through the wheel package
+    from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
+
+
+class BinaryDistribution(Distribution):
+    def has_ext_modules(self):
+        # Without this the package is "pure" and the wheel tag would be
+        # py3-none-any, which cannot carry a per-platform binary.
+        return True
+
+
+class bdist_wheel(_bdist_wheel):
+    def get_tag(self):
+        _python, _abi, platform = super().get_tag()
+        return "py3", "none", platform
+
+
+setup(distclass=BinaryDistribution, cmdclass={"bdist_wheel": bdist_wheel})

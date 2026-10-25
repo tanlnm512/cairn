@@ -1,7 +1,8 @@
-"""The parity oracle replays without the Python engine."""
+"""The parity and CLI golden oracles replay without the Python engine."""
 
 import os
 import pwd
+import re
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts" / "rust_migration"
 SERVE_EXAMPLE = REPO_ROOT / "rust" / "target" / "release" / "examples" / "serve_search"
+RUST_BIN = REPO_ROOT / "rust" / "target" / "release" / "cairn"
 
 
 def _real_home() -> Path:
@@ -38,13 +40,14 @@ def _toolchain_env(env: dict) -> dict:
     return out
 
 
-pytestmark = [
-    pytest.mark.infra,
-    pytest.mark.skipif(
-        not SERVE_EXAMPLE.exists(),
-        reason="serve_search example absent (cargo build --release -p cairn-daemon --example serve_search)",
-    ),
-]
+pytestmark = pytest.mark.infra
+
+
+def _engine_free_env() -> dict:
+    env = _toolchain_env({**os.environ, "CAIRN_LIB": "/tmp/__no_such_lib__"})
+    # PYTHONPATH could smuggle the engine in past -S.
+    env.pop("PYTHONPATH", None)
+    return env
 
 
 def _engine_free_tree(tmp_path: Path) -> Path:
@@ -59,19 +62,39 @@ def _engine_free_tree(tmp_path: Path) -> Path:
     return root
 
 
+@pytest.mark.skipif(
+    not SERVE_EXAMPLE.exists(),
+    reason="serve_search example absent (cargo build --release -p cairn-daemon --example serve_search)",
+)
 def test_parity_replay_needs_no_python_engine(tmp_path):
     root = _engine_free_tree(tmp_path)
     parity = root / "scripts" / "rust_migration" / "parity.py"
-    env = _toolchain_env({**os.environ, "CAIRN_LIB": "/tmp/__no_such_lib__"})
-    # PYTHONPATH could smuggle the engine in past -S.
-    env.pop("PYTHONPATH", None)
     # -S keeps the venv's editable cairn out: no engine importable anywhere.
     proc = subprocess.run(
         [sys.executable, "-S", str(parity), "--store", "self"],
         capture_output=True,
         text=True,
         timeout=900,
-        env=env,
+        env=_engine_free_env(),
     )
     assert proc.returncode == 0, (proc.stderr + proc.stdout)[-3000:]
     assert "self: 26/26 tools golden-equal" in proc.stdout
+
+
+@pytest.mark.skipif(
+    not RUST_BIN.exists(),
+    reason="release binary absent (cargo build --release -p cairn-cli)",
+)
+def test_cli_golden_replay_needs_no_python_engine(tmp_path):
+    root = _engine_free_tree(tmp_path)
+    harness = root / "scripts" / "rust_migration" / "cli_golden.py"
+    proc = subprocess.run(
+        [sys.executable, "-S", str(harness), "--rust-bin", str(RUST_BIN)],
+        capture_output=True,
+        text=True,
+        timeout=900,
+        env=_engine_free_env(),
+    )
+    assert proc.returncode == 0, (proc.stderr + proc.stdout)[-3000:]
+    verdict = re.search(r"(\d+)/(\d+) commands golden-equal", proc.stdout)
+    assert verdict and verdict.group(1) == verdict.group(2), proc.stdout[-3000:]

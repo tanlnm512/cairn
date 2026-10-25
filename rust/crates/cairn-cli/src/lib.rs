@@ -1,5 +1,6 @@
 //! The `cairn` binary crate.
 
+pub mod agent_hooks;
 pub mod agent_install;
 pub mod agent_templates;
 pub mod build_graph;

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -9,9 +10,20 @@ import pytest
 _GROUPS = {"P0": ["C77", "C1"], "P1": ["Q1"], "P2": ["S1"], "P3": ["SY1"]}
 
 
-def _mod():
-    from cairn.cli.system import audit_status
+def _load_audit_status():
+    from importlib.util import module_from_spec, spec_from_file_location
 
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    spec = spec_from_file_location("audit_status", scripts / "audit_status.py")
+    mod = module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+audit_status = _load_audit_status()
+
+
+def _mod():
     return audit_status
 
 

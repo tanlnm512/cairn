@@ -1,16 +1,21 @@
-FROM python:3.12-slim
+# Build the engine binary from the rust workspace, then ship it alone: the
+# daemon needs no Python.
+FROM rust:1-slim-bookworm AS build
+WORKDIR /src
+COPY rust/ ./rust/
+RUN cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
 
-RUN useradd --create-home --uid 1000 cairn
+FROM debian:bookworm-slim
 
-WORKDIR /app
-COPY pyproject.toml README.md ./
-COPY src/ ./src/
-RUN pip install --no-cache-dir .
+RUN useradd --create-home --uid 1000 cairn \
+    && apt-get update -qq \
+    && apt-get install -y --no-install-recommends ca-certificates curl git \
+    && rm -rf /var/lib/apt/lists/*
 
-# Store home lives on the mounted volume; PYTHONUNBUFFERED keeps lifecycle
-# milestones visible in container logs.
-ENV CAIRN_HOME=/data \
-    PYTHONUNBUFFERED=1
+COPY --from=build /src/rust/target/release/cairn /usr/local/bin/cairn
+
+# Store home lives on the mounted volume.
+ENV CAIRN_HOME=/data
 RUN mkdir -p /data && chown cairn:cairn /data
 VOLUME /data
 
@@ -18,7 +23,7 @@ USER cairn
 EXPOSE 9876
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD ["python", "-c", "import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://127.0.0.1:9876/healthz', timeout=4)"]
+    CMD ["curl", "-sf", "http://127.0.0.1:9876/healthz"]
 
 # Key comes from the CAIRN_MCP_API_KEY env var; without it the wildcard bind
 # refuses to start (keyless serving is loopback-only).

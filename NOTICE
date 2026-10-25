@@ -4,176 +4,93 @@ Copyright (c) 2025–2026 Tan Le
 Licensed under the MIT License; see LICENSE for full text.
 
 This NOTICE file documents the third-party open-source software used by cairn.
-cairn depends on these packages at runtime (resolved via pip/uv from PyPI) and
-does not redistribute their source. Each package retains its own license; the
-summaries below are for convenience and are not legal substitutes for the
-upstream license texts.
+Each package retains its own license; the summaries below are for convenience
+and are not legal substitutes for the upstream license texts.
 
 ================================================================================
-Dependencies (by license family)
+Engine binary dependencies
 ================================================================================
 
-This product depends on software distributed under the following licenses. Each
-entry lists the package and its declared license.
-
-----------------------------------------
-MIT License
-----------------------------------------
-  annotated-types, anyio, attrs, build, h11, httpx-sse, iniconfig, jsonschema,
-  jsonschema-specifications, markdown-it-py, mcp, mdurl, pluggy, pydantic,
-  pydantic-settings, pydantic_core, PyJWT, pyproject_hooks, pytest,
-  questionary, referencing, rich, rpds-py, ruff, PyYAML, tree-sitter,
-  tree-sitter-c, tree-sitter-c-sharp, tree-sitter-cpp, tree-sitter-dart,
-  tree-sitter-go, tree-sitter-java, tree-sitter-javascript, tree-sitter-objc,
-  tree-sitter-php, tree-sitter-python, tree-sitter-ruby, tree-sitter-swift,
-  tree-sitter-typescript,
-  typing-inspection, cffi (MIT-0)
-
-----------------------------------------
-BSD License (BSD-2-Clause / BSD-3-Clause)
-----------------------------------------
-  click (BSD-3-Clause), httpcore (BSD-3-Clause), httpx (BSD-3-Clause),
-  idna (BSD-3-Clause), jinja2 (BSD-3-Clause), markupsafe (BSD-3-Clause),
-  numpy (BSD-3-Clause), pycparser (BSD-3-Clause), Pygments (BSD-2-Clause),
-  python-dotenv (BSD-3-Clause), sse-starlette (BSD-3-Clause),
-  starlette (BSD-3-Clause), uvicorn (BSD-3-Clause)
-
-----------------------------------------
-Apache License 2.0
-----------------------------------------
-  python-multipart (Apache-2.0), watchdog (Apache-2.0)
-
-----------------------------------------
-Dual: Apache License 2.0 OR BSD
-----------------------------------------
-  cryptography (Apache-2.0 OR BSD-3-Clause)
-  packaging (Apache-2.0 OR BSD-2-Clause)
-
-----------------------------------------
-Mozilla Public License 2.0 (MPL-2.0)
-----------------------------------------
-  certifi, pathspec
-  Note: MPL-2.0 is file-level weak copyleft. It is satisfied by keeping the
-  MPL-licensed files' source and notice available (they remain in the upstream
-  PyPI packages). cairn does not copy or vendor these files into its source
-  tree, so no additional obligation attaches to distributing cairn itself.
-
-----------------------------------------
-Python Software Foundation License (PSF-2.0)
-----------------------------------------
-  typing_extensions
-
-----------------------------------------
-Dual: MIT License OR Apache License 2.0
-----------------------------------------
-  sqlite-vec
+The cairn engine is a Rust binary. Every crate it links (including the
+tree-sitter grammars and the bundled SQLite and sqlite-vec builds) is declared
+in rust/Cargo.lock; their licenses are checked on every change by cargo-deny
+against the allow-list in rust/deny.toml (Apache-2.0, Apache-2.0 WITH
+LLVM-exception, BSD-2-Clause, BSD-3-Clause, CC0-1.0, ISC, MIT, Unicode-3.0,
+Zlib). The lockfile is the authoritative inventory; `cargo deny list` in
+rust/ renders it.
 
 ================================================================================
-Optional extras
+PyPI launcher package
 ================================================================================
 
-The `[semantic]` extra (sentence-transformers) is not installed by
-default. On Linux it additionally pulls torch and its transitive NVIDIA CUDA
-runtime packages (e.g. nvidia-cublas, nvidia-cudnn, nvidia-cufft, triton),
-which are governed by NVIDIA's CUDA EULA / Apache-2.0 and torch's BSD-style
-license. These are resolved and accepted by the end user; cairn does not
-bundle or redistribute them.
+The `cairn-intel` wheel is a launcher: the Python package execs the bundled
+engine binary and declares no runtime dependencies. Its optional extras are
+resolved by the end user from PyPI; cairn does not bundle or redistribute
+them. Declared licenses:
 
-The embedding model `BAAI/bge-m3` (referenced by name, downloaded on demand
-to ~/.cairn/lib/ when a user runs `cairn embed --install-deps`) is released
-under the MIT License on Hugging Face. cairn does not redistribute the
-model weights.
-
-================================================================================
-Vendored content (benchmark corpus)
-================================================================================
-
-The datasource benchmarks vendor a source snapshot of one third-party project
-solely as benchmark content. Unlike the packages above, this snapshot is
-carried in-tree; it is not a runtime dependency and no part of it is imported
-by cairn's code.
-
-yarl (https://github.com/aio-libs/yarl), Copyright 2016-2021, Andrew Svetlov
-and aio-libs team. Vendored at pinned commit
-dddcb82e4aa9665e15b43d90ad370d7e54ac1fbb (GitHub source export taken
-2026-08-15) under benchmarks/datasource/t2/yarl/, and licensed under
-Apache-2.0. The full license text is retained in-tree, unmodified, at
-benchmarks/datasource/t2/yarl/LICENSE; the complete export record (origin,
-pin, license, kept and excluded files, and size) is kept alongside the
-snapshot in benchmarks/datasource/t2/provenance.json.
+  [graph-analytics]  networkx (BSD-3-Clause)
+  [ingest]           pymupdf4llm / PyMuPDF (AGPL-3.0, commercial license
+                     available from Artifex), mammoth (BSD-2-Clause),
+                     markdownify (MIT), onnxruntime (MIT)
 
 ================================================================================
 Vendored content (dashboard static assets)
 ================================================================================
 
-The dashboard vendors the minified standalone browser build of one third-party
-library as a static asset served by the dashboard app. These files are carried
-in-tree; no bundler or CDN is used at runtime.
+The dashboard vendors the minified standalone browser builds of the
+third-party libraries below as static assets. They are carried in-tree under
+rust/crates/cairn-cli/dashboard-assets/static/, embedded into the cairn binary
+(rust/crates/cairn-cli/src/dashboard/assets.rs) and served by its dashboard;
+no bundler or CDN is used at runtime.
 
 vis-network (https://github.com/visjs/vis-network), Copyright (c) 2011-2017
 Almende B.V, http://almende.com and (c) 2017-2019 vis.js contributors,
 https://github.com/visjs. The official standalone UMD minified build is
-vendored at pinned version 9.1.13 (unpkg dist file, downloaded 2026-08-20,
-sha256 39b9a36f17b4ca2e27d1e4327216860b042077b3307402ae315402ac826f878b) at
-src/cairn/dashboard/static/vis-network.min.js, and is dual licensed under the
-Apache License 2.0 OR MIT License. The upstream copyright and license notice
-are retained unmodified in the file's leading banner comment.
+vendored at pinned version 9.1.13 (unpkg dist file, sha256
+39b9a36f17b4ca2e27d1e4327216860b042077b3307402ae315402ac826f878b) at
+rust/crates/cairn-cli/dashboard-assets/static/vis-network.min.js, and is dual
+licensed under the Apache License 2.0 OR MIT License. The upstream copyright
+and license notice are retained unmodified in the file's leading banner
+comment.
 
 htmx (https://htmx.org / https://github.com/bigskysoftware/htmx), by Big Sky
 Software. The official minified browser build is vendored at pinned version
 2.0.10 (jsDelivr npm dist file, sha256
 71ea67185bfa8c98c39d31717c6fce5d852370fcdfd129db4543774d3145c0de) at
-src/cairn/dashboard/static/htmx.min.js, licensed under Zero-Clause BSD (0BSD)
-per the htmx project license.
+rust/crates/cairn-cli/dashboard-assets/static/htmx.min.js, licensed under
+Zero-Clause BSD (0BSD) per the htmx project license.
 
 Alpine.js (https://alpinejs.dev / https://github.com/alpinejs/alpine),
 Copyright Caleb Porzio and Alpine.js contributors. The official CDN build is
 vendored at pinned version 3.17.1 (jsDelivr npm dist file, sha256
 b30997fc126d808b1a9b20ab3f504ded88df957818c02d6249bba3ec114eb0ec) at
-src/cairn/dashboard/static/alpine.min.js, licensed under the MIT License.
+rust/crates/cairn-cli/dashboard-assets/static/alpine.min.js, licensed under
+the MIT License.
 
 @alpinejs/morph (https://alpinejs.dev/plugins/morph), Copyright Caleb Porzio
 and Alpine.js contributors. The official CDN build is vendored at pinned
 version 3.17.1 (jsDelivr npm dist file, sha256
 40741b6d946e9c7e01787d8fefead1c1537a20cf7203726be648cda9d2c9f375) at
-src/cairn/dashboard/static/alpinejs-morph.min.js, licensed under the MIT
-License.
+rust/crates/cairn-cli/dashboard-assets/static/alpinejs-morph.min.js, licensed
+under the MIT License.
 
 htmx-ext-alpine-morph
 (https://github.com/bigskysoftware/htmx-extensions), by Big Sky Software.
 The extension source is vendored at pinned version 2.0.1 (jsDelivr npm dist
 file, sha256
 762a87ecc98f76558b7d6384c37400ab61e5ab1626196cb7d093fceb89c13b67) at
-src/cairn/dashboard/static/alpine-morph.js. The extension ships with the
-htmx project; its package manifest declares no separate license, and the
-htmx project license (Zero-Clause BSD) governs upstream.
+rust/crates/cairn-cli/dashboard-assets/static/alpine-morph.js. The extension
+ships with the htmx project; its package manifest declares no separate
+license, and the htmx project license (Zero-Clause BSD) governs upstream.
 
 Mermaid (https://mermaid.js.org / https://github.com/mermaid-js/mermaid),
 Copyright (c) 2014-2026 Knut Sveidqvist and mermaid contributors. The
 official ESM browser distribution is vendored at pinned version 11.17.2
-(jsDelivr npm dist files, downloaded 2026-09-09) at
-src/cairn/dashboard/static/mermaid.min.js (the mermaid.esm.min.mjs entry,
-sha256
+(jsDelivr npm dist files) at
+rust/crates/cairn-cli/dashboard-assets/static/mermaid.min.js (the
+mermaid.esm.min.mjs entry, sha256
 462d6f73fc9833044bca6dc08e62e0ee83f5a2b09583f588f95d5fd91b1960ed) together
 with its content-hash-named chunk files under
-src/cairn/dashboard/static/chunks/mermaid.esm.min/ (the entry's relative
-imports resolve there; the chunks are carried unmodified). Licensed under
-the MIT License.
-
-================================================================================
-Vendored content (Kotlin grammar)
-================================================================================
-
-The Kotlin tree-sitter grammar is vendored in-tree as build input for cairn's
-own compiled extension. Only the upstream generated parser output and LICENSE
-are carried in-tree; the upstream packaging (setup.py, pyproject.toml,
-bindings/, Cargo.toml, package.json) is not vendored.
-
-fwcd/tree-sitter-kotlin (https://github.com/fwcd/tree-sitter-kotlin),
-Copyright (c) 2019 fwcd. The generated sources are vendored at pinned commit
-1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1 (upstream main HEAD, committed
-2026-08-02, vendored 2026-08-25) under vendor/tree-sitter-kotlin/
-(src/parser.c, src/scanner.c, src/grammar.json, src/node-types.json, and the
-src/tree_sitter/ headers), and are licensed under the MIT License. The full
-license text is retained in-tree, unmodified, at
-vendor/tree-sitter-kotlin/LICENSE.
+rust/crates/cairn-cli/dashboard-assets/static/chunks/mermaid.esm.min/ (the
+entry's relative imports resolve there; the chunks are carried unmodified).
+Licensed under the MIT License.

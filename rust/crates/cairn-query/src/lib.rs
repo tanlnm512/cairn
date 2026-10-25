@@ -5,6 +5,7 @@ pub mod graph;
 pub mod grep;
 pub mod ingest;
 pub mod review;
+pub mod sidecar;
 pub mod skillgen;
 pub mod tasks;
 pub mod tools_federation;

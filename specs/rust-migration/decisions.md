@@ -494,3 +494,58 @@ distribution decision — the next unused id is D-013.)
   engine-less Windows wheel would break every `cairn` command. Revisit
   trigger: real Windows demand, which requires the unix-API port above plus
   the MSVC CI leg.
+
+## D-016: the CLI golden oracle is frozen replay-only, `resolver_parity.py` is retired, and `download-reranker` diverges by ruling (4e-2)
+
+- **What**: `scripts/rust_migration/cli_golden.py` no longer runs the Python
+  CLI. It replays the Rust binary against frozen fixtures under
+  `rust/golden/cli/`: `cases.json` (the scrubbed exit/stdout/stderr of every
+  case, captured from the last Python CLI over the seeded pinned `self` store)
+  and `seeds/` (the OKF concepts the seed hooks used to write through the
+  Python OKF bundle, frozen as bytes). The harness pins `HOME` to a scratch dir
+  and scrubs the daemon-probe line and registered-store keys as environment.
+  `--record --only <label>` re-freezes the affected cases from the Rust binary
+  and stamps them under `capture.refreshed`; a bare `--record` re-freezes all.
+  `scripts/rust_migration/resolver_parity.py` and the `cairn-build`
+  `resolve_parity` example are removed. Two cases diverge from the Python
+  capture by this ruling and were re-frozen from the Rust binary:
+  `download-reranker` exits 2 with "this build has no native cross-encoder
+  reranker" instead of the Python `[semantic]` install hint, and `report`
+  carries one added doctor line, `agent_hooks`, which warns when an agent
+  hook file still invokes the retired `python -m cairn.hooks.claude_hooks`
+  runner and names `cairn install-agents` as the migration. The engine-free
+  pytest leg `tests/test_parity_replay_engine_free.py` pins both oracles.
+- **Why**: 4e-1 froze `parity.py` and `g2_check.sh` but left `cli_golden.py`
+  and `resolver_parity.py` as live Python-vs-Rust differentials importing the
+  engine (a 4e-1 scope gap); deleting the engine (4e-2) makes them impossible
+  rather than red. The edges-table parity `resolver_parity.py` protected is
+  byte-covered by `g2_check.sh`'s frozen `self-corpus.norm.txt` plus the Rust
+  resolver unit tests and nav goldens, so it has no second owner to keep. The
+  `download-reranker` hint advertised an extra that no longer exists; the
+  binary ships no reranker (`reranker_available()` is false), so the honest
+  message is the divergence.
+- **Scope landed with it (4e-2)**: `src/cairn` holds only the console shim,
+  binary discovery (`paths.py`), and the §9 sidecars `communities.py` (D-013,
+  resolves the store via `cairn config --db`) and `ingest_convert.py`; the
+  wheel is tagged `py3-none-<platform>` by `setup.py` and declares no runtime
+  dependencies; the Windows wheel leg is dropped (D-015); Claude/Cursor hooks
+  run through `cairn hooks run <entrypoint>` (the retired
+  `python -m cairn.hooks.claude_hooks` entries migrate on re-install);
+  `prs`/`bench`/`eval` leave with the engine (D-014) along with `benchmarks/`
+  and the bench CI jobs; `comment_style.py`/`audit_status.py` re-home under
+  `scripts/`. The binary detects the `[ingest]` sidecar at runtime (plan §9):
+  the launcher hands its interpreter to the engine as `CAIRN_SIDECAR_PYTHON`,
+  `cairn_query::sidecar` resolves it (that env, then an interpreter beside
+  the binary, then PATH), and `knowledge ingest --file` converts PDF/docx
+  through `python -m cairn.ingest_convert` (markdown on stdout, the skip
+  reason on stderr), skipping with "cairn[ingest] not installed" when no
+  interpreter imports the module.
+- **Cost**: the frozen CLI fixtures change only through `--record --only` plus
+  a ruling (plan §8); the pinned-bundle memory timestamps carry the same slow
+  freshness drift the MCP goldens already accept. Installs whose agent hook
+  files still name the retired python runner fail silently until
+  `cairn install-agents` is re-run; `cairn doctor`/`report` surface them. A
+  Rust-driven perf harness replacing the deleted `cairn bench` CI gate is a
+  follow-up. The CHANGELOG line plan §8 asks for is
+  not written here: the 4e-2 ask forbids editing CHANGELOG.md, so the
+  integrator adds it.

@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Command, ExitCode};
 use std::time::Instant;
 
 use regex::Regex;
@@ -1410,28 +1410,15 @@ fn load_audit_sidecar(
 
 fn comment_quality_gate(root: &Path) -> Value {
     // The comment gate is defined over CPython tokenize/ast semantics; the
-    // binary evaluates it through the python sidecar and reports unavailable
-    // where no cairn-importable python exists.
-    let Some(python) = sidecar_python() else {
+    // binary runs the checkout's own checker script and reports unavailable
+    // where no python or no checker exists.
+    let script = root.join("scripts").join("comment_style.py");
+    let Some(python) = sidecar_python().filter(|_| script.is_file()) else {
         return json!({"status": "unavailable"});
     };
-    let probe = Command::new(&python)
-        .arg("-c")
-        .arg("import cairn.cli.system.comment_style")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    if !probe.is_ok_and(|status| status.success()) {
-        return json!({"status": "unavailable"});
-    }
-    let script = "import sys, json; from pathlib import Path; \
-                  from cairn.cli.system.comment_style import check_comment_baseline, DEFAULT_BASELINE; \
-                  root = Path(sys.argv[1]); \
-                  s = check_comment_baseline(root, root.joinpath(*DEFAULT_BASELINE)); \
-                  print(json.dumps({'ok': s['ok'], 'remaining': s['remaining']}))";
     let output = Command::new(&python)
-        .arg("-c")
-        .arg(script)
+        .arg(&script)
+        .args(["--json", "--root"])
         .arg(root)
         .output();
     let parsed: Option<Value> = output
@@ -1446,24 +1433,8 @@ fn comment_quality_gate(root: &Path) -> Value {
     }
 }
 
-/// A python that can host cairn sidecars: an interpreter next to this binary
-/// (venv bin dir) when present, else the PATH python3.
 fn sidecar_python() -> Option<PathBuf> {
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        for name in ["python3", "python"] {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|dir| dir.join("python3"))
-            .find(|candidate| candidate.is_file())
-    })
+    cairn_query::sidecar::python()
 }
 
 fn report_config() -> Map<String, Value> {
@@ -2429,42 +2400,11 @@ pub struct DownloadRerankerArgs {
     pub model: Option<String>,
 }
 
-const RERANKER_INSTALL_HINT: &str = "Reranking requires the 'semantic' extra (same dependency as local embeddings). Install it with: pip install 'cairn-intel[semantic]', then set CAIRN_RERANK=1.";
+const RERANKER_UNAVAILABLE: &str = "download-reranker is unavailable: this build has no native cross-encoder reranker, so semantic_search runs without the rerank stage.";
 
-pub fn run_download_reranker(args: DownloadRerankerArgs) -> ExitCode {
-    // The model download is sentence-transformers (the [semantic] sidecar), so
-    // the whole flow delegates to the python CLI when one is importable.
-    let Some(python) = sidecar_python() else {
-        eprintln!("{RERANKER_INSTALL_HINT}");
-        return ExitCode::from(2);
-    };
-    let probe = Command::new(&python)
-        .arg("-c")
-        .arg("import cairn.cli")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    if !probe.is_ok_and(|status| status.success()) {
-        eprintln!("{RERANKER_INSTALL_HINT}");
-        return ExitCode::from(2);
-    }
-    let mut argv: Vec<String> = vec![
-        python.to_string_lossy().into_owned(),
-        "-c".into(),
-        "import sys; from cairn.cli import main; main(sys.argv[1:])".into(),
-        "download-reranker".into(),
-    ];
-    if let Some(model) = &args.model {
-        argv.push("--model".into());
-        argv.push(model.clone());
-    }
-    match Command::new(&argv[0]).args(&argv[1..]).status() {
-        Ok(status) => ExitCode::from(u8::try_from(status.code().unwrap_or(1)).unwrap_or(1)),
-        Err(_) => {
-            eprintln!("{RERANKER_INSTALL_HINT}");
-            ExitCode::from(2)
-        }
-    }
+pub fn run_download_reranker(_args: DownloadRerankerArgs) -> ExitCode {
+    eprintln!("{RERANKER_UNAVAILABLE}");
+    ExitCode::from(2)
 }
 
 #[cfg(test)]

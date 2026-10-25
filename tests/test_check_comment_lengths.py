@@ -2,15 +2,21 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
-from cairn.cli.system.comment_style import (
-    CommentStyleError,
-    check_comment_baseline,
-    main,
-    scan_comment_violations,
-)
+from importlib.util import module_from_spec, spec_from_file_location
+
+_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+_spec = spec_from_file_location("comment_style", _SCRIPTS / "comment_style.py")
+comment_style = module_from_spec(_spec)
+_spec.loader.exec_module(comment_style)
+
+CommentStyleError = comment_style.CommentStyleError
+check_comment_baseline = comment_style.check_comment_baseline
+main = comment_style.main
+scan_comment_violations = comment_style.scan_comment_violations
 
 
 LETTER_BLOCK = "# alpha\n# beta\n# gamma\n# delta\n"
@@ -217,11 +223,9 @@ def test_failed_baseline_write_preserves_the_old_document(tmp_path, monkeypatch)
     """A torn baseline write must not clobber the file: check/update/init stay usable."""
     import os
 
-    from cairn.cli.system.comment_style import _write_baseline
-
     root = _repo(tmp_path, {"a.py": LETTER_BLOCK})
     baseline = tmp_path / "baseline.json"
-    _write_baseline(baseline, scan_comment_violations(root))
+    comment_style._write_baseline(baseline, scan_comment_violations(root))
     original = baseline.read_bytes()
 
     def explode(src, dst, *args, **kwargs):
@@ -230,7 +234,7 @@ def test_failed_baseline_write_preserves_the_old_document(tmp_path, monkeypatch)
     monkeypatch.setattr(os, "replace", explode)
 
     with pytest.raises(OSError):
-        _write_baseline(baseline, [])
+        comment_style._write_baseline(baseline, [])
 
     assert baseline.read_bytes() == original
     assert list(tmp_path.glob("*.tmp")) == []

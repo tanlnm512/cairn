@@ -16,7 +16,7 @@ jobs:
   smoke:
     name: CLI replay (vendored fixture)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     env:
       CAIRN_TELEMETRY: "off"
     steps:
@@ -24,27 +24,30 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-      - name: Install
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build cairn
         run: |
-          uv sync
-          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+          echo "$GITHUB_WORKSPACE/rust/target/release" >> "$GITHUB_PATH"
       - name: Build fixture graph
         env:
           SMOKE_ROOT: ${{ runner.temp }}/weekly-smoke
         run: |
           mkdir -p "$SMOKE_ROOT"
-          cp -R benchmarks/datasource/t2/yarl "$SMOKE_ROOT/yarl"
-          # The scanner needs a repo marker; the vendored tree has none.
+          cp -R rust/golden/stores/yarl/corpus "$SMOKE_ROOT/yarl"
+          # The scanner needs a repo marker; the pinned corpus ships without one.
           mkdir "$SMOKE_ROOT/yarl/.git"
-          uv run --no-sync cairn build \
+          cairn build \
             --workspace "$SMOKE_ROOT" \
             --db "$SMOKE_ROOT/cairn.kg"
       - name: Replay CLI commands
         env:
           SMOKE_ROOT: ${{ runner.temp }}/weekly-smoke
         run: >
-          uv run --no-sync python scripts/run_cli_smoke.py
+          python scripts/run_cli_smoke.py
           .github/smoke/cli-commands.txt
           --fixture "$SMOKE_ROOT/yarl"
           --db "$SMOKE_ROOT/cairn.kg"

@@ -181,7 +181,7 @@ pub enum SystemCommand {
     },
     /// Print the installed cairn version.
     Version,
-    /// Git hook management.
+    /// Hook management: git hooks, and the agent hook entrypoints.
     Hooks {
         #[command(subcommand)]
         command: HooksGroup,
@@ -237,6 +237,12 @@ pub enum HooksGroup {
         /// Workspace root (default: resolved workspace).
         #[arg(long)]
         workspace: Option<String>,
+    },
+    /// Run an agent hook entrypoint over the JSON payload on stdin.
+    #[command(hide = true)]
+    Run {
+        /// post_edit, session_end, post_tool_failure, or session_start.
+        entrypoint: String,
     },
 }
 
@@ -483,6 +489,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
         SystemCommand::Hooks { command } => match command {
             HooksGroup::Install { workspace } => run_hooks_install(workspace),
             HooksGroup::Uninstall { workspace } => run_hooks_uninstall(workspace),
+            HooksGroup::Run { entrypoint } => crate::agent_hooks::run(&entrypoint),
         },
     }
 }

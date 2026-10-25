@@ -25,76 +25,27 @@ classifiers = [
     "Topic :: Software Development",
     "Topic :: Software Development :: Libraries",
 ]
-dependencies = [
-    "tree-sitter==0.26.0",
-    "tree-sitter-java==0.23.5",
-    "tree-sitter-python==0.23.6",
-    "tree-sitter-swift==0.7.3",
-    "tree-sitter-typescript==0.23.2",
-    "tree-sitter-javascript==0.23.0",
-    "tree-sitter-dart==0.1.0",
-    "tree-sitter-objc==3.0.2",
-    "tree-sitter-go==0.25.0",
-    "tree-sitter-php==0.24.1",
-    "tree-sitter-ruby==0.23.1",
-    "tree-sitter-rust==0.24.2",
-    "tree-sitter-c-sharp==0.23.1",
-    "tree-sitter-c==0.23.4",
-    "tree-sitter-cpp==0.23.4",
-    "click>=8.0",
-    "pyyaml>=6.0",
-    "mcp>=0.9.0,<2.0.0",  # SSE/streamable-http + uvicorn/starlette are core deps in mcp>=0.9; the legacy [sse] extra was removed upstream
-    "jinja2>=3.0",  # dashboard template rendering; starlette ships it only in its [full] extra, so mcp's starlette never pulls it — without this a minimal install crashed `cairn dashboard` on ImportError
-    "pydantic>=2.0",  # used directly by mcp_server/structured.py; declared explicitly (not just transitive via mcp)
-    "pathspec>=0.12",
-    "packaging>=21.0",  # PEP 440 version comparison in `cairn upgrade`; declared explicitly (transitively always present via pip/setuptools, but the CLI relies on it)
-    "sqlite-vec>=0.1.0",
-    # numpy: the batched cosine scan (retrieval/vector_scan.py) runs it at
-    # ~0.7 us/row vs ~28 us/row for the pure-Python fallback -- and that scan
-    # is the path every semantic_search takes when no vec0 index is built.
-    # Promoted to core 2026-08-16: the default install already carries
-    # compiled wheels (14 wheel-provided grammars + vendored Kotlin
-    # + sqlite-vec), numpy is
-    # wheel-everywhere with no torch, and the [semantic] extra's pinned
-    # versions simply became default. The fallback stays for exotic
-    # numpy-less environments.
-    "numpy>=1.24",
-    # Progress display: spinners, progress bars, ETA/rate, themed tables.
-    # Pure-Python, no network/torch -- keeps the default install lightweight.
-    "rich>=13.0",
-    "questionary>=2.0",
-]
+# The package is the console-script launcher for the bundled engine binary plus
+# the sidecars below; the launcher itself needs nothing beyond the stdlib.
+dependencies = []
 
 [project.optional-dependencies]
-watch = ["watchdog>=3.0"]
 test = [
     "pytest>=7.0",
-    # The vendored SCIP stub's runtime, at the [scip] floor, so CI covers
-    # the importer without installing the extra explicitly.
-    "protobuf>=7.35.1",
 ]
 dev = [
     "pytest>=7.0",
-    # The full suite exercises the lazy [graph-analytics] import; pure-Python,
-    # so dev installs carry it while base installs stay networkx-free.
+    # The communities sidecar tests exercise the lazy [graph-analytics] import.
     "networkx>=3.4",
-    # Coverage reporting in CI (Layer 1 test job). Reporting-only, no threshold.
-    "pytest-cov>=4.0",
-    # Parallel suite execution (`pytest -n auto` in the CI test job); the
-    # suite is hermetic (per-test sandboxed HOME/env, tmp_path), so workers
-    # need no shared state.
-    "pytest-xdist>=3.6",
-    "watchdog>=3.0",
+    # scripts/run_skill_evals.py parses the eval frontmatter.
+    "pyyaml>=6.0",
     "build",
     "ruff>=0.6",
     # Review/audit pipeline (Layer 1 CI gates). Run locally before pushing:
     #   mypy --ignore-missing-imports src
-    #   bandit -r src -ii -ll -s B608   # -s B608: every query is parameterized,
-    #                                   # so B608 is endemic-but-safe noise
+    #   bandit -r src -ii -ll -s B608
     #   pip-audit
-    # Pinned (not >=) so local and CI run the SAME mypy -- a floating mypy
-    # caused CI-only version drift. ~52 known errors (advisory: continue-on-error
-    # in CI; drive the count down, then remove continue-on-error to promote it).
+    # Pinned (not >=) so local and CI run the SAME mypy.
     "mypy==2.3.0",
     "bandit>=1.7",
     "pip-audit>=2.7",
@@ -106,59 +57,11 @@ dev = [
     # docs/release-checklist.md "Cutting a release".
     "commitizen>=4.0",
 ]
-# Phase 7: semantic search. Pulls torch (~hundreds of MB) via
-# sentence-transformers, hence strictly optional. The default install remains
-# zero-network and torch-free; `pip install cairn-intel[semantic]` opts in.
-# numpy is also a CORE dependency (see dependencies above) since 2026-08-16;
-# listed here too keeps the pin identical for semantic installs.
-# Phase 7b: this same dependency also provides CrossEncoder, so the optional
-# rerank stage (CAIRN_RERANK=1, see src/graph/reranker.py) needs no
-# separate extra -- installing [semantic] is enough for both embeddings and
-# reranking.
-semantic = [
-    "sentence-transformers>=3.0",
-    "numpy>=1.24",
-]
-# Phase 7c: native ANN index for semantic_search (CAIRN_ANN_BACKEND=
-# sqlite-vec, see src/graph/ann_index.py). Separate from [semantic] since it
-# only matters at real corpus scale -- the brute-force cosine scan is the
-# default and remains fine for small/medium repos. A small, self-contained
-# loadable SQLite extension (no torch, no native build step on supported
-# platforms), so this stays cheap even for users who don't want [semantic].
-ann = [
-    "sqlite-vec>=0.1.0",
-]
-# SCIP (Sourcegraph Code Intelligence Protocol) consumption. No PyPI package
-# ships Sourcegraph's SCIP protobuf bindings -- the `scip` name on PyPI is an
-# unrelated bioimaging library, and Sourcegraph ships no official Python
-# bindings. The real dependency is the generic `protobuf` runtime, paired with
-# a checked-in generated stub (src/cairn/parsers/_scip_pb2.py) -- the same
-# approach googleapis-common-protos uses to avoid requiring
-# protoc/grpcio-tools at install time. Regenerating the stub is a dev-only
-# step (`scripts/regen_scip_pb2.sh`), never a runtime need. The floor MUST
-# stay >= the stub's ValidateProtobufRuntimeVersion() requirement.
-scip = [
-    "protobuf>=7.35.1",
-]
-# Optional OTLP export (task T19, observability-telemetry spec §3 + §7):
-# setting CAIRN_OTEL_ENDPOINT exports cairn's LOCAL telemetry events as
-# OpenTelemetry LogRecords to that OTLP/http endpoint. Strictly lazy -- the
-# SDK is imported only inside the exporter's first flush, after the env gate,
-# so the default install stays OTel-free and cairn works fine without this
-# extra (one warn_once, then local-only). OTel is never a required install.
-otlp = [
-    "opentelemetry-sdk>=1.20",
-    "opentelemetry-exporter-otlp-proto-http>=1.20",
-]
 
-# Binary-document conversion for `cairn knowledge ingest` (FR-003,
-# multi-source-doc-ingestion D-002): pymupdf4llm for PDF, mammoth +
-# markdownify for docx (mammoth's own Markdown writer is deprecated; the
-# composition goes HTML -> markdown). Pip-installable with prebuilt wheels
-# on supported platforms, no system binaries; converter deps never land in
-# core, so the base distribution is unchanged. Imports are strictly lazy
-# inside src/cairn/knowledge/ingest/convert.py -- base installs (and CI
-# without this extra) import the ingest package cleanly.
+# Binary-document conversion sidecar (cairn.ingest_convert): pymupdf4llm for
+# PDF, mammoth + markdownify for docx (mammoth's own Markdown writer is
+# deprecated; the composition goes HTML -> markdown). Imports are strictly
+# lazy, so base installs import the module cleanly.
 ingest = [
     "pymupdf4llm>=1.28",
     "mammoth>=1.11",
@@ -166,22 +69,10 @@ ingest = [
     "onnxruntime<1.24; python_version < '3.11'",
 ]
 
-# SWE-bench bench suite: `datasets` fetches the pinned task inputs in
-# src/cairn/bench/swe_bench.py (lazy import -- installs without this extra
-# never touch it). Bench-only per D-004: core wheel and platform matrix
-# unchanged; no `swebench` harness dep (resolve-rate machinery for the
-# deferred LLM arm, FR-005).
-bench = [
-    "datasets>=4.0",
-]
-
-# Symbol-community analytics (`cairn communities`, symbol-communities D-002):
-# Louvain partitioning via networkx. Opt-in because the core query/build path
-# never needs it; imports are strictly lazy inside the communities module --
-# base installs (and CI without this extra) run unaffected, and absence fails
-# with an actionable install hint rather than an import error. Pure-Python, so
-# the platform matrix is unchanged. Floor 3.4 keeps `louvain_communities(seed=
-# ...)` available on every supported Python arm.
+# Symbol-community analytics sidecar (`cairn communities`, cairn.communities):
+# Louvain partitioning via networkx. Opt-in because the engine never needs it;
+# the import is lazy and absence fails with an actionable install hint. Floor
+# 3.4 keeps `louvain_communities(seed=...)` available on every supported arm.
 graph-analytics = [
     "networkx>=3.4",
 ]
@@ -196,38 +87,19 @@ Homepage = "https://github.com/tanlnm512/cairn"
 where = ["src"]
 
 [tool.setuptools.package-data]
-# Ship the agent-integration templates (SKILL.md, commands, cursor rules, etc.)
-# so `cairn install-agents` works from a wheel install, not just a source checkout.
-"cairn.agent_integration" = ["**/*.md", "**/*.json", "**/*.mdc", "**/*.py"]
-# Same for the dashboard's Jinja2 templates and static assets; the
-# static glob must be recursive — nested asset subtrees (the vendored
-# mermaid chunk tree) ship only via "**/*", a flat "static/*" would
-# silently omit every file below the top level.
-"cairn.dashboard" = ["templates/*", "static/**/*"]
 # Injected engine binary: release/wheel builds copy the platform binary into
 # src/cairn/_bin/ immediately before packaging; the tree never commits it
 # (gitignored) and MANIFEST.in keeps it out of the sdist.
 "cairn" = ["_bin/*"]
 
 [tool.pytest.ini_options]
-# `core` marks the fast smoke subset (tests/test_core_smoke.py): one focused
-# test per core function across all 5 layers, runnable via `pytest -m core` for
-# a <3s feedback loop. The full suite (no marker) remains the CI path.
-#
-# testpaths pins collection to tests/ : the benchmark datasource vendors a
-# real upstream repo (benchmarks/datasource/t2/) whose own test files are
-# corpus content, not cairn's suite — bare `pytest -q` from the root would
-# collect them and die on import (found by T008's smoke work, 2026-08-16).
 testpaths = ["tests"]
 markers = [
-    "core: high-signal smoke tests covering the core query/build/transport path (run with -m core)",
     "real_env: opts a test out of the suite-wide _hermetic_env fixture (justify in a comment)",
     # The infra tier is CI selection, NOT a quarantine: every marked test still
     # runs and must pass on each main push (ci.yml's main-only `-m infra` step);
-    # per-PR legs exclude it via an explicit `-m "not infra"` on the full-suite
-    # step. Deliberately no addopts: a global -m filter would silently deselect
-    # the bench job's `-k t2` gate (ci.yml runs it without -m).
-    "infra: benchmark/dataset/soak infrastructure tests -- excluded from per-PR legs (pytest -m \"not infra\"), run on every main push (pytest -m infra)",
+    # per-PR legs exclude it via an explicit `-m "not infra"`.
+    "infra: oracle-replay tests that need the release rust binary -- excluded from per-PR legs (pytest -m \"not infra\"), run on every main push (pytest -m infra)",
 ]
 
 [tool.ruff]
@@ -239,16 +111,8 @@ src = ["src", "scripts", "tests"]
 # Golden fixtures are test *input* data (deliberately-shaped source the parser
 # exercises), not test code -- linting them would rewrite the fixtures and
 # invalidate the very golden tests that consume them.
-# Vendored benchmark corpora are the same class of content: third-party
-# source trees pinned by tree_hash (t2/yarl, ds2/second-corpus/attrs-26.1.0).
-# The attrs tree additionally ships its own pyproject.toml with a ruff
-# `select = ["ALL"]` config, which ruff's per-file config discovery applies
-# to its own files (CPY001 et al.) -- linting a pinned vendored tree can
-# never produce a fixable finding, only a red gate over immutable data.
 extend-exclude = [
   "tests/fixtures",
-  "benchmarks/datasource/t2/yarl",
-  "benchmarks/datasource/ds2/second-corpus",
 ]
 
 [tool.ruff.lint]

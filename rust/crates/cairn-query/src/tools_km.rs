@@ -409,6 +409,42 @@ impl Privacy {
     }
 }
 
+// --- failure signature (memory/recurrence.py port) ----------------------------
+
+/// Stable 16-hex key for the normalized shape of one tool failure.
+pub fn failure_signature(tool_name: &str, error: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    struct Shape {
+        ws: Regex,
+        uuid: Regex,
+        path: Regex,
+        hex: Regex,
+        digits: Regex,
+    }
+    static SHAPE: OnceLock<Shape> = OnceLock::new();
+    let s = SHAPE.get_or_init(|| Shape {
+        ws: Regex::new(r"\s+").expect("ws regex"),
+        uuid: Regex::new(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+            .expect("uuid regex"),
+        path: Regex::new(r"(?:/[A-Za-z0-9._-]+)+").expect("path regex"),
+        hex: Regex::new(r"\b[0-9a-f]{8,}\b").expect("hex regex"),
+        digits: Regex::new(r"\d+").expect("digits regex"),
+    });
+    let text = s.ws.replace_all(error, " ").trim().to_lowercase();
+    let text = s.uuid.replace_all(&text, " ");
+    let text = s.path.replace_all(&text, " ");
+    let text = s.hex.replace_all(&text, " ");
+    let text = s.digits.replace_all(&text, "0");
+    let text: String = text.chars().take(200).collect();
+    let digest = Sha256::digest(format!("{tool_name}\n{text}").as_bytes());
+    digest
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()[..16]
+        .to_string()
+}
+
 // --- slugify (okf/utils.py port) ---------------------------------------------
 
 /// URL-safe slug: lowercase, non-alnum runs to hyphens, trimmed, max 60 chars.
@@ -7778,6 +7814,53 @@ mod tests {
         let out = strip_private_data("<private>hidden</private> api_key=abcdefghijklmnopqrst uvw");
         assert!(out.contains("[REDACTED]"));
         assert!(!out.contains("abcdefghijklmnopqrst"));
+    }
+
+    #[test]
+    fn failure_signature_matches_the_python_recurrence_key() {
+        // Keys pinned from the last Python memory/recurrence.py capture.
+        assert_eq!(
+            failure_signature("Bash", "Traceback: /opt/venv/lib/site.py:1 boom pid 4242"),
+            "086e3a1aee6ab843"
+        );
+        assert_eq!(
+            failure_signature("Bash", "boom at run 12"),
+            "cf4d6e110e671a9a"
+        );
+        assert_eq!(failure_signature("Bash", ""), "c74a3dc103bd23fe");
+        assert_eq!(
+            failure_signature("Bash", "ünïcödé Ωmega 42 /tmp/ä"),
+            "908410bfb05e8f2b"
+        );
+        assert_eq!(
+            failure_signature("Bash", &"x".repeat(500)),
+            "770c9df9cbed9c4f"
+        );
+    }
+
+    #[test]
+    fn failure_signature_normalizes_case_paths_digits_uuid_hex() {
+        let base = failure_signature("Bash", "Error: /Users/me/proj/x.js:42 not found");
+        assert_eq!(
+            base,
+            failure_signature("Bash", "error: /var/lib/other/y.py:99 NOT FOUND")
+        );
+        assert_eq!(
+            failure_signature("Bash", "boom attempt 1 of 3"),
+            failure_signature("Bash", "boom attempt 27 of 3")
+        );
+        assert_eq!(
+            failure_signature("Bash", "corrupt cache 550e8400-e29b-41d4-a716-446655440000"),
+            failure_signature("Bash", "corrupt cache a1b2c3d4-e5f6-4a1b-8c2d-9e0f1a2b3c4d")
+        );
+        assert_eq!(
+            failure_signature("Bash", "checksum deadbeefcafe mismatch"),
+            failure_signature("Bash", "checksum 1234567890abcdef mismatch")
+        );
+        assert_ne!(
+            base,
+            failure_signature("Read", "/Users/me/proj/x.js:42 not found")
+        );
     }
 
     #[test]

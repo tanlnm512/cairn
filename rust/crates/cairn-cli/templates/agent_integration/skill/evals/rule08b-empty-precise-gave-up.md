@@ -49,7 +49,7 @@ edge the whole time — the agent just never asked for it.
 
 ## Mitigation shipped
 
-`get_callers`/`get_callees` (`src/cairn/mcp_server/tools_graph.py`) now retry fuzzy
+`get_callers`/`get_callees` (`rust/crates/cairn-query/src/tools_nav.rs`) now retry fuzzy
 automatically when `fuzzy=False` and precise returns zero rows, labeling the
 result as unverified fuzzy candidates rather than silently returning "no callers
 found." This removes the dependency on the agent remembering to retry, but the

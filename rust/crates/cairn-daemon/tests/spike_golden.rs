@@ -113,7 +113,7 @@ async fn spike_serves_search_symbols_golden_equal() {
     let store_path = fixture_store(&root, &fixture, "rust/golden/spike/search-store.kg");
     let entries = fixture["spike_queries"].as_array().unwrap_or_else(|| {
         panic!(
-            "spike_queries missing in {}; regenerate with scripts/rust_migration/spike_golden.py",
+            "spike_queries missing in {}; the fixture is frozen, restore it from history",
             fixture_path.display()
         )
     });

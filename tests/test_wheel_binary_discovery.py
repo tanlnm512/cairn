@@ -1,9 +1,8 @@
-"""Bundled-binary discovery pins: CAIRN_RUST_BIN > bundled package binary > PATH.
+"""Bundled-binary discovery pins: CAIRN_RUST_BIN > bundled package binary > PATH; the console shim execs it.
 
 Every case monkeypatches paths.BUNDLED_BIN_DIR into tmp_path, so the module is
 independent of whether a wheel build has injected a real binary into the source
-tree. No cargo, no network, no real exec; cairn.cli / cairn.mcp_server imports
-stay inside the test functions.
+tree. No cargo, no network, no real exec.
 """
 from __future__ import annotations
 
@@ -12,6 +11,8 @@ import sys
 
 import pytest
 
+from cairn import console, paths
+
 # Never executed -- only read back as bytes; the content just must not start
 # with "#!" so it would pass the native-binary exclusion if a PATH leg saw it.
 _STUB_BYTES = b"CAIRN-STUB-BINARY\x00"
@@ -19,8 +20,6 @@ _STUB_BYTES = b"CAIRN-STUB-BINARY\x00"
 
 def _write_stub_bundled_bin(monkeypatch, tmp_path):
     """Inject a stub engine binary as the bundled package-data location."""
-    from cairn import paths
-
     bin_dir = tmp_path / "_pkg_bin"
     bin_dir.mkdir()
     stub = bin_dir / "cairn"
@@ -30,21 +29,16 @@ def _write_stub_bundled_bin(monkeypatch, tmp_path):
     return stub
 
 
-def _patch_shim_env(monkeypatch, tmp_path, *, bundled: bool):
-    """Point the console shim at a deterministic discovery state and capture both exits."""
-    from cairn import paths
-    from cairn.mcp_server import lifecycle as lc
-
+def _no_binary_anywhere(monkeypatch, tmp_path):
     monkeypatch.delenv("CAIRN_RUST_BIN", raising=False)
-    if bundled:
-        _write_stub_bundled_bin(monkeypatch, tmp_path)
-    else:
-        monkeypatch.setattr(paths, "BUNDLED_BIN_DIR", tmp_path / "_no_bin")
-        monkeypatch.setattr(lc, "shutil_which", lambda name: None)
-        # rust_bin()'s ~/.local/bin leg reads HOME; pin it so a native binary
-        # installed there can't flip this test's no-binary premise.
-        monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(paths, "BUNDLED_BIN_DIR", tmp_path / "_no_bin")
+    monkeypatch.setattr(paths, "shutil_which", lambda name: None)
+    # rust_bin()'s ~/.local/bin leg reads HOME; pin it so a native binary
+    # installed there can't flip the no-binary premise.
+    monkeypatch.setenv("HOME", str(tmp_path))
 
+
+def _capture_exec(monkeypatch):
     execved: list[tuple[str, list[str]]] = []
 
     def fake_execv(path, argv):
@@ -52,136 +46,112 @@ def _patch_shim_env(monkeypatch, tmp_path, *, bundled: bool):
         sys.exit(0)  # the real execv never returns
 
     monkeypatch.setattr(os, "execv", fake_execv)
-    cli_calls: list[list[str]] = []
-
-    def fake_cli_main(args=None, **_):
-        cli_calls.append(list(args) if args is not None else sys.argv[1:])
-
-    import cairn.cli
-
-    monkeypatch.setattr(cairn.cli, "main", fake_cli_main)
-    return execved, cli_calls
+    return execved
 
 
-def test_no_bundled_binary_falls_through_to_python(monkeypatch, tmp_path):
-    """A source checkout (no injected binary) discovers nothing and keeps the python default."""
-    from cairn import paths
-    from cairn.mcp_server import lifecycle as lc
-
-    monkeypatch.setattr(paths, "BUNDLED_BIN_DIR", tmp_path / "_no_bin")
-    monkeypatch.setattr(lc, "shutil_which", lambda name: None)
-    monkeypatch.setenv("HOME", str(tmp_path))
+def test_no_bundled_binary_discovers_nothing(monkeypatch, tmp_path):
+    """A source checkout (no injected binary) discovers nothing."""
+    _no_binary_anywhere(monkeypatch, tmp_path)
 
     assert paths.bundled_binary() is None
-    assert lc.rust_bin() is None
-    assert lc.daemon_impl() == "python"
+    assert paths.rust_bin() is None
 
 
 def test_bundled_binary_discovered_over_path(monkeypatch, tmp_path):
     """The bundled package binary wins over a native `cairn` on PATH: a wheel install execs its own version-locked engine."""
-    from cairn.mcp_server import lifecycle as lc
-
+    monkeypatch.delenv("CAIRN_RUST_BIN", raising=False)
     stub = _write_stub_bundled_bin(monkeypatch, tmp_path)
     decoy = tmp_path / "decoy-cairn"
     decoy.write_bytes(_STUB_BYTES)
-    monkeypatch.setattr(lc, "shutil_which", lambda name: str(decoy))
+    monkeypatch.setattr(paths, "shutil_which", lambda name: str(decoy))
 
-    assert lc.rust_bin() == str(stub)
-    assert lc.daemon_impl() == "rust"
+    assert paths.rust_bin() == str(stub)
 
 
 def test_env_override_beats_bundled_binary(monkeypatch, tmp_path):
     """CAIRN_RUST_BIN stays first in the discovery order, ahead of the bundled leg."""
-    from cairn.mcp_server import lifecycle as lc
-
     _write_stub_bundled_bin(monkeypatch, tmp_path)
     env_bin = tmp_path / "env-cairn"
     env_bin.write_bytes(_STUB_BYTES)
     monkeypatch.setenv("CAIRN_RUST_BIN", str(env_bin))
 
-    assert lc.rust_bin() == str(env_bin)
+    assert paths.rust_bin() == str(env_bin)
 
 
-def test_windows_console_launcher_keeps_python_default(monkeypatch, tmp_path):
-    """On a Windows host the PATH legs never run: pip's native cairn.exe launcher must not flip the default to rust; CAIRN_RUST_BIN still overrides."""
-    from cairn import paths
-    from cairn.mcp_server import lifecycle as lc
+def test_path_leg_skips_the_console_script(monkeypatch, tmp_path):
+    """A `#!` console script named cairn on PATH is not an engine; a native one is."""
+    _no_binary_anywhere(monkeypatch, tmp_path)
+    script = tmp_path / "cairn"
+    script.write_bytes(b"#!/usr/bin/env python\n")
+    monkeypatch.setattr(paths, "shutil_which", lambda name: str(script))
+    assert paths.rust_bin() is None
 
-    monkeypatch.setattr(paths, "BUNDLED_BIN_DIR", tmp_path / "_no_bin")
-    monkeypatch.delenv("CAIRN_RUST_BIN", raising=False)
+    script.write_bytes(_STUB_BYTES)
+    assert paths.rust_bin() == str(script)
+
+
+def test_windows_console_launcher_is_never_an_engine(monkeypatch, tmp_path):
+    """On a Windows host the PATH legs never run: pip's native cairn.exe launcher must not be taken for an engine; CAIRN_RUST_BIN still overrides."""
+    _no_binary_anywhere(monkeypatch, tmp_path)
     # pip's Windows console script is a native PE launcher also named cairn(.exe);
     # it passes the #!-only native check, so only skipping the legs tells it apart.
     launcher = tmp_path / "cairn.exe"
     launcher.write_bytes(b"MZ\x90\x00" + b"\x00" * 64)
-    monkeypatch.setattr(lc, "shutil_which", lambda name: str(launcher))
+    monkeypatch.setattr(paths, "shutil_which", lambda name: str(launcher))
 
-    monkeypatch.setattr(lc, "_is_windows_host", lambda: True)
-    assert lc.rust_bin() is None
-    assert lc.daemon_impl() == "python"
+    monkeypatch.setattr(paths, "_is_windows_host", lambda: True)
+    assert paths.rust_bin() is None
 
     env_bin = tmp_path / "env-cairn"
     env_bin.write_bytes(_STUB_BYTES)
     monkeypatch.setenv("CAIRN_RUST_BIN", str(env_bin))
-    assert lc.rust_bin() == str(env_bin)
+    assert paths.rust_bin() == str(env_bin)
 
     monkeypatch.delenv("CAIRN_RUST_BIN", raising=False)
-    monkeypatch.setattr(lc, "_is_windows_host", lambda: False)
-    assert lc.rust_bin() == str(launcher)
-
-
-def test_cli_default_start_execs_bundled_binary(monkeypatch, tmp_path):
-    """A cold connect with no impl env starts the bundled binary by default; explicit python still wins."""
-    from click.testing import CliRunner
-
-    from cairn.cli import main
-    from cairn.mcp_server import lifecycle as lc
-
-    stub = _write_stub_bundled_bin(monkeypatch, tmp_path)
-    monkeypatch.delenv("CAIRN_DAEMON_IMPL", raising=False)
-    monkeypatch.setattr(lc, "is_macos", lambda: True)
-    monkeypatch.setattr(lc, "healthz_json", lambda *a, **k: None)
-    monkeypatch.setattr(lc, "sweep_strays", lambda *a, **k: 0)
-    monkeypatch.setattr(lc, "is_loaded", lambda: False)
-    monkeypatch.setattr(lc, "load", lambda: True)
-    monkeypatch.setattr(lc, "healthz_responds", lambda *a, **k: True)
-    monkeypatch.setattr(lc, "running_pid", lambda: 4321)
-    written: list[dict] = []
-    monkeypatch.setattr(lc, "write_plist", written.append)
-
-    result = CliRunner().invoke(main, ["connect"])
-    assert result.exit_code == 0, result.output
-    assert written, "a cold connect with a bundled binary must start the daemon"
-    assert written[-1]["ProgramArguments"][0] == str(stub)
-
-    # The python fallback stays reachable: explicit CAIRN_DAEMON_IMPL wins.
-    monkeypatch.setenv("CAIRN_DAEMON_IMPL", "python")
-    written.clear()
-    result = CliRunner().invoke(main, ["connect"])
-    assert result.exit_code == 0, result.output
-    assert written[-1]["ProgramArguments"][0] == lc.cg_bin()
-    assert written[-1]["ProgramArguments"][0] != str(stub)
+    monkeypatch.setattr(paths, "_is_windows_host", lambda: False)
+    assert paths.rust_bin() == str(launcher)
 
 
 def test_console_script_execs_bundled_binary(monkeypatch, tmp_path):
-    """The console entry execs the discovered binary with the original argv; the python CLI never runs."""
-    from cairn import console
-
-    execved, cli_calls = _patch_shim_env(monkeypatch, tmp_path, bundled=True)
-    stub = tmp_path / "_pkg_bin" / "cairn"
+    """The console entry execs the discovered binary with the original argv."""
+    monkeypatch.delenv("CAIRN_RUST_BIN", raising=False)
+    stub = _write_stub_bundled_bin(monkeypatch, tmp_path)
+    execved = _capture_exec(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["cairn", "config", "--json"])
 
     with pytest.raises(SystemExit):
         console.main()
 
     assert execved == [(str(stub), [str(stub), "config", "--json"])]
-    assert not cli_calls
+
+
+def test_console_script_hands_its_interpreter_to_the_engine(monkeypatch, tmp_path):
+    """The exec'd engine learns which interpreter carries the sidecar extras; an explicit value is kept."""
+    monkeypatch.delenv("CAIRN_RUST_BIN", raising=False)
+    monkeypatch.delenv("CAIRN_SIDECAR_PYTHON", raising=False)
+    _write_stub_bundled_bin(monkeypatch, tmp_path)
+    seen: list[str | None] = []
+
+    def fake_execv(path, argv):
+        seen.append(os.environ.get("CAIRN_SIDECAR_PYTHON"))
+        sys.exit(0)
+
+    monkeypatch.setattr(os, "execv", fake_execv)
+    monkeypatch.setattr(sys, "argv", ["cairn", "knowledge", "ingest"])
+    with pytest.raises(SystemExit):
+        console.main()
+    assert seen == [sys.executable]
+
+    monkeypatch.setenv("CAIRN_SIDECAR_PYTHON", "/opt/other/python")
+    with pytest.raises(SystemExit):
+        console.main()
+    assert seen[-1] == "/opt/other/python"
 
 
 def test_console_script_env_override_execs(monkeypatch, tmp_path):
     """CAIRN_RUST_BIN stays the first discovery leg through the console shim."""
-    from cairn import console
-
-    execved, cli_calls = _patch_shim_env(monkeypatch, tmp_path, bundled=True)
+    _write_stub_bundled_bin(monkeypatch, tmp_path)
+    execved = _capture_exec(monkeypatch)
     env_bin = tmp_path / "env-cairn"
     env_bin.write_bytes(_STUB_BYTES)
     monkeypatch.setenv("CAIRN_RUST_BIN", str(env_bin))
@@ -191,71 +161,55 @@ def test_console_script_env_override_execs(monkeypatch, tmp_path):
         console.main()
 
     assert execved == [(str(env_bin), [str(env_bin), "def", "x"])]
-    assert not cli_calls
 
 
-def test_console_script_falls_back_to_python_without_binary(monkeypatch, tmp_path):
-    """No discoverable binary (source checkouts, Windows wheels) keeps the console script on the python CLI."""
-    from cairn import console
-
-    execved, cli_calls = _patch_shim_env(monkeypatch, tmp_path, bundled=False)
+def test_console_script_without_binary_fails_loudly(monkeypatch, tmp_path, capsys):
+    """No discoverable binary is an error naming the fix, exit 1: no Python engine exists to fall back to."""
+    _no_binary_anywhere(monkeypatch, tmp_path)
+    execved = _capture_exec(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["cairn", "doctor"])
 
-    console.main()
+    with pytest.raises(SystemExit) as exc:
+        console.main()
 
+    assert exc.value.code == 1
     assert not execved
-    assert cli_calls == [["doctor"]]
+    err = capsys.readouterr().err
+    assert "no engine binary" in err and "CAIRN_RUST_BIN" in err
 
 
-@pytest.mark.parametrize("cmd", ["prs", "bench", "eval", "communities"])
-def test_console_script_keeps_pypi_only_commands_on_python(monkeypatch, tmp_path, cmd):
-    """D-013/D-014: the sidecar-ruled commands stay on the python CLI even with a binary present."""
-    from cairn import console
+@pytest.mark.parametrize(
+    "argv",
+    [["communities"], ["communities", "--top-k", "3"], ["-v", "communities"], ["--verbose", "communities", "--db", "x.kg"]],
+)
+def test_console_script_routes_communities_to_the_sidecar(monkeypatch, tmp_path, argv):
+    """D-013: `communities` runs the networkx sidecar in-process, binary or not, past the group-level -v/--verbose."""
+    from cairn import communities
 
-    execved, cli_calls = _patch_shim_env(monkeypatch, tmp_path, bundled=True)
-    monkeypatch.setattr(sys, "argv", ["cairn", cmd, "--flag"])
+    _write_stub_bundled_bin(monkeypatch, tmp_path)
+    execved = _capture_exec(monkeypatch)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(communities, "main", lambda rest: calls.append(list(rest)) or 0)
+    monkeypatch.setattr(sys, "argv", ["cairn", *argv])
 
-    console.main()
+    with pytest.raises(SystemExit) as exc:
+        console.main()
 
+    assert exc.value.code == 0
     assert not execved
-    assert cli_calls == [[cmd, "--flag"]]
+    expected = argv[argv.index("communities") + 1:]
+    assert calls == [expected]
 
 
-def test_console_script_pypi_only_survives_verbose_prefix(monkeypatch, tmp_path):
-    """The documented `-v <cmd>` spelling must not land sidecar commands on the binary's stub arm."""
-    from cairn import console
-
-    execved, cli_calls = _patch_shim_env(monkeypatch, tmp_path, bundled=True)
-    spellings = [
-        ["-v", "prs"],
-        ["--verbose", "bench", "--flag"],
-        ["-v", "communities"],
-        ["-v", "eval"],
-    ]
-
-    for argv in spellings:
-        execved.clear()
-        cli_calls.clear()
-        monkeypatch.setattr(sys, "argv", ["cairn", *argv])
-        try:
-            console.main()
-        except SystemExit:
-            pass
-
-        assert not execved, argv
-        assert cli_calls == [argv], argv
-
-
-def test_console_script_survives_exec_failure(monkeypatch, tmp_path, capsys):
-    """A bundled binary that fails to exec falls back to the python CLI instead of stranding the user."""
-    from cairn import console
-
-    execved, cli_calls = _patch_shim_env(monkeypatch, tmp_path, bundled=True)
-    stub = tmp_path / "_pkg_bin" / "cairn"
+def test_console_script_reports_exec_failure(monkeypatch, tmp_path, capsys):
+    """A bundled binary that fails to exec is reported with its path, exit 1."""
+    monkeypatch.delenv("CAIRN_RUST_BIN", raising=False)
+    stub = _write_stub_bundled_bin(monkeypatch, tmp_path)
     monkeypatch.setattr(os, "execv", lambda path, argv: (_ for _ in ()).throw(OSError("no exec")))
     monkeypatch.setattr(sys, "argv", ["cairn", "doctor"])
 
-    console.main()
+    with pytest.raises(SystemExit) as exc:
+        console.main()
 
-    assert cli_calls == [["doctor"]]
+    assert exc.value.code == 1
     assert str(stub) in capsys.readouterr().err

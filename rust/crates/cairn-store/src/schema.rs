@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 
-/// Base DDL mirroring `src/cairn/graph/schema.py` SCHEMA_SQL (column definitions
-/// and order are the C-1 contract; prose comments are not carried over).
+/// Base DDL; column definitions and their order are the C-1 store contract
+/// (the frozen canonical dumps under rust/golden pin them).
 pub const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS repos (
     id TEXT PRIMARY KEY,
@@ -334,7 +334,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 );
 "#;
 
-/// Additive migrations mirroring `schema.py` MIGRATIONS order, `(name, ALTER SQL)`.
+/// Additive migrations in application order, `(name, ALTER SQL)`.
 pub const MIGRATIONS: &[(&str, &str)] = &[
     (
         "edges.resolution",
@@ -489,8 +489,7 @@ fn migrate_dataflow_pk(conn: &Connection) -> rusqlite::Result<()> {
     tx.commit()
 }
 
-/// Create tables/indexes/FTS (idempotent) and apply additive migrations,
-/// mirroring `schema.py::_apply_schema`.
+/// Create tables/indexes/FTS (idempotent) and apply additive migrations.
 pub fn apply_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(SCHEMA_SQL)?;
     for (name, sql) in MIGRATIONS {
