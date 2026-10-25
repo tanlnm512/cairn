@@ -415,10 +415,26 @@ pub fn agents_instructions() -> String {
 /// The `cairn` an installed hook command runs: the PATH entry (stable across
 /// upgrades), else this binary, else a bare name for the agent's shell.
 fn cairn_for_hooks() -> String {
-    which("cairn")
-        .or_else(|| std::env::current_exe().ok())
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "cairn".to_string())
+    if let Some(found) = which("cairn") {
+        return found.to_string_lossy().into_owned();
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if exe.file_name().is_some_and(|n| n == "cairn") {
+            return exe.to_string_lossy().into_owned();
+        }
+        // Prefer the cargo bin sibling over a test-harness exe so hook
+        // commands keep the `cairn hooks run` shape in any environment.
+        if let Some(bin) = exe
+            .parent()
+            .and_then(|deps| deps.parent())
+            .map(|dir| dir.join("cairn"))
+            && bin.is_file()
+        {
+            return bin.to_string_lossy().into_owned();
+        }
+        return exe.to_string_lossy().into_owned();
+    }
+    "cairn".to_string()
 }
 
 fn shell_quote(text: &str) -> String {
