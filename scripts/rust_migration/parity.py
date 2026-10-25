@@ -340,6 +340,17 @@ def replay_entries(client: gr.GoldenClient, entries: list[dict]) -> dict:
     return captures
 
 
+def _stable_normalization(fixture: dict) -> dict:
+    """Normalization block minus the `*_resolved` scrub-rule names: those
+    rules exist only where scratch paths resolve differently (symlinked
+    tmp dirs), so their presence in the recorded list is host-dependent."""
+    block = dict(fixture.get("normalization") or {})
+    rules = block.get("rules")
+    if rules is not None:
+        block["rules"] = [r for r in rules if not r.endswith("_resolved")]
+    return block
+
+
 def verify_store(out_dir: Path, captures: dict, entries: list[dict],
                  dump_dir: Path | None = None) -> tuple[list, list]:
     """Per-tool golden diff; returns (passed tools, (tool, first-diff) failures)."""
@@ -360,8 +371,9 @@ def verify_store(out_dir: Path, captures: dict, entries: list[dict],
             golden.get("response") or {},
             [],
             bool(flags.get("sort_lines")), False,
-        )}
-        actual = captures[tool]["fixture"]
+        ), "normalization": _stable_normalization(golden)}
+        actual = {**captures[tool]["fixture"],
+                  "normalization": _stable_normalization(captures[tool]["fixture"])}
         diff = gr._diff_path(gr.compare_scope(golden), gr.compare_scope(actual))
         if diff:
             failures.append((tool, diff))
