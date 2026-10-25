@@ -145,8 +145,13 @@ def normalize(src: str, dst: str) -> None:
                 )
             rewritten.append("\t".join(r))
         out.extend(sorted(rewritten))
+    text = "\n".join(out) + "\n"
+    # kg_dump maps the scratch prefix to <WORKSPACE>, but symlink-resolved
+    # paths (macOS /tmp -> /private/tmp) keep a leading /private past the
+    # mapped marker; collapse it so dumps normalize identically per host.
+    text = text.replace("/private<WORKSPACE>", "<WORKSPACE>")
     with open(dst, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(out) + "\n")
+        fh.write(text)
 
 
 def main(argv: list[str]) -> int:
