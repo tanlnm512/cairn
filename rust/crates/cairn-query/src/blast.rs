@@ -169,22 +169,31 @@ fn run_git(repo: &Path, args: &[&str]) -> Result<std::process::Output, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("git {args:?}: {e}"))?;
+    // Drain both pipes from reader threads: a child writing past the pipe
+    // buffer blocks on write, which waits like a timeout if nobody reads.
+    fn drain<R: std::io::Read + Send + 'static>(
+        pipe: Option<R>,
+    ) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let mut buf = String::new();
+            if let Some(mut src) = pipe {
+                let _ = src.read_to_string(&mut buf);
+            }
+            buf
+        })
+    }
+    let out_handle = drain(child.stdout.take());
+    let err_handle = drain(child.stderr.take());
     let deadline = Instant::now() + Duration::from_secs(GIT_TIMEOUT_S);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let mut stdout = String::new();
-                let mut stderr = String::new();
-                if let Some(mut out) = child.stdout.take() {
-                    use std::io::Read as _;
-                    let _ = out.read_to_string(&mut stdout);
-                }
-                if let Some(mut err) = child.stderr.take() {
-                    use std::io::Read as _;
-                    let _ = err.read_to_string(&mut stderr);
-                }
-                stdout = String::from_utf8_lossy(stdout.as_bytes()).into_owned();
-                stderr = String::from_utf8_lossy(stderr.as_bytes()).into_owned();
+                let stdout =
+                    String::from_utf8_lossy(out_handle.join().unwrap_or_default().as_bytes())
+                        .into_owned();
+                let stderr =
+                    String::from_utf8_lossy(err_handle.join().unwrap_or_default().as_bytes())
+                        .into_owned();
                 return Ok(std::process::Output {
                     status,
                     stdout: stdout.into_bytes(),
