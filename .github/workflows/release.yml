@@ -112,7 +112,13 @@ jobs:
         if: runner.os == 'Linux'
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-zigbuild,zig
+          tool: cargo-zigbuild
+
+      # cargo-zigbuild discovers this via `python3 -m ziglang`; install-action
+      # has no zig tool.
+      - name: Install zig (ziglang)
+        if: runner.os == 'Linux'
+        run: python3 -m pip install --break-system-packages ziglang
 
       - name: Build rust engines (musl-static)
         if: runner.os == 'Linux'
