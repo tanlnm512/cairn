@@ -109,3 +109,109 @@ the sidecar's reason (no silent fallback).
 package from `packaging/` so pip-audit keeps auditing the pymupdf4llm
 surface); publishing the package to PyPI is release engineering outside this
 phase's code.
+
+## D-R05 — Daemon connection reuse with store-swap invalidation (Phase 6)
+
+**Requirement**: FR-008 (US4).
+
+**Decision**: tool dispatch parks SQLite connections per flavor (read;
+primary = writable unless read-only) instead of opening one per call. Every
+checkout revalidates the store's identity — `(dev, inode)` on Unix — and
+reopens when a build swap replaced the file, so a parked connection can
+never serve the unlinked old store
+(`rust/crates/cairn-daemon/src/conn_pool.rs`; leases park on drop, at most 8
+idle per flavor, a connection left mid-transaction is dropped, not parked).
+
+**Why**: the Python-era baseline harness showed per-tool p95 matching Python
+on only 21/26 tools because the daemon opened a fresh SQLite connection
+every call; the open cost (pragmas, busy timeout, file stat) dominated
+small-store tools.
+
+**Regression pins**: `tools::tests::sequential_conns_reuse_one_connection`
+(reuse) and `tools::tests::store_swap_invalidates_the_reused_connection`
+(post-swap reopen) in `rust/crates/cairn-daemon/src/tools.rs`.
+
+**Measured** (`scripts/rust_migration/baseline.py` — authored this phase; 25
+rounds + 2 warmup, all 26 tools, pinned stores, macOS arm64): the Python
+daemon no longer exists to race against, so the recorded absolute p95 below
+is the baseline and the gate is `baseline.py --store <s> --compare <json>`
+at 1.5× per tool (default). Connection-reuse speedup vs the per-call-open
+tree: self up to 3.50× (find_definition 0.983→0.281 ms), yarl up to 2.95×,
+attrs up to 3.15×; compute-bound tools (ask_compass, explore, path)
+unchanged within noise; no tool regressed beyond noise (worst 0.88× on
+federated_search, a sub-ms tool that opens no store connection).
+
+**Recorded baseline p95 (post-reuse, ms)** — self: ask_compass 200.474,
+explore 125.384, path 129.644, recall_memory 56.810, search_knowledge
+52.145, record_memory 42.225, wiki_generate 21.328, semantic_search 5.686,
+knowledge_search 5.815, repo_map 4.746, get_compass 2.678, search_symbols
+1.250, cross_repo_deps 1.355, knowledge_delete 0.750, impact_analysis
+0.930, trace_flow 0.433, generate_flow 0.344, get_callers 0.374,
+find_definition 0.281, knowledge_status 0.771, file_api 0.316, get_callees
+0.305, visualize_graph 0.339, knowledge_add 0.730, trace_workflow 0.358,
+federated_search 0.259. yarl: ask_compass 185.692, explore 108.067, path
+81.022, recall_memory 54.475, search_knowledge 47.355, record_memory
+42.428, wiki_generate 9.426, knowledge_search 6.228, semantic_search 3.529,
+generate_flow 4.095, impact_analysis 3.291, repo_map 2.432, get_compass
+2.905, trace_flow 1.428, knowledge_delete 0.754, search_symbols 0.717,
+cross_repo_deps 0.479, get_callers 0.386, visualize_graph 0.313, file_api
+0.368, find_definition 0.274, get_callees 0.285, knowledge_status 0.781,
+knowledge_add 0.742, trace_workflow 0.424, federated_search 0.332. attrs:
+ask_compass 194.672, explore 119.016, path 90.079, recall_memory 52.152,
+search_knowledge 49.679, record_memory 41.722, wiki_generate 13.249,
+knowledge_search 5.950, semantic_search 5.113, repo_map 4.001,
+impact_analysis 3.482, generate_flow 2.323, get_compass 2.834,
+search_symbols 1.744, knowledge_delete 0.705, trace_flow 0.551,
+cross_repo_deps 0.667, get_callers 0.461, get_callees 0.429,
+visualize_graph 0.309, find_definition 0.294, file_api 0.298,
+knowledge_status 0.743, knowledge_add 0.719, trace_workflow 0.351,
+federated_search 0.301.
+
+## D-R06 — Re-ruled closure gate: insert-bound absolute numbers (Phase 6)
+
+**Requirement**: FR-009. Supersedes the "closure ≥ 5× vs Python" migration
+gate (which measured 1.14×).
+
+**Decision**: the closure streams `INSERT`s into `transitive_edges`; its
+cost is SQLite-insert-bound and identical in any engine, so an
+engine-relative speedup ratio is the wrong ruler. The gate is re-ruled on
+absolute re-measurable numbers: wall time at the measured insert bound, and
+peak WAL during the rebuild.
+
+**Measured** (`scripts/rust_migration/closure_bench.py` — authored this
+phase; 5 iterations on fresh pinned-store copies, macOS arm64, `cairn
+closure --db`):
+
+| store | rows | median closure ms | rows/s | peak WAL MiB | single-tx WAL gain |
+|---|---:|---:|---:|---:|---:|
+| self | 26,807 | 91.0 | 294,582 | 5.4 | 1.00× |
+| yarl | 12,467 | 37.8 | 329,815 | 2.8 | 0.99× |
+| attrs | 12,539 | 40.6 | 308,842 | 2.8 | 0.99× |
+
+Insert-bound evidence: replaying the same rows in one transaction with
+`wal_autocheckpoint = 0` peaks at the same WAL size (gain ≈ 1.0×) — every
+pinned-store closure fits under the 50,000-row commit bound, so the WAL
+profile equals the unavoidable row volume and batched commits add no
+headroom to exploit at this scale.
+
+**New gate** (executable: `closure_bench.py --store self --compare <json>`,
+default tolerance 3×): on the self pinned store, median closure wall time
+≤ 275 ms (3× the measured 91 ms, absorbing CI machine variance) and peak
+WAL during rebuild ≤ 11 MiB (2× the measured 5.4 MiB, catching
+unbounded-WAL regressions).
+
+## D-R07 — `cairn build --lsp` retired with a hard error (Phase 6)
+
+**Requirement**: FR-012.
+
+**Decision**: hard error over an engine LSP pass. The pyright upgrade pass
+died with the Python engine; an engine-side LSP pass (spawn language
+servers, upgrade ambiguous edges to exact) is a feature build outside this
+spec's scope, and silently accepting the flag hides the loss from every
+caller.
+
+`--lsp` (`Some(true)`) exits 1 before any build work with a message naming
+the retirement and pointing at the indexer's edge resolution;
+`--lsp=false` remains a no-op equal to the default (it requests nothing).
+Pinned by `rust/crates/cairn-cli/tests/build_lsp_retired.rs`
+(`build_lsp_refuses_and_names_the_retirement`).

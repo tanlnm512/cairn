@@ -1,6 +1,7 @@
 //! Daemon layer: streamable-HTTP MCP server, bearer auth, healthz, reuse lifecycle.
 
 pub mod auth;
+pub mod conn_pool;
 pub mod healthz;
 pub mod lifecycle;
 pub mod search;

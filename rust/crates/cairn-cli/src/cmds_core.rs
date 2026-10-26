@@ -822,6 +822,14 @@ fn string_map_nested(
 
 /// build handler: full rebuild into the store (staging swaps atomically).
 fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
+    if args.lsp == Some(true) {
+        return command_error(
+            "cairn build --lsp is retired: the pyright LSP edge-upgrade pass was \
+             removed with the Python engine and no engine LSP pass replaces it. \
+             Run the build without --lsp; ambiguous edges stay resolved by the \
+             indexer.",
+        );
+    }
     if args.staging && args.repo.is_some() {
         return usage_error(
             "--staging cannot be combined with --repo: a staged single-repo \
@@ -3693,7 +3701,7 @@ pub struct BuildArgs {
     /// Build to temp DB and atomic-swap for zero downtime.
     #[arg(long = "staging", default_value_t = false)]
     pub staging: bool,
-    /// Accepted for compatibility; no pyright pass runs in this build.
+    /// Retired: the pyright LSP pass is gone; --lsp exits with an error.
     #[arg(long = "lsp", num_args = 0..=1, require_equals = false, default_missing_value = "true")]
     pub lsp: Option<bool>,
     /// Materialize the transitive closure (skipped by default).
