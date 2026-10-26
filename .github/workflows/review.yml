@@ -40,12 +40,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
 
       # The CLI under review is this checkout's engine, never a registry pull.
       - name: Build cairn from this checkout
         run: |
-          cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+          cargo build --release --manifest-path Cargo.toml -p cairn-cli
           echo "$GITHUB_WORKSPACE/rust/target/release" >> "$GITHUB_PATH"
 
       - name: Index workspace graph

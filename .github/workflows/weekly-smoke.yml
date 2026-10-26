@@ -27,10 +27,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
       - name: Build cairn
         run: |
-          cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+          cargo build --release --manifest-path Cargo.toml -p cairn-cli
           echo "$GITHUB_WORKSPACE/rust/target/release" >> "$GITHUB_PATH"
       - name: Build fixture graph
         env:

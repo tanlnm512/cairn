@@ -1426,11 +1426,7 @@ fn client_config_paths(client: &str) -> Vec<(PathBuf, String, bool)> {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var("HOME")
-        .ok()
-        .filter(|h| !h.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
+    cairn_store::home::platform_home().unwrap_or_else(|| PathBuf::from("/"))
 }
 
 fn scrub_safe_display(path: &Path, home: &Path) -> String {

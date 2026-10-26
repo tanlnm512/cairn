@@ -1,4 +1,4 @@
-"""Contracts for the shrink-only comment-style gate over ``src``."""
+"""Contracts for the shrink-only comment-style gate over the dev-script trees."""
 from __future__ import annotations
 
 import json
@@ -26,7 +26,7 @@ WORD_BLOCK = "# north\n# south\n# east\n# west\n"
 def _repo(tmp_path, files):
     root = tmp_path / "repo"
     for rel, text in files.items():
-        target = root / "src" / rel
+        target = root / "scripts" / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
     return root
@@ -44,7 +44,7 @@ def test_scan_flags_only_comment_blocks_longer_than_three_lines(tmp_path):
     assert len(violations) == 1
     v = violations[0]
     assert v["kind"] == "comment"
-    assert v["path"] == "src/a.py"
+    assert v["path"] == "scripts/a.py"
     assert (v["line"], v["end_line"], v["length"]) == (1, 4, 4)
     assert v["fingerprint"].startswith("comment:")
 
@@ -63,7 +63,7 @@ def test_scan_flags_only_docstrings_longer_than_three_lines(tmp_path):
     assert len(violations) == 1
     v = violations[0]
     assert v["kind"] == "docstring"
-    assert v["path"] == "src/a.py"
+    assert v["path"] == "scripts/a.py"
     assert (v["line"], v["end_line"], v["length"]) == (1, 4, 4)
     assert v["fingerprint"].startswith("docstring:")
 
@@ -91,22 +91,30 @@ def test_scan_fails_closed_on_broken_syntax(tmp_path):
         scan_comment_violations(root)
 
 
+def test_scan_fails_closed_when_no_source_roots_exist(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    with pytest.raises(CommentStyleError, match=r"no source trees found"):
+        scan_comment_violations(root)
+
+
 def test_duplicate_growth_exceeds_the_baseline_occurrence_count(tmp_path, capsys):
     root = _repo(tmp_path, {"a.py": LETTER_BLOCK, "b.py": LETTER_BLOCK})
     baseline = tmp_path / "baseline.json"
     assert _cli(root, baseline, "--init") == 0
     capsys.readouterr()
-    (root / "src" / "c.py").write_text(LETTER_BLOCK, encoding="utf-8")
+    (root / "scripts" / "c.py").write_text(LETTER_BLOCK, encoding="utf-8")
 
     result = check_comment_baseline(root, baseline)
 
     assert result["ok"] is False
-    assert [v["path"] for v in result["new"]] == ["src/c.py"]
+    assert [v["path"] for v in result["new"]] == ["scripts/c.py"]
     assert result["stale"] == []
     assert _cli(root, baseline, "--json") == 1
     failed = json.loads(capsys.readouterr().out)
     assert failed["ok"] is False
-    assert [v["path"] for v in failed["new"]] == ["src/c.py"]
+    assert [v["path"] for v in failed["new"]] == ["scripts/c.py"]
 
 
 def test_stale_entries_fail_and_name_the_last_seen_path(tmp_path, capsys):
@@ -114,7 +122,7 @@ def test_stale_entries_fail_and_name_the_last_seen_path(tmp_path, capsys):
     baseline = tmp_path / "baseline.json"
     assert _cli(root, baseline, "--init") == 0
     capsys.readouterr()
-    (root / "src" / "b.py").write_text("X = 1\n", encoding="utf-8")
+    (root / "scripts" / "b.py").write_text("X = 1\n", encoding="utf-8")
 
     result = check_comment_baseline(root, baseline)
     rc = _cli(root, baseline)
@@ -124,9 +132,9 @@ def test_stale_entries_fail_and_name_the_last_seen_path(tmp_path, capsys):
     assert result["ok"] is False
     assert result["new"] == []
     assert len(result["stale"]) == 1
-    assert result["stale"][0]["paths"] == ["src/b.py"]
+    assert result["stale"][0]["paths"] == ["scripts/b.py"]
     assert rc == 1
-    assert "src/b.py" in out
+    assert "scripts/b.py" in out
     assert "stale" in out
 
 
@@ -161,7 +169,7 @@ def test_updates_only_shrink_the_baseline(tmp_path, capsys):
     root = _repo(tmp_path, {"a.py": LETTER_BLOCK, "b.py": WORD_BLOCK})
     baseline = tmp_path / "baseline.json"
     assert _cli(root, baseline, "--init") == 0
-    (root / "src" / "a.py").write_text("X = 1\n", encoding="utf-8")
+    (root / "scripts" / "a.py").write_text("X = 1\n", encoding="utf-8")
     assert _cli(root, baseline) == 1
     capsys.readouterr()
 
@@ -169,7 +177,7 @@ def test_updates_only_shrink_the_baseline(tmp_path, capsys):
     shrunk = baseline.read_bytes()
     assert _cli(root, baseline) == 0
 
-    (root / "src" / "c.py").write_text(LETTER_BLOCK, encoding="utf-8")
+    (root / "scripts" / "c.py").write_text(LETTER_BLOCK, encoding="utf-8")
     assert _cli(root, baseline, "--update") == 1
     captured = capsys.readouterr()
     assert "growth" in captured.out + captured.err

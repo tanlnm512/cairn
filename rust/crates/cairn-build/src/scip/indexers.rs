@@ -340,20 +340,25 @@ fn find_on_path(path_env: &str, tool: &str) -> Option<std::path::PathBuf> {
     if tool.contains('/') {
         return exec_bit(std::path::Path::new(tool)).then(|| tool.into());
     }
-    path_env.split(':').find_map(|dir| {
-        let candidate = if dir.is_empty() {
-            std::path::PathBuf::from(tool)
-        } else {
-            std::path::Path::new(dir).join(tool)
-        };
-        exec_bit(&candidate).then_some(candidate)
+    let path_var: std::ffi::OsString = path_env.into();
+    std::env::split_paths(&path_var).find_map(|dir| {
+        cairn_store::exec::exec_candidates(&dir, tool)
+            .into_iter()
+            .find(|cand| exec_bit(cand))
     })
 }
 
-/// isfile + X_OK, the two checks shutil.which makes on POSIX.
+/// isfile + X_OK, the two checks shutil.which makes on POSIX; isfile on Windows.
 fn exec_bit(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    path.is_file() && std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.is_file() && std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
 }
 
 #[cfg(test)]
@@ -471,6 +476,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn run_tool_classifies_missing_binary_nonzero_exit_and_success() {
         let dir = std::env::temp_dir().join(format!("scip-run-{}", std::process::id()));
         let bin = dir.join("bin");
@@ -554,6 +560,7 @@ mod tests {
     }
 
     /// generate_index_result with an injectable PATH for hermetic tests.
+    #[cfg(unix)]
     fn generate_with(
         spec: &IndexerSpec,
         output_path: &Path,
@@ -598,14 +605,23 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("scip-which-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
         std::fs::write(dir.join("tool"), b"not executable").expect("plain file");
-        // Non-executable candidates are skipped, matching shutil.which.
-        assert_eq!(find_on_path(&dir.to_string_lossy(), "tool"), None);
+        #[cfg(unix)]
+        {
+            // Non-executable candidates are skipped, matching shutil.which on POSIX.
+            assert_eq!(find_on_path(&dir.to_string_lossy(), "tool"), None);
+        }
+        #[cfg(windows)]
+        {
+            // No exec bit exists on Windows: a readable plain file is a candidate.
+            assert_eq!(
+                find_on_path(&dir.to_string_lossy(), "tool"),
+                Some(dir.join("tool"))
+            );
+        }
         // An empty PATH entry resolves relative to the cwd, where no `tool`
-        // exists; the lookup must neither panic nor match the skipped file.
-        assert_eq!(
-            find_on_path(&format!("{}:", dir.to_string_lossy()), "tool"),
-            None
-        );
+        // exists; a separator-only PATH probes nothing but those entries.
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        assert_eq!(find_on_path(sep, "tool"), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

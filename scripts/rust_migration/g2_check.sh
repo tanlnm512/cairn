@@ -30,13 +30,20 @@ export PATH="$HOME/.cargo/bin:$PATH"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CORPUS="${1:-$REPO_ROOT}"
 WORKERS="${CAIRN_WORKERS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
-PY="$REPO_ROOT/.venv/bin/python"
+# Repo venv when present, else the active/PATH interpreter (containers).
+if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+  PY="$REPO_ROOT/.venv/bin/python"
+elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+  PY="$VIRTUAL_ENV/bin/python"
+else
+  PY="$(command -v python3 || command -v python)" || { echo "G2: no python interpreter" >&2; exit 1; }
+fi
 KG_DUMP="$REPO_ROOT/scripts/rust_migration/kg_dump.py"
 KG_NORMALIZE="$REPO_ROOT/scripts/rust_migration/kg_normalize.py"
 KG_DIFF="$REPO_ROOT/scripts/rust_migration/kg_diff.py"
 FROZEN_NORM="$REPO_ROOT/rust/golden/dump/self-corpus.norm.txt"
 PINNED_CORPUS="$REPO_ROOT/rust/golden/stores/self/corpus"
-RS_CAIRN="$REPO_ROOT/rust/target/release/cairn"
+RS_CAIRN="${CAIRN_RUST_BIN:-$REPO_ROOT/rust/target/release/cairn}"
 WORK="$(mktemp -d /tmp/cairn-g2.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -66,7 +73,7 @@ parse_legs || exit 1
 # --- rust binary -------------------------------------------------------------
 if [ ! -x "$RS_CAIRN" ]; then
   echo "== building rust cairn binary =="
-  cargo build --release --manifest-path "$REPO_ROOT/rust/Cargo.toml" -p cairn-cli \
+  cargo build --release --manifest-path "$REPO_ROOT/Cargo.toml" -p cairn-cli \
     || fail "cargo build -p cairn-cli"
 fi
 [ -x "$RS_CAIRN" ] || fail "rust binary missing at $RS_CAIRN"

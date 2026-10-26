@@ -1,5 +1,5 @@
-//! Python sidecar discovery: the interpreter whose site-packages carry the
-//! `cairn` launcher package and its optional extras.
+//! Python sidecar discovery: the interpreter whose site-packages carry an
+//! optional cairn companion package (e.g. the `cairn_intel_ingest` converter).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

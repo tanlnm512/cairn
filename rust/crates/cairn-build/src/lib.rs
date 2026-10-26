@@ -2,6 +2,7 @@
 
 pub mod builder;
 pub mod closure;
+pub mod communities;
 pub mod config;
 pub mod dataflow;
 pub mod embeddings;

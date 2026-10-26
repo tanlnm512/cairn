@@ -51,8 +51,8 @@ repos:
       - id: debug-statements    # catch pdb/breakpoint() left in
 
   # --- Comment-style ratchet: local mirror of the quality-ratchet CI job.
-  # The checker owns its sorted src/ scope, so it never receives filenames
-  # and runs on every commit regardless of what is staged.
+  # The checker owns its sorted dev-script scope, so it never receives
+  # filenames and runs on every commit regardless of what is staged.
   - repo: local
     hooks:
       - id: check-comment-lengths
@@ -70,13 +70,13 @@ repos:
     hooks:
       - id: cargo-fmt
         name: cargo fmt --check (rust workspace)
-        entry: bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; exec cargo fmt --manifest-path rust/Cargo.toml --all -- --check'
+        entry: bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; exec cargo fmt --manifest-path Cargo.toml --all -- --check'
         language: system
         pass_filenames: false
         files: ^rust/.*\.rs$
       - id: cargo-clippy
         name: cargo clippy -D warnings (rust workspace)
-        entry: bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; exec cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings'
+        entry: bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; exec cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings'
         language: system
         pass_filenames: false
         files: ^rust/(.*\.(rs|toml)|Cargo\.lock)$

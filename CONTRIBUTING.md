@@ -8,27 +8,25 @@ parsers — are genuinely welcome and have a real impact.
 
 ## Development setup
 
-cairn targets **Python 3.10+** and is MIT-licensed.
+cairn's engine is a **Rust binary** (the Python runtime is retired); Python
+3.10+ is used only for the dev tooling. MIT-licensed.
 
 ```bash
 git clone https://github.com/tanlnm512/cairn.git
 cd cairn
 
-# Preferred (a uv.lock is committed at the repo root):
+# Dev tooling (a uv.lock is committed at the repo root):
 uv sync --extra dev
 
-# Or with plain pip:
-pip install -e ".[dev]"
+# The engine itself:
+cargo build --release --manifest-path Cargo.toml -p cairn-cli
 ```
 
-The editable install compiles the vendored Kotlin grammar extension
-(`vendor/tree-sitter-kotlin/`) in-place, so a C toolchain (clang, gcc, or
-MSVC) is required for development installs; released wheels ship the
-extension prebuilt, so end-user installs stay toolchain-free.
-
-Optional extras (see `pyproject.toml`): `[watch]` (file watching),
-`[semantic]` (sentence-transformers; pulls torch, large — numpy and
-sqlite-vec are already core).
+Installing the PyPI package means compiling the engine, so development
+installs use the cargo build above (or `scripts/install.sh`, which drives
+uv/pipx); a Rust toolchain is required either way. The optional
+high-fidelity PDF converter package lives under
+`packaging/cairn-intel-ingest/`.
 
 Install the dev pre-commit hook (runs `ruff` on staged `.py` files; aborts
 on any unused-import / undefined-name / redefinition error so it's caught
@@ -46,42 +44,31 @@ Bypass once with `git commit --no-verify`; uninstall with
 There are two feedback loops:
 
 ```bash
-pytest -m core -q      # fast smoke subset (<3s) — the inner dev loop
-pytest -q              # full suite, default gate + infra tier — CI runs them split
+cargo test --manifest-path Cargo.toml --workspace   # the engine suite
+uv run pytest -q -m "not infra"                     # packaging, docs, dev-script gates
 ```
 
-The `core` marker (declared in `pyproject.toml`) marks **one focused test per
-core function across all 5 layers**, living in `tests/test_core_smoke.py`. It is
-the fastest way to confirm you haven't broken the core query/build/transport
-path. Run `pytest -q` before opening a PR.
+The pytest `infra` tier (oracle replays against the release binary) runs on
+main pushes; run it locally with `uv run pytest -m infra` when touching the
+frozen oracles under `rust/golden/`. Run both loops before opening a PR.
 
 ### Performance changes
 
-If your change touches build/embed/query hot paths, check for regressions with
-the benchmark:
-
-```bash
-cairn bench --save before.json        # baseline before your change
-# ...make your change, rebuild...
-cairn bench --compare before.json     # flags ops >15% slower; exits 2 on regression
-```
-
-The default `hash` embed backend is dependency-free, so this runs on a plain
-install. `bench` is a PyPI-CLI command — run it from the development install
-above; the Rust binary exits 1 and names it. See `docs/cli-reference.md` for
-the full `cairn bench` surface.
+If your change touches daemon/build hot paths, measure with the recorded
+harnesses under `scripts/rust_migration/` — `baseline.py` (per-tool p95 over
+the pinned stores, with `--compare` against a recorded baseline) and
+`closure_bench.py` (closure wall time and peak WAL, with `--compare`).
+Rebuild the release binary first; both compare modes fail on regression.
 
 ## Project layout
 
-Source lives under `src/cairn/`, with one subpackage per concern:
-`graph/` (structural call graph + retrieval), `compass/` (module navigation
-guides), `wiki/` (architectural docs), `memory/` (agent memory + tribal
-knowledge), `knowledge/` (knowledge-base query tools), `parsers/` (tree-sitter
-language parsers), `retrieval/` (FTS + semantic search), `mcp_server/` (the MCP
-transport), `cli/` (the `cairn` entry point), `llm/` (decoupled task queue —
-cairn never calls an LLM directly), `okf/` (the `.knowledge/` file format),
-`viz/` (graph visualization), and `agent_integration/` (shipped templates for
-`cairn install-agents`). Tests mirror the package under `tests/`.
+The engine is the cargo workspace under `rust/` (one crate per concern:
+store, parse, build, query, daemon, cli — see
+[docs/architecture.md](docs/architecture.md)). Python remains for
+development only: the frozen-oracle replay scripts
+(`scripts/rust_migration/`), the repo gates under `scripts/`, the pytest
+suite under `tests/`, and the optional converter package under
+`packaging/cairn-intel-ingest/`.
 
 ## Codebase intelligence convention (read before editing)
 
@@ -101,20 +88,19 @@ See **AGENTS.md** for the full tool list, resolution-aware querying (precise vs
 
 ## Coding style
 
-- Follow existing patterns in the subpackage you're touching.
+- Follow existing patterns in the crate you're touching.
 - Keep functions focused; prefer small, testable units.
-- Add tests for new behavior. If the change is on the core query/build/transport
-  path, add or extend a case under the `core` marker in
-  `tests/test_core_smoke.py` so the fast loop covers it.
-- Don't introduce new top-level dependencies without discussion — the default
-  install is deliberately lightweight (no torch, no network).
+- Add tests for new behavior; every contract has one owner test at its
+  strongest boundary (see AGENTS.md's "Before Adding a Test").
+- Don't introduce new runtime dependencies without a recorded decision — the
+  default install is deliberately lightweight (no torch, no network).
 
 ## Pull requests
 
 1. Open a PR against `main`.
 2. Describe the change and link any related issue.
-3. Ensure `pytest -m core` passes at minimum; `pytest -q` if you can run the
-   full suite.
+3. Ensure `cargo test --workspace` and `uv run pytest -m "not infra"` pass
+   at minimum.
 4. Keep PRs scoped — one logical change each.
 5. Enable auto-merge on your PR (`gh pr merge --auto --merge`) so it merges
    the moment review and required checks land.
@@ -152,7 +138,7 @@ license notice in the file or add it to `NOTICE`.
 File bugs via **GitHub Issues**. Please include:
 
 - cairn version (`cairn version`)
-- Python version and OS
+- OS and install channel (Homebrew / cargo / tarball / PyPI)
 - Steps to reproduce, expected vs. actual behavior, and any relevant logs
 
 For security-sensitive reports, see **SECURITY.md** instead of a public issue.

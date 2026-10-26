@@ -1,13 +1,18 @@
 //! Auth resolution + launchd plist + stray-sweep contract tests (the 1c parity floor).
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::process::Command;
 use std::time::Duration;
 
 use cairn_daemon::auth;
 use cairn_daemon::healthz::HealthzState;
-use cairn_daemon::lifecycle::{self, SweepCtx, cg_bin_from, is_cairn_serve_cmdline, render_plist};
+#[cfg(unix)]
+use cairn_daemon::lifecycle::SweepCtx;
+use cairn_daemon::lifecycle::{self, cg_bin_from, is_cairn_serve_cmdline, render_plist};
 use serde_json::Value;
 
 fn repo_root() -> PathBuf {
@@ -529,7 +534,10 @@ fn daemon_impl_selection_matrix() {
         // A missing CAIRN_RUST_BIN falls back to the running cairn binary.
         std::env::set_var(lifecycle::RUST_BIN_ENV, "/nonexistent/rust-cairn");
         let current = std::env::current_exe().expect("current exe");
-        let expected = if current.file_name().is_some_and(|n| n == "cairn") {
+        let expected = if current
+            .file_name()
+            .is_some_and(lifecycle::is_cairn_binary_name)
+        {
             Some(current.to_string_lossy().into_owned())
         } else {
             None

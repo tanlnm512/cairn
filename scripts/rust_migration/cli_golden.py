@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -24,7 +23,7 @@ import golden_record as gr  # reuse: path scrub rules + text normalizer
 import parity  # reuse: CARGO_BIN, RUST_WORKSPACE, load_pinned_store
 
 DB_NAME = parity.DB_NAME
-RUST_BIN = parity.RUST_WORKSPACE / "target" / "release" / "cairn"
+RUST_BIN = parity.TARGET_DIR / "release" / "cairn"
 CMD_TIMEOUT_S = 120.0
 SCHEMA = "cairn-rust-golden-cli/1"
 FIXTURE_DIR = REPO_ROOT / "rust" / "golden" / "cli"
@@ -257,9 +256,9 @@ def _note(msg: str) -> None:
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
-def cli_env(scratch: Path, workspace: Path, cargo_path: bool) -> dict:
-    """Child env wiring the scratch store; the rust leg's PATH gets the cargo
-    bin dir prepended because the caller's PATH may predate rustup."""
+def cli_env(scratch: Path, workspace: Path) -> dict:
+    """Child env wiring the scratch store; PATH gets the cargo bin dir
+    prepended because the caller's PATH may predate rustup."""
     env = dict(os.environ)
     for key in ("CAIRN_READ_ONLY", "CAIRN_MCP_API_KEY", "PYTEST_CURRENT_TEST",
                 "CAIRN_DB", "CAIRN_KNOWLEDGE", "CAIRN_WORKSPACE", "CAIRN_HOME"):
@@ -286,9 +285,8 @@ def cli_env(scratch: Path, workspace: Path, cargo_path: bool) -> dict:
     env["CAIRN_KNOWLEDGE"] = str(scratch / ".knowledge")
     env["CAIRN_WORKSPACE"] = str(workspace)
     env["NO_COLOR"] = "1"
-    if cargo_path:
-        env["PATH"] = os.pathsep.join([str(parity.CARGO_BIN),
-                                       env.get("PATH", os.defpath)])
+    env["PATH"] = os.pathsep.join([str(parity.CARGO_BIN),
+                                   env.get("PATH", os.defpath)])
     return env
 
 
@@ -865,6 +863,10 @@ def golden_commands(scratch: Path) -> list[list[str]]:
         ["review", "--capture-event", str(events / "resolved.json")],
         ["review", "--capture-event", str(events / "open.json")],
         ["review", "--capture-event", str(events / "bad-payload.json")],
+        # Communities family: seeded Louvain over the scratch store's structural
+        # edges; runs last because it mutates the communities tables the map
+        # legs above read.
+        ["communities", "--top-k", "2"],
     ]
 
 
@@ -981,10 +983,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rust-bin", default=None,
                         help=f"Rust binary override (default: build {RUST_BIN.relative_to(REPO_ROOT)}).")
     parser.add_argument("--record", action="store_true",
-                        help="Re-freeze the fixtures from --reference (default: the rust binary) "
+                        help="Re-freeze the fixtures from the rust binary "
                              "instead of replaying against them.")
-    parser.add_argument("--reference", default=None,
-                        help="Shell-split command recorded by --record.")
     parser.add_argument("--only", default=None, metavar="LABEL",
                         help="With --record: re-freeze only the cases whose label starts "
                              "with LABEL (an intentional divergence), keeping the rest.")
@@ -999,12 +999,8 @@ def main(argv: list[str] | None = None) -> int:
         prepare_store(scratch)
         rules = gr.scrub_rules(scratch, scratch / "home", workspace) + EXTRA_SCRUB_RULES
         commands = golden_commands(scratch)
-        if args.record and args.reference:
-            exe = shlex.split(args.reference)
-            env = cli_env(scratch, workspace, cargo_path=False)
-        else:
-            exe = [str(Path(args.rust_bin).resolve() if args.rust_bin else ensure_rust_binary())]
-            env = cli_env(scratch, workspace, cargo_path=True)
+        exe = [str(Path(args.rust_bin).resolve() if args.rust_bin else ensure_rust_binary())]
+        env = cli_env(scratch, workspace)
         _note(f"binary: {' '.join(exe)}")
         if args.record:
             record(commands, exe, env, scratch, rules, only=args.only)

@@ -1,6 +1,7 @@
 //! The MCP tool surface: catalog and dispatch over the cairn-query ports.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::Value;
@@ -12,7 +13,8 @@ use cairn_query::tools_nav as nav;
 use cairn_query::tools_repo as repo;
 use cairn_query::tools_search as search;
 use cairn_query::tools_wiki as wiki;
-use rusqlite::Connection;
+
+use crate::conn_pool::{ConnLease, ConnPool};
 
 /// Per-call context a server instance resolves once and dispatch threads through.
 #[derive(Clone)]
@@ -23,6 +25,7 @@ pub struct ToolCtx {
     pub read_only: bool,
     /// `mcp-<pid>-<date>` when writable; None gates recall's read-through refs write.
     pub session_id: Option<String>,
+    conns: Arc<ConnPool>,
 }
 
 impl ToolCtx {
@@ -42,16 +45,16 @@ impl ToolCtx {
             knowledge_path: knowledge_path.to_path_buf(),
             read_only,
             session_id,
+            conns: Arc::new(ConnPool::new(db_path, read_only)),
         }
     }
 
-    fn conn(&self) -> Result<Connection, String> {
-        if self.read_only {
-            cairn_store::conn::open_read_only(&self.db_path)
-        } else {
-            cairn_store::conn::open_writable(&self.db_path)
-        }
-        .map_err(|e| format!("store open failed: {e}"))
+    fn conn(&self) -> Result<ConnLease, String> {
+        self.conns.primary()
+    }
+
+    fn read_conn(&self) -> Result<ConnLease, ToolFailure> {
+        self.conns.read().map_err(ToolFailure)
     }
 
     fn bundle(&self) -> km::Bundle {
@@ -66,11 +69,6 @@ impl From<String> for ToolFailure {
     fn from(message: String) -> Self {
         Self(message)
     }
-}
-
-fn open_read_conn(ctx: &ToolCtx) -> Result<Connection, ToolFailure> {
-    cairn_store::conn::open_read_only(&ctx.db_path)
-        .map_err(|e| ToolFailure(format!("store open failed: {e}")))
 }
 
 // --- argument extraction -----------------------------------------------------
@@ -486,7 +484,7 @@ pub fn catalog() -> Vec<Tool> {
 pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolFailure> {
     match name {
         "search_symbols" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             let kind = arg_str_or(args, "kind", "");
             let kind = if kind.is_empty() { None } else { Some(kind) };
             Ok(search::search_symbols_response(
@@ -498,7 +496,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             ))
         }
         "semantic_search" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             let limit = arg_i64_or(args, "limit", 20).clamp(1, 1000) as usize;
             let rerank = args.get("rerank").and_then(Value::as_bool);
             Ok(search::semantic_search_response(
@@ -510,7 +508,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             ))
         }
         "find_definition" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             nav::find_definition_text(
                 &conn,
                 arg_str(args, "name")
@@ -521,7 +519,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.to_string()))
         }
         "get_callers" | "get_callees" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             let symbol = arg_str(args, "name")
                 .ok_or_else(|| ToolFailure(format!("{name} requires a string name")))?;
             let fuzzy = arg_bool_or(args, "fuzzy", false);
@@ -534,7 +532,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             result.map_err(|e| ToolFailure(e.to_string()))
         }
         "impact_analysis" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             let namespaces = cairn_query::graph::resolve_namespaces(&ctx.workspace, None);
             let ns_refs: Vec<(&str, &str)> = namespaces
                 .iter()
@@ -553,7 +551,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.to_string()))
         }
         "path" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             flow::path_text(
                 &conn,
                 arg_str(args, "from_pattern")
@@ -567,11 +565,11 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.to_string()))
         }
         "repo_map" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             repo::repo_map_text(&conn).map_err(|e| ToolFailure(e.to_string()))
         }
         "file_api" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             repo::file_api_text(
                 &conn,
                 arg_str(args, "path")
@@ -596,7 +594,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.to_string()))
         }
         "trace_flow" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             flow::trace_flow_text(
                 &conn,
                 arg_str(args, "entry")
@@ -606,7 +604,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.to_string()))
         }
         "cross_repo_deps" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             flow::cross_repo_deps_text(
                 &conn,
                 &ctx.workspace,
@@ -617,7 +615,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.to_string()))
         }
         "visualize_graph" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             flow::visualize_graph_text(
                 &conn,
                 &ctx.workspace,
@@ -683,7 +681,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
         )
         .map_err(|e| ToolFailure(e.0)),
         "knowledge_search" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             km::knowledge_search(
                 &conn,
                 &ctx.bundle(),
@@ -738,7 +736,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
         )
         .map_err(|e| ToolFailure(e.0)),
         "ask_compass" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             km::ask_compass(
                 &conn,
                 &ctx.bundle(),
@@ -768,7 +766,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
         )
         .map_err(ToolFailure),
         "wiki_generate" => {
-            let conn = open_read_conn(ctx)?;
+            let conn = ctx.read_conn()?;
             wiki::wiki_generate_text(
                 &conn,
                 &ctx.bundle(),
@@ -788,11 +786,11 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
 
-    #[test]
-    fn writable_conn_carries_the_store_pragmas() {
+    fn temp_ctx(tag: &str) -> (std::path::PathBuf, ToolCtx) {
         let dir = std::env::temp_dir().join(format!(
-            "cairn-daemon-tools-conn-{}-{}",
+            "cairn-daemon-tools-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -801,6 +799,29 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let ctx = ToolCtx::new(&dir.join("t.kg"), &dir, &dir.join(".knowledge"), false);
+        (dir, ctx)
+    }
+
+    fn create_marker_store(path: &std::path::Path, value: &str) {
+        let conn = cairn_store::conn::open_writable(path).expect("create store");
+        conn.execute_batch(&format!(
+            "CREATE TABLE marker (v TEXT); INSERT INTO marker VALUES ('{value}');"
+        ))
+        .expect("marker table");
+    }
+
+    fn probe_count(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_temp_master WHERE name = 'reuse_probe'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("probe count")
+    }
+
+    #[test]
+    fn writable_conn_carries_the_store_pragmas() {
+        let (dir, ctx) = temp_ctx("conn");
         let conn = ctx.conn().expect("writable conn");
         let journal: String = conn
             .query_row("PRAGMA journal_mode", [], |r| r.get(0))
@@ -809,6 +830,65 @@ mod tests {
             .query_row("PRAGMA mmap_size", [], |r| r.get(0))
             .expect("mmap_size");
         assert_eq!((journal.as_str(), mmap), ("wal", 268_435_456));
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sequential_conns_reuse_one_connection() {
+        let (dir, ctx) = temp_ctx("reuse");
+        create_marker_store(&dir.join("t.kg"), "original");
+        {
+            let conn = ctx.conn().expect("first conn");
+            conn.execute("CREATE TEMP TABLE reuse_probe (x)", [])
+                .expect("probe");
+            let marker: String = conn
+                .query_row("SELECT v FROM marker", [], |r| r.get(0))
+                .expect("marker");
+            assert_eq!(marker, "original");
+        }
+        let conn = ctx.conn().expect("second conn");
+        assert_eq!(
+            probe_count(&conn),
+            1,
+            "sequential tool calls must reuse the parked connection"
+        );
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn store_swap_invalidates_the_reused_connection() {
+        let (dir, ctx) = temp_ctx("swap");
+        let db = dir.join("t.kg");
+        create_marker_store(&db, "original");
+        let staged = cairn_store::swap::staging_path(&db);
+        {
+            let conn = ctx.conn().expect("pre-swap conn");
+            conn.execute("CREATE TEMP TABLE reuse_probe (x)", [])
+                .expect("probe");
+        }
+        {
+            let conn = Connection::open(&staged).expect("staged store");
+            conn.execute_batch(
+                "CREATE TABLE marker (v TEXT); INSERT INTO marker VALUES ('rebuilt');",
+            )
+            .expect("staged marker");
+        }
+        cairn_store::swap::swap_db_file(&staged, &db).expect("swap");
+        let conn = ctx.conn().expect("post-swap conn");
+        let marker: String = conn
+            .query_row("SELECT v FROM marker", [], |r| r.get(0))
+            .expect("marker");
+        assert_eq!(
+            marker, "rebuilt",
+            "a swapped store must be reopened, not served from the unlinked inode"
+        );
+        assert_eq!(
+            probe_count(&conn),
+            0,
+            "the post-swap connection must be a fresh open"
+        );
         drop(conn);
         let _ = std::fs::remove_dir_all(&dir);
     }

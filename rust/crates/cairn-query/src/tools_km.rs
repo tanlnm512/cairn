@@ -885,12 +885,12 @@ pub struct Bundle {
 /// deepest existing ancestor and re-apply the remaining components.
 pub(crate) fn resolve_lenient(p: &Path) -> PathBuf {
     if let Ok(c) = p.canonicalize() {
-        return c;
+        return cairn_store::paths::strip_verbatim(c);
     }
     let mut ancestor = p.parent();
     while let Some(a) = ancestor {
         if let Ok(base) = a.canonicalize() {
-            let mut resolved = base;
+            let mut resolved = cairn_store::paths::strip_verbatim(base);
             if let Ok(tail) = p.strip_prefix(a) {
                 for comp in tail.components() {
                     match comp {
@@ -1071,17 +1071,10 @@ pub struct BundleLockGuard<'a> {
     file: Option<std::fs::File>,
 }
 
-#[cfg(unix)]
+/// flock(2)-equivalent exclusive non-blocking take of the lock file.
 fn flock_ex_nb(file: &std::fs::File) -> bool {
-    use std::os::unix::io::AsRawFd;
-    // flock(2) via the platform libc std already links; no libc crate needed.
-    unsafe extern "C" {
-        fn flock(fd: i32, operation: i32) -> i32;
-    }
-    const LOCK_EX: i32 = 2;
-    const LOCK_NB: i32 = 4;
-    // Any errno retries until the deadline; only contention is expected.
-    unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) == 0 }
+    // std try_lock is flock(LOCK_EX|LOCK_NB) on Unix and LockFileEx on Windows.
+    file.try_lock().is_ok()
 }
 
 impl<'a> BundleLockGuard<'a> {
@@ -1114,11 +1107,7 @@ impl<'a> BundleLockGuard<'a> {
         let deadline =
             std::time::Instant::now() + std::time::Duration::from_secs_f64(BUNDLE_LOCK_TIMEOUT_S);
         loop {
-            #[cfg(unix)]
-            let held = flock_ex_nb(&file);
-            #[cfg(not(unix))]
-            let held = true;
-            if held {
+            if flock_ex_nb(&file) {
                 break;
             }
             if std::time::Instant::now() >= deadline {
@@ -1144,15 +1133,7 @@ impl<'a> BundleLockGuard<'a> {
 impl Drop for BundleLockGuard<'_> {
     fn drop(&mut self) {
         if let Some(file) = self.file.take() {
-            #[cfg(unix)]
-            {
-                use std::os::unix::io::AsRawFd;
-                unsafe extern "C" {
-                    fn flock(fd: i32, operation: i32) -> i32;
-                }
-                const LOCK_UN: i32 = 8;
-                unsafe { flock(file.as_raw_fd(), LOCK_UN) };
-            }
+            let _ = file.unlock();
             LOCK_DEPTH.with(|depth| depth.borrow_mut().insert(self.key.clone(), 0));
         } else {
             LOCK_DEPTH.with(|depth| {

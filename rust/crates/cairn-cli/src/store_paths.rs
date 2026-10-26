@@ -12,9 +12,7 @@ pub fn cairn_home() -> Option<PathBuf> {
     {
         return Some(PathBuf::from(home));
     }
-    std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".cairn"))
+    cairn_store::home::platform_home().map(|h| h.join(".cairn"))
 }
 
 /// `~`-expanded, absolute CAIRN_HOME (the `_current_cairn_home` contract).
@@ -28,9 +26,9 @@ pub fn current_cairn_home() -> PathBuf {
 
 fn expanduser(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/")
-        && let Ok(home) = std::env::var("HOME")
+        && let Some(home) = cairn_store::home::platform_home()
     {
-        return format!("{home}/{rest}");
+        return home.join(rest).to_string_lossy().into_owned();
     }
     path.to_string()
 }
@@ -38,7 +36,7 @@ fn expanduser(path: &str) -> String {
 /// `Path.resolve()` (non-strict): absolute with symlinks resolved where possible.
 pub fn resolve_path(path: &Path) -> PathBuf {
     if let Ok(resolved) = std::fs::canonicalize(path) {
-        return resolved;
+        return cairn_store::paths::strip_verbatim(resolved);
     }
     let joined = if path.is_absolute() {
         path.to_path_buf()

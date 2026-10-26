@@ -25,10 +25,10 @@ Author — confirm before requesting review (procedure: `docs/review-checklist.m
 - [ ] **Graph updated** — `cairn update` ran so blast-radius is current
 - [ ] **Memory recorded** — `record_memory` for any decision / pattern / mistake
 - [ ] **Fallback/perf paths** — if the change alters a fallback or performance path, `cairn doctor` was run and the telemetry signal exposing the degradation is named (spec §6.4)
-- [ ] **Tests** — change is covered (`pytest -m core` fast loop + full suite); new tests are hermetic (no PATH/HOME/env dependence; `result.stdout`, not `result.output`)
+- [ ] **Tests** — change is covered (`cargo test --workspace` + `uv run pytest -m "not infra"`); new tests are hermetic (no PATH/HOME/env dependence; `result.stdout`, not `result.output`)
 - [ ] **CHANGELOG** — `[Unreleased]` entry added (feature/bugfix only)
 - [ ] **Comment, doc & log brevity** — 1-line docstrings default, no commentary blocks, no decision logs in code, non-verbose logging (AGENTS.md §"Comment, doc, and log style")
-- [ ] **Gates green** — pre-commit, pip-audit, conventional PR title; reviewed any new mypy/bandit findings
+- [ ] **Gates green** — pre-commit, pip-audit, conventional PR title; reviewed any new bandit findings
 
 ## Blast-radius note
 

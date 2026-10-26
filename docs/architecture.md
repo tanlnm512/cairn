@@ -40,20 +40,11 @@ decoupled task queue.
 | Knowledge & memory | `cairn-query` (`tools_km.rs`, `ingest.rs`, `tasks.rs`), dispatched by `cairn-cli` `cmds_knowledge.rs` | OKF document store, staged doc ingestion, tiered agent memory with bi-temporal validity and per-agent sharing, the LLM task queue |
 | Compass & wiki | `cairn-query` (`tools_wiki.rs`, `tools_flow.rs`, `skillgen.rs`) | navigation guides, architecture pages, generated skills; LLM work runs via the task queue, fact-checked by a deterministic critic |
 
-### Launcher and sidecars (`src/cairn/`)
-
-| Module | Purpose |
-|---|---|
-| `console.py` | the PyPI `cairn` console script: execs the discovered binary with the original argv, exporting its interpreter as `CAIRN_SIDECAR_PYTHON` |
-| `paths.py` | binary discovery: `CAIRN_RUST_BIN` → the binary bundled in the wheel (`_bin/`) → `PATH` |
-| `communities.py` | the `[graph-analytics]` sidecar: seeded networkx Louvain over the store (`cairn communities` runs it in-process from the launcher) |
-| `ingest_convert.py` | the `[ingest]` sidecar: PDF/DOCX → markdown on stdout, invoked by the binary's `knowledge ingest --file` |
-
 ### Resolution tiers, Rust sources, and worktree behavior
 
 - The resolver labels every call edge `exact` / `ambiguous` / `unresolved`
-  (see [indexing.md](indexing.md)); `cairn build --lsp` is accepted for
-  compatibility but no pyright upgrade pass runs in this build.
+  (see [indexing.md](indexing.md)); `cairn build --lsp` exits 1 naming the
+  retired pyright upgrade pass.
 - Rust sources use the generic tree-sitter tier with a pinned grammar. It
   records definitions and spans, keeps call edges `unresolved`, and records
   `.rs` files as parser-unavailable skips when the grammar cannot load.

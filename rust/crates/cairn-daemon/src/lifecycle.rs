@@ -71,11 +71,20 @@ pub fn pidfile_pid() -> Option<u32> {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var("HOME")
-        .ok()
-        .filter(|h| !h.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
+    cairn_store::home::platform_home().unwrap_or_else(|| PathBuf::from("/"))
+}
+
+/// True when `name` is this engine's binary file name (`cairn`, or
+/// `cairn.exe` on Windows).
+pub fn is_cairn_binary_name(name: &std::ffi::OsStr) -> bool {
+    if name == "cairn" {
+        return true;
+    }
+    #[cfg(windows)]
+    if name == "cairn.exe" {
+        return true;
+    }
+    false
 }
 
 // --- plist template ---------------------------------------------------------
@@ -85,7 +94,7 @@ fn home_dir() -> PathBuf {
 pub fn cg_bin() -> String {
     let running = std::env::current_exe()
         .ok()
-        .filter(|exe| exe.file_name().is_some_and(|n| n == "cairn"))
+        .filter(|exe| exe.file_name().is_some_and(is_cairn_binary_name))
         .map(|exe| exe.to_string_lossy().into_owned());
     cg_bin_from(
         std::env::var("CAIRN_BIN").ok().as_deref(),
@@ -124,14 +133,7 @@ pub fn cg_bin_from(
 }
 
 fn which_cairn() -> Option<String> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let cand = dir.join("cairn");
-        if cand.is_file() {
-            return Some(cand.to_string_lossy().into_owned());
-        }
-    }
-    None
+    cairn_store::exec::which("cairn").map(|p| p.to_string_lossy().into_owned())
 }
 
 /// The LaunchAgent plist for a read-write-by-default `cairn serve run` daemon.
@@ -280,7 +282,7 @@ pub fn is_cairn_serve_cmdline(cmdline: &str) -> bool {
     }
     let bin_is_cairn = Path::new(tokens[0])
         .file_name()
-        .is_some_and(|n| n == "cairn");
+        .is_some_and(is_cairn_binary_name);
     if !bin_is_cairn || tokens[1] != "serve" {
         return false;
     }
@@ -288,22 +290,53 @@ pub fn is_cairn_serve_cmdline(cmdline: &str) -> bool {
 }
 
 /// Full command line of `pid`; None when unreadable (never identify-and-kill blindly).
+#[cfg(target_os = "linux")]
 pub fn pid_cmdline(pid: u32) -> Option<String> {
-    #[cfg(target_os = "linux")]
-    {
-        let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-        if !raw.is_empty() {
-            return Some(
-                String::from_utf8_lossy(&raw)
-                    .split('\0')
-                    .filter(|t| !t.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-                    .trim()
-                    .to_string(),
-            );
-        }
+    pid_cmdline_procfs(pid).or_else(|| pid_cmdline_ps(pid))
+}
+
+/// Full command line of `pid` via PowerShell CIM; None when unreadable.
+#[cfg(windows)]
+pub fn pid_cmdline(pid: u32) -> Option<String> {
+    let script = format!("(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine");
+    let output = run_with_timeout(
+        Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]),
+        PROCBE_TIMEOUT,
+    )?;
+    if !output.status.success() {
+        return None;
     }
+    let line = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if line.is_empty() { None } else { Some(line) }
+}
+
+/// Full command line of `pid` via ps; None when unreadable.
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn pid_cmdline(pid: u32) -> Option<String> {
+    pid_cmdline_ps(pid)
+}
+
+/// Whitespace-joined `/proc/<pid>/cmdline`; None when absent or empty.
+#[cfg(target_os = "linux")]
+fn pid_cmdline_procfs(pid: u32) -> Option<String> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    if raw.is_empty() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&raw)
+            .split('\0')
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string(),
+    )
+}
+
+/// `ps -p <pid> -o command=` output; None when unreadable or empty.
+#[cfg(not(windows))]
+fn pid_cmdline_ps(pid: u32) -> Option<String> {
     let output = run_with_timeout(
         Command::new("ps").args(["-p", &pid.to_string(), "-o", "command="]),
         PROCBE_TIMEOUT,
@@ -336,6 +369,27 @@ fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Option<std::process
 }
 
 /// Pids whose cmdline mentions `cairn serve` — a deliberately over-matching superset.
+#[cfg(windows)]
+pub fn pgrep_candidates() -> Vec<u32> {
+    let script = "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%cairn serve%'\" \
+                  | ForEach-Object { $_.ProcessId }";
+    let Some(output) = run_with_timeout(
+        Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", script]),
+        PROCBE_TIMEOUT,
+    ) else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .filter_map(|t| t.parse::<u32>().ok())
+        .collect()
+}
+
+/// Pids whose cmdline mentions `cairn serve` — a deliberately over-matching superset.
+#[cfg(not(windows))]
 pub fn pgrep_candidates() -> Vec<u32> {
     let Some(output) = run_with_timeout(
         Command::new("pgrep").args(["-f", "cairn serve"]),
@@ -354,30 +408,39 @@ pub fn pgrep_candidates() -> Vec<u32> {
 
 /// Pids holding `db_path` open; None means verification failed (never conflated with empty).
 pub fn db_holder_pids(db_path: &Path) -> Option<HashSet<u32>> {
-    let output = run_with_timeout(
-        Command::new("lsof").args(["-F", "p"]).arg(db_path),
-        PROCBE_TIMEOUT,
-    )?;
-    // lsof exits 1 when the file is open by no one; stderr set means real failure.
-    let code = output.status.code();
-    let failed = match code {
-        Some(0) => false,
-        Some(1) => !String::from_utf8_lossy(&output.stderr).trim().is_empty(),
-        _ => true,
-    };
-    if failed {
-        return None;
+    #[cfg(windows)]
+    {
+        // No lsof equivalent: report unverified so the sweep never kills blind.
+        let _ = db_path;
+        None
     }
-    let mut holders = HashSet::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let line = line.trim();
-        if let Some(pid) = line.strip_prefix('p')
-            && let Ok(pid) = pid.parse::<u32>()
-        {
-            holders.insert(pid);
+    #[cfg(not(windows))]
+    {
+        let output = run_with_timeout(
+            Command::new("lsof").args(["-F", "p"]).arg(db_path),
+            PROCBE_TIMEOUT,
+        )?;
+        // lsof exits 1 when the file is open by no one; stderr set means real failure.
+        let code = output.status.code();
+        let failed = match code {
+            Some(0) => false,
+            Some(1) => !String::from_utf8_lossy(&output.stderr).trim().is_empty(),
+            _ => true,
+        };
+        if failed {
+            return None;
         }
+        let mut holders = HashSet::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let line = line.trim();
+            if let Some(pid) = line.strip_prefix('p')
+                && let Ok(pid) = pid.parse::<u32>()
+            {
+                holders.insert(pid);
+            }
+        }
+        Some(holders)
     }
-    Some(holders)
 }
 
 /// Direct child pids of `ppid` (best-effort, empty on failure).
@@ -479,7 +542,7 @@ pub fn find_strays_ctx(ctx: &SweepCtx<'_>) -> Vec<u32> {
     let Some(holders) = db_holder_pids(ctx.db_path) else {
         eprintln!(
             "cairn: stray sweep skipped -- could not verify which processes \
-             hold the DB via lsof; not killing unverified `cairn serve` candidates"
+             hold the DB; not killing unverified `cairn serve` candidates"
         );
         return Vec::new();
     };
@@ -505,20 +568,63 @@ pub fn find_strays(db_path: &Path) -> Vec<u32> {
 }
 
 fn send_signal(pid: u32, signal: &str) -> bool {
-    Command::new("kill")
-        .args(["-s", signal, &pid.to_string()])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    #[cfg(windows)]
+    {
+        // Windows has no signals: TERM is a best-effort close, KILL is force
+        // with the child tree. A non-force kill of a console process reports
+        // failure while the process lives, so only spawn failure is "not sent".
+        let mut args: Vec<&str> = vec!["/T", "/PID"];
+        if signal.eq_ignore_ascii_case("KILL") {
+            args.insert(0, "/F");
+        }
+        Command::new("taskkill")
+            .args(&args)
+            .arg(pid.to_string())
+            .status()
+            .map(|_| true)
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("kill")
+            .args(["-s", signal, &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
 }
 
 /// Liveness probe (signal 0): true while the pid exists and is signallable.
 fn pid_alive(pid: u32) -> bool {
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    #[cfg(windows)]
+    {
+        let Some(output) = run_with_timeout(
+            Command::new("tasklist").args(["/NH", "/FI", &format!("PID eq {pid}")]),
+            PROCBE_TIMEOUT,
+        ) else {
+            return false;
+        };
+        tasklist_reports_pid(&String::from_utf8_lossy(&output.stdout), pid)
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+}
+
+/// True when `tasklist /NH` output has a row whose image runs as `pid`.
+#[cfg(windows)]
+fn tasklist_reports_pid(stdout: &str, pid: u32) -> bool {
+    let wanted = pid.to_string();
+    stdout.lines().any(|line| {
+        line.split_whitespace()
+            .nth(1)
+            .is_some_and(|field| field == wanted)
+    })
 }
 
 /// SIGTERM, wait, then SIGKILL; `cmd_check` re-verification aborts on pid reuse.
@@ -711,7 +817,7 @@ pub fn rust_bin() -> Option<String> {
     }
     std::env::current_exe()
         .ok()
-        .filter(|exe| exe.file_name().is_some_and(|n| n == "cairn"))
+        .filter(|exe| exe.file_name().is_some_and(is_cairn_binary_name))
         .map(|exe| exe.to_string_lossy().into_owned())
 }
 
@@ -938,7 +1044,6 @@ fn spawn_daemonized(
     store: &StoreBinding,
     api_key: Option<&str>,
 ) -> std::io::Result<u32> {
-    use std::os::unix::process::CommandExt as _;
     let log_path = daemon_log_path();
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -959,7 +1064,18 @@ fn spawn_daemonized(
     if let Some(key) = api_key {
         cmd.env("CAIRN_MCP_API_KEY", key);
     }
-    cmd.process_group(0);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
     Ok(cmd.spawn()?.id())
 }
 
@@ -1059,4 +1175,37 @@ pub fn db_holder_identities(db_path: &Path) -> Vec<String> {
     holders.sort();
     holders.dedup();
     holders
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn tasklist_output_reports_only_exact_pid_rows() {
+        let stdout = "cairn.exe                  1234 Console                    1     4,096 K\r\n\
+                      INFO: No tasks are running which match the specified criteria.\r\n";
+        assert!(tasklist_reports_pid(stdout, 1234));
+        assert!(
+            !tasklist_reports_pid(stdout, 123),
+            "prefix pid must not match"
+        );
+        assert!(!tasklist_reports_pid(stdout, 12345));
+        assert!(!tasklist_reports_pid(
+            "INFO: No tasks are running.\r\n",
+            1234
+        ));
+    }
+
+    #[test]
+    fn cairn_binary_names_match_per_platform() {
+        assert!(is_cairn_binary_name(std::ffi::OsStr::new("cairn")));
+        assert!(!is_cairn_binary_name(std::ffi::OsStr::new("cairn-agent")));
+        if cfg!(windows) {
+            assert!(is_cairn_binary_name(std::ffi::OsStr::new("cairn.exe")));
+        } else {
+            assert!(!is_cairn_binary_name(std::ffi::OsStr::new("cairn.exe")));
+        }
+    }
 }

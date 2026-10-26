@@ -19,15 +19,11 @@ concurrency:
 jobs:
   # --- Security: supply-chain + code scanning -----------------------------
   # pip-audit is a HARD gate: a known-vulnerable dependency blocks the PR.
-  # bandit is ADVISORY (continue-on-error): it surfaces NEW security
-  # regressions (eval/exec/pickle/shell/weak-crypto) without churning on the
-  # codebase's known-benign findings. B608 is skipped via -s because every SQL
-  # query here is parameterized (f-strings interpolate only the `?,?,?`
-  # placeholder list; values pass separately to execute()) -- the 26 B608 hits
-  # are false positives. The B324 hashlib findings were silenced at the call
-  # sites with usedforsecurity=False (content-addressing IDs, not crypto); the
-  # only remaining hits are 2 B310 urllib fetches (timeout-bounded, to known
-  # URLs) -- benign.
+  # bandit is ADVISORY (continue-on-error) over the remaining dev scripts and
+  # the optional converter package: it surfaces NEW security regressions
+  # (eval/exec/pickle/shell/weak-crypto) without churning on known-benign
+  # findings. The engine binary is audited on the Rust side (cargo-deny in
+  # rust.yml).
   security:
     name: Security (pip-audit + bandit)
     runs-on: ubuntu-latest
@@ -41,35 +37,17 @@ jobs:
       # Every job installs from the committed uv.lock (exact pinned set) via
       # `uv sync` -- the lockfile is the dependency set CI tests, not a fresh
       # pip resolution. `uv run --no-sync` then executes from that venv.
-      # The sidecar extras ride the audit: they are user-facing install
-      # surfaces (pip install cairn-intel[ingest]) -- a CVE there must fail it.
-      - name: Install (with dev + sidecar extras)
-        run: uv sync --extra dev --extra ingest --extra graph-analytics
+      # The optional converter package rides the audit: it is a user-facing
+      # install (pip install cairn-intel-ingest) -- a CVE there must fail it.
+      - name: Install (with dev extras + converter package)
+        run: |
+          uv sync --extra dev
+          uv pip install packaging/cairn-intel-ingest
       - name: pip-audit (hard gate -- known-vulnerable deps fail here)
         run: uv run --no-sync pip-audit
-      - name: bandit (advisory)
+      - name: bandit (advisory, dev scripts + converter package)
         continue-on-error: true
-        run: uv run --no-sync bandit -r src -ii -ll -s B608
-
-  # --- Type checking: HARD gate --------------------------------------------
-  # mypy runs clean at default settings (--ignore-missing-imports because
-  # tree-sitter & friends ship no stubs) after the 0-error cleanup wave
-  # (63 errors at adoption time). New type regressions now block CI, same
-  # philosophy as the ruff gate.
-  typecheck:
-    name: Type check (mypy)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-      - name: Install (with dev extras)
-        run: uv sync --extra dev
-      - name: mypy
-        run: uv run --no-sync mypy --ignore-missing-imports src
+        run: uv run --no-sync bandit -r scripts packaging -ii -ll
 
   # --- Conventional Commit PR-title gate (hard) ---------------------------
   # Mirrors the commitizen convention that `cz bump` derives the SemVer bump
@@ -217,8 +195,10 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.1.0
 
-      - name: Install (with dev + ingest + graph-analytics extras)
-        run: uv sync --extra dev --extra ingest --extra graph-analytics --python ${{ matrix.python-version }}
+      - name: Install (with dev extras + converter package)
+        run: |
+          uv sync --extra dev --python ${{ matrix.python-version }}
+          uv pip install --python ${{ matrix.python-version }} packaging/cairn-intel-ingest
 
       - name: Validate skill eval specs
         run: uv run --no-sync python scripts/run_skill_evals.py
@@ -227,6 +207,9 @@ jobs:
         # The infra tier (oracle replays against the release binary) runs in
         # rust-parity.yml, where the binary is built.
         run: uv run --no-sync pytest -q -m "not infra" --durations=25 --junitxml=test-results.xml
+
+      - name: Run the converter package's tests
+        run: uv run --no-sync pytest -q packaging/cairn-intel-ingest/tests
 
       - name: Publish test summary
         if: always()
@@ -260,16 +243,16 @@ jobs:
 
 
   # Packaging canary, MAIN PUSHES ONLY: verifies `python -m build` (sdist +
-  # wheel) stays green on every merge so packaging breakage surfaces between
-  # releases, never at tag time (release.yml builds the real multi-platform
-  # wheels there). PRs skip it deliberately -- their wheel-build cost buys no
-  # signal the test legs don't already give, and the canary still runs on the
-  # merge commit itself.
+  # bin wheel, maturin backend) stays green on every merge so packaging
+  # breakage surfaces between releases, never at tag time (release.yml builds
+  # the real multi-platform wheels there). PRs skip it deliberately -- the
+  # engine compile buys no signal the test legs don't already give, and the
+  # canary still runs on the merge commit itself.
   build:
     name: Build wheel + sdist
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 40
     needs: test
     steps:
       - uses: actions/checkout@v5
@@ -278,16 +261,20 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v10.1.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> rust/target"
 
       - name: Build distributions
         run: |
           uv sync --extra dev
           uv run --no-sync python -m build
 
-      - name: Verify the wheel imports
-        run: |
-          uv pip install --python .venv/bin/python dist/*.whl
-          uv run --no-sync python -c "import cairn; print('ok')"
+      # The installed-product smoke proves the wheel is the engine binary
+      # (no Python module inside) and runs from a fresh venv.
+      - name: Smoke the built wheel
+        run: bash scripts/rust_migration/wheel_smoke.sh dist/*.whl
 
       - uses: actions/upload-artifact@v6
         with:

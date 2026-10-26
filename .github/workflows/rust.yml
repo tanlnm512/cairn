@@ -29,7 +29,7 @@ jobs:
         with:
           components: rustfmt
       - name: cargo fmt --check
-        run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+        run: cargo fmt --manifest-path Cargo.toml --all -- --check
 
   clippy:
     name: clippy (-D warnings)
@@ -42,9 +42,9 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
       - name: cargo clippy
-        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+        run: cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
 
   test:
     name: test
@@ -55,9 +55,31 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
       - name: cargo test
-        run: cargo test --manifest-path rust/Cargo.toml --workspace
+        run: cargo test --manifest-path Cargo.toml --workspace
+
+  windows:
+    name: windows (clippy + test + release build)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> rust/target"
+          key: x86_64-pc-windows-msvc
+      - name: cargo clippy
+        run: cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
+      - name: cargo test
+        # no-fail-fast surfaces every platform mismatch in one run.
+        run: cargo test --manifest-path Cargo.toml --workspace --no-fail-fast
+      - name: cargo build (release)
+        run: cargo build --manifest-path Cargo.toml --release --target x86_64-pc-windows-msvc -p cairn-cli
 
   deny:
     name: cargo-deny (advisories + licenses)
@@ -68,13 +90,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
       - name: cargo deny check
-        working-directory: rust
-        run: cargo deny check advisories licenses
+        run: cargo deny --config rust/deny.toml check advisories licenses
 
   # --- Release dry-run build matrix: compile-only proof per target; --------
   # no artifacts published here (real distribution lands in Phase 3).
@@ -109,7 +130,7 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
           key: ${{ matrix.target }}
       - name: Install cross
         if: matrix.cross == true
@@ -118,11 +139,9 @@ jobs:
           tool: cross
       - name: Build (cargo)
         if: matrix.cross != true
-        working-directory: rust
         run: cargo build --release --target ${{ matrix.target }}
       - name: Build (cross)
         if: matrix.cross == true
-        working-directory: rust
         run: cross build --release --target ${{ matrix.target }}
       - name: Verify static link (musl)
         if: contains(matrix.target, 'musl')

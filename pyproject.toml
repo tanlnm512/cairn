@@ -1,11 +1,11 @@
 [build-system]
-requires = ["setuptools>=64.0"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.15,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "cairn-intel"
 version = "0.23.1"
-description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory (deprecated: install the standalone cairn binary instead; see README)"
+description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -25,8 +25,7 @@ classifiers = [
     "Topic :: Software Development",
     "Topic :: Software Development :: Libraries",
 ]
-# The package is the console-script launcher for the bundled engine binary plus
-# the sidecars below; the launcher itself needs nothing beyond the stdlib.
+# The wheel is the engine binary: nothing Python-side at runtime.
 dependencies = []
 
 [project.optional-dependencies]
@@ -35,18 +34,14 @@ test = [
 ]
 dev = [
     "pytest>=7.0",
-    # The communities sidecar tests exercise the lazy [graph-analytics] import.
-    "networkx>=3.4",
     # scripts/run_skill_evals.py parses the eval frontmatter.
     "pyyaml>=6.0",
     "build",
     "ruff>=0.6",
-    # Review/audit pipeline (Layer 1 CI gates). Run locally before pushing:
-    #   mypy --ignore-missing-imports src
-    #   bandit -r src -ii -ll -s B608
+    # Review/audit pipeline (Layer 1 CI gates) over the dev scripts and the
+    # optional converter package. Run locally before pushing:
+    #   bandit -r scripts packaging -ii -ll -s B608
     #   pip-audit
-    # Pinned (not >=) so local and CI run the SAME mypy.
-    "mypy==2.3.0",
     "bandit>=1.7",
     "pip-audit>=2.7",
     # Local review/audit gate (Layer 0 of the review pipeline): defines the
@@ -58,39 +53,22 @@ dev = [
     "commitizen>=4.0",
 ]
 
-# Binary-document conversion sidecar (cairn.ingest_convert): pymupdf4llm for
-# PDF, mammoth + markdownify for docx (mammoth's own Markdown writer is
-# deprecated; the composition goes HTML -> markdown). Imports are strictly
-# lazy, so base installs import the module cleanly.
-ingest = [
-    "pymupdf4llm>=1.28",
-    "mammoth>=1.11",
-    "markdownify>=0.13",
-    "onnxruntime<1.24; python_version < '3.11'",
-]
-
-# Symbol-community analytics sidecar (`cairn communities`, cairn.communities):
-# Louvain partitioning via networkx. Opt-in because the engine never needs it;
-# the import is lazy and absence fails with an actionable install hint. Floor
-# 3.4 keeps `louvain_communities(seed=...)` available on every supported arm.
-graph-analytics = [
-    "networkx>=3.4",
-]
-
-[project.scripts]
-cairn = "cairn.console:main"
-
 [project.urls]
 Homepage = "https://github.com/tanlnm512/cairn"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+# The wheel is the cairn-cli binary installed as the `cairn` executable
+# (py3-none-<platform>); the sdist carries the cargo workspace. The vendored
+# sqlite-vec is reached through [patch.crates-io], which maturin's sdist
+# walker does not follow, so it is included explicitly.
+[tool.maturin]
+bindings = "bin"
+manifest-path = "rust/crates/cairn-cli/Cargo.toml"
+include = [{ path = "rust/vendor/sqlite-vec/**/*", format = "sdist" }]
 
-[tool.setuptools.package-data]
-# Injected engine binary: release/wheel builds copy the platform binary into
-# src/cairn/_bin/ immediately before packaging; the tree never commits it
-# (gitignored) and MANIFEST.in keeps it out of the sdist.
-"cairn" = ["_bin/*"]
+# Installing the project means compiling the engine, so uv manages only the
+# dev environment.
+[tool.uv]
+package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -107,7 +85,7 @@ markers = [
 # unused imports, redefinitions) with a low false-positive rate. Style rules
 # (E, UP, BLE, S, etc.) are intentionally excluded -- the codebase predates
 # ruff and adopting them would be a dedicated cleanup PR, not a CI gate.
-src = ["src", "scripts", "tests"]
+src = ["scripts", "tests", "packaging"]
 # Golden fixtures are test *input* data (deliberately-shaped source the parser
 # exercises), not test code -- linting them would rewrite the fixtures and
 # invalidate the very golden tests that consume them.
@@ -124,7 +102,8 @@ select = ["F"]
 # `cz bump` does the mechanical parts of a release:
 #   1. reads conventional commits since the last tag
 #   2. computes the next SemVer bump (feat -> MINOR, fix -> PATCH, etc.)
-#   3. updates `version` here AND `__version__` in src/cairn/__init__.py
+#   3. updates `version` here (the workspace version in Cargo.toml moves in
+#      the changelog commit; see docs/release-checklist.md)
 #   4. commits ("bump: version X -> Y") and tags (v$version)
 #
 # update_changelog_on_bump is FALSE on purpose: commitizen's changelog
@@ -146,5 +125,4 @@ changelog_file = "CHANGELOG.md"
 template = ".cz_templates/keepachangelog.j2"
 version_files = [
     "pyproject.toml:version",
-    "src/cairn/__init__.py:__version__",
 ]

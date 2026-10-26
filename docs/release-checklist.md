@@ -20,7 +20,7 @@ don't skip on "I'm sure it's fine."
 | [`## Cutting a release`](#cutting-a-release) | Conventional commits, the changelog-first rule, the `cz` bump, and the tag-push paths. |
 
 ## Tests
-- [ ] `cargo test --manifest-path rust/Cargo.toml --workspace` — the engine
+- [ ] `cargo test --manifest-path Cargo.toml --workspace` — the engine
       suite.
 - [ ] `uv run pytest tests/ -q` — the full local suite (default gate + infra
       tier together; a bare `pytest` runs everything by design). CI runs the
@@ -45,8 +45,8 @@ don't skip on "I'm sure it's fine."
 
 ## "No behavior changed" claims
 If a change is supposed to be refactor/doc-only/comments-only:
-- [ ] AST-verify the Python side (`src/`, `scripts/`, `tests/`):
-      `uv run python -m compileall -q src/` passes, AND
+- [ ] AST-verify the Python side (`scripts/`, `tests/`, `packaging/`):
+      `uv run python -m compileall -q scripts/ tests/ packaging/` passes, AND
       `make verify-no-code-change` (see [below](#agent--bulk-edit-safety)) —
       self-reports of "no code changed" are unreliable; sub-agents and
       late-night edits silently drift into executable code.
@@ -131,11 +131,11 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
    ```sh
    cz bump --yes
    ```
-   This updates `version` in `pyproject.toml` and `__version__` in
-   `src/cairn/__init__.py`, commits as `bump: version A -> B`, and tags
-   `v$version`. (If the pre-release checklist above isn't done yet, run
+   This updates `version` in `pyproject.toml`, commits as
+   `bump: version A -> B`, and tags `v$version`. (If the pre-release
+   checklist above isn't done yet, run
    `cz bump --version-files-only` to update files without committing/tagging.)
-   The Cargo workspace version (`rust/Cargo.toml` `[workspace.package]`) is
+   The Cargo workspace version (`Cargo.toml` `[workspace.package]`) is
    not a `cz` version file: bump it to the same `X.Y.Z` in the changelog
    commit — `release-rust.yml` refuses a tag that does not equal the
    workspace version, and the crates.io publish would otherwise 404 every
@@ -163,11 +163,11 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
    ```sh
    git push origin v$version
    ```
-   `.github/workflows/release.yml` builds the per-platform wheels (each
-   bundling its engine binary) + sdist, publishes to PyPI via Trusted
-   Publishing, and cuts the GitHub Release from the `[X.Y.Z]` CHANGELOG
-   section; `release-rust.yml` (below) attaches the binary tarballs and
-   updates the Homebrew tap and crates.io. Watch it:
+   `.github/workflows/release.yml` builds the per-platform bin wheels with
+   maturin (the engine binary is each wheel's only payload) + the sdist,
+   publishes to PyPI via Trusted Publishing, and cuts the GitHub Release from
+   the `[X.Y.Z]` CHANGELOG section; `release-rust.yml` (below) attaches the
+   binary tarballs and updates the Homebrew tap and crates.io. Watch it:
    `gh run watch $(gh run list --workflow=release.yml -L1 -q '.[0].databaseId')`.
 
 ### Notes

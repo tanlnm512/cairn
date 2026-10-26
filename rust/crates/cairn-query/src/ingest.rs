@@ -1072,14 +1072,24 @@ fn walk_md_files(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Binary conversion rides the Python [ingest] sidecar (`cairn.ingest_convert`);
-/// without an importable sidecar every binary document is skipped.
+/// Binary documents convert natively; PDFs prefer the optional
+/// `cairn_intel_ingest` sidecar when its interpreter is importable.
 fn fed_binary_docs(paths: &[PathBuf]) -> Result<(Vec<SourcedDoc>, AdapterSkips), String> {
     if paths.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
-    let python = crate::sidecar::python_with("cairn.ingest_convert");
-    fed_binary_docs_with(paths, python.as_deref())
+    let needs_sidecar = paths.iter().any(|p| convert_suffix(p) == ".pdf");
+    let sidecar = needs_sidecar
+        .then(|| crate::sidecar::python_with("cairn_intel_ingest"))
+        .flatten();
+    fed_binary_docs_with(paths, sidecar.as_deref())
+}
+
+/// The lowercased ".ext" suffix of `path`, or "".
+fn convert_suffix(path: &Path) -> String {
+    path.extension()
+        .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
+        .unwrap_or_default()
 }
 
 fn fed_binary_docs_with(
@@ -1092,17 +1102,14 @@ fn fed_binary_docs_with(
         if !path.exists() {
             return Err(format!("Fed path does not exist: {}", path.display()));
         }
-        let suffix = path
-            .extension()
-            .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
-            .unwrap_or_default();
+        let suffix = convert_suffix(path);
         if !CONVERT_SUFFIXES.contains(&suffix.as_str()) {
             continue;
         }
         let relpath = path.to_string_lossy().replace('\\', "/");
-        let outcome = match sidecar {
-            None => Err("cairn-intel[ingest] not installed".to_string()),
-            Some(python) => convert_with_sidecar(python, path),
+        let outcome = match (suffix.as_str(), sidecar) {
+            (".pdf", Some(python)) => convert_with_sidecar(python, path),
+            _ => convert_natively(path, &suffix),
         };
         match outcome {
             Ok(markdown) => docs.push((
@@ -1117,11 +1124,20 @@ fn fed_binary_docs_with(
     Ok((docs, skipped))
 }
 
-/// `python -m cairn.ingest_convert <path>`: markdown on stdout, or the skip
+/// Native docx/PDF conversion under the ingest size bound.
+fn convert_natively(path: &Path, suffix: &str) -> Result<String, String> {
+    if let Some(reason) = size_skip_reason(path) {
+        return Err(reason);
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("conversion failed: {e}"))?;
+    crate::convert::convert_document(suffix, &bytes)
+}
+
+/// `python -m cairn_intel_ingest <path>`: markdown on stdout, or the skip
 /// reason on stderr with a non-zero exit.
 fn convert_with_sidecar(python: &Path, path: &Path) -> Result<String, String> {
     let output = std::process::Command::new(python)
-        .args(["-m", "cairn.ingest_convert"])
+        .args(["-m", "cairn_intel_ingest"])
         .arg(path)
         .output()
         .map_err(|e| format!("conversion failed: {e}"))?;
@@ -2105,8 +2121,9 @@ mod tests {
         dir
     }
 
-    /// A stand-in for `python -m cairn.ingest_convert <path>`: markdown on
+    /// A stand-in for `python -m cairn_intel_ingest <path>`: markdown on
     /// stdout, or `reason` on stderr with exit 1.
+    #[cfg(unix)]
     fn fake_sidecar(dir: &Path, reason: Option<&str>) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let body = match reason {
@@ -2114,14 +2131,48 @@ mod tests {
             Some(reason) => &format!("#!/bin/sh\necho '{reason}' >&2\nexit 1\n"),
         };
         let script = dir.join("python3");
-        std::fs::write(&script, body).expect("script");
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let staged = dir.join("python3.staged");
+        std::fs::write(&staged, body).expect("script");
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        // Rename-publish: exec'ing a just-written file races ETXTBSY on Linux.
+        std::fs::rename(&staged, &script).expect("publish");
         script
     }
 
+    fn convert_fixture(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/convert")
+            .join(name)
+    }
+
     #[test]
-    fn binary_docs_convert_through_the_ingest_sidecar() {
+    fn docx_converts_natively_without_a_sidecar() {
+        let docx = convert_fixture("sample.docx");
+        let golden = std::fs::read_to_string(convert_fixture("sample.docx.md")).expect("golden");
+        let (docs, skipped) =
+            fed_binary_docs_with(std::slice::from_ref(&docx), None).expect("adapter");
+        assert!(skipped.is_empty(), "{skipped:?}");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].2, golden.trim_end());
+        assert_eq!(docs[0].3, CONVERTED_ORIGIN);
+    }
+
+    #[test]
+    fn pdf_extracts_text_natively_without_a_sidecar() {
+        let pdf = convert_fixture("gateway.pdf");
+        let (docs, skipped) =
+            fed_binary_docs_with(std::slice::from_ref(&pdf), None).expect("adapter");
+        assert!(skipped.is_empty(), "{skipped:?}");
+        assert_eq!(docs.len(), 1);
+        assert!(docs[0].2.contains("Deploy the gateway"));
+        assert!(docs[0].2.contains("Route traffic through the edge proxy."));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn docx_stays_native_and_pdf_prefers_the_sidecar_when_present() {
         let dir = scratch("ingest-sidecar");
+        let docx = convert_fixture("sample.docx");
         let pdf = dir.join("spec.pdf");
         std::fs::write(&pdf, b"%PDF-1.4").expect("pdf");
         let note = dir.join("note.md");
@@ -2129,42 +2180,51 @@ mod tests {
         let python = fake_sidecar(&dir, None);
 
         let (docs, skipped) =
-            fed_binary_docs_with(&[pdf.clone(), note], Some(&python)).expect("adapter");
+            fed_binary_docs_with(&[pdf.clone(), docx, note], Some(&python)).expect("adapter");
         assert!(skipped.is_empty(), "{skipped:?}");
-        assert_eq!(
-            docs,
-            vec![(
-                FED_REPO.to_string(),
-                pdf.to_string_lossy().to_string(),
-                "# converted spec.pdf".to_string(),
-                CONVERTED_ORIGIN.to_string(),
-            )]
-        );
+        let by_rel = |docs: &[(String, String, String, String)], rel: &str| -> String {
+            docs.iter()
+                .find(|d| d.1.ends_with(rel))
+                .map(|d| d.2.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(by_rel(&docs, "spec.pdf"), "# converted spec.pdf");
+        assert!(by_rel(&docs, "sample.docx").contains("# Deployment Guide"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn binary_docs_skip_with_the_sidecar_reason_or_the_missing_extra() {
+    fn corrupt_binary_docs_skip_with_the_conversion_failed_reason() {
         let dir = scratch("ingest-sidecar-skip");
         let docx = dir.join("spec.docx");
         std::fs::write(&docx, b"PK").expect("docx");
-        let rel = docx.to_string_lossy().to_string();
+        let pdf = dir.join("spec.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4 not a real document").expect("pdf");
+        let blank = convert_fixture("blank.pdf");
 
         let (docs, skipped) =
-            fed_binary_docs_with(std::slice::from_ref(&docx), None).expect("adapter");
+            fed_binary_docs_with(&[docx, pdf.clone(), blank], None).expect("adapter");
         assert!(docs.is_empty());
-        assert_eq!(
-            skipped,
-            vec![(rel.clone(), "cairn-intel[ingest] not installed".to_string())]
-        );
+        let reasons: Vec<&str> = skipped.iter().map(|(_, r)| r.as_str()).collect();
+        assert_eq!(reasons.len(), 3, "{reasons:?}");
+        assert!(reasons[0].starts_with("conversion failed:"), "{reasons:?}");
+        assert!(reasons[1].starts_with("conversion failed:"), "{reasons:?}");
+        assert_eq!(reasons[2], "empty extraction");
 
-        let python = fake_sidecar(&dir, Some("conversion failed: not a zip"));
-        let (docs, skipped) = fed_binary_docs_with(&[docx], Some(&python)).expect("adapter");
-        assert!(docs.is_empty());
-        assert_eq!(
-            skipped,
-            vec![(rel, "conversion failed: not a zip".to_string())]
-        );
+        #[cfg(unix)]
+        {
+            let python = fake_sidecar(&dir, Some("conversion failed: not a pdf"));
+            let (docs, skipped) =
+                fed_binary_docs_with(std::slice::from_ref(&pdf), Some(&python)).expect("adapter");
+            assert!(docs.is_empty());
+            assert_eq!(
+                skipped,
+                vec![(
+                    pdf.to_string_lossy().to_string(),
+                    "conversion failed: not a pdf".to_string()
+                )]
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

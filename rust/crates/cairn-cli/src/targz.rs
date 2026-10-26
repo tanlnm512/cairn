@@ -2,8 +2,21 @@
 //! in the tree, and the export contract only needs a valid, readable tarball.
 
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+
+/// ustar mode bits of a file: the Unix permission bits, 0o644 elsewhere.
+fn file_mode(meta: &std::fs::Metadata) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        meta.permissions().mode() & 0o777
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        0o644
+    }
+}
 
 const BLOCK: usize = 512;
 const NAME_MAX: usize = 100;
@@ -142,7 +155,7 @@ fn walk_sorted(
             let Ok(meta) = std::fs::metadata(&path) else {
                 continue;
             };
-            let mode = meta.permissions().mode() & 0o777;
+            let mode = file_mode(&meta);
             out.push((arcname, meta.len(), mode, mtime_of(&path), false, path));
         }
     }

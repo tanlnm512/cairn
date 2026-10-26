@@ -9,7 +9,6 @@ on:
     paths:
       - "rust/**"
       - "scripts/rust_migration/**"
-      - "src/cairn/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/rust-parity.yml"
@@ -42,11 +41,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
       - name: Build rust cairn (release)
-        run: cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+        run: cargo build --release --manifest-path Cargo.toml -p cairn-cli
       - name: Build serve_search example
-        run: cargo build --release --manifest-path rust/Cargo.toml -p cairn-daemon --example serve_search
+        run: cargo build --release --manifest-path Cargo.toml -p cairn-daemon --example serve_search
       - name: Engine-free parity oracle test
         run: uv run --no-sync python -m pytest tests/test_parity_replay_engine_free.py -v
       - name: parity replay (self)
@@ -73,9 +72,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
       - name: Build rust cairn (release)
-        run: cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+        run: cargo build --release --manifest-path Cargo.toml -p cairn-cli
       - name: parity replay (yarl)
         run: uv run --no-sync python scripts/rust_migration/parity.py --store yarl
       - name: parity replay (attrs)
@@ -97,9 +96,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
       - name: Build rust cairn (release)
-        run: cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+        run: cargo build --release --manifest-path Cargo.toml -p cairn-cli
       # Expected red until staged builds swap into the store and rebuilds replace it.
       - name: G2 (rebuild + staging legs)
         continue-on-error: true
@@ -123,6 +122,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
       - name: wheel smoke
         run: bash scripts/rust_migration/wheel_smoke.sh

@@ -41,6 +41,8 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             cross: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v5
 
@@ -50,7 +52,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: ". -> rust/target"
           key: ${{ matrix.target }}
 
       - name: Install cross
@@ -61,12 +63,10 @@ jobs:
 
       - name: Build (cargo)
         if: matrix.cross != true
-        working-directory: rust
         run: cargo build --release --target ${{ matrix.target }} -p cairn-cli
 
       - name: Build (cross)
         if: matrix.cross == true
-        working-directory: rust
         run: cross build --release --target ${{ matrix.target }} -p cairn-cli
 
       - name: Verify static link (musl)
@@ -79,11 +79,15 @@ jobs:
       - name: Package tarball + checksum
         env:
           REF_NAME: ${{ github.ref_name }}
+        shell: bash
         run: |
           version="${REF_NAME#v}"
           mkdir dist
-          cp "rust/target/${{ matrix.target }}/release/cairn" dist/
-          tar -czf "cairn-cli-${version}-${{ matrix.target }}.tar.gz" -C dist cairn
+          bin="rust/target/${{ matrix.target }}/release/cairn"
+          [ -f "$bin" ] || bin="$bin.exe"   # windows builds carry the .exe name
+          cp "$bin" dist/
+          member="$(basename "$bin")"
+          tar -czf "cairn-cli-${version}-${{ matrix.target }}.tar.gz" -C dist "$member"
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "cairn-cli-${version}-${{ matrix.target }}.tar.gz" \
               > "cairn-cli-${version}-${{ matrix.target }}.tar.gz.sha256"
@@ -167,7 +171,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Publish workspace crates in dependency order
-        working-directory: rust
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           REF_NAME: ${{ github.ref_name }}

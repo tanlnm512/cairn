@@ -5,12 +5,11 @@
 # clients afterward, run `cairn install-agents` separately.
 #
 # Usage:
-#   ./scripts/install.sh                  # install cairn
-#   ./scripts/install.sh --semantic       # also install semantic search extras
 #   ./scripts/install.sh --venv           # use venv instead of uv/pipx
 #
 # Prerequisites:
-#   - Python >= 3.10 (auto-detected; not the macOS default 3.9)
+#   - A Rust toolchain when installing from a checkout (the wheel compiles
+#     the engine); prebuilt channels need none.
 
 set -euo pipefail
 
@@ -28,13 +27,11 @@ warn()  { echo -e "${YELLOW}⚠${NC} $*"; }
 fail()  { echo -e "${RED}✗${NC} $*"; exit 1; }
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
-EXTRA_SEMANTIC=false
 USE_VENV=false
 
 # ─── Parse args ───────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --semantic)    EXTRA_SEMANTIC=true ;;
     --venv)         USE_VENV=true ;;
     -h|--help)
       sed -n '2,10p' "$0" | sed 's/^# //' | sed 's/^#//'
@@ -131,25 +128,6 @@ fi
 CAIRN_VERSION=$("$CAIRN_CMD" --version 2>/dev/null || echo "unknown")
 ok "cairn --version: $CAIRN_VERSION"
 
-# ─── Step 3: Optional — semantic search extras ─────────────────────────────
-#
-# `cairn embed --install-deps` (ensure_semantic_deps in
-# src/cairn/graph/embeddings.py) is the canonical installer: it resolves the
-# shared lib dir (~/.cairn/lib by default, honoring CAIRN_HOME/CAIRN_LIB) and
-# installs sentence-transformers/numpy/sqlite-vec there — not into cairn's own
-# venv, which is wiped on every `uv tool install --force`.
-if $EXTRA_SEMANTIC; then
-  if $USE_VENV && [[ -f "$PROJECT_DIR/.venv/bin/pip" ]]; then
-    # venv mode: the venv is the runtime, so install there directly instead
-    # of the shared lib dir `cairn embed --install-deps` targets.
-    info "Installing semantic search extras (sentence-transformers + numpy + sqlite-vec)..."
-    "$PROJECT_DIR/.venv/bin/pip" install "sentence-transformers>=3.0" "numpy>=1.24" "sqlite-vec>=0.1.0" >/dev/null 2>&1
-    ok "Semantic search extras installed into .venv"
-  else
-    "$CAIRN_CMD" embed --install-deps
-  fi
-fi
-
 # ─── Done ─────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}cairn installed${NC}"
@@ -159,8 +137,7 @@ echo ""
 echo "  Next steps:"
 echo "    1. cairn init                      # register workspace + build graph"
 echo "    2. cairn install-agents            # wire AI coding clients (interactive)"
-echo "    3. cairn embed --install-deps      # one-time: semantic deps (bge-m3)"
-echo "    4. cairn embed                     # build the embedding index"
+echo "    3. cairn embed                     # build the embedding index (hash backend)"
 echo ""
 echo "  Verify:"
 echo "    cairn --version"

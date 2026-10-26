@@ -1,43 +1,63 @@
-"""G4e: the PyPI package holds only the console shim, binary discovery, and the sidecars."""
+"""The PyPI package is the engine binary: maturin bin wheel, no Python package, no runtime extras."""
 from __future__ import annotations
 
-import os
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = REPO_ROOT / "src" / "cairn"
-KEPT_MODULES = {
-    "__init__.py",
-    "console.py",
-    "paths.py",
-    "communities.py",
-    "ingest_convert.py",
-}
+PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 
-def test_package_holds_only_the_shim_discovery_and_sidecars():
-    assert {p.name for p in PACKAGE.glob("*.py")} == KEPT_MODULES
-    stray = sorted(
-        p.name for p in PACKAGE.iterdir()
-        if p.name not in {"_bin", "__pycache__"} and p.name not in KEPT_MODULES
-    )
-    assert stray == [], stray
+def _pyproject() -> str:
+    return PYPROJECT.read_text(encoding="utf-8")
 
 
-def test_package_imports_on_a_bare_interpreter():
-    """Every kept module imports with the stdlib alone: the sidecar extras are lazy."""
-    env = {**os.environ, "PYTHONPATH": str(PACKAGE.parent)}
-    proc = subprocess.run(
-        [sys.executable, "-S", "-c",
-         "import cairn, cairn.console, cairn.paths, cairn.communities, cairn.ingest_convert"],
-        capture_output=True, text=True, env=env,
-    )
-    assert proc.returncode == 0, proc.stderr
+def _extras(text: str) -> set[str]:
+    m = re.search(r"^\[project\.optional-dependencies\]\n(.*?)(?:\n\n|\Z)", text, re.M | re.S)
+    assert m, "[project.optional-dependencies] section missing"
+    return set(re.findall(r"^(\w[\w.-]*) = \[", m.group(1), re.M))
+
+
+def test_build_backend_is_maturin_bin_over_the_cli_crate():
+    """FR-004: maturin installs the cairn-cli binary as the `cairn` executable."""
+    text = _pyproject()
+    assert re.search(r'^build-backend = "maturin"$', text, re.M)
+    m = re.search(r"^\[tool\.maturin\]\n(.*?)(?:\n\n|\Z)", text, re.M | re.S)
+    assert m, "[tool.maturin] section missing"
+    assert re.search(r'^bindings = "bin"$', m.group(1), re.M)
+    assert re.search(r'^manifest-path = "rust/crates/cairn-cli/Cargo\.toml"$', m.group(1), re.M)
+
+
+def test_launcher_and_setuptools_glue_are_gone():
+    """No console-script shim, package-data injection, setup.py or MANIFEST rule remains."""
+    text = _pyproject()
+    assert "[project.scripts]" not in text
+    assert "[tool.setuptools" not in text
+    for gone in ("setup.py", "MANIFEST.in", "src/cairn/_bin", "src/cairn/console.py", "src/cairn/paths.py"):
+        assert not (REPO_ROOT / gone).exists(), gone
+
+
+def test_the_python_package_tree_is_gone():
+    """FR-010: nothing Python ships under src/; the wheel's only payload is the engine binary."""
+    assert not PACKAGE.exists(), "src/cairn/ must not exist"
+    assert not (REPO_ROOT / "src").exists() or not any(
+        (REPO_ROOT / "src").iterdir()
+    ), "src/ must hold nothing"
+
+
+def test_only_dev_extras_remain():
+    """FR-010: the runtime extras (graph-analytics, ingest) are retired; test/dev are tooling only."""
+    assert _extras(_pyproject()) <= {"test", "dev"}
+    text = _pyproject()
+    assert "graph-analytics" not in text and "networkx" not in text
 
 
 def test_wheel_declares_no_runtime_dependencies():
-    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert re.search(r"^dependencies = \[\]$", text, re.M), "the shim must stay dependency-free"
+    assert re.search(r"^dependencies = \[\]$", _pyproject(), re.M), "the bin wheel must stay dependency-free"
+
+
+def test_commitizen_version_files_do_not_reference_the_deleted_package():
+    m = re.search(r"^version_files = \[(.*?)\]", _pyproject(), re.M | re.S)
+    assert m, "commitizen version_files missing"
+    assert "src/cairn" not in m.group(1)

@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Added
+- Native document conversion in the engine (rust-only spec, FR-002/FR-003): `knowledge ingest --file` converts `.docx` to markdown (headings, paragraphs, emphasis, lists, tables, links) and extracts `.pdf` text with no Python present; the optional high-fidelity PDF converter moved to its own `cairn-intel-ingest` package (`pip install cairn-intel-ingest`) and is used automatically when importable, keeping the AGPL dependency (pymupdf4llm) out of the engine; the `cairn-intel[ingest]` extra is retired.
+
+### Changed
+- The PyPI wheel is the engine binary (rust-only spec, FR-004/FR-005/FR-006): maturin builds `cairn-intel` from the cargo workspace with the native `cairn` executable as its only payload (`py3-none-<platform>`, no Python launcher or module), so `pip install`, `pipx install` and `uv tool install cairn-intel` run the engine directly; wheels ship for manylinux and musllinux x86_64/aarch64 and macOS x86_64/arm64, the sdist compiles the engine with a Rust toolchain (vendored sqlite-vec and grammar sources included), and `scripts/rust_migration/wheel_smoke.sh` probes the installed product on each native release leg.
+
+### Removed
+- The Python runtime is retired end to end (rust-only spec, FR-010/FR-011): `src/cairn/` is deleted (the networkx communities module went first — `cairn communities` is native and deterministic), the `[graph-analytics]` extra and the dev-time networkx/mypy pins are gone, and the converter package's tests moved next to it under `packaging/cairn-intel-ingest/`. CI drops the mypy leg and the bandit-over-src scan (bandit now advises over `scripts/` and `packaging/`; pip-audit still audits the dev environment and the converter package), the comment-style ratchet re-scopes to the dev-script trees, and the migration oracles lose their Python-engine recording arms (`cli_golden.py --reference`, parity's venv-`cairn` lookup) — they are replay-only. Docs swept to the binary-only install: README install/development sections, `docs/cli-reference.md`, `docs/architecture.md`, `docs/indexing.md`, `docs/release-checklist.md`, AGENTS.md's CLI fallback, CONTRIBUTING, NOTICE; `scripts/install.sh` drops the retired `--semantic` path. `cairn prs`, `bench` and `eval` stay retired — the Python engine they measured is gone and the binary carries no arm for them (decision D-R10 in `specs/rust-only/decisions.md`).
 
 ## [0.23.1] - 2026-10-25
 ### Added

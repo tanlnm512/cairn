@@ -138,12 +138,27 @@ fn re_replace(pattern: &str, replacement: &str, text: &str) -> String {
 }
 
 fn normalize_text(text: &str, store_home: &Path) -> String {
-    // Path rules first: resolved + plain store-home forms (recorder variants).
+    // Slash-normalize first so one set of path spellings covers every platform;
+    // scrub the canonical (longer, resolved) form before the given store home.
+    let norm = if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.to_string()
+    };
     let canonical = store_home
         .canonicalize()
         .unwrap_or_else(|_| store_home.to_path_buf());
-    let mut out = text.replace(canonical.to_string_lossy().as_ref(), "<STORE_HOME>");
-    out = out.replace(store_home.to_string_lossy().as_ref(), "<STORE_HOME>");
+    // canonicalize on Windows yields a `\\?\` verbatim prefix the tool output
+    // (already slash-normalized above) never carries; strip it both ways.
+    let canon = canonical
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_start_matches("//?/")
+        .trim_start_matches("UNC/")
+        .to_string();
+    let home = store_home.to_string_lossy().replace('\\', "/");
+    let mut out = norm.replace(&canon, "<STORE_HOME>");
+    out = out.replace(&home, "<STORE_HOME>");
     out = re_replace(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?",
         "<ISO>",

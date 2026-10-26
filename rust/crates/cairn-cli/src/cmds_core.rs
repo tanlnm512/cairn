@@ -3,7 +3,6 @@
 //! taint/federated-search/pack).
 
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
@@ -450,7 +449,41 @@ fn collect_knowledge_copies(root: &Path, dir: &Path, dest_root: &Path, copied: &
     }
 }
 
-/// Create the persisted API key once (0600, never overwrite).
+/// OS CSPRNG bytes for key material; None when the source is unavailable.
+fn os_random_bytes(out: &mut [u8]) -> Option<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Read as _;
+        std::fs::File::open("/dev/urandom")
+            .and_then(|mut f| f.read_exact(out))
+            .ok()?;
+        Some(())
+    }
+    #[cfg(windows)]
+    {
+        #[link(name = "bcrypt")]
+        unsafe extern "system" {
+            fn BCryptGenRandom(
+                halgorithm: *mut core::ffi::c_void,
+                pbbuffer: *mut u8,
+                cbbuffer: u32,
+                dwflags: u32,
+            ) -> i32;
+        }
+        const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
+        let status = unsafe {
+            BCryptGenRandom(
+                core::ptr::null_mut(),
+                out.as_mut_ptr(),
+                out.len() as u32,
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+            )
+        };
+        (status == 0).then_some(())
+    }
+}
+
+/// Create the persisted API key once (0600 on Unix, never overwrite).
 fn ensure_api_key() {
     let key_file = store_paths::current_cairn_home().join("mcp-api-key");
     if key_file.exists() {
@@ -460,10 +493,7 @@ fn ensure_api_key() {
         let _ = std::fs::create_dir_all(parent);
     }
     let mut bytes = [0u8; 32];
-    if std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut bytes))
-        .is_err()
-    {
+    if os_random_bytes(&mut bytes).is_none() {
         return;
     }
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -485,13 +515,16 @@ fn ensure_api_key() {
         let _ = keep;
     }
     use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&key_file)
-    {
+    #[cfg(unix)]
+    let mut options = {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut o = std::fs::OpenOptions::new();
+        o.mode(0o600);
+        o
+    };
+    #[cfg(not(unix))]
+    let mut options = std::fs::OpenOptions::new();
+    if let Ok(mut file) = options.write(true).create_new(true).open(&key_file) {
         let _ = writeln!(file, "{token}");
     }
 }
@@ -822,6 +855,14 @@ fn string_map_nested(
 
 /// build handler: full rebuild into the store (staging swaps atomically).
 fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
+    if args.lsp == Some(true) {
+        return command_error(
+            "cairn build --lsp is retired: the pyright LSP edge-upgrade pass was \
+             removed with the Python engine and no engine LSP pass replaces it. \
+             Run the build without --lsp; ambiguous edges stay resolved by the \
+             indexer.",
+        );
+    }
     if args.staging && args.repo.is_some() {
         return usage_error(
             "--staging cannot be combined with --repo: a staged single-repo \
@@ -3502,13 +3543,57 @@ fn dataflow_lookup(args: crate::cmds_core::DataflowLookupArgs) -> ExitCode {
 
 // --- cairn communities -------------------------------------------------------------
 
-/// communities handler: Louvain stays the Python [graph-analytics] sidecar.
-fn communities(_args: crate::cmds_core::CommunitiesArgs) -> ExitCode {
-    display::error(
-        "cairn communities is served by the Python [graph-analytics] sidecar (networkx Louvain): \
-         pip install 'cairn-intel[graph-analytics]' and run `cairn communities` from that install",
-    );
-    ExitCode::FAILURE
+/// communities handler: seeded Louvain partition persisted, then the hub summary.
+fn communities(args: crate::cmds_core::CommunitiesArgs) -> ExitCode {
+    let db = db_arg(&args.db);
+    let path = PathBuf::from(&db);
+    if !path.is_file() {
+        return command_error(&format!("cannot open {db}"));
+    }
+    let Ok(mut conn) = cairn_store::conn::open_writable(&path) else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    let count = match cairn_build::communities::refresh_communities(&mut conn) {
+        Ok(count) => count,
+        Err(e) => return command_error(&format!("cairn communities: {e} ({db})")),
+    };
+    if count == 0 {
+        println!("no communities found");
+        return ExitCode::SUCCESS;
+    }
+    println!("{count} communities");
+    println!("Global hubs:");
+    if let Err(e) = print_hub_rows(&conn, None, args.top_k, "  ") {
+        return command_error(&format!("cairn communities: {e} ({db})"));
+    }
+    println!("Communities:");
+    let rows = match cairn_build::communities::community_rows(&conn) {
+        Ok(rows) => rows,
+        Err(e) => return command_error(&format!("cairn communities: {e} ({db})")),
+    };
+    for (id, label, size) in rows {
+        println!("  {id}: {label} ({size} symbols)");
+        if let Err(e) = print_hub_rows(&conn, Some(id), args.top_k, "    ") {
+            return command_error(&format!("cairn communities: {e} ({db})"));
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// One hub block: qualified name and degree per row, indented.
+fn print_hub_rows(
+    conn: &Connection,
+    community_id: Option<i64>,
+    top_k: usize,
+    indent: &str,
+) -> Result<(), String> {
+    for row in cairn_build::communities::hub_rows(conn, community_id, top_k)? {
+        println!(
+            "{indent}{} (degree {})",
+            row.qualified_name, row.structural_degree
+        );
+    }
+    Ok(())
 }
 
 // --- cairn viz ---------------------------------------------------------------------
@@ -3649,7 +3734,7 @@ pub struct BuildArgs {
     /// Build to temp DB and atomic-swap for zero downtime.
     #[arg(long = "staging", default_value_t = false)]
     pub staging: bool,
-    /// Accepted for compatibility; no pyright pass runs in this build.
+    /// Retired: the pyright LSP pass is gone; --lsp exits with an error.
     #[arg(long = "lsp", num_args = 0..=1, require_equals = false, default_missing_value = "true")]
     pub lsp: Option<bool>,
     /// Materialize the transitive closure (skipped by default).

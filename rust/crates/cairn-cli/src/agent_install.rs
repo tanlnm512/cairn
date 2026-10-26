@@ -89,22 +89,11 @@ pub struct InstallReport {
 // --- shared path / config resolution ---------------------------------------------
 
 fn home_dir() -> PathBuf {
-    std::env::var("HOME")
-        .ok()
-        .filter(|h| !h.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
+    cairn_store::home::platform_home().unwrap_or_else(|| PathBuf::from("/"))
 }
 
 pub(crate) fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let cand = dir.join(name);
-        if cand.is_file() {
-            return Some(cand);
-        }
-    }
-    None
+    cairn_store::exec::which(name)
 }
 
 /// The managed daemon's MCP URL (its actual bind when discoverable, else the default).
@@ -419,7 +408,10 @@ fn cairn_for_hooks() -> String {
         return found.to_string_lossy().into_owned();
     }
     if let Ok(exe) = std::env::current_exe() {
-        if exe.file_name().is_some_and(|n| n == "cairn") {
+        if exe
+            .file_name()
+            .is_some_and(cairn_daemon::lifecycle::is_cairn_binary_name)
+        {
             return exe.to_string_lossy().into_owned();
         }
         // Prefer the cargo bin sibling over a test-harness exe so hook
@@ -468,6 +460,12 @@ fn hook_command_markers(entrypoint: &str) -> [String; 4] {
         format!("cairn.hooks.claude_hooks {entrypoint}"),
         format!("src.hooks.claude_hooks {entrypoint}"),
     ]
+}
+
+/// Shape test for a cairn-written hook command, robust to the binary's
+/// platform spelling (quoted, `.exe`, absolute path, home export prefix).
+fn looks_like_cairn_hook(cmd: &str) -> bool {
+    cmd.contains(" hooks run ") && cmd.to_lowercase().contains("cairn")
 }
 
 fn hook_markers() -> Vec<&'static str> {
@@ -603,10 +601,15 @@ fn write_file(path: &Path, content: &str, force: bool, res: &mut InstallResult, 
     if is_script(path)
         && let Ok(meta) = std::fs::metadata(path)
     {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mut perms = meta.permissions();
-        perms.set_mode(perms.mode() | 0o111);
-        let _ = std::fs::set_permissions(path, perms);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mut perms = meta.permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            let _ = std::fs::set_permissions(path, perms);
+        }
+        #[cfg(not(unix))]
+        let _ = meta;
     }
     res.add(path, false);
 }
@@ -1050,7 +1053,8 @@ fn rm_tree_if_cairn(path: &Path, res: &mut InstallResult) {
             continue;
         }
         let rel = file.strip_prefix(path).unwrap_or(&file);
-        let ours = templates::read(&format!("skill/{}", rel.to_string_lossy()))
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        let ours = templates::read(&format!("skill/{rel}"))
             .map(|expected| std::fs::read(&file).is_ok_and(|bytes| bytes == expected.as_bytes()))
             .unwrap_or(false);
         if ours {
@@ -1244,9 +1248,9 @@ fn strip_hooks_matching(path: &Path, res: &mut InstallResult, cursor_shape: bool
         for entry in entries {
             let matches = entry.as_object().is_some_and(|obj| {
                 if cursor_shape {
-                    entry_commands(obj)
-                        .iter()
-                        .any(|cmd| markers.iter().any(|m| cmd.contains(m)))
+                    entry_commands(obj).iter().any(|cmd| {
+                        looks_like_cairn_hook(cmd) || markers.iter().any(|m| cmd.contains(m))
+                    })
                 } else {
                     // Claude shape: cairn entries nest their commands under "hooks".
                     obj.get("hooks")
@@ -1256,7 +1260,10 @@ fn strip_hooks_matching(path: &Path, res: &mut InstallResult, cursor_shape: bool
                                 h.as_object()
                                     .and_then(|hobj| hobj.get("command"))
                                     .and_then(Value::as_str)
-                                    .map(|cmd| markers.iter().any(|m| cmd.contains(m)))
+                                    .map(|cmd| {
+                                        looks_like_cairn_hook(cmd)
+                                            || markers.iter().any(|m| cmd.contains(m))
+                                    })
                                     .unwrap_or(false)
                             })
                         })
@@ -2725,18 +2732,41 @@ fn repo_hooks_dir(repo_root: &Path) -> Option<PathBuf> {
     }
 }
 
+/// The home path embedded in git hooks: forward slashes on Windows, where the
+/// hook runs under git's sh and every native path would otherwise carry a
+/// backslash the unsafe-embed check must reject.
+fn hook_home() -> Result<String, String> {
+    let home = crate::store_paths::current_cairn_home()
+        .display()
+        .to_string();
+    let embed = if cfg!(windows) {
+        home.replace('\\', "/")
+    } else {
+        home
+    };
+    if embed
+        .chars()
+        .any(|c| matches!(c, '$' | '`' | '"' | '\\' | '\r' | '\n'))
+    {
+        return Err(format!(
+            "CAIRN_HOME ({embed}) contains characters unsafe to embed in a git hook; \
+             use a path without $ ` \" \\ or newlines, or unset CAIRN_HOME"
+        ));
+    }
+    Ok(embed)
+}
+
 fn render_hook(template: &str, repo: &str) -> String {
     let rendered = template.replace("{repo}", repo);
-    let home = crate::store_paths::current_cairn_home();
     let default = home_dir().join(".cairn");
-    if home == crate::store_paths::resolve_path(&default) {
+    if crate::store_paths::current_cairn_home() == crate::store_paths::resolve_path(&default) {
         return rendered;
     }
+    let Ok(home) = hook_home() else {
+        return rendered;
+    };
     let (shebang, rest) = rendered.split_once('\n').unwrap_or((&rendered, ""));
-    format!(
-        "{shebang}\nexport CAIRN_HOME=\"{}\"\n{rest}",
-        home.display()
-    )
+    format!("{shebang}\nexport CAIRN_HOME=\"{home}\"\n{rest}")
 }
 
 const POST_COMMIT_TEMPLATE: &str = r#"#!/bin/bash
@@ -2787,18 +2817,7 @@ pub fn install_git_hooks(repos: &[(String, PathBuf)]) -> Result<Vec<String>, Str
             ));
         }
     }
-    let home = crate::store_paths::current_cairn_home();
-    if home
-        .to_string_lossy()
-        .chars()
-        .any(|c| matches!(c, '$' | '`' | '"' | '\\' | '\r' | '\n'))
-    {
-        return Err(format!(
-            "CAIRN_HOME ({}) contains characters unsafe to embed in a git hook; \
-             use a path without $ ` \" \\ or newlines, or unset CAIRN_HOME",
-            home.display()
-        ));
-    }
+    hook_home()?; // refuse the whole install when home cannot be embedded safely
     let mut installed = Vec::new();
     for (repo, root) in repos {
         let Some(hooks_dir) = repo_hooks_dir(root) else {
@@ -2815,6 +2834,7 @@ pub fn install_git_hooks(repos: &[(String, PathBuf)]) -> Result<Vec<String>, Str
                 continue;
             }
             if std::fs::write(&hook_path, render_hook(template, repo)).is_ok() {
+                #[cfg(unix)]
                 if let Ok(meta) = std::fs::metadata(&hook_path) {
                     use std::os::unix::fs::PermissionsExt as _;
                     let mut perms = meta.permissions();
@@ -3224,6 +3244,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn install_aborts_the_client_when_the_config_backup_fails() {
         let _env = crate::test_env::EnvScope::new("agent-install");
         use std::os::unix::fs::PermissionsExt as _;
