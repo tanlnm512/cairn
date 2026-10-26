@@ -371,10 +371,11 @@ effective value and where it came from):
 ## Supported Platforms & Agents
 
 - **Platforms** — macOS aarch64 / x86_64 and Linux aarch64 / x86_64 (static
-  musl). The PyPI wheels cover macOS arm64 and manylinux x86_64 / aarch64
-  and need Python ≥ 3.10 only to launch the bundled binary and run the
-  sidecars; `make ci-local` replicates CI in a clean Linux container. There
-  is no Windows build.
+  musl). The PyPI wheels cover macOS arm64 + x86_64 and manylinux / musllinux
+  x86_64 + aarch64, and need Python ≥ 3.10 only to launch the bundled binary
+  and run the sidecars; `make ci-local` replicates CI in a clean Linux
+  container. There is no native Windows build yet — on Windows, run the
+  standalone Linux binary under WSL until native wheels ship.
 - **Agents** — Claude Code, Cursor, ZCode, Droid, opencode, agy, kilo, omp —
   wired by `cairn install-agents`, or any MCP client via the
   manual JSON block above.

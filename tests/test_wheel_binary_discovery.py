@@ -178,6 +178,22 @@ def test_console_script_without_binary_fails_loudly(monkeypatch, tmp_path, capsy
     assert "no engine binary" in err and "CAIRN_RUST_BIN" in err
 
 
+def test_console_script_without_binary_on_windows_points_at_wsl(monkeypatch, tmp_path, capsys):
+    """On a Windows host the no-engine message names WSL: no native Windows engine ships yet."""
+    _no_binary_anywhere(monkeypatch, tmp_path)
+    monkeypatch.setattr(paths, "_is_windows_host", lambda: True)
+    execved = _capture_exec(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["cairn", "doctor"])
+
+    with pytest.raises(SystemExit) as exc:
+        console.main()
+
+    assert exc.value.code == 1
+    assert not execved
+    err = capsys.readouterr().err
+    assert "no engine binary" in err and "WSL" in err
+
+
 @pytest.mark.parametrize(
     "argv",
     [["communities"], ["communities", "--top-k", "3"], ["-v", "communities"], ["--verbose", "communities", "--db", "x.kg"]],

@@ -62,39 +62,31 @@ jobs:
 
       # --- Rust engine binary for the bundled-binary wheels -------------------
       # Runs after the sdist build so the sdist stays binary-free. The macOS
-      # arm64 wheel bundles the aarch64-apple-darwin binary; the manylinux
-      # x86_64/aarch64 wheels bundle the musl-static Linux binaries -- the
-      # same per-target bytes the tarball channel ships, cross-built like
-      # release-rust.yml (static binaries exec on glibc). Windows has no
-      # engine target and no longer gets a wheel: the package is only the
-      # launcher for the bundled binary.
+      # arm64/x86_64 wheels bundle the matching darwin binary; the linux
+      # wheels (manylinux and musllinux alike) bundle the musl-static Linux
+      # binaries -- the same per-target bytes the tarball channel ships,
+      # cross-built like release-rust.yml (static binaries exec on glibc).
+      # Windows has no engine target yet: the launcher points Windows users
+      # at WSL until a native Windows engine ships.
 
-      - name: Set up Rust (aarch64-apple-darwin)
+      - name: Set up Rust (darwin targets)
         if: runner.os == 'macOS'
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
         if: runner.os == 'macOS'
         with:
           workspaces: rust
-          key: wheel-aarch64-apple-darwin
+          key: wheel-darwin
 
-      - name: Build rust engine (aarch64-apple-darwin)
+      - name: Build rust engines (darwin)
         if: runner.os == 'macOS'
         working-directory: rust
-        run: cargo build --release --target aarch64-apple-darwin -p cairn-cli
-
-      # Injected as package data ([tool.setuptools.package-data] "cairn" =
-      # ["_bin/*"]); fails loudly here so no engine-less wheel can ship.
-      - name: Bundle rust engine into package data
-        if: runner.os == 'macOS'
         run: |
-          mkdir -p src/cairn/_bin
-          cp rust/target/aarch64-apple-darwin/release/cairn src/cairn/_bin/cairn
-          chmod 755 src/cairn/_bin/cairn
-          test -x src/cairn/_bin/cairn
+          cargo build --release --target aarch64-apple-darwin -p cairn-cli
+          cargo build --release --target x86_64-apple-darwin -p cairn-cli
 
       - name: Set up Rust (linux musl targets)
         if: runner.os == 'Linux'
@@ -140,19 +132,20 @@ jobs:
 
       # The package is pure Python; setup.py tags the wheel py3-none-<platform>
       # because it carries the platform binary, so one build per platform
-      # (cp310-*) covers every supported interpreter. Supported: macOS Apple
-      # Silicon, manylinux x86_64 + aarch64. musllinux is skipped: those users
-      # are served by the tarball/binstall channel. Pinned exactly: cibuildwheel
-      # minor releases add/remove platforms (their FAQ mandates exact pins).
+      # (cp310-*) covers every supported interpreter. Supported: macOS arm64 +
+      # x86_64 (x86_64 builds on the arm64 runner through Rosetta), manylinux
+      # and musllinux x86_64 + aarch64 -- the musllinux legs reuse the static
+      # binaries the linux before-build already copies per arch. Pinned
+      # exactly: cibuildwheel minor releases add/remove platforms (their FAQ
+      # mandates exact pins).
       - name: Build wheels
         uses: pypa/cibuildwheel@v4.2.0
         with:
           output-dir: wheelhouse
         env:
           CIBW_BUILD: "cp310-*"
-          CIBW_SKIP: "*musllinux*"
           CIBW_ARCHS_LINUX: "x86_64 aarch64"
-          CIBW_ARCHS_MACOS: "arm64"
+          CIBW_ARCHS_MACOS: "arm64 x86_64"
           # Copy the matching musl binary into package data inside each arch's
           # build container (the repo root is the container's /project, so the
           # host-built binaries at rust/target/ are visible); a missing or
@@ -168,6 +161,23 @@ jobs:
             cp "rust/target/$tgt/release/cairn" src/cairn/_bin/cairn
             chmod 755 src/cairn/_bin/cairn
             test -x src/cairn/_bin/cairn
+          # Copy the matching darwin binary into package data per wheel,
+          # inside each arch's build. Both wheels build on the arm64 runner
+          # and before-build runs untranslated, so the wheel arch is read from
+          # cibuildwheel's build identifier, never from uname -m. A missing or
+          # wrong-arch binary fails the wheel build loudly.
+          CIBW_BEFORE_BUILD_MACOS: |
+            set -eux
+            case "$CIBUILDWHEEL_BUILD_IDENTIFIER" in
+              *-macosx_arm64) tgt=aarch64-apple-darwin; arch=arm64 ;;
+              *-macosx_x86_64) tgt=x86_64-apple-darwin; arch=x86_64 ;;
+              *) echo "unexpected macOS wheel: $CIBUILDWHEEL_BUILD_IDENTIFIER" >&2; exit 1 ;;
+            esac
+            mkdir -p src/cairn/_bin
+            cp "rust/target/$tgt/release/cairn" src/cairn/_bin/cairn
+            chmod 755 src/cairn/_bin/cairn
+            test -x src/cairn/_bin/cairn
+            file src/cairn/_bin/cairn | grep -q "$arch"
           # Smoke-test every wheel: the bundled binary is discoverable and the
           # console script execs it.
           CIBW_TEST_COMMAND: >-
