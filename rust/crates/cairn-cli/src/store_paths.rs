@@ -36,7 +36,7 @@ fn expanduser(path: &str) -> String {
 /// `Path.resolve()` (non-strict): absolute with symlinks resolved where possible.
 pub fn resolve_path(path: &Path) -> PathBuf {
     if let Ok(resolved) = std::fs::canonicalize(path) {
-        return resolved;
+        return cairn_store::paths::strip_verbatim(resolved);
     }
     let joined = if path.is_absolute() {
         path.to_path_buf()

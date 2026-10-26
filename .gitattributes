@@ -1,0 +1,6 @@
+# Text files normalize to LF so goldens and fixtures are byte-stable on every
+# checkout; binary fixtures must never be line-ending converted.
+* text=auto eol=lf
+*.pdf binary
+*.docx binary
+*.kg binary

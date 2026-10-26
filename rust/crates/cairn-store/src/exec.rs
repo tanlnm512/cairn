@@ -49,7 +49,13 @@ mod tests {
         let cands = exec_candidates(dir, "cairn");
         assert!(cands.contains(&dir.join("cairn")));
         if cfg!(windows) {
-            assert!(cands.contains(&dir.join("cairn.exe")));
+            let exe = dir.join("cairn.exe").to_string_lossy().to_string();
+            assert!(
+                cands
+                    .iter()
+                    .any(|c| c.to_string_lossy().eq_ignore_ascii_case(&exe)),
+                "candidates must cover cairn.exe: {cands:?}"
+            );
         } else {
             assert_eq!(cands.len(), 1);
         }

@@ -885,12 +885,12 @@ pub struct Bundle {
 /// deepest existing ancestor and re-apply the remaining components.
 pub(crate) fn resolve_lenient(p: &Path) -> PathBuf {
     if let Ok(c) = p.canonicalize() {
-        return c;
+        return cairn_store::paths::strip_verbatim(c);
     }
     let mut ancestor = p.parent();
     while let Some(a) = ancestor {
         if let Ok(base) = a.canonicalize() {
-            let mut resolved = base;
+            let mut resolved = cairn_store::paths::strip_verbatim(base);
             if let Ok(tail) = p.strip_prefix(a) {
                 for comp in tail.components() {
                     match comp {

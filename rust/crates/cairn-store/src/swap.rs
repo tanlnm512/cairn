@@ -88,9 +88,32 @@ pub fn swap_db_file(staged: &Path, db: &Path) -> Result<(), String> {
         let _ = old.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
     }
     remove_sidecars(db);
-    std::fs::rename(staged, db).map_err(|e| format!("swap {}: {e}", db.display()))?;
+    replace_db_file(staged, db)?;
     remove_sidecars(staged);
     Ok(())
+}
+
+/// Atomic staged-to-live rename; on Windows the live file moves aside first
+/// because rename-over-open-file is denied while a parked connection holds it.
+fn replace_db_file(staged: &Path, db: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        std::fs::rename(staged, db).map_err(|e| format!("swap {}: {e}", db.display()))
+    }
+    #[cfg(windows)]
+    {
+        let aside = db.with_extension("kg.replaced");
+        let _ = std::fs::remove_file(&aside);
+        if db.exists() {
+            std::fs::rename(db, &aside).map_err(|e| format!("swap {}: {e}", db.display()))?;
+        }
+        if let Err(e) = std::fs::rename(staged, db) {
+            let _ = std::fs::rename(&aside, db);
+            return Err(format!("swap {}: {e}", db.display()));
+        }
+        let _ = std::fs::remove_file(&aside);
+        Ok(())
+    }
 }
 
 /// Best-effort append of retained analytics history from `old_db` into `dest`.

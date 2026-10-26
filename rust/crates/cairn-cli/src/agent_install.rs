@@ -1047,7 +1047,8 @@ fn rm_tree_if_cairn(path: &Path, res: &mut InstallResult) {
             continue;
         }
         let rel = file.strip_prefix(path).unwrap_or(&file);
-        let ours = templates::read(&format!("skill/{}", rel.to_string_lossy()))
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        let ours = templates::read(&format!("skill/{rel}"))
             .map(|expected| std::fs::read(&file).is_ok_and(|bytes| bytes == expected.as_bytes()))
             .unwrap_or(false);
         if ours {
@@ -2722,18 +2723,41 @@ fn repo_hooks_dir(repo_root: &Path) -> Option<PathBuf> {
     }
 }
 
+/// The home path embedded in git hooks: forward slashes on Windows, where the
+/// hook runs under git's sh and every native path would otherwise carry a
+/// backslash the unsafe-embed check must reject.
+fn hook_home() -> Result<String, String> {
+    let home = crate::store_paths::current_cairn_home()
+        .display()
+        .to_string();
+    let embed = if cfg!(windows) {
+        home.replace('\\', "/")
+    } else {
+        home
+    };
+    if embed
+        .chars()
+        .any(|c| matches!(c, '$' | '`' | '"' | '\\' | '\r' | '\n'))
+    {
+        return Err(format!(
+            "CAIRN_HOME ({embed}) contains characters unsafe to embed in a git hook; \
+             use a path without $ ` \" \\ or newlines, or unset CAIRN_HOME"
+        ));
+    }
+    Ok(embed)
+}
+
 fn render_hook(template: &str, repo: &str) -> String {
     let rendered = template.replace("{repo}", repo);
-    let home = crate::store_paths::current_cairn_home();
     let default = home_dir().join(".cairn");
-    if home == crate::store_paths::resolve_path(&default) {
+    if crate::store_paths::current_cairn_home() == crate::store_paths::resolve_path(&default) {
         return rendered;
     }
+    let Ok(home) = hook_home() else {
+        return rendered;
+    };
     let (shebang, rest) = rendered.split_once('\n').unwrap_or((&rendered, ""));
-    format!(
-        "{shebang}\nexport CAIRN_HOME=\"{}\"\n{rest}",
-        home.display()
-    )
+    format!("{shebang}\nexport CAIRN_HOME=\"{home}\"\n{rest}")
 }
 
 const POST_COMMIT_TEMPLATE: &str = r#"#!/bin/bash
@@ -2784,18 +2808,7 @@ pub fn install_git_hooks(repos: &[(String, PathBuf)]) -> Result<Vec<String>, Str
             ));
         }
     }
-    let home = crate::store_paths::current_cairn_home();
-    if home
-        .to_string_lossy()
-        .chars()
-        .any(|c| matches!(c, '$' | '`' | '"' | '\\' | '\r' | '\n'))
-    {
-        return Err(format!(
-            "CAIRN_HOME ({}) contains characters unsafe to embed in a git hook; \
-             use a path without $ ` \" \\ or newlines, or unset CAIRN_HOME",
-            home.display()
-        ));
-    }
+    hook_home()?; // refuse the whole install when home cannot be embedded safely
     let mut installed = Vec::new();
     for (repo, root) in repos {
         let Some(hooks_dir) = repo_hooks_dir(root) else {

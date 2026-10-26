@@ -153,6 +153,9 @@ fn normalize_text(text: &str, store_home: &Path) -> String {
     out = re_replace(r"\d{4}-\d{2}-\d{2}", "<DATE>", &out);
     out = re_replace(r"\b\d+\.\d+ ?m?s\b|\b\d+ ?ms\b", "<DUR>", &out);
     out = re_replace(r"\bjust now\b|\b\d+[smhd] old\b", "<AGE>", &out);
+    if cfg!(windows) {
+        out = out.replace('\\', "/");
+    }
     out = re_replace(r"\b[0-9a-f]{12}\b", "<ID>", &out);
     out = re_replace(r"([-_.])[0-9a-f]{6}\b", "${1}<ID6>", &out);
     Regex::new(r"\b\d+\.\d{5,}\b")
