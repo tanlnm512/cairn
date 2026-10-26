@@ -9,7 +9,6 @@ on:
     paths:
       - "rust/**"
       - "scripts/rust_migration/**"
-      - "src/cairn/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/rust-parity.yml"

@@ -9,11 +9,10 @@ not per call.
 
 One engine serves every install channel: the `cairn` binary (Homebrew tap,
 `cargo binstall`, release tarball) is the whole surface below, and the PyPI
-package is a launcher whose `cairn` console script execs the binary bundled
-in the wheel. Two commands lean on Python sidecars shipped as PyPI extras —
-`communities` (`[graph-analytics]`) and the PDF/DOCX leg of
-`knowledge ingest` (`[ingest]`); everything else runs without an
-interpreter. `cairn --help` and `cairn <command> --help` are authoritative.
+package installs that same binary as the `cairn` executable (a maturin bin
+wheel — no launcher, no interpreter at runtime). The optional
+`cairn-intel-ingest` package adds higher-fidelity PDF conversion when
+installed. `cairn --help` and `cairn <command> --help` are authoritative.
 
 Machine contracts (`config --json`/`--db`/`--mcp-config` shapes, stdout-pure
 JSON modes, exit codes) are pinned by the frozen CLI goldens under
@@ -24,7 +23,7 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 | Command | Purpose |
 |---|---|
 | `cairn init [--with-hooks] [--no-build] [--import-docs]` | register the workspace and run a first build; `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)); `--import-docs` is accepted and retired — use `cairn knowledge import <dir>`; `--from-legacy <dir>` migrates an old in-repo store |
-| `cairn build [--staging] [--with-closure] [--repo R]` | full workspace rebuild (see [indexing.md](indexing.md)); `--staging` builds into a temp DB and atomic-swaps it under the build lock; `--lsp` is accepted for compatibility and performs no pass |
+| `cairn build [--staging] [--with-closure] [--repo R]` | full workspace rebuild (see [indexing.md](indexing.md)); `--staging` builds into a temp DB and atomic-swaps it under the build lock; `--lsp` exits 1 naming the retired pyright upgrade pass |
 | `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
 | `cairn stats` | graph statistics |
 | `cairn checkpoint` | checkpoint the WAL into the main file |
@@ -58,7 +57,7 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 | `cairn impact <symbol>` | what breaks if changed (within-repo) |
 | `cairn blast` | reverse-dependency radius of a git diff |
 | `cairn map` | deterministic repository orientation map |
-| `cairn communities` | Louvain subsystem clusters over the symbol graph (the `[graph-analytics]` sidecar; see [below](#cairn-communities)) |
+| `cairn communities` | Louvain subsystem clusters over the symbol graph (see [below](#cairn-communities)) |
 | `cairn grep <pattern>` | span-grouped search over indexed files |
 | `cairn rationale` | `NOTE:`/`WHY:`/`HACK:` marker-comment records for a symbol or file (see [below](#cairn-rationale)) |
 | `cairn deps <repo>` | cross-repo dependency map |
@@ -96,11 +95,6 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 - Computes deterministic Louvain communities over structural edge kinds only
   and persists the partition plus per-community hubs to derived tables;
   prints the community count, global hubs, and per-community hubs.
-- Served by the PyPI launcher's sidecar: install
-  `pip install 'cairn-intel[graph-analytics]'` and run `cairn communities`
-  from that install. The bare binary exits 1 naming the sidecar, and a
-  launcher without the extra exits 1 with the install hint; the store is
-  untouched either way.
 - `--db` selects the store; `--top-k` caps the hub lists (default 10,
   minimum 1).
 - A store with no structural edges prints "no communities found".

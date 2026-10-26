@@ -1,6 +1,6 @@
 # Spec: rust-only
 
-**Status**: draft
+**Status**: done
 **Effort**: large
 **Created**: 2026-10-26
 **Branch**: TBD

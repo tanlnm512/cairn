@@ -51,8 +51,8 @@ repos:
       - id: debug-statements    # catch pdb/breakpoint() left in
 
   # --- Comment-style ratchet: local mirror of the quality-ratchet CI job.
-  # The checker owns its sorted src/ scope, so it never receives filenames
-  # and runs on every commit regardless of what is staged.
+  # The checker owns its sorted dev-script scope, so it never receives
+  # filenames and runs on every commit regardless of what is staged.
   - repo: local
     hooks:
       - id: check-comment-lengths

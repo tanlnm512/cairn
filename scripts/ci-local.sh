@@ -12,9 +12,8 @@
 #   make ci-local PYTHON_VERSION=3.11          # test job on another version
 #   make ci-local-all                          # the full 3.10-3.14 matrix
 #   scripts/ci-local.sh security               # pip-audit (hard) + bandit (advisory)
-#   scripts/ci-local.sh typecheck              # mypy (advisory, like CI)
 #   scripts/ci-local.sh precommit              # pre-commit run --all-files
-#   scripts/ci-local.sh build                  # wheel + sdist + import check
+#   scripts/ci-local.sh build                  # wheel + sdist + smoke (needs cargo)
 #
 # Environment:
 #   CI_LOCAL_ARCH     linux/arm64 (default, native) or linux/amd64
@@ -55,8 +54,8 @@ if [[ -z "${CI_LOCAL_INNER:-}" ]]; then
   PY="${2:-${PYTHON_VERSION:-3.12}}"
   case "$JOB" in
     -h|--help|help) usage 0 ;;
-    test|test-all|security|typecheck|precommit|build) ;;
-    *) die "unknown job '$JOB' (test|test-all|security|typecheck|precommit|build)" ;;
+    test|test-all|security|precommit|build) ;;
+    *) die "unknown job '$JOB' (test|test-all|security|precommit|build)" ;;
   esac
 
   # Boot the container system service if needed (idempotent, ~10s cold).
@@ -102,6 +101,9 @@ fi
 # ---------------------------------------------------------------------------
 # Inner side: runs INSIDE the container. Mirrors the ci.yml steps verbatim;
 # the mapping is noted per job so the workflow stays the source of truth.
+# CI installs from the committed uv.lock via `uv sync --extra dev` (the
+# project itself is not installed: installing it means compiling the engine);
+# this script drives the SAME lockfile through a container-local uv.
 # ---------------------------------------------------------------------------
 JOB="${CI_LOCAL_JOB:?inner: CI_LOCAL_JOB unset}"
 PY="${CI_LOCAL_PY:?inner: CI_LOCAL_PY unset}"
@@ -112,24 +114,21 @@ export PIP_CACHE_DIR="$CACHE/pip"
 export PRE_COMMIT_HOME="$CACHE/pre-commit"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 
-VENV="$CACHE/venv-$PY"
-if [[ ! -x "$VENV/bin/python" ]]; then
-  log "creating venv for Python $PY (cached under $CACHE_REL/)"
-  python"$PY" -m venv "$VENV"
+UV_BIN="$CACHE/uv/bin"
+if [[ ! -x "$UV_BIN/uv" ]]; then
+  log "installing uv into the cache (CI runners use setup-uv)"
+  mkdir -p "$UV_BIN"
+  curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$UV_BIN" sh >/dev/null 2>&1
 fi
-# shellcheck disable=SC1091
-source "$VENV/bin/activate"
-export PATH="$VENV/bin:$PATH"
+export PATH="$UV_BIN:$PATH"
+command -v uv >/dev/null 2>&1 || die "uv unavailable (installer failed)"
 
-install_extras() { # $@ = extras, e.g. dev / dev,otlp (empty = no extras)
-  python -m pip install --upgrade pip -q
-  if [[ -n "$1" ]]; then
-    log "pip install -e \".[$1]\" (CI: Install step)"
-    python -m pip install -e ".[$1]" -q
-  else
-    log "pip install -e . (CI: Install step)"
-    python -m pip install -e . -q
-  fi
+export UV_PYTHON="$PY"
+export UV_PROJECT_ENVIRONMENT="$CACHE/venv-$PY"
+
+sync_dev() {
+  log "uv sync --extra dev (CI: Install step, from the committed uv.lock)"
+  cd "$MOUNT_POINT" && uv sync --extra dev
 }
 
 cd "$MOUNT_POINT"
@@ -137,51 +136,54 @@ cd "$MOUNT_POINT"
 case "$JOB" in
   test)
     # ci.yml: test job -- skill-eval validation, then the suite (the infra
-    # tier needs the release rust binary and runs in rust-parity.yml).
-    install_extras dev,ingest,graph-analytics
+    # tier needs the release rust binary and runs in rust-parity.yml), then
+    # the optional converter package's own tests.
+    sync_dev
+    log "installing the converter package (CI: Install converter package)"
+    uv pip install packaging/cairn-intel-ingest
     log "validating skill eval specs (CI: Validate skill eval specs)"
-    python scripts/run_skill_evals.py
+    uv run --no-sync python scripts/run_skill_evals.py
     log "suite (CI: Run test suite, infra tier excluded)"
-    python -m pytest -q -m "not infra" --junitxml=test-results.xml
+    uv run --no-sync pytest -q -m "not infra" --junitxml=test-results.xml
+    log "converter package tests (CI: Run the converter package's tests)"
+    uv run --no-sync pytest -q packaging/cairn-intel-ingest/tests
     log "suite green (results: test-results.xml)"
     ;;
 
   security)
-    # ci.yml: security job -- pip-audit is a HARD gate, bandit advisory.
-    install_extras dev,ingest,graph-analytics
+    # ci.yml: security job -- pip-audit is a HARD gate, bandit advisory over
+    # the dev scripts and the converter package.
+    sync_dev
+    log "installing the converter package (CI: Install converter package)"
+    uv pip install packaging/cairn-intel-ingest
     log "pip-audit (CI: hard gate)"
-    python -m pip_audit
+    uv run --no-sync pip-audit
     log "bandit (CI: advisory -- findings below don't fail)"
-    python -m bandit -r src -ii -ll -s B608 || warn "bandit findings above (advisory in CI too)"
+    uv run --no-sync bandit -r scripts packaging -ii -ll || warn "bandit findings above (advisory in CI too)"
     log "security job green"
-    ;;
-
-  typecheck)
-    # ci.yml: typecheck job -- mypy is advisory (continue-on-error in CI).
-    install_extras dev
-    log "mypy (CI: advisory -- findings below don't fail)"
-    python -m mypy --ignore-missing-imports src \
-      || warn "mypy findings above (advisory in CI too)"
     ;;
 
   precommit)
     # ci.yml: pre-commit job -- all Layer-0 gates server-side.
-    log "pip install pre-commit (CI: Install pre-commit)"
-    python -m pip install --upgrade pip -q
-    python -m pip install "pre-commit>=4.0" -q
+    sync_dev
     log "pre-commit run --all-files (CI: Run all hooks)"
-    pre-commit run --all-files
+    uv run --no-sync pre-commit run --all-files
     ;;
 
   build)
-    # ci.yml: build job -- distributions + wheel import check (no upload).
+    # ci.yml: build job -- distributions + installed-product smoke (no
+    # upload). maturin compiles the engine, so the container needs cargo.
+    command -v cargo >/dev/null 2>&1 || {
+      log "installing rust toolchain (maturin builds the engine from source)"
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+      source "$HOME/.cargo/env"
+    }
+    sync_dev
     log "python -m build (CI: Build distributions)"
-    python -m pip install --upgrade pip build -q
-    python -m build
-    log "wheel import check (CI: Verify the wheel imports)"
-    python -m pip install --upgrade pip -q
-    python -m pip install dist/*.whl -q
-    python -c "import cairn; print('ok')"
+    uv run --no-sync python -m build
+    log "installed-product smoke (CI: Smoke the built wheel)"
+    uv pip install dist/*.whl
+    uv run cairn --version
     ;;
 
   *) die "inner: unknown job '$JOB'" ;;

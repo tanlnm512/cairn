@@ -1,21 +1,22 @@
-"""The PyPI package is the engine binary: maturin bin wheel, no launcher, no setuptools glue."""
+"""The PyPI package is the engine binary: maturin bin wheel, no Python package, no runtime extras."""
 from __future__ import annotations
 
-import os
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = REPO_ROOT / "src" / "cairn"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
-# Modules that outlive the launcher until the Python retirement phase.
-KEPT_MODULES = {"__init__.py", "communities.py"}
 
 
 def _pyproject() -> str:
     return PYPROJECT.read_text(encoding="utf-8")
+
+
+def _extras(text: str) -> set[str]:
+    m = re.search(r"^\[project\.optional-dependencies\]\n(.*?)(?:\n\n|\Z)", text, re.M | re.S)
+    assert m, "[project.optional-dependencies] section missing"
+    return set(re.findall(r"^(\w[\w.-]*) = \[", m.group(1), re.M))
 
 
 def test_build_backend_is_maturin_bin_over_the_cli_crate():
@@ -37,21 +38,26 @@ def test_launcher_and_setuptools_glue_are_gone():
         assert not (REPO_ROOT / gone).exists(), gone
 
 
-def test_package_holds_only_the_kept_modules():
-    assert {p.name for p in PACKAGE.glob("*.py")} == KEPT_MODULES
-    stray = sorted(p.name for p in PACKAGE.iterdir() if p.name != "__pycache__" and p.name not in KEPT_MODULES)
-    assert stray == [], stray
+def test_the_python_package_tree_is_gone():
+    """FR-010: nothing Python ships under src/; the wheel's only payload is the engine binary."""
+    assert not PACKAGE.exists(), "src/cairn/ must not exist"
+    assert not (REPO_ROOT / "src").exists() or not any(
+        (REPO_ROOT / "src").iterdir()
+    ), "src/ must hold nothing"
 
 
-def test_package_imports_on_a_bare_interpreter():
-    """Every kept module imports with the stdlib alone: the sidecar extra is lazy."""
-    env = {**os.environ, "PYTHONPATH": str(PACKAGE.parent)}
-    proc = subprocess.run(
-        [sys.executable, "-S", "-c", "import cairn, cairn.communities"],
-        capture_output=True, text=True, env=env,
-    )
-    assert proc.returncode == 0, proc.stderr
+def test_only_dev_extras_remain():
+    """FR-010: the runtime extras (graph-analytics, ingest) are retired; test/dev are tooling only."""
+    assert _extras(_pyproject()) <= {"test", "dev"}
+    text = _pyproject()
+    assert "graph-analytics" not in text and "networkx" not in text
 
 
 def test_wheel_declares_no_runtime_dependencies():
     assert re.search(r"^dependencies = \[\]$", _pyproject(), re.M), "the bin wheel must stay dependency-free"
+
+
+def test_commitizen_version_files_do_not_reference_the_deleted_package():
+    m = re.search(r"^version_files = \[(.*?)\]", _pyproject(), re.M | re.S)
+    assert m, "commitizen version_files missing"
+    assert "src/cairn" not in m.group(1)

@@ -28,7 +28,7 @@ hub fallback, sort orders, CLI flags and output shape).
 Louvain core; partitions observed by users can differ from the sidecar's at
 equal-or-better modularity.
 
-## D-R02 — Cargo workspace manifest at the repo root (Phase 2)
+## D-R11 — Cargo workspace manifest at the repo root (Phase 2)
 
 **Decision**: the cargo workspace manifest and lockfile live at the repo root
 (`Cargo.toml`, `Cargo.lock`), with members under `rust/crates/`,
@@ -306,3 +306,30 @@ process-table facts (never a false "verified"). Accepted locally by
 `cargo check --target x86_64-pc-windows-msvc --workspace --all-targets`
 (warnings denied); running the suite and wheels on Windows runners is
 CI-only.
+
+## D-R10 — `prs`, `bench` and `eval` retired; Python removed from the runtime and release path (Phase 7)
+
+**Requirement**: FR-010, FR-011 (US3).
+
+**Decision**: `cairn prs`, `cairn bench` and `cairn eval` are retired with no
+engine arm — they measured the Python engine (PR-surface checks, hosted-runner
+benchmarking, k-fold eval harnesses), which no longer exists, and the binary
+never carried a port of them. With that, the retirement completes: `src/cairn/`
+is deleted (the networkx communities module was superseded by D-R01), the
+`[graph-analytics]` extra and the dev-time networkx pin are dropped, and the
+maturin manifest (`pyproject.toml`) is the only packaging surface.
+
+**Gates re-scoped, not just removed**: the mypy leg is gone (it scanned
+`src/`; the remaining dev scripts type-check at 33 errors and a cleanup is
+out of scope), bandit advises over `scripts/` + `packaging/` (measured clean
+at `-ii -ll`), pip-audit still hard-gates the dev environment and the
+converter package (the pymupdf4llm surface, per D-R04), and the comment-style
+ratchet re-scopes to the dev-script trees with a fresh shrink-only baseline.
+`cli_golden.py` and `parity.py` are replay-only: the `--reference`
+record-from-another-engine arm and parity's `.venv/bin/cairn` lookup are
+deleted — with one engine there is no second side to record from.
+
+**Cost**: users of the retired commands must use the recorded harnesses
+instead (`scripts/rust_migration/baseline.py`, `closure_bench.py` for
+performance; nothing replaces the Python-engine PR/eval suites); a future
+engine-side benchmark/eval feature would be new work, not a restoration.

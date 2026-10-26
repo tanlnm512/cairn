@@ -61,14 +61,15 @@ and `cargo install --path rust/crates/cairn-cli` builds from a clone. Release
 tags populate the tarballs, the wheels, the Homebrew formula, and the
 binstall metadata.
 
-The PyPI package is a launcher, not a second implementation: the wheel
-bundles the platform binary, the `cairn` console script execs it, and the
-package declares no runtime dependencies. Its two extras are sidecars the
-binary drives — `[ingest]` (PDF/DOCX conversion for `cairn knowledge ingest`)
-and `[graph-analytics]` (`cairn communities`). `cairn upgrade` updates PyPI
-installs in place (detects `uv tool` / `pipx` / `pip`; `--check` previews
-without changing anything); Homebrew and cargo installs upgrade through their
-own channel.
+The PyPI package is the engine binary itself: maturin builds the wheel from
+the cargo workspace, its only payload is the platform `cairn` executable, and
+it declares no runtime dependencies and ships no Python. `docx` and PDF
+conversion run natively in the engine; the optional
+[`cairn-intel-ingest`](packaging/cairn-intel-ingest) package (`pip install
+cairn-intel-ingest`) adds higher-fidelity PDF conversion when present.
+`cairn upgrade` updates PyPI installs in place (detects `uv tool` / `pipx` /
+`pip`; `--check` previews without changing anything); Homebrew and cargo
+installs upgrade through their own channel.
 
 **2. Wire up your agent(s)**
 
@@ -288,8 +289,8 @@ a clone — the build takes seconds:
 ```bash
 git clone https://github.com/tanlnm512/cairn && cd cairn
 cairn build
-cairn def rust_bin                  # -> src/cairn/paths.py
-cairn impact rust_bin               # -> real transitive callers (non-empty)
+cairn def load_pinned_store         # -> scripts/rust_migration/parity.py
+cairn impact load_pinned_store      # -> real transitive callers (non-empty)
 sqlite3 "$(cairn config --db)" \
   "SELECT COUNT(*) FROM edges WHERE resolution='exact' AND target_id IS NULL"   # -> 0
 ```
@@ -317,7 +318,7 @@ channel runs the same binary. The essentials:
 | `cairn review` | Diff-scoped review pack (`--base`), pre-submit memory guard (`--pre-submit [--gate]`), comment capture (`--capture-event`) |
 | `cairn context <file>` | Compass + memory + wiki context for a file |
 | `cairn memory / compass / wiki / task / knowledge …` | The layered stores + LLM task queue (memory: `share`/`check` multi-agent verbs, `timeline <symbol>`, `search --as-of <date>`) |
-| `cairn communities` | Louvain subsystem clusters — the `[graph-analytics]` PyPI sidecar; the binary alone names it |
+| `cairn communities` | Louvain subsystem clusters over structural edges (seeded, deterministic; writes the `communities` tables) |
 | `cairn install-agents` / `cairn uninstall` | Wire / remove agent integration |
 | `cairn upgrade` | In-place update for PyPI installs (`--check` to preview) |
 | `cairn doctor` | Health checks (PASS/WARN/FAIL; exit code gates CI) |
@@ -345,14 +346,13 @@ initialized submodules and nested child repositories under prefixed repo ids;
 the default is `false`. `"exclude"` globs drop paths from indexing (this
 repository's own `cairn.json` excludes `rust/`).
 
-The engine is dependency-light and network-free. The two PyPI extras are
-sidecars the binary drives; binary-only installs (tap / binstall / tarball)
-run everything else without them:
-
-| Extra | Adds | Used by |
-|-------|------|---------|
-| `[ingest]` | `pymupdf4llm` + `mammoth` + `markdownify` — PDF/DOCX conversion | `cairn knowledge ingest --file` (`cairn.json` `ingest` key holds the classification rules) |
-| `[graph-analytics]` | `networkx` — seeded Louvain partitioning | `cairn communities` |
+The engine is dependency-light and network-free: every command runs from the
+binary alone on every install channel. The one optional add-on is the
+[`cairn-intel-ingest`](packaging/cairn-intel-ingest) package — a separately
+installed high-fidelity PDF converter the engine uses automatically when
+importable (`cairn knowledge ingest --file`; `cairn.json`'s `ingest` key
+holds the classification rules). Without it the engine extracts PDF text
+natively.
 
 Key environment knobs (`cairn doctor`'s `config` check prints every
 effective value and where it came from):
@@ -366,7 +366,8 @@ effective value and where it came from):
 | `CAIRN_WORKERS` | parse-pool size (default: CPU count) |
 | `CAIRN_READ_ONLY=1` | open the store read-only, skipping the pre-query freshness refresh (what `cairn serve --read-only` sets for the daemon) |
 | `CAIRN_TELEMETRY=off` | master kill switch for the local telemetry tables |
-| `CAIRN_RUST_BIN` | PyPI launcher only: exec this binary instead of the bundled one |
+| `CAIRN_RUST_BIN` | daemon start: exec this engine binary instead of the running one |
+| `CAIRN_SIDECAR_PYTHON` | the optional converter package: run it with this interpreter |
 
 ## Supported Platforms & Agents
 
@@ -412,13 +413,13 @@ cargo clippy --manifest-path Cargo.toml --workspace -- -D warnings
 cargo test --manifest-path Cargo.toml --workspace
 ```
 
-The Python side is the wheel launcher and sidecars (`src/cairn/`) plus the
-frozen-oracle replay scripts (`scripts/rust_migration/`); pytest covers
-them:
+Python remains only for development: the frozen-oracle replay scripts
+(`scripts/rust_migration/`), the repo gates under `scripts/`, the pytest
+suite, and the optional converter package (`packaging/cairn-intel-ingest`):
 
 ```bash
 uv sync --extra dev
-uv run pytest -m "not infra"   # default gate: launcher, sidecars, release wiring
+uv run pytest -m "not infra"   # default gate: packaging, release wiring, doc gates, dev scripts
 uv run pytest -m infra         # oracle replay against the release binary (main pushes)
 make ci-local                  # clean-room CI replication in a Linux container
 ```
@@ -433,10 +434,10 @@ Contributions follow [docs/review-checklist.md](docs/review-checklist.md).
 MIT-licensed. The binary links only permissive crates (MIT, Apache-2.0,
 BSD, ISC, Zlib, Unicode-3.0, CC0-1.0); `Cargo.lock` is the
 authoritative inventory and cargo-deny gates it against that allow-list on
-every change — see [NOTICE](NOTICE). The `[ingest]` and `[graph-analytics]`
-sidecar extras resolve their own permissively licensed Python packages at
-install time. An embeddings server configured through `CAIRN_EMBED_BACKEND`
-stays outside cairn's dependency tree entirely.
+every change — see [NOTICE](NOTICE). The optional `cairn-intel-ingest`
+package carries the one copyleft dependency in the ecosystem (PyMuPDF,
+AGPL-3.0) and never links into the engine. An embeddings server configured
+through `CAIRN_EMBED_BACKEND` stays outside cairn's dependency tree entirely.
 
 ## Status
 

@@ -63,7 +63,7 @@ class McpClient:
         raw = raw.strip()
         if raw.startswith("{"):
             return [json.loads(raw)]
-        # rmcp inserts empty SSE keepalive data frames; python never does.
+        # rmcp inserts empty SSE keepalive data frames.
         return [
             json.loads(payload)
             for line in raw.splitlines()

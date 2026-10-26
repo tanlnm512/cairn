@@ -1,4 +1,4 @@
-"""Shrink-only comment-style gate over the ``src`` tree."""
+"""Shrink-only comment-style gate over the dev-script trees."""
 from __future__ import annotations
 
 import argparse
@@ -15,6 +15,9 @@ from pathlib import Path
 MAX_BLOCK_LINES = 3
 BASELINE_SCHEMA_VERSION = 1
 DEFAULT_BASELINE = ("scripts", "hooks", "comment-style-baseline.json")
+# The shipped/runtime Python trees this gate covers; tests/ stay out (fixture
+# and scenario prose is test input, not shipped code).
+SOURCE_ROOTS = ("scripts", "packaging")
 _FINGERPRINT_RE = re.compile(r"(?:comment|docstring):[0-9a-f]{64}")
 
 
@@ -107,20 +110,23 @@ def _docstring_violations(rel: str, tree: ast.Module) -> list[dict]:
 
 
 def scan_comment_violations(root: Path) -> list[dict]:
-    """Return every over-length comment block and docstring under ``root/src``."""
-    source_root = root / "src"
-    if not source_root.is_dir():
-        raise CommentStyleError(f"source tree not found: {source_root}")
+    """Return every over-length comment block and docstring under the SOURCE_ROOTS trees."""
+    roots = [root / name for name in SOURCE_ROOTS if (root / name).is_dir()]
+    if not roots:
+        raise CommentStyleError(
+            f"no source trees found under {root}: {'/'.join(SOURCE_ROOTS)}"
+        )
     violations: list[dict] = []
-    for path in sorted(source_root.rglob("*.py"), key=lambda p: p.as_posix()):
-        rel = path.relative_to(root).as_posix()
-        try:
-            with tokenize.open(path) as handle:
-                source = handle.read()
-            violations.extend(_comment_violations(rel, source))
-            violations.extend(_docstring_violations(rel, ast.parse(source)))
-        except (SyntaxError, tokenize.TokenError, UnicodeDecodeError) as exc:
-            raise CommentStyleError(f"{rel}: {exc}") from exc
+    for source_root in roots:
+        for path in sorted(source_root.rglob("*.py"), key=lambda p: p.as_posix()):
+            rel = path.relative_to(root).as_posix()
+            try:
+                with tokenize.open(path) as handle:
+                    source = handle.read()
+                violations.extend(_comment_violations(rel, source))
+                violations.extend(_docstring_violations(rel, ast.parse(source)))
+            except (SyntaxError, tokenize.TokenError, UnicodeDecodeError) as exc:
+                raise CommentStyleError(f"{rel}: {exc}") from exc
     violations.sort(key=lambda v: (v["path"], v["line"], v["kind"]))
     return violations
 
@@ -258,7 +264,7 @@ def check_comment_baseline(root: Path, baseline_path: Path) -> dict:
 def _find_root() -> Path:
     cwd = Path.cwd().resolve()
     for candidate in (cwd, *cwd.parents):
-        if (candidate / "src").is_dir() and (candidate / "pyproject.toml").is_file():
+        if (candidate / "pyproject.toml").is_file():
             return candidate
     return cwd
 
@@ -352,7 +358,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the comment-style gate; writer modes never grow the baseline."""
     parser = argparse.ArgumentParser(
         prog="comment_style",
-        description="Enforce the shrink-only comment-style baseline over src/.",
+        description="Enforce the shrink-only comment-style baseline over the dev-script trees.",
     )
     parser.add_argument("--json", dest="as_json", action="store_true", help="emit machine-readable JSON")
     parser.add_argument("--root", type=Path, default=None, help="repository root (default: discovered from cwd)")

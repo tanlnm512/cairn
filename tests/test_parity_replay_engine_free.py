@@ -45,19 +45,18 @@ pytestmark = pytest.mark.infra
 
 def _engine_free_env() -> dict:
     env = _toolchain_env({**os.environ, "CAIRN_LIB": "/tmp/__no_such_lib__"})
-    # PYTHONPATH could smuggle the engine in past -S.
+    # PYTHONPATH could smuggle a package in past -S.
     env.pop("PYTHONPATH", None)
     return env
 
 
 def _engine_free_tree(tmp_path: Path) -> Path:
-    """A checkout whose src/ holds no cairn package: the oracle must still run."""
+    """A checkout holding only the oracle scripts and the rust tree."""
     root = tmp_path / "repo"
     dest = root / "scripts" / "rust_migration"
     dest.mkdir(parents=True)
     for script in SCRIPTS.glob("*.py"):
         shutil.copy2(script, dest / script.name)
-    (root / "src").mkdir()
     os.symlink(REPO_ROOT / "rust", root / "rust", target_is_directory=True)
     return root
 
@@ -69,7 +68,7 @@ def _engine_free_tree(tmp_path: Path) -> Path:
 def test_parity_replay_needs_no_python_engine(tmp_path):
     root = _engine_free_tree(tmp_path)
     parity = root / "scripts" / "rust_migration" / "parity.py"
-    # -S keeps the venv's editable cairn out: no engine importable anywhere.
+    # -S keeps the venv's packages out: nothing python-side to import.
     proc = subprocess.run(
         [sys.executable, "-S", str(parity), "--store", "self"],
         capture_output=True,

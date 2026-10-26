@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Replay the frozen MCP goldens against the RUST daemon.
-
-The fixtures under rust/golden/mcp and the pinned store bytes under
-rust/golden/stores are the spec of record; this runner never drives the
-Python engine.
-"""
+"""Replay the frozen MCP goldens (rust/golden/mcp, over the pinned stores) against the RUST daemon."""
 
 from __future__ import annotations
 
@@ -49,12 +44,6 @@ def _note(msg: str) -> None:
 
 
 # --- store wiring ------------------------------------------------------------
-
-
-def cairn_cli() -> list[str]:
-    """The repo venv's `cairn` when present, else PATH."""
-    venv = REPO_ROOT / ".venv" / "bin" / "cairn"
-    return [str(venv)] if venv.exists() else ["cairn"]
 
 
 def load_pinned_store(store: str, scratch: Path) -> dict:
@@ -111,9 +100,8 @@ class RustClient(gr.GoldenClient):
         ]
 
 
-def daemon_env(scratch: Path, workspace: Path, api_key: str,
-               cargo_path: bool = False) -> dict:
-    """Child env for the daemon: pins, scratch store wiring, keyed."""
+def daemon_env(scratch: Path, workspace: Path, api_key: str) -> dict:
+    """Child env for the daemon: pins, scratch store wiring, keyed, cargo on PATH."""
     env = dict(os.environ)
     for key in ("CAIRN_READ_ONLY", "CAIRN_MCP_API_KEY", "PYTEST_CURRENT_TEST",
                 "CAIRN_DB", "CAIRN_KNOWLEDGE", "CAIRN_WORKSPACE", "CAIRN_HOME"):
@@ -124,9 +112,8 @@ def daemon_env(scratch: Path, workspace: Path, api_key: str,
     env["CAIRN_KNOWLEDGE"] = str(scratch / ".knowledge")
     env["CAIRN_WORKSPACE"] = str(workspace)
     env["CAIRN_MCP_API_KEY"] = api_key
-    if cargo_path:
-        env["PATH"] = os.pathsep.join([str(CARGO_BIN),
-                                       env.get("PATH", os.defpath)])
+    env["PATH"] = os.pathsep.join([str(CARGO_BIN),
+                                   env.get("PATH", os.defpath)])
     return env
 
 
@@ -417,8 +404,7 @@ def replay(out_dir: Path, scratch: Path, store: str,
     apply_volatility(entries)
     api_key = secrets.token_urlsafe(24)
     exe = ensure_serve_binary()
-    daemon = RustDaemon(exe, db, workspace,
-                        daemon_env(scratch, workspace, api_key, cargo_path=True))
+    daemon = RustDaemon(exe, db, workspace, daemon_env(scratch, workspace, api_key))
     try:
         if not daemon.wait_ready():
             raise RuntimeError(

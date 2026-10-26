@@ -34,18 +34,14 @@ test = [
 ]
 dev = [
     "pytest>=7.0",
-    # The communities sidecar tests exercise the lazy [graph-analytics] import.
-    "networkx>=3.4",
     # scripts/run_skill_evals.py parses the eval frontmatter.
     "pyyaml>=6.0",
     "build",
     "ruff>=0.6",
-    # Review/audit pipeline (Layer 1 CI gates). Run locally before pushing:
-    #   mypy --ignore-missing-imports src
-    #   bandit -r src -ii -ll -s B608
+    # Review/audit pipeline (Layer 1 CI gates) over the dev scripts and the
+    # optional converter package. Run locally before pushing:
+    #   bandit -r scripts packaging -ii -ll -s B608
     #   pip-audit
-    # Pinned (not >=) so local and CI run the SAME mypy.
-    "mypy==2.3.0",
     "bandit>=1.7",
     "pip-audit>=2.7",
     # Local review/audit gate (Layer 0 of the review pipeline): defines the
@@ -55,16 +51,6 @@ dev = [
     # tags the release; CHANGELOG.md stays hand-maintained. See
     # docs/release-checklist.md "Cutting a release".
     "commitizen>=4.0",
-]
-
-# Binary-document conversion is native in the engine (docx and PDF); the
-# optional high-fidelity PDF converter lives in its own package at
-# packaging/cairn-intel-ingest (pip install cairn-intel-ingest).
-
-# networkx backs the legacy cairn.communities module (lazy import; the engine
-# computes communities natively). Floor 3.4 keeps `louvain_communities(seed=...)`.
-graph-analytics = [
-    "networkx>=3.4",
 ]
 
 [project.urls]
@@ -80,13 +66,12 @@ manifest-path = "rust/crates/cairn-cli/Cargo.toml"
 include = [{ path = "rust/vendor/sqlite-vec/**/*", format = "sdist" }]
 
 # Installing the project means compiling the engine, so uv manages only the
-# dev/extras environment; tests import the legacy src/ modules via pythonpath.
+# dev environment.
 [tool.uv]
 package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
 markers = [
     "real_env: opts a test out of the suite-wide _hermetic_env fixture (justify in a comment)",
     # The infra tier is CI selection, NOT a quarantine: every marked test still
@@ -100,7 +85,7 @@ markers = [
 # unused imports, redefinitions) with a low false-positive rate. Style rules
 # (E, UP, BLE, S, etc.) are intentionally excluded -- the codebase predates
 # ruff and adopting them would be a dedicated cleanup PR, not a CI gate.
-src = ["src", "scripts", "tests"]
+src = ["scripts", "tests", "packaging"]
 # Golden fixtures are test *input* data (deliberately-shaped source the parser
 # exercises), not test code -- linting them would rewrite the fixtures and
 # invalidate the very golden tests that consume them.
@@ -117,7 +102,8 @@ select = ["F"]
 # `cz bump` does the mechanical parts of a release:
 #   1. reads conventional commits since the last tag
 #   2. computes the next SemVer bump (feat -> MINOR, fix -> PATCH, etc.)
-#   3. updates `version` here AND `__version__` in src/cairn/__init__.py
+#   3. updates `version` here (the workspace version in Cargo.toml moves in
+#      the changelog commit; see docs/release-checklist.md)
 #   4. commits ("bump: version X -> Y") and tags (v$version)
 #
 # update_changelog_on_bump is FALSE on purpose: commitizen's changelog
@@ -139,5 +125,4 @@ changelog_file = "CHANGELOG.md"
 template = ".cz_templates/keepachangelog.j2"
 version_files = [
     "pyproject.toml:version",
-    "src/cairn/__init__.py:__version__",
 ]

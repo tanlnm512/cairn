@@ -1,7 +1,7 @@
 # Code structure: cairn
 
-Module map of the Rust engine, its entry points and the remaining Python
-package. Every path below was read from the tree; re-verify with
+Module map of the Rust engine, its entry points and the development-only
+Python trees. Every path below was read from the tree; re-verify with
 `rg --files rust/crates` before citing.
 
 ## Distribution
@@ -33,21 +33,22 @@ Vendored: `rust/vendor/tree-sitter-dart` (workspace member) and
   daemon on loopback).
 - Dashboard: `cairn dashboard`.
 
-## Python package (`src/cairn/`)
-| File | Role |
-|---|---|
-| `communities.py` | legacy `cairn communities` sidecar module: seeded Louvain over structural edges (networkx, `[graph-analytics]` extra); the engine computes communities natively |
+## Development-only Python trees
+- `scripts/`: repo gates (`comment_style.py`, `audit_status.py`,
+  `check_doc_links.py`), installers, and `rust_migration/` — the replay
+  oracles (`parity.py`, `cli_golden.py`), canonical-dump tooling
+  (`kg_dump.py`, `kg_diff.py`, `kg_normalize.py`), the measured gates
+  (`baseline.py`, `closure_bench.py`), `g2_check.sh` and `wheel_smoke.sh`.
+- `tests/`: pytest suite for packaging, release distribution and
+  documentation gates (`testpaths` in `pyproject.toml`).
+- `packaging/`: the optional `cairn-intel-ingest` converter package (with
+  its own tests) and the Homebrew formula template.
 
 ## Tests and oracles
 - Rust: unit tests in each crate, integration suites under
   `rust/crates/*/tests/`.
 - Golden fixtures under `rust/golden/` (`mcp`, `cli`, `flow`, `nav`,
   `search`, `km`, `dump`, `embed`, `spike`, and pinned stores in `stores/`).
-- `scripts/rust_migration/`: replay oracles (`parity.py`, `cli_golden.py`),
-  canonical-dump tooling (`kg_dump.py`, `kg_diff.py`, `kg_normalize.py`),
-  `g2_check.sh` and `wheel_smoke.sh`.
-- `tests/`: Python tests for packaging, the sidecars, release distribution
-  and documentation gates.
 
 ## Other trees
 - `extensions/vscode/`: VS Code extension (npm-confined, separate release

@@ -24,7 +24,7 @@ evals:
 # has. Catches non-hermetic tests (green locally only because of the dev
 # machine) BEFORE pushing. Mirrors .github/workflows/ci.yml job-by-job;
 # venv/pip/pre-commit caches persist under .cache/ci-local/ (gitignored).
-# Jobs: scripts/ci-local.sh [test|test-all|security|typecheck|precommit|build]
+# Jobs: scripts/ci-local.sh [test|test-all|security|precommit|build]
 # CI_LOCAL_ARCH=linux/amd64 runs the x86-64 image via Rosetta for runner parity.
 PYTHON_VERSION ?= 3.12
 ci-local:
