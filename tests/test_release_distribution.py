@@ -36,7 +36,12 @@ WHEEL_TARGET_RUNNERS = {
 }
 LINUX_TARGETS = tuple(t for t in WHEEL_TARGET_RUNNERS if "linux" in t)
 # Legs whose runner can install its own wheel run the installed-product smoke.
-NATIVE_SMOKE_TARGETS = {"x86_64-unknown-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin"}
+NATIVE_SMOKE_TARGETS = {
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+}
 
 
 def test_release_publishes_workspace_crates_in_dependency_order():
@@ -121,13 +126,12 @@ def test_linux_wheels_cross_compile_with_zig_and_carry_their_platform_tag():
         assert legs[target]["manylinux"] == expected, target
 
 
-def test_windows_leg_is_non_blocking_until_the_engine_ports():
-    """The win_amd64 row is in the matrix but cannot fail the release before the Windows engine lands."""
+def test_every_wheel_leg_is_blocking():
+    """No leg is experimental: the Windows engine builds, so every wheel can fail the release."""
     doc = _wheels_doc()
     legs = _wheel_legs(doc)
-    assert legs["x86_64-pc-windows-msvc"]["experimental"] is True
-    assert all("experimental" not in leg for t, leg in legs.items() if t != "x86_64-pc-windows-msvc")
-    assert doc["jobs"]["wheels"]["continue-on-error"] == "${{ matrix.experimental || false }}"
+    assert all("experimental" not in leg for leg in legs.values()), legs
+    assert "continue-on-error" not in doc["jobs"]["wheels"]
 
 
 def test_wheels_are_smoked_on_their_own_runner_before_publish():
@@ -138,6 +142,7 @@ def test_wheels_are_smoked_on_their_own_runner_before_publish():
     smoke = [s for s in doc["jobs"]["wheels"]["steps"] if "wheel_smoke.sh" in str(s.get("run", ""))]
     assert len(smoke) == 1 and smoke[0]["if"] == "matrix.smoke"
     assert "dist/*.whl" in smoke[0]["run"]
+    assert smoke[0]["shell"] == "bash", "the windows runner's pwsh would not glob dist/*.whl"
 
 
 def test_sdist_is_built_by_maturin_and_publish_gates_on_every_artifact():

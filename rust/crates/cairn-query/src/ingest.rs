@@ -2123,6 +2123,7 @@ mod tests {
 
     /// A stand-in for `python -m cairn_intel_ingest <path>`: markdown on
     /// stdout, or `reason` on stderr with exit 1.
+    #[cfg(unix)]
     fn fake_sidecar(dir: &Path, reason: Option<&str>) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let body = match reason {
@@ -2165,6 +2166,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn docx_stays_native_and_pdf_prefers_the_sidecar_when_present() {
         let dir = scratch("ingest-sidecar");
         let docx = convert_fixture("sample.docx");
@@ -2206,17 +2208,20 @@ mod tests {
         assert!(reasons[1].starts_with("conversion failed:"), "{reasons:?}");
         assert_eq!(reasons[2], "empty extraction");
 
-        let python = fake_sidecar(&dir, Some("conversion failed: not a pdf"));
-        let (docs, skipped) =
-            fed_binary_docs_with(std::slice::from_ref(&pdf), Some(&python)).expect("adapter");
-        assert!(docs.is_empty());
-        assert_eq!(
-            skipped,
-            vec![(
-                pdf.to_string_lossy().to_string(),
-                "conversion failed: not a pdf".to_string()
-            )]
-        );
+        #[cfg(unix)]
+        {
+            let python = fake_sidecar(&dir, Some("conversion failed: not a pdf"));
+            let (docs, skipped) =
+                fed_binary_docs_with(std::slice::from_ref(&pdf), Some(&python)).expect("adapter");
+            assert!(docs.is_empty());
+            assert_eq!(
+                skipped,
+                vec![(
+                    pdf.to_string_lossy().to_string(),
+                    "conversion failed: not a pdf".to_string()
+                )]
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

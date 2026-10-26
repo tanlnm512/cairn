@@ -250,9 +250,7 @@ pub fn cairn_home() -> Option<PathBuf> {
     {
         return Some(PathBuf::from(home));
     }
-    env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".cairn"))
+    cairn_store::home::platform_home().map(|h| h.join(".cairn"))
 }
 
 /// Backend name resolved env > config file > `local`.

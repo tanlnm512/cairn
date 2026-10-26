@@ -8,6 +8,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+cairn-store = { path = "../cairn-store" }
 pdf-extract = "=0.12.1"
 quick-xml = "=0.42.0"
 regex = "1"
@@ -16,9 +17,6 @@ serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "=0.10.9"
 yaml-rust2 = { version = "=0.13.0", default-features = false }
 zip = { version = "=9.1.2", default-features = false, features = ["deflate-flate2"] }
-
-[dev-dependencies]
-cairn-store = { path = "../cairn-store" }
 
 [lints]
 workspace = true

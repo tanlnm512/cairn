@@ -255,3 +255,54 @@ run the installed-product smoke; the cross-built aarch64 and musl wheels are
 not smoked on their runner. Measured host wheel (macOS arm64): 12,697,546
 bytes, payload the 58,088,704-byte stripped engine — far under the 100 MB
 limit (NFR-001), so no `lto`/`codegen-units` tuning.
+
+## D-R09 — Windows support (Phase 5)
+
+**Requirement**: FR-007 (US1-AC3). Supersedes the Windows-stays-on-Python
+ruling, whose premise (the wheel keeps shipping the Python engine) ended with
+the Python engine; also flips D-R08's "Windows as a non-blocking leg until
+the engine builds there" — the engine builds, so the `win_amd64` wheel leg is
+blocking and runs the installed-product smoke like the other native legs.
+
+**Decision**: the engine compiles, tests and ships on Windows x86_64 with
+Unix-only calls gated or replaced, no new external crate:
+
+- **Daemon lifecycle**: no launchd — the daemonize fallback is the Windows
+  path: detached process (`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`) plus
+  the pidfile it already writes. `connect` reuse and `stop` work off the
+  pidfile; process identity comes from PowerShell CIM command lines,
+  liveness from `tasklist`, termination from `taskkill` (no signals on
+  Windows: TERM→wait→KILL maps to `taskkill` then `taskkill /F /T`).
+- **Conservative verification kept**: the db-holder check has no Windows
+  equivalent (lsof absent), so it reports unverified and the stray sweep
+  declines to kill — the existing never-kill-unverified contract.
+- **Home/config**: one `cairn_store::home::platform_home()`
+  (HOME → USERPROFILE → HOMEDRIVE+HOMEPATH) feeds every CAIRN_HOME
+  resolution; Claude Desktop and agy configs sit under `%APPDATA%` (branches
+  already present), the CLI clients under the platform home; PATH lookup is
+  PATHEXT-aware through `cairn_store::exec`, shared by the daemon launcher,
+  agent detection and the scip indexer finder.
+- **Locks**: `tools_km`'s extern-`flock` bundle lock moves to std
+  `File::try_lock`/`unlock` (flock on Unix, LockFileEx on Windows) — same
+  primitive the build lock already uses.
+- **Key randomness**: `BCryptGenRandom` via the system `bcrypt.dll` on
+  Windows, `/dev/urandom` on Unix.
+- **New runtime dependency edge**: `cairn-query` → `cairn-store` (was
+  dev-only) so the shared helpers have one home; zero cost — every workspace
+  binary already links both crates (same pinned rusqlite bundled).
+- **CI**: one Windows leg in `rust.yml` (clippy + test + release build,
+  shared cache, per the spec's cost mitigation); release-rust.yml gains the
+  `x86_64-pc-windows-msvc` tarball (member kept as `cairn.exe` —
+  cargo-binstall's `bin-dir = "{ bin }{ binary-ext }"` expects the
+  platform extension).
+
+**Why**: Windows users lost every install path when the Python engine was
+deleted; FR-005's seven-target matrix is incomplete without `win_amd64`.
+
+**Cost**: Unix-only tests (shell-script sidecar fakes, flock semantics,
+chmod-based failures) are `#[cfg(unix)]`-gated, so the Windows test leg runs
+a strictly smaller suite; `pid_alive`/`db_holder_pids` degrade to
+process-table facts (never a false "verified"). Accepted locally by
+`cargo check --target x86_64-pc-windows-msvc --workspace --all-targets`
+(warnings denied); running the suite and wheels on Windows runners is
+CI-only.

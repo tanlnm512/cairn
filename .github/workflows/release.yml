@@ -35,9 +35,6 @@ jobs:
   wheels:
     name: Wheel (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
-    # The Windows engine does not build yet: its leg runs but cannot fail the
-    # release until it does.
-    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -48,7 +45,7 @@ jobs:
           - { os: ubuntu-latest,  target: aarch64-unknown-linux-musl, manylinux: musllinux_1_2, zig: "--zig", smoke: false }
           - { os: macos-15-intel, target: x86_64-apple-darwin,        manylinux: auto,          zig: "",      smoke: true }
           - { os: macos-latest,   target: aarch64-apple-darwin,       manylinux: auto,          zig: "",      smoke: true }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc,     manylinux: auto,          zig: "",      smoke: false, experimental: true }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,     manylinux: auto,          zig: "",      smoke: true }
     steps:
       - uses: actions/checkout@v5
 
@@ -69,6 +66,7 @@ jobs:
         if: matrix.smoke
       - name: Smoke the built wheel
         if: matrix.smoke
+        shell: bash
         run: bash scripts/rust_migration/wheel_smoke.sh dist/*.whl
 
       # Unique artifact name per upload -- upload-artifact rejects a

@@ -8,10 +8,7 @@ use std::path::PathBuf;
 pub fn cairn_home() -> PathBuf {
     let home = match env::var("CAIRN_HOME") {
         Ok(v) if !v.trim().is_empty() => Some(PathBuf::from(v)),
-        _ => env::var("HOME")
-            .ok()
-            .filter(|h| !h.trim().is_empty())
-            .map(|h| PathBuf::from(h).join(".cairn")),
+        _ => cairn_store::home::platform_home().map(|h| h.join(".cairn")),
     };
     match home {
         Some(p) if p.is_absolute() => p,

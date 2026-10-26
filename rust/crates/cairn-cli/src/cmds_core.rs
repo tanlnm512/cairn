@@ -3,7 +3,6 @@
 //! taint/federated-search/pack).
 
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
@@ -450,7 +449,41 @@ fn collect_knowledge_copies(root: &Path, dir: &Path, dest_root: &Path, copied: &
     }
 }
 
-/// Create the persisted API key once (0600, never overwrite).
+/// OS CSPRNG bytes for key material; None when the source is unavailable.
+fn os_random_bytes(out: &mut [u8]) -> Option<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Read as _;
+        std::fs::File::open("/dev/urandom")
+            .and_then(|mut f| f.read_exact(out))
+            .ok()?;
+        Some(())
+    }
+    #[cfg(windows)]
+    {
+        #[link(name = "bcrypt")]
+        unsafe extern "system" {
+            fn BCryptGenRandom(
+                halgorithm: *mut core::ffi::c_void,
+                pbbuffer: *mut u8,
+                cbbuffer: u32,
+                dwflags: u32,
+            ) -> i32;
+        }
+        const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
+        let status = unsafe {
+            BCryptGenRandom(
+                core::ptr::null_mut(),
+                out.as_mut_ptr(),
+                out.len() as u32,
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+            )
+        };
+        (status == 0).then_some(())
+    }
+}
+
+/// Create the persisted API key once (0600 on Unix, never overwrite).
 fn ensure_api_key() {
     let key_file = store_paths::current_cairn_home().join("mcp-api-key");
     if key_file.exists() {
@@ -460,10 +493,7 @@ fn ensure_api_key() {
         let _ = std::fs::create_dir_all(parent);
     }
     let mut bytes = [0u8; 32];
-    if std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut bytes))
-        .is_err()
-    {
+    if os_random_bytes(&mut bytes).is_none() {
         return;
     }
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -485,13 +515,16 @@ fn ensure_api_key() {
         let _ = keep;
     }
     use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&key_file)
-    {
+    #[cfg(unix)]
+    let mut options = {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut o = std::fs::OpenOptions::new();
+        o.mode(0o600);
+        o
+    };
+    #[cfg(not(unix))]
+    let mut options = std::fs::OpenOptions::new();
+    if let Ok(mut file) = options.write(true).create_new(true).open(&key_file) {
         let _ = writeln!(file, "{token}");
     }
 }

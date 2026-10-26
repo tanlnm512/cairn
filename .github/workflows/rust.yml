@@ -59,6 +59,27 @@ jobs:
       - name: cargo test
         run: cargo test --manifest-path Cargo.toml --workspace
 
+  windows:
+    name: windows (clippy + test + release build)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          key: x86_64-pc-windows-msvc
+      - name: cargo clippy
+        run: cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --manifest-path Cargo.toml --workspace
+      - name: cargo build (release)
+        run: cargo build --manifest-path Cargo.toml --release --target x86_64-pc-windows-msvc -p cairn-cli
+
   deny:
     name: cargo-deny (advisories + licenses)
     runs-on: ubuntu-latest

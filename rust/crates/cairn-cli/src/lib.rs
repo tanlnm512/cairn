@@ -32,8 +32,9 @@ pub(crate) mod test_env {
     use std::sync::{Mutex, MutexGuard};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-    const PINNED: [&str; 5] = [
+    const PINNED: [&str; 6] = [
         "HOME",
+        "USERPROFILE",
         "CAIRN_HOME",
         "CAIRN_DB",
         "CAIRN_KNOWLEDGE",
@@ -64,7 +65,8 @@ pub(crate) mod test_env {
             // SAFETY: every env-mutating test holds ENV_LOCK; restored on drop.
             unsafe {
                 std::env::set_var("HOME", &dir);
-                for key in PINNED.iter().skip(1) {
+                std::env::set_var("USERPROFILE", &dir);
+                for key in PINNED.iter().skip(2) {
                     std::env::remove_var(key);
                 }
             }

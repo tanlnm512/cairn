@@ -2,6 +2,8 @@
 
 pub mod conn;
 pub mod dump;
+pub mod exec;
+pub mod home;
 pub mod schema;
 pub mod swap;
 pub mod vec0;

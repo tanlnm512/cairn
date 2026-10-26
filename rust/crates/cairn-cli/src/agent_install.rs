@@ -89,22 +89,11 @@ pub struct InstallReport {
 // --- shared path / config resolution ---------------------------------------------
 
 fn home_dir() -> PathBuf {
-    std::env::var("HOME")
-        .ok()
-        .filter(|h| !h.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
+    cairn_store::home::platform_home().unwrap_or_else(|| PathBuf::from("/"))
 }
 
 pub(crate) fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let cand = dir.join(name);
-        if cand.is_file() {
-            return Some(cand);
-        }
-    }
-    None
+    cairn_store::exec::which(name)
 }
 
 /// The managed daemon's MCP URL (its actual bind when discoverable, else the default).
@@ -419,7 +408,10 @@ fn cairn_for_hooks() -> String {
         return found.to_string_lossy().into_owned();
     }
     if let Ok(exe) = std::env::current_exe() {
-        if exe.file_name().is_some_and(|n| n == "cairn") {
+        if exe
+            .file_name()
+            .is_some_and(cairn_daemon::lifecycle::is_cairn_binary_name)
+        {
             return exe.to_string_lossy().into_owned();
         }
         // Prefer the cargo bin sibling over a test-harness exe so hook
@@ -603,10 +595,15 @@ fn write_file(path: &Path, content: &str, force: bool, res: &mut InstallResult, 
     if is_script(path)
         && let Ok(meta) = std::fs::metadata(path)
     {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mut perms = meta.permissions();
-        perms.set_mode(perms.mode() | 0o111);
-        let _ = std::fs::set_permissions(path, perms);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mut perms = meta.permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            let _ = std::fs::set_permissions(path, perms);
+        }
+        #[cfg(not(unix))]
+        let _ = meta;
     }
     res.add(path, false);
 }
@@ -2815,6 +2812,7 @@ pub fn install_git_hooks(repos: &[(String, PathBuf)]) -> Result<Vec<String>, Str
                 continue;
             }
             if std::fs::write(&hook_path, render_hook(template, repo)).is_ok() {
+                #[cfg(unix)]
                 if let Ok(meta) = std::fs::metadata(&hook_path) {
                     use std::os::unix::fs::PermissionsExt as _;
                     let mut perms = meta.permissions();
@@ -3224,6 +3222,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn install_aborts_the_client_when_the_config_backup_fails() {
         let _env = crate::test_env::EnvScope::new("agent-install");
         use std::os::unix::fs::PermissionsExt as _;
