@@ -1,75 +1,60 @@
 # Code structure: cairn
 
-**Created**: 2026-08-28 | **Baseline**: 0.16.0 @ fe7a7f09edb015d6a8fb12cd5d0f1b06ed07f5c3
-**Refreshed**: 2026-08-31 @ e002f9b (wiki-enhancements survey); line refs re-verified @ 0eaccf8 (v0.18.0);
-re-verified @ 7663989 (2026-09-04); refreshed @ dc9882b (2026-09-11, remove-scip-exact-rate
-survey — version 0.18.0→0.20.0, `_EXPECTED_TOOL_COUNT` 28→22; other line refs spot-checked,
-unchanged where cited); refreshed @ d18768c (2026-09-17, ide-extensions delta re-survey —
-new `skillgen/` package + `cairn skill generate` (cli/skill.py); cli command-module
-enumeration re-counted; all other cited lines re-verified unchanged); refreshed @ 1a95264
-(2026-09-18, post-0.21.0 docs pass — version 0.21.0; MCP tools 25; new since 0.20:
-`review/` engine + cli/review.py, `pack.py` + `pack_enrich.py`, `graph/taint.py`,
-`graph/federation.py` + mcp tools_federation.py, `bench/swe_bench{,_suite}.py` (datasets
-behind the `bench` extra), `dashboard/routes/editor.py` (frozen editor JSON contract),
-`extensions/vscode/` (VS Code extension, npm-confined), memory validity interval +
-`agent_symbols` sharing substrate)
-This repo's first spec-context baseline. Module map of `src/cairn/`, entry points,
-and per-area ownership. All paths cited from file reads in the baseline session.
+Module map of the Rust engine, its entry points and the remaining Python
+package. Every path below was read from the tree; re-verify with
+`rg --files rust/crates` before citing.
 
-## Package facts
-- Distribution `cairn-intel` v0.21.0 (pyproject.toml:7; was v0.20.0 at last refresh), src-layout (`[tool.setuptools.packages.find] where = ["src"]`,
-  pyproject.toml:159-160). Console script: `cairn = "cairn.cli:main"` (pyproject.toml:153-154).
-- Templates shipped as package data: `cairn.agent_integration` = `**/*`,
-  `cairn.dashboard` templates/static (pyproject.toml:162-167) — install-agents and the
-  dashboard work from a wheel install, not just a checkout.
+## Distribution
+- One engine binary, `cairn`, built from `rust/crates/cairn-cli`. The cargo
+  workspace version and the PyPI version are the same number
+  (`rust/Cargo.toml` `[workspace.package]`, `pyproject.toml` `[project]`).
+- Channels: GitHub release tarballs, a Homebrew tap and crates.io/binstall
+  (`.github/workflows/release-rust.yml`), and the PyPI wheel `cairn-intel`
+  (`.github/workflows/release.yml`). The wheel is a launcher around the
+  bundled binary.
+
+## Cargo workspace (`rust/`)
+| Crate | Role |
+|---|---|
+| `cairn-store` | SQLite schema mirror and migrations (`schema.rs`), connection factory (`conn.rs`), build lock and atomic swap (`swap.rs`), sqlite-vec helpers (`vec0.rs`), canonical dump (`dump.rs`) |
+| `cairn-parse` | tree-sitter registry and per-language extraction (`parser_{script,web,apple,jvm,sys}.rs`), generic tier, symbol/edge/import model, rationale comments |
+| `cairn-build` | scanner, rayon builder, resolver (exact/ambiguous/unresolved triage, repair), incremental update and watcher, transitive closure, dataflow, embeddings, routes and service calls, SCIP import and overlay (`scip/`) |
+| `cairn-query` | read path and knowledge layer: search (FTS5 + vector + RRF), navigation and impact, flow and taint, federation, KM/memory/compass (`tools_km.rs`), wiki and task queue (`tools_wiki.rs`, `tasks.rs`), review engine, ingest, skill generation, Python sidecar resolution (`sidecar.rs`) |
+| `cairn-daemon` | rmcp Streamable HTTP server for the 26 MCP tools (`server.rs`, `tools.rs`), bearer auth, healthz, daemon lifecycle (launchd plist on macOS, detached process elsewhere) |
+| `cairn-cli` | the `cairn` binary: clap tree in `cli.rs` (Core / Knowledge / System groups dispatched to `cmds_*.rs`), agent install and hooks, doctor, dashboard (`dashboard/`, minijinja templates), pack |
+
+Vendored: `rust/vendor/tree-sitter-dart` (workspace member) and
+`rust/vendor/sqlite-vec` (patched crate).
 
 ## Entry points
-1. `cairn` CLI → `src/cairn/cli/__init__.py:15` (`from .main import main`) → the click
-   group in `src/cairn/cli/main.py`; every `cli/*.py` module imports `main` and decorates
-   subcommands onto it (re-counted @ 1a95264: 29 single-file command modules plus the
-   `system/` package — enumerate with `grep -l "@main" src/cairn/cli/*.py`; new since the
-   0.20 refresh: `skill.py`, `taint.py`, `review.py`, `pack.py`).
-2. MCP server → `cairn serve` / `cairn serve run` → `src/cairn/cli/serve.py:65-85`
-   `_serve_foreground` sets `CAIRN_DB`/`CAIRN_KNOWLEDGE`/`CAIRN_READ_ONLY` then calls
-   `src/cairn/mcp_server/server.py:run()` (stdio default, SSE with `--port`).
-3. Agent-client hooks → `python -m cairn.hooks.claude_hooks <post_edit|session_end|post_tool_failure>`
-   (`src/cairn/hooks/claude_hooks.py:175-185`); `src/cairn/hooks/cursor_hooks.py` re-exports
-   the same handlers under Cursor's event names.
-4. SSE daemon → `cairn serve start` writes a LaunchAgent plist
-   (`~/Library/LaunchAgents/dev.cairn.sse.plist`, `src/cairn/mcp_server/lifecycle.py:22-36`)
-   running `cairn serve run --port N --read-only` — macOS-only.
+- `rust/crates/cairn-cli/src/main.rs`: migration-harness shims
+  (`canonical-dump`, `build-graph`, `closure`), then `cli::run`.
+- MCP: `cairn serve` (foreground) and `cairn connect` (ensures the shared
+  daemon on loopback).
+- Dashboard: `cairn dashboard`.
 
-## Module map (src/cairn/)
+## Python package (`src/cairn/`)
+| File | Role |
+|---|---|
+| `console.py` | PyPI console script: execs the engine binary; runs `communities` in-process |
+| `paths.py` | engine discovery: `CAIRN_RUST_BIN`, then the bundled `_bin/cairn`, then a native `cairn` on PATH (non-Windows) |
+| `communities.py` | `cairn communities` sidecar: seeded Louvain over structural edges (networkx, `[graph-analytics]` extra) |
+| `ingest_convert.py` | `[ingest]` sidecar: PDF and docx to markdown, invoked by the engine as `python -m cairn.ingest_convert` |
 
-| area | files (key) | owns |
-|---|---|---|
-| `paths.py` | single module | THE resolution substrate: `CAIRN_HOME` import-time binding (31-33), registry `workspaces.json` (35, `register_workspace` 193), `config.json` substrate (40, 214+), `resolve_workspace` (335), `resolve_store`/`StorePaths` (152, 355), `store_key` (167), shared-lib injection (`_inject_shared_libs` 123). Nearly every spec about stores/env touches this file first. |
-| `agent_install/` | `_common.py`, `detect.py`, `merge.py`, `clients/{claude,claude_desktop,cursor,droid,zcode,agy,opencode,kilo,omp}.py`, `__init__.py` | `install-agents`/`uninstall-agents` engine. `_common`: CLIENTS list (9 clients, _common.py:19), `resolve_cg_command` (67-76), `mcp_config_json` (92-117), hook-command builder `_claude_hook_command` (125-127), instruction bodies (`_INSTRUCTIONS_BODY` 284, `_claude_instructions` 422, `_agents_instructions` 432 — the AGENTS.md/CLAUDE.md text; refreshed @ e002f9b, tool-count line at :440). `detect`: `detect_clients` (41-119), `check_installed` (150-218 — also covers the client-CLI user-scope registration files: claude `~/.claude.json`, droid `~/.factory/mcp.json`), `claude_desktop_config_path` (16-31). `merge`: atomic writes (25-54), `_merge_json_file` (159-205), `_already_installed` incl. env-dict compare (212-271), strip helpers (438-576). `__init__`: `install`/`uninstall` dispatch + `_INSTALLERS`/`_UNINSTALLERS` tables (246-258), `sse_daemon_reachable` (190), install-reach matrix comment (141-172). |
-| `hooks/` | `claude_hooks.py`, `cursor_hooks.py`, `git_hooks.py` | runtime hook handlers (PATH-resolved `cairn` subprocess, claude_hooks.py:26-53) and the git post-commit installer (`POST_COMMIT_TEMPLATE` git_hooks.py:32-38, shell-injection guard 16-29). |
-| `mcp_server/` | `server.py`, `_server_core.py`, `lifecycle.py`, `tools_{graph,compass,knowledge,memory,wiki,federation}.py`, `structured.py`, `metric_buffering.py`, `embed_buffering.py` | MCP surface: boot guard + watchdog + run() (server.py:177-374; store check 213-234), FastMCP singleton + `_conn`/`_store`/`_bundle` + status resource (_server_core.py: 78, 81, 159, 222, 454), launchd daemon (lifecycle.py: cg_bin 45, render_plist 64, strays 262/371, sse_responds 424), enforced tool count `_EXPECTED_TOOL_COUNT = 25` (server.py:57 — 24→25 @ 0.21.0 with `federated_search` in tools_federation.py). |
-| `cli/` | `main.py`, `_helpers.py`, `core.py`, `serve.py`, `skill.py`, `system.py`, `agents.py`, `uninstall.py`, + query/memory/knowledge/task/compass/wiki/embed/bench/dashboard/dataflow/tree/update/validate/upgrade/hooks_viz/ask_context/download_reranker | command surface. `core.py`: init/build/config (`cairn config` paths echo 150-224). `system.py`: metrics/status/eval/sync/doctor/report (doctor checks `_check_schema` 743 … `_check_environment` 1569-1656, registration-audit tables `_REG_WS_FILES` 1353 / `_REG_HOME_FILES` 1362 + `_client_config_paths` 1374, `_run_doctor` 1680, render/json `_render_doctor` 1732 + doctor command 1750, report privacy gate `_scrub_doctor` 1839 + report command 2050). `agents.py`: install-agents CLI (10-206). `serve.py`: serve group + daemon lifecycle (89-241). `uninstall.py`: store teardown incl. lazy `_cairn_home()` (30-32). `wiki.py`: wiki group (generate/search/status/retry/export/enrich). `display.py`: echo helpers + vertical-rail flow (`rail` 517). (Refreshed 2026-08-31 @ 264647ae: added `_helpers.py`, `wiki.py`; 2026-09-17 @ d18768c: added `skill.py` — `cairn skill generate` command group, cli/skill.py:13-14.) |
-| `graph/` | `schema.py`, `builder.py`, `incremental.py`, `scanner.py`, `resolver.py`, `queries.py`, `explore.py`, `semantic.py`, `embeddings.py`, `embed_ladder.py`, `ann_index.py`, `reranker.py`, `watcher.py`, `dataflow.py`, `cross_repo.py`, `fusion.py`, `lexical.py`, `prf.py`, `traversal.py`, `stats.py`, `config.py`, `model_warmup.py`, `vector_math.py`, `tokenize.py`, `query_enrich.py`, `tests.py`, `taint.py`, `federation.py` | L1 graph: SQLite schema + `get_db` (schema.py:729-760), build/incremental update, symbol resolution, retrieval (BM25+vector fusion), embeddings backends/ladder, ANN, watcher. Added @ 0.21.0: `taint.py` (source/sink registry `build_registry`, exact-edge BFS `find_paths`/`intersect_seeds`, `format_taint_warning`; config overrides via `config.py`'s `taint` section) and `federation.py` (`federated_search` registry fan-out with `rrf_fuse` merge, per-repo attribution, `iter_stores` per-store re-pinning, opt-in `shared_embed`); schema gained `memory_validity` + `agent_symbols` tables. |
-| `knowledge/` | `store.py`, `ingest/{staging,parser,identity,executor,convert,config,classifier,adapters}.py` | business-doc ingestion into the OKF knowledge base. |
-| `memory/` | `store.py`, `promotion.py`, `privacy.py`, `scoring.py`, `store_protocol.py` | agent memory tiers (raw/drafts/tribal), promotion/decay, privacy filter used by report redaction. Added @ 0.21.0: bi-temporal validity (`write_validity`, `memory_validity` projection + concept extensions), as-of filtering in `search_memory`, multi-agent sharing (`share_memory`, `check_overlap`, `shared_recall_entries`, `validate_agent_id`). |
-| `okf/` | `concept.py`, `bundle.py`, `conformance.py`, `provenance.py`, `utils.py` | OKF markdown concept store (`.knowledge/`) read/written by compass/wiki/memory. |
-| `pack.py` / `pack_enrich.py` | standalone modules | `cairn pack` pipeline added @ 0.21.0: seed union (semantic + lexical term anchors) → one-hop precise expansion → closure-gated centrality ranking → greedy budget fit with per-class drop reporting (pack.py), and the enrichment renderers — source trimmer, blast-radius line, compass excerpt, top-3 memories (pack_enrich.py). |
-| `review/` | `engine.py`, `capture.py`, `spans.py` | review loop added @ 0.21.0: `build_pack`/`build_pre_submit` over `compute_blast` seeds with memory/compass/wiki enrichment, comment-to-symbol span mapping, and GitHub resolved-comment capture into draft-tier memories. |
-| `parsers/` | `python_parser.py`, `kotlin.py`, `typescript.py`, `swift.py`, `go.py`, `java.py`, `ruby.py`, `php.py`, `objc.py`, `dart.py`, `csharp.py`, `c_family.py`, `scip_indexers.py`, `scip_importer.py`, `_scip_pb2.py`, `_registry.py`, `base.py`, `service_calls.py`, `routes.py`, `inference/` | tree-sitter language adapters + SCIP consumption. |
-| `retrieval/` | `vector_scan.py`, `protocols.py` | cosine scan + retrieval protocols. |
-| `skillgen/` | `selector.py`, `ranking.py`, `assembly.py`, `gate.py`, `polish.py`, `emitter.py` | `cairn skill generate` engine (added @ d18768c): selector → symbols (`resolve_selector` selector.py:35) → call-graph ranking (`rank_candidates` ranking.py:36; defaults TOP_K=20 / TOP_N=5 assembly.py:22-23) → draft assembly (`assemble_draft` assembly.py:45) → deterministic gate (`verify_draft` gate.py:58) → optional LLM polish via the task queue (`POLISH_KIND = "skill-polish"` polish.py:24, critic-exempt llm/tasks.py:417-418, `run_polish_stage` polish.py:52) → emit to `.agents/skills` (`_SKILLS_HOME` emitter.py:28). |
-| `telemetry/` | `events.py`, `sink.py`, `otel.py`, `cli_metrics.py` | local events/tool_metrics buffering, optional OTLP export. |
-| `viz/`, `wiki/`, `llm/`, `bench/`, `eval.py`, `dashboard/`, `utils/`, `refs.py` | renderers+query / wiki generation pipeline (catalog planner, manifest, pipeline, refine validator, sources parser + generator) / LLM task queue / perf suites + datasource (added @ 0.21.0: `swe_bench.py` loader over the frozen `benchmarks/datasource/swe-bench-subset.json` manifest + `swe_bench_suite.py` deterministic two-arm runner; `datasets` behind the `bench` extra) / retrieval eval harness / FastAPI-ish dashboard + escape-first markdown renderer (dashboard/markdown.py; added @ 0.21.0: `routes/editor.py`, the frozen editor JSON contract `/editor/symbol|file|status` consumed by `extensions/vscode/`) / logging+git helpers (utils/git.py: `_run_git` — used by the incremental updater, graph/incremental.py:766 — and `get_current_commit` rev-parse HEAD) / symbol ref helpers (added @ 0.21.0: `successor_candidates`/`resolve_successor` for rename-time memory invalidation) | peripheral surfaces. |
+## Tests and oracles
+- Rust: unit tests in each crate, integration suites under
+  `rust/crates/*/tests/`.
+- Golden fixtures under `rust/golden/` (`mcp`, `cli`, `flow`, `nav`,
+  `search`, `km`, `dump`, `embed`, `spike`, and pinned stores in `stores/`).
+- `scripts/rust_migration/`: replay oracles (`parity.py`, `cli_golden.py`),
+  canonical-dump tooling (`kg_dump.py`, `kg_diff.py`, `kg_normalize.py`),
+  `g2_check.sh` and `wheel_smoke.sh`.
+- `tests/`: Python tests for packaging, the sidecars, release distribution
+  and documentation gates.
 
-## Cross-cutting invariants (relevant to any install/env spec)
-- Env → store: `CAIRN_WORKSPACE` (workspace pin) > cwd ancestor-walk; `CAIRN_DB`/
-  `CAIRN_KNOWLEDGE` (hard path overrides); `CAIRN_HOME` (home root, import-time).
-  All resolved through `paths.resolve_store` (paths.py:305-318).
-- Config files are generated, never copied: every client config points at the
-  `cairn` binary resolved at install time (`resolve_cg_command`), with no env block
-  except claude-desktop's `CAIRN_WORKSPACE` pin (claude_desktop.py:32-35).
-- Writes to user configs are atomic (tmp + os.replace, merge.py:25-54) and merges
-  never clobber malformed files (backup-then-fresh, merge.py:119-205).
-- Doctor/report are read-only by contract (`_run_doctor` system.py:1680,
-  doctor command 1750, `_db_unavailable_results` 1657, report privacy gate
-  `_scrub_doctor` 1839) — a missing store FAILs schema instead of being
-  materialized.
+## Other trees
+- `extensions/vscode/`: VS Code extension (npm-confined, separate release
+  workflow).
+- `docs/`: user and contributor documentation; `docs/cli-reference.md` is
+  the CLI reference.
+- `.cairn-knowledge/`: repository seed for the knowledge bundle.
