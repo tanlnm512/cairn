@@ -103,7 +103,11 @@ jobs:
       - name: Install (with dev extras)
         run: uv sync --extra dev
       - name: Run all hooks
+        # PR legs skip the two cargo hooks (~5 of the job's 6 minutes): Rust
+        # CI runs both on every PR already. Main and the merge queue run all.
         run: uv run --no-sync pre-commit run --all-files
+        env:
+          SKIP: ${{ github.event_name == 'pull_request' && 'cargo-fmt,cargo-clippy' || '' }}
 
   # --- Quality ratchet: audit-debt + comment-style stop-growth gates ------
   # Human modes keep the maintainer surface green; the JSON steps pin the
@@ -283,6 +287,9 @@ jobs:
 
   container:
     name: Container build (Dockerfile smoke)
+    # ~8 minutes compiling the engine in Docker with no cache; the image
+    # changes rarely -- main and the merge queue own the proof.
+    if: github.event_name == 'push' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     # The image compiles the rust engine from source (no cargo cache in docker build).
     timeout-minutes: 40
