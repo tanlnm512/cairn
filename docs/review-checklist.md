@@ -70,7 +70,7 @@ they actually ran — not just that they were claimed:
       `@pytest.mark.real_env` only with justification); Rust tests that
       touch the store build into a scratch path, never the live one.
 - [ ] Tests added or updated to cover the change — a Rust owner test under
-      `rust/` for engine behavior (`cargo test --manifest-path rust/Cargo.toml
+      `rust/` for engine behavior (`cargo test --manifest-path Cargo.toml
       -p <crate>` for the fast loop, then `--workspace`), pytest for the
       launcher, sidecars and release wiring.
 - [ ] **Comment, doc & log brevity** — 1-line docstrings default, no commentary blocks,

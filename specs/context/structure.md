@@ -7,7 +7,7 @@ package. Every path below was read from the tree; re-verify with
 ## Distribution
 - One engine binary, `cairn`, built from `rust/crates/cairn-cli`. The cargo
   workspace version and the PyPI version are the same number
-  (`rust/Cargo.toml` `[workspace.package]`, `pyproject.toml` `[project]`).
+  (`Cargo.toml` `[workspace.package]`, `pyproject.toml` `[project]`).
 - Channels: GitHub release tarballs, a Homebrew tap and crates.io/binstall
   (`.github/workflows/release-rust.yml`), and the PyPI wheel `cairn-intel`
   (`.github/workflows/release.yml`). The wheel is a launcher around the

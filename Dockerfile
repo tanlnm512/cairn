@@ -2,8 +2,9 @@
 # daemon needs no Python.
 FROM rust:1-slim-bookworm AS build
 WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
 COPY rust/ ./rust/
-RUN cargo build --release --manifest-path rust/Cargo.toml -p cairn-cli
+RUN cargo build --release -p cairn-cli
 
 FROM debian:bookworm-slim
 
@@ -12,7 +13,7 @@ RUN useradd --create-home --uid 1000 cairn \
     && apt-get install -y --no-install-recommends ca-certificates curl git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /src/rust/target/release/cairn /usr/local/bin/cairn
+COPY --from=build /src/target/release/cairn /usr/local/bin/cairn
 
 # Store home lives on the mounted volume.
 ENV CAIRN_HOME=/data

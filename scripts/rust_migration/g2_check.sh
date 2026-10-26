@@ -66,7 +66,7 @@ parse_legs || exit 1
 # --- rust binary -------------------------------------------------------------
 if [ ! -x "$RS_CAIRN" ]; then
   echo "== building rust cairn binary =="
-  cargo build --release --manifest-path "$REPO_ROOT/rust/Cargo.toml" -p cairn-cli \
+  cargo build --release --manifest-path "$REPO_ROOT/Cargo.toml" -p cairn-cli \
     || fail "cargo build -p cairn-cli"
 fi
 [ -x "$RS_CAIRN" ] || fail "rust binary missing at $RS_CAIRN"

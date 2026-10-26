@@ -30,7 +30,7 @@ fail() { echo "wheel-smoke: FAIL — $*"; exit 1; }
 [ -x "$PY" ] || fail "repo venv python not found at $PY"
 
 # --- rust release binary ------------------------------------------------------
-cargo build --release --manifest-path "$REPO_ROOT/rust/Cargo.toml" -p cairn-cli \
+cargo build --release --manifest-path "$REPO_ROOT/Cargo.toml" -p cairn-cli \
   || fail "cargo build -p cairn-cli"
 [ -f "$RS_BIN" ] || fail "release binary missing: $RS_BIN"
 

@@ -1,0 +1,4 @@
+# Workspace artifacts stay under rust/ so every script, workflow and
+# golden-binary path keeps resolving after the manifest moved to the repo root.
+[build]
+target-dir = "rust/target"

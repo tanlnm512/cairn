@@ -20,7 +20,7 @@ don't skip on "I'm sure it's fine."
 | [`## Cutting a release`](#cutting-a-release) | Conventional commits, the changelog-first rule, the `cz` bump, and the tag-push paths. |
 
 ## Tests
-- [ ] `cargo test --manifest-path rust/Cargo.toml --workspace` — the engine
+- [ ] `cargo test --manifest-path Cargo.toml --workspace` — the engine
       suite.
 - [ ] `uv run pytest tests/ -q` — the full local suite (default gate + infra
       tier together; a bare `pytest` runs everything by design). CI runs the
@@ -135,7 +135,7 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
    `src/cairn/__init__.py`, commits as `bump: version A -> B`, and tags
    `v$version`. (If the pre-release checklist above isn't done yet, run
    `cz bump --version-files-only` to update files without committing/tagging.)
-   The Cargo workspace version (`rust/Cargo.toml` `[workspace.package]`) is
+   The Cargo workspace version (`Cargo.toml` `[workspace.package]`) is
    not a `cz` version file: bump it to the same `X.Y.Z` in the changelog
    commit — `release-rust.yml` refuses a tag that does not equal the
    workspace version, and the crates.io publish would otherwise 404 every

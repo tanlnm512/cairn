@@ -1,10 +1,11 @@
 # Tech stack & conventions: cairn
 
-Stack, build and test runners, and gates. Cited from `rust/Cargo.toml`,
+Stack, build and test runners, and gates. Cited from `Cargo.toml`,
 `pyproject.toml`, `.pre-commit-config.yaml` and `.github/workflows/`.
 
 ## Stack
-- Rust, edition 2024, one cargo workspace under `rust/` with exact-pinned
+- Rust, edition 2024, one cargo workspace (manifest at the repo root, crates
+  under `rust/`) with exact-pinned
   dependencies and a cargo-deny license/advisory gate. Key crates: rmcp
   (MCP server), rusqlite with bundled SQLite and FTS5, sqlite-vec (vendored
   patch), tree-sitter with 15 grammar crates, rayon, clap, notify, prost,
@@ -20,7 +21,7 @@ Stack, build and test runners, and gates. Cited from `rust/Cargo.toml`,
 
 ## Build and test
 - `cargo build --release -p cairn-cli` (from `rust/`, or pass
-  `--manifest-path rust/Cargo.toml`).
+  `--manifest-path Cargo.toml`).
 - `cargo test --workspace --no-fail-fast`; `cargo clippy --workspace
   --all-targets -- -D warnings`; `cargo fmt --all -- --check`.
 - Python: `uv sync --extra dev`, then `uv run pytest`.

@@ -409,9 +409,9 @@ effective value and where it came from):
 The engine is the Rust workspace under `rust/`:
 
 ```bash
-cargo fmt --manifest-path rust/Cargo.toml --all
-cargo clippy --manifest-path rust/Cargo.toml --workspace -- -D warnings
-cargo test --manifest-path rust/Cargo.toml --workspace
+cargo fmt --manifest-path Cargo.toml --all
+cargo clippy --manifest-path Cargo.toml --workspace -- -D warnings
+cargo test --manifest-path Cargo.toml --workspace
 ```
 
 The Python side is the wheel launcher and sidecars (`src/cairn/`) plus the
@@ -433,7 +433,7 @@ Contributions follow [docs/review-checklist.md](docs/review-checklist.md).
 ## Dependency Licenses
 
 MIT-licensed. The binary links only permissive crates (MIT, Apache-2.0,
-BSD, ISC, Zlib, Unicode-3.0, CC0-1.0); `rust/Cargo.lock` is the
+BSD, ISC, Zlib, Unicode-3.0, CC0-1.0); `Cargo.lock` is the
 authoritative inventory and cargo-deny gates it against that allow-list on
 every change — see [NOTICE](NOTICE). The `[ingest]` and `[graph-analytics]`
 sidecar extras resolve their own permissively licensed Python packages at

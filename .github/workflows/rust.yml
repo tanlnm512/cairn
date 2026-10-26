@@ -29,7 +29,7 @@ jobs:
         with:
           components: rustfmt
       - name: cargo fmt --check
-        run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+        run: cargo fmt --manifest-path Cargo.toml --all -- --check
 
   clippy:
     name: clippy (-D warnings)
@@ -44,7 +44,7 @@ jobs:
         with:
           workspaces: rust
       - name: cargo clippy
-        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+        run: cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
 
   test:
     name: test
@@ -57,7 +57,7 @@ jobs:
         with:
           workspaces: rust
       - name: cargo test
-        run: cargo test --manifest-path rust/Cargo.toml --workspace
+        run: cargo test --manifest-path Cargo.toml --workspace
 
   deny:
     name: cargo-deny (advisories + licenses)

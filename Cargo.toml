@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/cairn-build",
-    "crates/cairn-cli",
-    "crates/cairn-daemon",
-    "crates/cairn-parse",
-    "crates/cairn-query",
-    "crates/cairn-store",
-    "vendor/tree-sitter-dart",
+    "rust/crates/cairn-build",
+    "rust/crates/cairn-cli",
+    "rust/crates/cairn-daemon",
+    "rust/crates/cairn-parse",
+    "rust/crates/cairn-query",
+    "rust/crates/cairn-store",
+    "rust/vendor/tree-sitter-dart",
 ]
 
 [workspace.package]
@@ -29,4 +29,4 @@ strip = true
 [patch.crates-io]
 # sqlite-vec 0.1.9 vendored with upstream main's musl typedef fix (D-010);
 # drop this patch when a stable release > 0.1.9 ships the fix.
-sqlite-vec = { path = "vendor/sqlite-vec" }
+sqlite-vec = { path = "rust/vendor/sqlite-vec" }
