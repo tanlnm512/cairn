@@ -63,7 +63,10 @@ Homepage = "https://github.com/tanlnm512/cairn"
 [tool.maturin]
 bindings = "bin"
 manifest-path = "rust/crates/cairn-cli/Cargo.toml"
-include = [{ path = "rust/vendor/sqlite-vec/**/*", format = "sdist" }]
+include = [
+    { path = "LICENSE", format = "sdist" },
+    { path = "rust/vendor/sqlite-vec/**/*", format = "sdist" },
+]
 
 # Installing the project means compiling the engine, so uv manages only the
 # dev environment.
