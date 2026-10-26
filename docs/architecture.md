@@ -47,7 +47,6 @@ decoupled task queue.
 | `console.py` | the PyPI `cairn` console script: execs the discovered binary with the original argv, exporting its interpreter as `CAIRN_SIDECAR_PYTHON` |
 | `paths.py` | binary discovery: `CAIRN_RUST_BIN` → the binary bundled in the wheel (`_bin/`) → `PATH` |
 | `communities.py` | the `[graph-analytics]` sidecar: seeded networkx Louvain over the store (`cairn communities` runs it in-process from the launcher) |
-| `ingest_convert.py` | the `[ingest]` sidecar: PDF/DOCX → markdown on stdout, invoked by the binary's `knowledge ingest --file` |
 
 ### Resolution tiers, Rust sources, and worktree behavior
 

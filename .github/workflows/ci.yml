@@ -41,10 +41,13 @@ jobs:
       # Every job installs from the committed uv.lock (exact pinned set) via
       # `uv sync` -- the lockfile is the dependency set CI tests, not a fresh
       # pip resolution. `uv run --no-sync` then executes from that venv.
-      # The sidecar extras ride the audit: they are user-facing install
-      # surfaces (pip install cairn-intel[ingest]) -- a CVE there must fail it.
-      - name: Install (with dev + sidecar extras)
-        run: uv sync --extra dev --extra ingest --extra graph-analytics
+      # The sidecar surfaces ride the audit: they are user-facing installs
+      # (pip install cairn-intel[graph-analytics], pip install cairn-intel-ingest)
+      # -- a CVE there must fail it.
+      - name: Install (with dev + sidecar extras + converter package)
+        run: |
+          uv sync --extra dev --extra graph-analytics
+          uv pip install packaging/cairn-intel-ingest
       - name: pip-audit (hard gate -- known-vulnerable deps fail here)
         run: uv run --no-sync pip-audit
       - name: bandit (advisory)
@@ -217,8 +220,10 @@ jobs:
 
       - uses: astral-sh/setup-uv@v10.1.0
 
-      - name: Install (with dev + ingest + graph-analytics extras)
-        run: uv sync --extra dev --extra ingest --extra graph-analytics --python ${{ matrix.python-version }}
+      - name: Install (with dev + graph-analytics extras + converter package)
+        run: |
+          uv sync --extra dev --extra graph-analytics --python ${{ matrix.python-version }}
+          uv pip install --python ${{ matrix.python-version }} packaging/cairn-intel-ingest
 
       - name: Validate skill eval specs
         run: uv run --no-sync python scripts/run_skill_evals.py

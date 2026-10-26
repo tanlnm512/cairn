@@ -156,7 +156,7 @@ Group: `cairn knowledge …`
 
 | Subcommand | Purpose |
 |---|---|
-| `ingest` | staged doc ingestion; `--file`/`--dir`/`--repo` sources, `--ingest` to execute, `--include-drafts`, `--outbox`. Markdown converts natively; PDF/DOCX files go through the `[ingest]` sidecar (`python -m cairn.ingest_convert`, resolved via `CAIRN_SIDECAR_PYTHON`, then an interpreter beside the binary, then `PATH`) and are skipped with `cairn-intel[ingest] not installed` when no interpreter carries it |
+| `ingest` | staged doc ingestion; `--file`/`--dir`/`--repo` sources, `--ingest` to execute, `--include-drafts`, `--outbox`. Markdown, DOCX and PDF convert natively; a PDF prefers the optional `cairn-intel-ingest` package when importable (`python -m cairn_intel_ingest`, resolved via `CAIRN_SIDECAR_PYTHON`, then an interpreter beside the binary, then `PATH`), else the engine extracts the text itself |
 | `rebuild` | recompute the derived `knowledge_edges` / `knowledge_doc_refs` index tables from the bundle (runs automatically after `ingest --ingest`; idempotent); island detection then queues `doc-link` tasks for detached pair-units (deduped per member set) |
 | `islands` | list doc-graph islands (detached pair-units) and their `doc-link` task state |
 | `related <doc_id>` | stored relationship neighbors of one doc, one line per edge with relation (`relates-to`/`supersedes`/`superseded-by`/`references`), kind (`extracted`/`inferred`/`derived`), and direction; `--json` emits the full rows. Unknown ids exit non-zero with a named error |

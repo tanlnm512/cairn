@@ -58,16 +58,9 @@ dev = [
     "commitizen>=4.0",
 ]
 
-# Binary-document conversion sidecar (cairn.ingest_convert): pymupdf4llm for
-# PDF, mammoth + markdownify for docx (mammoth's own Markdown writer is
-# deprecated; the composition goes HTML -> markdown). Imports are strictly
-# lazy, so base installs import the module cleanly.
-ingest = [
-    "pymupdf4llm>=1.28",
-    "mammoth>=1.11",
-    "markdownify>=0.13",
-    "onnxruntime<1.24; python_version < '3.11'",
-]
+# Binary-document conversion is native in the engine (docx and PDF); the
+# optional high-fidelity PDF converter lives in its own package at
+# packaging/cairn-intel-ingest (pip install cairn-intel-ingest).
 
 # Symbol-community analytics sidecar (`cairn communities`, cairn.communities):
 # Louvain partitioning via networkx. Opt-in because the engine never needs it;

@@ -8,11 +8,14 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+pdf-extract = "=0.12.1"
+quick-xml = "=0.42.0"
 regex = "1"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "=0.10.9"
 yaml-rust2 = { version = "=0.13.0", default-features = false }
+zip = { version = "=9.1.2", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
 cairn-store = { path = "../cairn-store" }

@@ -39,7 +39,6 @@ Vendored: `rust/vendor/tree-sitter-dart` (workspace member) and
 | `console.py` | PyPI console script: execs the engine binary; runs `communities` in-process |
 | `paths.py` | engine discovery: `CAIRN_RUST_BIN`, then the bundled `_bin/cairn`, then a native `cairn` on PATH (non-Windows) |
 | `communities.py` | `cairn communities` sidecar: seeded Louvain over structural edges (networkx, `[graph-analytics]` extra) |
-| `ingest_convert.py` | `[ingest]` sidecar: PDF and docx to markdown, invoked by the engine as `python -m cairn.ingest_convert` |
 
 ## Tests and oracles
 - Rust: unit tests in each crate, integration suites under

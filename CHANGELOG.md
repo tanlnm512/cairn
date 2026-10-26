@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Added
+- Native document conversion in the engine (rust-only spec, FR-002/FR-003): `knowledge ingest --file` converts `.docx` to markdown (headings, paragraphs, emphasis, lists, tables, links) and extracts `.pdf` text with no Python present; the optional high-fidelity PDF converter moved to its own `cairn-intel-ingest` package (`pip install cairn-intel-ingest`) and is used automatically when importable, keeping the AGPL dependency (pymupdf4llm) out of the engine; the `cairn-intel[ingest]` extra is retired.
 
 ## [0.23.1] - 2026-10-25
 ### Added

@@ -92,7 +92,7 @@ assert "-py3-none-" in name and not name.endswith("-any.whl"), name
 names = zipfile.ZipFile(sys.argv[1]).namelist()
 modules = sorted(n for n in names if n.startswith("cairn/") and n.endswith(".py"))
 assert modules == ["cairn/__init__.py", "cairn/communities.py", "cairn/console.py",
-                   "cairn/ingest_convert.py", "cairn/paths.py"], modules
+                   "cairn/paths.py"], modules
 print("launcher wheel OK:", name)
 EOF
 

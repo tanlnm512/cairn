@@ -1,6 +1,7 @@
 //! Query engine: FTS5 search, definition lookup, callers/callees, impact, explore, trace.
 
 pub mod blast;
+pub mod convert;
 pub mod graph;
 pub mod grep;
 pub mod ingest;

@@ -1,4 +1,4 @@
-"""G4e: the PyPI package holds only the console shim, binary discovery, and the sidecars."""
+"""G4e: the PyPI package holds only the console shim, binary discovery, and the communities sidecar."""
 from __future__ import annotations
 
 import os
@@ -14,7 +14,6 @@ KEPT_MODULES = {
     "console.py",
     "paths.py",
     "communities.py",
-    "ingest_convert.py",
 }
 
 
@@ -32,7 +31,7 @@ def test_package_imports_on_a_bare_interpreter():
     env = {**os.environ, "PYTHONPATH": str(PACKAGE.parent)}
     proc = subprocess.run(
         [sys.executable, "-S", "-c",
-         "import cairn, cairn.console, cairn.paths, cairn.communities, cairn.ingest_convert"],
+         "import cairn, cairn.console, cairn.paths, cairn.communities"],
         capture_output=True, text=True, env=env,
     )
     assert proc.returncode == 0, proc.stderr
