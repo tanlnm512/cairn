@@ -2131,8 +2131,11 @@ mod tests {
             Some(reason) => &format!("#!/bin/sh\necho '{reason}' >&2\nexit 1\n"),
         };
         let script = dir.join("python3");
-        std::fs::write(&script, body).expect("script");
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let staged = dir.join("python3.staged");
+        std::fs::write(&staged, body).expect("script");
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        // Rename-publish: exec'ing a just-written file races ETXTBSY on Linux.
+        std::fs::rename(&staged, &script).expect("publish");
         script
     }
 
