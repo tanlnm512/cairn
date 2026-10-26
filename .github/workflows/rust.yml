@@ -76,7 +76,8 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
       - name: cargo test
-        run: cargo test --manifest-path Cargo.toml --workspace
+        # no-fail-fast surfaces every platform mismatch in one run.
+        run: cargo test --manifest-path Cargo.toml --workspace --no-fail-fast
       - name: cargo build (release)
         run: cargo build --manifest-path Cargo.toml --release --target x86_64-pc-windows-msvc -p cairn-cli
 

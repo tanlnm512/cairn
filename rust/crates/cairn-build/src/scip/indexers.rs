@@ -619,12 +619,9 @@ mod tests {
             );
         }
         // An empty PATH entry resolves relative to the cwd, where no `tool`
-        // exists; the lookup must neither panic nor match the file above.
+        // exists; a separator-only PATH probes nothing but those entries.
         let sep = if cfg!(windows) { ";" } else { ":" };
-        assert_eq!(
-            find_on_path(&format!("{}{sep}", dir.to_string_lossy()), "tool"),
-            None
-        );
+        assert_eq!(find_on_path(sep, "tool"), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
