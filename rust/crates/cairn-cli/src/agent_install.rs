@@ -462,6 +462,12 @@ fn hook_command_markers(entrypoint: &str) -> [String; 4] {
     ]
 }
 
+/// Shape test for a cairn-written hook command, robust to the binary's
+/// platform spelling (quoted, `.exe`, absolute path, home export prefix).
+fn looks_like_cairn_hook(cmd: &str) -> bool {
+    cmd.contains(" hooks run ") && cmd.to_lowercase().contains("cairn")
+}
+
 fn hook_markers() -> Vec<&'static str> {
     HOOK_ENTRYPOINTS
         .iter()
@@ -1242,9 +1248,9 @@ fn strip_hooks_matching(path: &Path, res: &mut InstallResult, cursor_shape: bool
         for entry in entries {
             let matches = entry.as_object().is_some_and(|obj| {
                 if cursor_shape {
-                    entry_commands(obj)
-                        .iter()
-                        .any(|cmd| markers.iter().any(|m| cmd.contains(m)))
+                    entry_commands(obj).iter().any(|cmd| {
+                        looks_like_cairn_hook(cmd) || markers.iter().any(|m| cmd.contains(m))
+                    })
                 } else {
                     // Claude shape: cairn entries nest their commands under "hooks".
                     obj.get("hooks")
@@ -1254,7 +1260,10 @@ fn strip_hooks_matching(path: &Path, res: &mut InstallResult, cursor_shape: bool
                                 h.as_object()
                                     .and_then(|hobj| hobj.get("command"))
                                     .and_then(Value::as_str)
-                                    .map(|cmd| markers.iter().any(|m| cmd.contains(m)))
+                                    .map(|cmd| {
+                                        looks_like_cairn_hook(cmd)
+                                            || markers.iter().any(|m| cmd.contains(m))
+                                    })
                                     .unwrap_or(false)
                             })
                         })

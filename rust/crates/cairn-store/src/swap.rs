@@ -105,7 +105,9 @@ fn replace_db_file(staged: &Path, db: &Path) -> Result<(), String> {
         let aside = db.with_extension("kg.replaced");
         let _ = std::fs::remove_file(&aside);
         if db.exists() {
-            std::fs::rename(db, &aside).map_err(|e| format!("swap {}: {e}", db.display()))?;
+            if std::fs::rename(db, &aside).is_err() {
+                return copy_into_place(staged, db);
+            }
         }
         if let Err(e) = std::fs::rename(staged, db) {
             let _ = std::fs::rename(&aside, db);
@@ -114,6 +116,15 @@ fn replace_db_file(staged: &Path, db: &Path) -> Result<(), String> {
         let _ = std::fs::remove_file(&aside);
         Ok(())
     }
+}
+
+/// Copy staged over the live file when renaming it aside is denied (an open
+/// handle without share-delete); readers detect the swap by identity change.
+#[cfg(windows)]
+fn copy_into_place(staged: &Path, db: &Path) -> Result<(), String> {
+    std::fs::copy(staged, db).map_err(|e| format!("swap {}: {e}", db.display()))?;
+    let _ = std::fs::remove_file(staged);
+    Ok(())
 }
 
 /// Best-effort append of retained analytics history from `old_db` into `dest`.

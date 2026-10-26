@@ -217,7 +217,7 @@ fn concept_to_task(concept: &Concept) -> Task {
     Task {
         id: concept
             .concept_id
-            .rsplit('/')
+            .rsplit(['/', '\\'])
             .next()
             .unwrap_or(&concept.concept_id)
             .to_string(),
