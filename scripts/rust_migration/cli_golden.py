@@ -865,6 +865,10 @@ def golden_commands(scratch: Path) -> list[list[str]]:
         ["review", "--capture-event", str(events / "resolved.json")],
         ["review", "--capture-event", str(events / "open.json")],
         ["review", "--capture-event", str(events / "bad-payload.json")],
+        # Communities family: seeded Louvain over the scratch store's structural
+        # edges; runs last because it mutates the communities tables the map
+        # legs above read.
+        ["communities", "--top-k", "2"],
     ]
 
 

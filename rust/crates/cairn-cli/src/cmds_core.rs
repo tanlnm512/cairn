@@ -3502,13 +3502,57 @@ fn dataflow_lookup(args: crate::cmds_core::DataflowLookupArgs) -> ExitCode {
 
 // --- cairn communities -------------------------------------------------------------
 
-/// communities handler: Louvain stays the Python [graph-analytics] sidecar.
-fn communities(_args: crate::cmds_core::CommunitiesArgs) -> ExitCode {
-    display::error(
-        "cairn communities is served by the Python [graph-analytics] sidecar (networkx Louvain): \
-         pip install 'cairn-intel[graph-analytics]' and run `cairn communities` from that install",
-    );
-    ExitCode::FAILURE
+/// communities handler: seeded Louvain partition persisted, then the hub summary.
+fn communities(args: crate::cmds_core::CommunitiesArgs) -> ExitCode {
+    let db = db_arg(&args.db);
+    let path = PathBuf::from(&db);
+    if !path.is_file() {
+        return command_error(&format!("cannot open {db}"));
+    }
+    let Ok(mut conn) = cairn_store::conn::open_writable(&path) else {
+        return command_error(&format!("cannot open {db}"));
+    };
+    let count = match cairn_build::communities::refresh_communities(&mut conn) {
+        Ok(count) => count,
+        Err(e) => return command_error(&format!("cairn communities: {e} ({db})")),
+    };
+    if count == 0 {
+        println!("no communities found");
+        return ExitCode::SUCCESS;
+    }
+    println!("{count} communities");
+    println!("Global hubs:");
+    if let Err(e) = print_hub_rows(&conn, None, args.top_k, "  ") {
+        return command_error(&format!("cairn communities: {e} ({db})"));
+    }
+    println!("Communities:");
+    let rows = match cairn_build::communities::community_rows(&conn) {
+        Ok(rows) => rows,
+        Err(e) => return command_error(&format!("cairn communities: {e} ({db})")),
+    };
+    for (id, label, size) in rows {
+        println!("  {id}: {label} ({size} symbols)");
+        if let Err(e) = print_hub_rows(&conn, Some(id), args.top_k, "    ") {
+            return command_error(&format!("cairn communities: {e} ({db})"));
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// One hub block: qualified name and degree per row, indented.
+fn print_hub_rows(
+    conn: &Connection,
+    community_id: Option<i64>,
+    top_k: usize,
+    indent: &str,
+) -> Result<(), String> {
+    for row in cairn_build::communities::hub_rows(conn, community_id, top_k)? {
+        println!(
+            "{indent}{} (degree {})",
+            row.qualified_name, row.structural_degree
+        );
+    }
+    Ok(())
 }
 
 // --- cairn viz ---------------------------------------------------------------------

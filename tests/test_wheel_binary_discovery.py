@@ -198,23 +198,22 @@ def test_console_script_without_binary_on_windows_points_at_wsl(monkeypatch, tmp
     "argv",
     [["communities"], ["communities", "--top-k", "3"], ["-v", "communities"], ["--verbose", "communities", "--db", "x.kg"]],
 )
-def test_console_script_routes_communities_to_the_sidecar(monkeypatch, tmp_path, argv):
-    """D-013: `communities` runs the networkx sidecar in-process, binary or not, past the group-level -v/--verbose."""
+def test_console_script_execs_communities_into_the_engine(monkeypatch, tmp_path, argv):
+    """The engine serves `communities` natively: argv is exec'd like every other command."""
     from cairn import communities
 
-    _write_stub_bundled_bin(monkeypatch, tmp_path)
+    def _must_not_run(rest):
+        raise AssertionError("communities sidecar must not be invoked")
+
+    monkeypatch.setattr(communities, "main", _must_not_run)
+    stub = _write_stub_bundled_bin(monkeypatch, tmp_path)
     execved = _capture_exec(monkeypatch)
-    calls: list[list[str]] = []
-    monkeypatch.setattr(communities, "main", lambda rest: calls.append(list(rest)) or 0)
     monkeypatch.setattr(sys, "argv", ["cairn", *argv])
 
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit):
         console.main()
 
-    assert exc.value.code == 0
-    assert not execved
-    expected = argv[argv.index("communities") + 1:]
-    assert calls == [expected]
+    assert execved == [(str(stub), [str(stub), *argv])]
 
 
 def test_console_script_reports_exec_failure(monkeypatch, tmp_path, capsys):

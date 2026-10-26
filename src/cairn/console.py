@@ -1,4 +1,4 @@
-"""PyPI console-script entry: exec the cairn engine binary; `communities` runs the networkx sidecar in-process."""
+"""PyPI console-script entry: exec the cairn engine binary with the original argv."""
 from __future__ import annotations
 
 import os
@@ -7,8 +7,6 @@ import sys
 from . import paths
 from .paths import RUST_BIN_ENV, rust_bin
 
-# Louvain stays the Python [graph-analytics] sidecar; the binary only has a stub arm for it.
-_SIDECAR_COMMANDS = frozenset({"communities"})
 # Tells the engine which interpreter carries the sidecar extras ([ingest]).
 _SIDECAR_PYTHON_ENV = "CAIRN_SIDECAR_PYTHON"
 
@@ -23,25 +21,9 @@ _NO_ENGINE_WINDOWS = (
 )
 
 
-def _split_sidecar(argv: list[str]) -> tuple[str | None, list[str]]:
-    """(command, its argv) when argv names a sidecar command past the group-level -v/--verbose; else (None, argv)."""
-    for i, arg in enumerate(argv):
-        if arg in ("-v", "--verbose"):
-            continue
-        if arg in _SIDECAR_COMMANDS:
-            return arg, argv[i + 1:]
-        return None, argv
-    return None, argv
-
-
 def main() -> None:
     """Exec the discovered engine binary (rust_bin() order) with the original argv."""
     argv = sys.argv[1:]
-    command, rest = _split_sidecar(argv)
-    if command == "communities":
-        from .communities import main as run_communities
-
-        sys.exit(run_communities(rest))
     bin_path = rust_bin()
     if bin_path is None:
         message = _NO_ENGINE_WINDOWS if paths._is_windows_host() else _NO_ENGINE

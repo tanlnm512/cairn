@@ -123,9 +123,9 @@ impl Key {
 
 /// Adjacency entry packed as (target + 1) << 32 | (name + 1); 0 half = None.
 #[derive(Clone, Copy)]
-struct AdjEntry(u64);
+pub(crate) struct AdjEntry(u64);
 
-fn entry_target(e: AdjEntry) -> Option<u32> {
+pub(crate) fn entry_target(e: AdjEntry) -> Option<u32> {
     u32::try_from(e.0 >> 32).ok().and_then(|v| v.checked_sub(1))
 }
 
@@ -173,30 +173,30 @@ struct Row {
 }
 
 /// Case-2 hop: unique mid name -> one of that symbol's eligible edges.
-struct Case2Hop {
+pub(crate) struct Case2Hop {
     mid: u32,
     target: Option<u32>,
     name: Option<u32>,
 }
 
 /// Eligible level-1 edge: (source id, target id, resolved name).
-type Seed = (u32, Option<u32>, Option<u32>);
+pub(crate) type Seed = (u32, Option<u32>, Option<u32>);
 
-struct Graph {
+pub(crate) struct Graph {
     /// Id string per interned id.
-    ids: Vec<String>,
+    pub(crate) ids: Vec<String>,
     /// Name string per name id.
-    names: Vec<String>,
+    pub(crate) names: Vec<String>,
     /// CSR adjacency over interned ids, scan order within each source.
-    adj_off: Vec<u32>,
-    adj: Vec<AdjEntry>,
+    pub(crate) adj_off: Vec<u32>,
+    pub(crate) adj: Vec<AdjEntry>,
     /// Eligible level-1 edges per kind, scan order within the kind.
-    seeds: Vec<Vec<Seed>>,
-    case2: Vec<Case2Hop>,
+    pub(crate) seeds: Vec<Vec<Seed>>,
+    pub(crate) case2: Vec<Case2Hop>,
 }
 
 impl Graph {
-    fn adjacency(&self, id: u32) -> &[AdjEntry] {
+    pub(crate) fn adjacency(&self, id: u32) -> &[AdjEntry] {
         let start = self.adj_off[id as usize] as usize;
         let end = self.adj_off[id as usize + 1] as usize;
         &self.adj[start..end]
@@ -230,7 +230,7 @@ impl Interner {
 }
 
 /// Read symbols and structural edges into interned, CSR-shaped graph data.
-fn load_graph(conn: &Connection) -> Result<Graph, String> {
+pub(crate) fn load_graph(conn: &Connection) -> Result<Graph, String> {
     let mut interner = Interner::default();
     let mut names: Vec<String> = Vec::new();
     let mut name_index: HashMap<String, u32> = HashMap::new();
