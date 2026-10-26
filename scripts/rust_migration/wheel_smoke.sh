@@ -66,7 +66,16 @@ EOF
 # --- fresh venv + install ------------------------------------------------------
 "$PY" -m venv "$WORK/venv" || fail "fresh venv"
 if [ -x "$WORK/venv/bin/python" ]; then VENV_BIN="$WORK/venv/bin"; else VENV_BIN="$WORK/venv/Scripts"; fi
-VENV_PY="$VENV_BIN/python"
+# Arguments passed to uv/pipx need the interpreter's real spelling (no
+# CreateProcess .exe appending outside direct exec); keep bash-exec uses working.
+if [ -e "$VENV_BIN/python" ]; then
+  VENV_PY="$VENV_BIN/python"
+elif [ -e "$VENV_BIN/python.exe" ]; then
+  VENV_PY="$VENV_BIN/python.exe"
+else
+  VENV_PY="$VENV_BIN/python3.exe"
+fi
+[ -x "$VENV_PY" ] || fail "venv python missing in $VENV_BIN"
 "$VENV_PY" -m pip install --quiet --disable-pip-version-check "$WHEEL" || fail "wheel install"
 # Resolve the installed executable's REAL spelling: msys ls reports the
 # extensionless name as existing next to cairn.exe (CreateProcess appends
