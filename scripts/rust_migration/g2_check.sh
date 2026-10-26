@@ -30,7 +30,14 @@ export PATH="$HOME/.cargo/bin:$PATH"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CORPUS="${1:-$REPO_ROOT}"
 WORKERS="${CAIRN_WORKERS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
-PY="$REPO_ROOT/.venv/bin/python"
+# Repo venv when present, else the active/PATH interpreter (containers).
+if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+  PY="$REPO_ROOT/.venv/bin/python"
+elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+  PY="$VIRTUAL_ENV/bin/python"
+else
+  PY="$(command -v python3 || command -v python)" || { echo "G2: no python interpreter" >&2; exit 1; }
+fi
 KG_DUMP="$REPO_ROOT/scripts/rust_migration/kg_dump.py"
 KG_NORMALIZE="$REPO_ROOT/scripts/rust_migration/kg_normalize.py"
 KG_DIFF="$REPO_ROOT/scripts/rust_migration/kg_diff.py"

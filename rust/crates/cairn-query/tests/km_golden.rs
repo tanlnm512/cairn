@@ -138,16 +138,20 @@ fn re_replace(pattern: &str, replacement: &str, text: &str) -> String {
 }
 
 fn normalize_text(text: &str, store_home: &Path) -> String {
-    // Path rules first: resolved + plain store-home forms (recorder variants).
+    // Slash-normalize first so one set of path spellings covers every platform;
+    // scrub the canonical (longer, resolved) form before the given store home.
+    let norm = if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.to_string()
+    };
     let canonical = store_home
         .canonicalize()
         .unwrap_or_else(|_| store_home.to_path_buf());
-    // Canonical (verbatim/longest) spellings first so shorter forms cannot
-    // leave a prefix behind.
-    let mut out = text.replace(canonical.to_string_lossy().as_ref(), "<STORE_HOME>");
     let canon = canonical.to_string_lossy().replace('\\', "/");
-    out = out.replace(&canon, "<STORE_HOME>");
-    out = out.replace(store_home.to_string_lossy().as_ref(), "<STORE_HOME>");
+    let home = store_home.to_string_lossy().replace('\\', "/");
+    let mut out = norm.replace(&canon, "<STORE_HOME>");
+    out = out.replace(&home, "<STORE_HOME>");
     out = re_replace(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?",
         "<ISO>",
@@ -157,9 +161,6 @@ fn normalize_text(text: &str, store_home: &Path) -> String {
     out = re_replace(r"\d{4}-\d{2}-\d{2}", "<DATE>", &out);
     out = re_replace(r"\b\d+\.\d+ ?m?s\b|\b\d+ ?ms\b", "<DUR>", &out);
     out = re_replace(r"\bjust now\b|\b\d+[smhd] old\b", "<AGE>", &out);
-    if cfg!(windows) {
-        out = out.replace('\\', "/");
-    }
     out = re_replace(r"\b[0-9a-f]{12}\b", "<ID>", &out);
     out = re_replace(r"([-_.])[0-9a-f]{6}\b", "${1}<ID6>", &out);
     Regex::new(r"\b\d+\.\d{5,}\b")
