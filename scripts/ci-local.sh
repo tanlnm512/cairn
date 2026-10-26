@@ -90,7 +90,26 @@ if [[ -z "${CI_LOCAL_INNER:-}" ]]; then
   esac
   RES_FLAGS=()
   [[ -n "${CI_LOCAL_CPUS:-}" ]] && RES_FLAGS+=(--cpus "$CI_LOCAL_CPUS")
-  [[ -n "${CI_LOCAL_MEMORY:-}" ]] && RES_FLAGS+=(--memory "$CI_LOCAL_MEMORY")
+  # Cargo jobs link whole-workspace test binaries; the default container
+  # memory gets the linker OOM-killed mid-link.
+  case "$JOB" in
+    rust|parity|smoke|build)
+      RES_FLAGS+=(--memory "${CI_LOCAL_MEMORY:-8G}") ;;
+    *)
+      [[ -n "${CI_LOCAL_MEMORY:-}" ]] && RES_FLAGS+=(--memory "$CI_LOCAL_MEMORY") ;;
+  esac
+
+  # GitHub's ubuntu runners carry lsof/fuser; the stock python image does not,
+  # and the daemon's db-holder verification refuses to act without them.
+  IMAGE_TAG="ci-local-python:$PY"
+  BUILD_DIR="$REPO/.cache/ci-local/build/$PY"
+  mkdir -p "$BUILD_DIR"
+  printf 'FROM python:%s-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends lsof psmisc procps && rm -rf /var/lib/apt/lists/*\n' "$PY" \
+    > "$BUILD_DIR/Containerfile"
+  if ! container image list 2>/dev/null | awk '{print $1":"$2}' | grep -qx "$IMAGE_TAG"; then
+    log "building derived image $IMAGE_TAG (github-runner parity tooling)"
+    container build --tag "$IMAGE_TAG" "$BUILD_DIR" >/dev/null
+  fi
 
   log "job=$JOB python=$PY arch=${CI_LOCAL_ARCH:-linux/arm64} repo=$REPO"
   exec container run --rm \
@@ -101,7 +120,7 @@ if [[ -z "${CI_LOCAL_INNER:-}" ]]; then
     -e CI_LOCAL_INNER=1 -e CI_LOCAL_JOB="$JOB" -e CI_LOCAL_PY="$PY" \
     -e CI_LOCAL_ARCH="${CI_LOCAL_ARCH:-linux/arm64}" \
     -e HOME="$MOUNT_POINT/$CACHE_REL/home" \
-    "python:${PY}-bookworm" \
+    "$IMAGE_TAG" \
     bash "$MOUNT_POINT/scripts/ci-local.sh"
 fi
 
@@ -155,10 +174,13 @@ ensure_cargo() {
   if ! command -v cargo >/dev/null 2>&1; then
     log "installing rust toolchain (CI: dtolnay/rust-toolchain)"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --default-toolchain stable --profile minimal >/dev/null 2>&1
+      | sh -s -- -y --default-toolchain stable --profile minimal \
+        --component rustfmt --component clippy >/dev/null 2>&1
   fi
   export PATH="$CARGO_HOME/bin:$PATH"
   command -v cargo >/dev/null 2>&1 || die "cargo unavailable (rustup failed)"
+  command -v cargo-fmt >/dev/null 2>&1 || rustup component add rustfmt >/dev/null 2>&1
+  command -v cargo-clippy >/dev/null 2>&1 || rustup component add clippy >/dev/null 2>&1
 }
 
 ensure_cargo_deny() {

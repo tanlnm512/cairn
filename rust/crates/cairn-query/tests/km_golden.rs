@@ -142,7 +142,11 @@ fn normalize_text(text: &str, store_home: &Path) -> String {
     let canonical = store_home
         .canonicalize()
         .unwrap_or_else(|_| store_home.to_path_buf());
+    // Canonical (verbatim/longest) spellings first so shorter forms cannot
+    // leave a prefix behind.
     let mut out = text.replace(canonical.to_string_lossy().as_ref(), "<STORE_HOME>");
+    let canon = canonical.to_string_lossy().replace('\\', "/");
+    out = out.replace(&canon, "<STORE_HOME>");
     out = out.replace(store_home.to_string_lossy().as_ref(), "<STORE_HOME>");
     out = re_replace(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?",

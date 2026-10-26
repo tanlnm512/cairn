@@ -245,7 +245,9 @@ fn read(bundle: &Bundle, task_id: &str) -> Result<Option<Task>, ToolError> {
         // an id escaping the bundle root or a missing file reads as not found
         Err(e)
             if e.0.starts_with("concept_id escapes bundle root")
-                || e.0.contains("No such file or directory") =>
+                // io NotFound text: Unix vs Windows phrasing
+                || e.0.contains("No such file or directory")
+                || e.0.contains("cannot find the file") =>
         {
             Ok(None)
         }
