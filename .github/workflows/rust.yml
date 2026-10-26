@@ -102,6 +102,9 @@ jobs:
   build-release:
     name: release build (${{ matrix.target }})
     needs: [fmt, clippy, test, deny]
+    # Cross-target compile proof is release-shaped; clippy+test already
+    # compile the workspace on every PR.
+    if: github.event_name == 'push' || github.event_name == 'merge_group'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
