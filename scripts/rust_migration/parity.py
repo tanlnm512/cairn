@@ -27,6 +27,8 @@ import golden_record as gr  # reuse: golden client, normalizer, diff oracle
 SCHEMA = gr.SCHEMA
 DEFAULT_OUT_DIR = REPO_ROOT / "rust" / "golden" / "mcp"
 RUST_WORKSPACE = REPO_ROOT / "rust"
+# Cargo target dir; CARGO_TARGET_DIR isolates container builds from host artifacts.
+TARGET_DIR = Path(os.environ.get("CARGO_TARGET_DIR", RUST_WORKSPACE / "target"))
 CARGO_BIN = Path.home() / ".cargo" / "bin"
 SERVE_EXAMPLE = "serve_search"
 SERVE_ADDR_RE = re.compile(r"http://127\.0\.0\.1:(\d+)/mcp")
@@ -189,7 +191,7 @@ def ensure_serve_binary() -> Path:
          "--example", SERVE_EXAMPLE],
         cwd=str(RUST_WORKSPACE), check=True, env=env,
     )
-    return RUST_WORKSPACE / "target" / "release" / "examples" / SERVE_EXAMPLE
+    return TARGET_DIR / "release" / "examples" / SERVE_EXAMPLE
 
 
 # --- volatility overrides (burn-down classifications) ------------------------

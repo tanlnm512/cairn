@@ -23,7 +23,7 @@ import golden_record as gr  # reuse: path scrub rules + text normalizer
 import parity  # reuse: CARGO_BIN, RUST_WORKSPACE, load_pinned_store
 
 DB_NAME = parity.DB_NAME
-RUST_BIN = parity.RUST_WORKSPACE / "target" / "release" / "cairn"
+RUST_BIN = parity.TARGET_DIR / "release" / "cairn"
 CMD_TIMEOUT_S = 120.0
 SCHEMA = "cairn-rust-golden-cli/1"
 FIXTURE_DIR = REPO_ROOT / "rust" / "golden" / "cli"

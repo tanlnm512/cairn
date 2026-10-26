@@ -104,10 +104,8 @@ fn replace_db_file(staged: &Path, db: &Path) -> Result<(), String> {
     {
         let aside = db.with_extension("kg.replaced");
         let _ = std::fs::remove_file(&aside);
-        if db.exists() {
-            if std::fs::rename(db, &aside).is_err() {
-                return copy_into_place(staged, db);
-            }
+        if db.exists() && std::fs::rename(db, &aside).is_err() {
+            return copy_into_place(staged, db);
         }
         if let Err(e) = std::fs::rename(staged, db) {
             let _ = std::fs::rename(&aside, db);

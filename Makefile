@@ -1,4 +1,4 @@
-.PHONY: dist evals ci-local ci-local-all verify-no-code-change audit-status comment-style comment-style-shrink verify-protection release help
+.PHONY: dist evals ci-local ci-local-all ci-local-rust ci-local-parity verify-no-code-change audit-status comment-style comment-style-shrink verify-protection release help
 
 # Build the bin wheel + sdist into dist/ for the HOST platform only (the
 # release workflow's maturin matrix builds the full platform set).
@@ -24,7 +24,7 @@ evals:
 # has. Catches non-hermetic tests (green locally only because of the dev
 # machine) BEFORE pushing. Mirrors .github/workflows/ci.yml job-by-job;
 # venv/pip/pre-commit caches persist under .cache/ci-local/ (gitignored).
-# Jobs: scripts/ci-local.sh [test|test-all|security|precommit|build]
+# Jobs: scripts/ci-local.sh [test|test-all|security|precommit|build|rust|parity|smoke]
 # CI_LOCAL_ARCH=linux/amd64 runs the x86-64 image via Rosetta for runner parity.
 PYTHON_VERSION ?= 3.12
 ci-local:
@@ -36,6 +36,16 @@ ci-local-all:
 	scripts/ci-local.sh test-all
 	@echo ""
 	@echo "clean-room matrix green (3.10-3.14)"
+
+ci-local-rust:
+	scripts/ci-local.sh rust
+	@echo ""
+	@echo "clean-room rust gates green (fmt/clippy/test/deny)"
+
+ci-local-parity:
+	scripts/ci-local.sh parity
+	@echo ""
+	@echo "clean-room parity gates green (self replay + golden + G2 base)"
 
 # Verify a "comments/docstrings-only" change didn't alter executable code.
 # Compares AST (docstrings blanked) of changed .py files. Run before staging

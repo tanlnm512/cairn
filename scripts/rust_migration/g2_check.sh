@@ -36,7 +36,7 @@ KG_NORMALIZE="$REPO_ROOT/scripts/rust_migration/kg_normalize.py"
 KG_DIFF="$REPO_ROOT/scripts/rust_migration/kg_diff.py"
 FROZEN_NORM="$REPO_ROOT/rust/golden/dump/self-corpus.norm.txt"
 PINNED_CORPUS="$REPO_ROOT/rust/golden/stores/self/corpus"
-RS_CAIRN="$REPO_ROOT/rust/target/release/cairn"
+RS_CAIRN="${CAIRN_RUST_BIN:-$REPO_ROOT/rust/target/release/cairn}"
 WORK="$(mktemp -d /tmp/cairn-g2.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 

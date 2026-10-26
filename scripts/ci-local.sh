@@ -14,6 +14,12 @@
 #   scripts/ci-local.sh security               # pip-audit (hard) + bandit (advisory)
 #   scripts/ci-local.sh precommit              # pre-commit run --all-files
 #   scripts/ci-local.sh build                  # wheel + sdist + smoke (needs cargo)
+#   scripts/ci-local.sh rust                   # rust.yml ubuntu legs: fmt/clippy/test/deny
+#   scripts/ci-local.sh parity                 # rust-parity.yml PR leg: oracles + G2 base
+#   scripts/ci-local.sh smoke                  # rust-parity.yml nightly wheel smoke
+#
+# Not mirrored (GitHub-only): PR title, dependency review, windows-latest,
+# macos runners, container/Dockerfile build, review.yml pre-submit.
 #
 # Environment:
 #   CI_LOCAL_ARCH     linux/arm64 (default, native) or linux/amd64
@@ -54,8 +60,8 @@ if [[ -z "${CI_LOCAL_INNER:-}" ]]; then
   PY="${2:-${PYTHON_VERSION:-3.12}}"
   case "$JOB" in
     -h|--help|help) usage 0 ;;
-    test|test-all|security|precommit|build) ;;
-    *) die "unknown job '$JOB' (test|test-all|security|precommit|build)" ;;
+    test|test-all|security|precommit|build|rust|parity|smoke) ;;
+    *) die "unknown job '$JOB' (test|test-all|security|precommit|build|rust|parity|smoke)" ;;
   esac
 
   # Boot the container system service if needed (idempotent, ~10s cold).
@@ -93,6 +99,7 @@ if [[ -z "${CI_LOCAL_INNER:-}" ]]; then
     --uid "$(id -u)" --gid "$(id -g)" \
     "${ARCH_FLAGS[@]}" "${RES_FLAGS[@]+"${RES_FLAGS[@]}"}" \
     -e CI_LOCAL_INNER=1 -e CI_LOCAL_JOB="$JOB" -e CI_LOCAL_PY="$PY" \
+    -e CI_LOCAL_ARCH="${CI_LOCAL_ARCH:-linux/arm64}" \
     -e HOME="$MOUNT_POINT/$CACHE_REL/home" \
     "python:${PY}-bookworm" \
     bash "$MOUNT_POINT/scripts/ci-local.sh"
@@ -125,10 +132,40 @@ command -v uv >/dev/null 2>&1 || die "uv unavailable (installer failed)"
 
 export UV_PYTHON="$PY"
 export UV_PROJECT_ENVIRONMENT="$CACHE/venv-$PY"
+# uv pip/run resolve VIRTUAL_ENV before UV_PROJECT_ENVIRONMENT; without this
+# they discover the bind-mounted host .venv, whose python symlink is a
+# different-platform binary inside the container.
+export VIRTUAL_ENV="$UV_PROJECT_ENVIRONMENT"
 
 sync_dev() {
   log "uv sync --extra dev (CI: Install step, from the committed uv.lock)"
   cd "$MOUNT_POINT" && uv sync --extra dev
+}
+
+# Rust in the container: toolchain + cargo-deny live in the cache; the cargo
+# target dir is per-arch and OUTSIDE the bind-mounted rust/target so container
+# (linux) builds never thrash the host's darwin artifacts. The oracle scripts
+# honor CARGO_TARGET_DIR / CAIRN_RUST_BIN.
+ARCH_TAG="${CI_LOCAL_ARCH##*/}"
+export CARGO_HOME="$CACHE/cargo-home"
+export CARGO_TARGET_DIR="$CACHE/cargo-target-$ARCH_TAG"
+export CAIRN_RUST_BIN="$CARGO_TARGET_DIR/release/cairn"
+
+ensure_cargo() {
+  if ! command -v cargo >/dev/null 2>&1; then
+    log "installing rust toolchain (CI: dtolnay/rust-toolchain)"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --default-toolchain stable --profile minimal >/dev/null 2>&1
+  fi
+  export PATH="$CARGO_HOME/bin:$PATH"
+  command -v cargo >/dev/null 2>&1 || die "cargo unavailable (rustup failed)"
+}
+
+ensure_cargo_deny() {
+  command -v cargo-deny >/dev/null 2>&1 && return 0
+  log "installing cargo-deny (CI: taiki-e/install-action)"
+  cargo install --locked cargo-deny >/dev/null 2>&1 \
+    || die "cargo-deny install failed"
 }
 
 cd "$MOUNT_POINT"
@@ -173,17 +210,50 @@ case "$JOB" in
   build)
     # ci.yml: build job -- distributions + installed-product smoke (no
     # upload). maturin compiles the engine, so the container needs cargo.
-    command -v cargo >/dev/null 2>&1 || {
-      log "installing rust toolchain (maturin builds the engine from source)"
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
-      source "$HOME/.cargo/env"
-    }
+    ensure_cargo
     sync_dev
     log "python -m build (CI: Build distributions)"
     uv run --no-sync python -m build
     log "installed-product smoke (CI: Smoke the built wheel)"
     uv pip install dist/*.whl
     uv run cairn --version
+    ;;
+
+  rust)
+    # rust.yml ubuntu legs -- fmt, clippy, workspace tests, cargo-deny.
+    ensure_cargo
+    log "cargo fmt (rust.yml: fmt)"
+    cargo fmt --all --check
+    log "cargo clippy -D warnings (rust.yml: clippy)"
+    cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
+    log "cargo test --workspace (rust.yml: test)"
+    cargo test --manifest-path Cargo.toml --workspace
+    log "cargo deny (rust.yml: deny)"
+    ensure_cargo_deny
+    cargo deny --config rust/deny.toml check advisories licenses
+    ;;
+
+  parity)
+    # rust-parity.yml PR leg -- engine-free oracle test, parity self,
+    # cli golden, G2 base; the scripts build the release binaries themselves
+    # into the isolated target dir.
+    ensure_cargo
+    sync_dev
+    log "engine-free parity oracle test (rust-parity.yml)"
+    uv run --no-sync python -m pytest tests/test_parity_replay_engine_free.py -v
+    log "parity replay self + cli golden (scripts build the binaries)"
+    uv run --no-sync python scripts/rust_migration/parity.py --store self
+    uv run --no-sync python scripts/rust_migration/cli_golden.py
+    log "G2 base leg (rust-parity.yml)"
+    bash scripts/rust_migration/g2_check.sh
+    ;;
+
+  smoke)
+    # rust-parity.yml nightly wheel-smoke leg, through the bin-wheel script.
+    ensure_cargo
+    sync_dev
+    log "wheel smoke (rust-parity.yml: wheel-smoke)"
+    bash scripts/rust_migration/wheel_smoke.sh
     ;;
 
   *) die "inner: unknown job '$JOB'" ;;
