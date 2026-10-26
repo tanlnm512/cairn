@@ -17,7 +17,11 @@ RUST_BIN = REPO_ROOT / "rust" / "target" / "release" / "cairn"
 
 
 def _real_home() -> Path:
-    return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    try:
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except KeyError:
+        # uid without a passwd entry (mapped-uid containers): fall back to HOME
+        return Path(os.environ.get("HOME", "/root"))
 
 
 def _cargo_dir() -> Path | None:
