@@ -68,7 +68,14 @@ EOF
 if [ -x "$WORK/venv/bin/python" ]; then VENV_BIN="$WORK/venv/bin"; else VENV_BIN="$WORK/venv/Scripts"; fi
 VENV_PY="$VENV_BIN/python"
 "$VENV_PY" -m pip install --quiet --disable-pip-version-check "$WHEEL" || fail "wheel install"
-CAIRN="$(ls "$VENV_BIN"/cairn "$VENV_BIN"/cairn.exe 2>/dev/null | head -n1)"
+# Resolve the installed executable's REAL spelling: msys ls reports the
+# extensionless name as existing next to cairn.exe (CreateProcess appends
+# .exe, plain open() does not), so prefer the .exe when present.
+if [ -e "$VENV_BIN/cairn.exe" ]; then
+  CAIRN="$VENV_BIN/cairn.exe"
+else
+  CAIRN="$VENV_BIN/cairn"
+fi
 [ -n "$CAIRN" ] && [ -x "$CAIRN" ] || fail "cairn executable missing after install in $VENV_BIN"
 
 export CAIRN_HOME="$WORK/home"
