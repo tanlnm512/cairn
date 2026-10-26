@@ -11,13 +11,15 @@ Stack, build and test runners, and gates. Cited from `Cargo.toml`,
   patch), tree-sitter with 15 grammar crates, rayon, clap, notify, prost,
   minijinja.
 - Release profile strips symbols (`[profile.release] strip = true`).
-- Python ≥ 3.10 only for the PyPI launcher, the two sidecars and dev
-  tooling. The package has no runtime dependencies; optional extras:
-  `ingest` (pymupdf4llm, mammoth, markdownify) and `graph-analytics`
-  (networkx).
-- Wheel build: setuptools with `setup.py` forcing a platform tag
-  (`py3-none-<platform>`) around the injected binary; the sdist carries no
-  binary.
+- Python ≥ 3.10 only for dev tooling and the legacy `cairn.communities`
+  module (`graph-analytics` extra: networkx); the optional PDF converter is
+  the separate `cairn-intel-ingest` package. The wheel has no runtime
+  dependencies.
+- Wheel build: maturin (`[tool.maturin] bindings = "bin"` over
+  `rust/crates/cairn-cli/Cargo.toml`) packages the engine binary as the
+  `cairn` executable, tagged `py3-none-<platform>` with no Python module
+  inside; the sdist carries the cargo workspace including the vendored
+  sqlite-vec and grammar sources.
 
 ## Build and test
 - `cargo build --release -p cairn-cli` (from `rust/`, or pass

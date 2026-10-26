@@ -215,3 +215,43 @@ the retirement and pointing at the indexer's edge resolution;
 `--lsp=false` remains a no-op equal to the default (it requests nothing).
 Pinned by `rust/crates/cairn-cli/tests/build_lsp_retired.rs`
 (`build_lsp_refuses_and_names_the_retirement`).
+
+## D-R08 — maturin bin packaging for the PyPI wheel (Phase 4)
+
+**Requirement**: FR-004, FR-005, FR-006, NFR-001 (US1, US3). Supersedes the
+exec-shim binding (D-011: the wheel is a Python console script that execs a
+binary injected into `src/cairn/_bin/`).
+
+**Decision**: `cairn-intel` is built by maturin with `bindings = "bin"` over
+`rust/crates/cairn-cli/Cargo.toml` (`[tool.maturin]` in `pyproject.toml`).
+The wheel's only payload is the engine binary, installed as the `cairn`
+executable and tagged `py3-none-<platform>`; no Python module ships. The
+launcher (`console.py`, `paths.py`), `setup.py`, `MANIFEST.in` and the `_bin/`
+injection are deleted. `release.yml` runs `PyO3/maturin-action` over the
+plan's seven targets — the four linux legs cross-build on one ubuntu host
+through zig (`--zig`, manylinux `auto` / `musllinux_1_2`), macOS x86_64 on
+`macos-15-intel`, arm64 on `macos-latest`, Windows on `windows-latest` as a
+non-blocking leg until the engine builds there — plus one `maturin sdist`
+job; Trusted Publishing is unchanged. The sdist includes
+`rust/vendor/sqlite-vec/**/*` explicitly: maturin's sdist walker follows
+workspace members and path dependencies but not `[patch.crates-io]` paths,
+so without the include the sdist's manifest pointed at a missing crate.
+
+**Why**: every `cairn` run from a PyPI install paid an interpreter start to
+`execv` the binary; platforms without an injected binary installed a launcher
+that exited "no engine binary"; and one artifact needed two toolchains
+(setuptools platform-tag shim + cibuildwheel + per-leg binary copy). With the
+sidecars native (D-R01, D-R02–D-R04) the wheel has nothing Python left to
+carry. The shape is the one `ruff` ships on PyPI, so pip, pipx and `uv tool`
+all install it; `wheel_smoke.sh` probes all three.
+
+**Cost**: maturin is a build-time dependency only (`[build-system]`; no
+runtime dependency). Installing the project now means compiling the engine,
+so `[tool.uv] package = false` keeps `uv sync` from building it and pytest
+reaches the remaining `src/cairn` modules through `pythonpath`; the ci.yml
+packaging canary compiles the engine (40-minute budget, rust-cache). Only the
+legs whose runner can install their own wheel (x86_64 linux-gnu, both macOS)
+run the installed-product smoke; the cross-built aarch64 and musl wheels are
+not smoked on their runner. Measured host wheel (macOS arm64): 12,697,546
+bytes, payload the 58,088,704-byte stripped engine — far under the 100 MB
+limit (NFR-001), so no `lto`/`codegen-units` tuning.

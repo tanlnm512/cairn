@@ -10,8 +10,8 @@ package. Every path below was read from the tree; re-verify with
   (`Cargo.toml` `[workspace.package]`, `pyproject.toml` `[project]`).
 - Channels: GitHub release tarballs, a Homebrew tap and crates.io/binstall
   (`.github/workflows/release-rust.yml`), and the PyPI wheel `cairn-intel`
-  (`.github/workflows/release.yml`). The wheel is a launcher around the
-  bundled binary.
+  (`.github/workflows/release.yml`). The wheel is the engine binary itself
+  (maturin bin wheel, no Python module).
 
 ## Cargo workspace (`rust/`)
 | Crate | Role |
@@ -36,9 +36,7 @@ Vendored: `rust/vendor/tree-sitter-dart` (workspace member) and
 ## Python package (`src/cairn/`)
 | File | Role |
 |---|---|
-| `console.py` | PyPI console script: execs the engine binary; runs `communities` in-process |
-| `paths.py` | engine discovery: `CAIRN_RUST_BIN`, then the bundled `_bin/cairn`, then a native `cairn` on PATH (non-Windows) |
-| `communities.py` | `cairn communities` sidecar: seeded Louvain over structural edges (networkx, `[graph-analytics]` extra) |
+| `communities.py` | legacy `cairn communities` sidecar module: seeded Louvain over structural edges (networkx, `[graph-analytics]` extra); the engine computes communities natively |
 
 ## Tests and oracles
 - Rust: unit tests in each crate, integration suites under

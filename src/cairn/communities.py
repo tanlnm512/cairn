@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import sqlite3
 import subprocess
 import sys
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .paths import rust_bin
+
+def rust_bin() -> Optional[str]:
+    """The engine binary: `CAIRN_RUST_BIN`, else `cairn` on PATH; None when neither resolves."""
+    return os.environ.get("CAIRN_RUST_BIN") or shutil.which("cairn")
+
 
 LOUVAIN_SEED = 0
 DEFAULT_TOP_K = 10

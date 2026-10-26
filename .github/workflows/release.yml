@@ -26,163 +26,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build wheel + sdist (${{ matrix.os }})
+  # Every wheel is the cairn-cli binary built by maturin straight from the
+  # cargo workspace (`[tool.maturin] bindings = "bin"` in pyproject.toml):
+  # tagged py3-none-<platform>, no Python module inside. One leg per rust
+  # target on its platform's runner family; the linux legs cross-build on the
+  # host through zig (no QEMU, no container), so one ubuntu runner covers
+  # glibc and musl on both arches.
+  wheels:
+    name: Wheel (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    # The Windows engine does not build yet: its leg runs but cannot fail the
+    # release until it does.
+    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,   manylinux: auto,          zig: "--zig", smoke: true }
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-gnu,  manylinux: auto,          zig: "--zig", smoke: false }
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-musl,  manylinux: musllinux_1_2, zig: "--zig", smoke: false }
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-musl, manylinux: musllinux_1_2, zig: "--zig", smoke: false }
+          - { os: macos-15-intel, target: x86_64-apple-darwin,        manylinux: auto,          zig: "",      smoke: true }
+          - { os: macos-latest,   target: aarch64-apple-darwin,       manylinux: auto,          zig: "",      smoke: true }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,     manylinux: auto,          zig: "",      smoke: false, experimental: true }
     steps:
       - uses: actions/checkout@v5
 
-      # Linux aarch64 legs build under QEMU emulation inside cibuildwheel's
-      # docker containers (D-008).
-      - name: Set up QEMU
-        if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@v3
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
         with:
-          platforms: all
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist ${{ matrix.zig }}
 
-      # The sdist is built once, on the linux leg; every leg adds its
-      # platform wheels below.
-      - name: Set up Python
-        if: runner.os == 'Linux'
-        uses: actions/setup-python@v6
+      # Installed-product smoke on the legs whose runner can install its own
+      # wheel; cross-built arches and musl wheels cannot be installed here.
+      - uses: actions/setup-python@v6
+        if: matrix.smoke
         with:
           python-version: "3.12"
-
-      - name: Set up uv
-        if: runner.os == 'Linux'
-        uses: astral-sh/setup-uv@v6
-
-      - name: Build sdist
-        if: runner.os == 'Linux'
-        run: uv build --sdist
-
-      # --- Rust engine binary for the bundled-binary wheels -------------------
-      # Runs after the sdist build so the sdist stays binary-free. The macOS
-      # arm64/x86_64 wheels bundle the matching darwin binary; the linux
-      # wheels (manylinux and musllinux alike) bundle the musl-static Linux
-      # binaries -- the same per-target bytes the tarball channel ships,
-      # cross-built like release-rust.yml (static binaries exec on glibc).
-      # Windows has no engine target yet: the launcher points Windows users
-      # at WSL until a native Windows engine ships.
-
-      - name: Set up Rust (darwin targets)
-        if: runner.os == 'macOS'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-
-      - uses: Swatinem/rust-cache@v2
-        if: runner.os == 'macOS'
-        with:
-          workspaces: rust
-          key: wheel-darwin
-
-      - name: Build rust engines (darwin)
-        if: runner.os == 'macOS'
-        working-directory: rust
-        run: |
-          cargo build --release --target aarch64-apple-darwin -p cairn-cli
-          cargo build --release --target x86_64-apple-darwin -p cairn-cli
-
-      - name: Set up Rust (linux musl targets)
-        if: runner.os == 'Linux'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
-
-      - uses: Swatinem/rust-cache@v2
-        if: runner.os == 'Linux'
-        with:
-          workspaces: rust
-          key: wheel-linux-musl
-
-      - name: Install cargo-zigbuild
-        if: runner.os == 'Linux'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-zigbuild
-
-      # cargo-zigbuild discovers this via `python3 -m ziglang`; install-action
-      # has no zig tool.
-      - name: Install zig (ziglang)
-        if: runner.os == 'Linux'
-        run: python3 -m pip install --break-system-packages ziglang
-
-      - name: Build rust engines (musl-static)
-        if: runner.os == 'Linux'
-        working-directory: rust
-        run: |
-          # zigbuild compiles on the host with zig as the toolchain: no
-          # container, so no glibc boundary between runner and cross image.
-          cargo zigbuild --release --target x86_64-unknown-linux-musl -p cairn-cli
-          cargo zigbuild --release --target aarch64-unknown-linux-musl -p cairn-cli
-
-      - name: Verify static link (musl)
-        if: runner.os == 'Linux'
-        run: |
-          for tgt in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-            out=$(file "rust/target/$tgt/release/cairn")
-            echo "$out"
-            echo "$out" | grep -Eq 'statically linked|static-pie linked'
-          done
-
-      # The package is pure Python; setup.py tags the wheel py3-none-<platform>
-      # because it carries the platform binary, so one build per platform
-      # (cp310-*) covers every supported interpreter. Supported: macOS arm64 +
-      # x86_64 (x86_64 builds on the arm64 runner through Rosetta), manylinux
-      # and musllinux x86_64 + aarch64 -- the musllinux legs reuse the static
-      # binaries the linux before-build already copies per arch. Pinned
-      # exactly: cibuildwheel minor releases add/remove platforms (their FAQ
-      # mandates exact pins).
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v4.2.0
-        with:
-          output-dir: wheelhouse
-        env:
-          CIBW_BUILD: "cp310-*"
-          CIBW_ARCHS_LINUX: "x86_64 aarch64"
-          CIBW_ARCHS_MACOS: "arm64 x86_64"
-          # Copy the matching musl binary into package data inside each arch's
-          # build container (the repo root is the container's /project, so the
-          # host-built binaries at rust/target/ are visible); a missing or
-          # wrong-arch binary fails the wheel build loudly.
-          CIBW_BEFORE_BUILD_LINUX: |
-            set -eux
-            case "$(uname -m)" in
-              x86_64) tgt=x86_64-unknown-linux-musl ;;
-              aarch64) tgt=aarch64-unknown-linux-musl ;;
-              *) echo "unexpected arch: $(uname -m)" >&2; exit 1 ;;
-            esac
-            mkdir -p src/cairn/_bin
-            cp "rust/target/$tgt/release/cairn" src/cairn/_bin/cairn
-            chmod 755 src/cairn/_bin/cairn
-            test -x src/cairn/_bin/cairn
-          # Copy the matching darwin binary into package data per wheel,
-          # inside each arch's build. Both wheels build on the arm64 runner
-          # and before-build runs untranslated, so the wheel arch is read from
-          # cibuildwheel's build identifier, never from uname -m. A missing or
-          # wrong-arch binary fails the wheel build loudly.
-          CIBW_BEFORE_BUILD_MACOS: |
-            set -eux
-            case "$CIBUILDWHEEL_BUILD_IDENTIFIER" in
-              *-macosx_arm64) tgt=aarch64-apple-darwin; arch=arm64 ;;
-              *-macosx_x86_64) tgt=x86_64-apple-darwin; arch=x86_64 ;;
-              *) echo "unexpected macOS wheel: $CIBUILDWHEEL_BUILD_IDENTIFIER" >&2; exit 1 ;;
-            esac
-            mkdir -p src/cairn/_bin
-            cp "rust/target/$tgt/release/cairn" src/cairn/_bin/cairn
-            chmod 755 src/cairn/_bin/cairn
-            test -x src/cairn/_bin/cairn
-            file src/cairn/_bin/cairn | grep -q "$arch"
-          # Smoke-test every wheel: the bundled binary is discoverable and the
-          # console script execs it.
-          CIBW_TEST_COMMAND: >-
-            python -c "from cairn import paths; assert paths.bundled_binary() is not None"
-            && cairn --version
+      - uses: astral-sh/setup-uv@v10.1.0
+        if: matrix.smoke
+      - name: Smoke the built wheel
+        if: matrix.smoke
+        run: bash scripts/rust_migration/wheel_smoke.sh dist/*.whl
 
       # Unique artifact name per upload -- upload-artifact rejects a
       # duplicate name within one job (409), and same-name merging across
@@ -190,12 +77,24 @@ jobs:
       # dist-* with merge-multiple.
       - uses: actions/upload-artifact@v6
         with:
-          name: dist-wheels-${{ matrix.os }}
-          path: wheelhouse/
+          name: dist-wheel-${{ matrix.target }}
+          path: dist/
 
-      - name: Upload sdist
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v6
+  # The sdist carries the cargo workspace (crates, vendored sqlite-vec and
+  # grammar sources, lockfile) so `pip install --no-binary cairn-intel`
+  # compiles the engine with a Rust toolchain.
+  sdist:
+    name: Source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v6
         with:
           name: dist-sdist
           path: dist/
@@ -203,7 +102,7 @@ jobs:
   publish-pypi:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: build
+    needs: [wheels, sdist]
     environment:
       name: pypi             # must match the Trusted Publisher environment name
       url: https://pypi.org/project/cairn-intel/

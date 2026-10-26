@@ -265,16 +265,16 @@ jobs:
 
 
   # Packaging canary, MAIN PUSHES ONLY: verifies `python -m build` (sdist +
-  # wheel) stays green on every merge so packaging breakage surfaces between
-  # releases, never at tag time (release.yml builds the real multi-platform
-  # wheels there). PRs skip it deliberately -- their wheel-build cost buys no
-  # signal the test legs don't already give, and the canary still runs on the
-  # merge commit itself.
+  # bin wheel, maturin backend) stays green on every merge so packaging
+  # breakage surfaces between releases, never at tag time (release.yml builds
+  # the real multi-platform wheels there). PRs skip it deliberately -- the
+  # engine compile buys no signal the test legs don't already give, and the
+  # canary still runs on the merge commit itself.
   build:
     name: Build wheel + sdist
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 40
     needs: test
     steps:
       - uses: actions/checkout@v5
@@ -283,16 +283,20 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v10.1.0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> rust/target"
 
       - name: Build distributions
         run: |
           uv sync --extra dev
           uv run --no-sync python -m build
 
-      - name: Verify the wheel imports
-        run: |
-          uv pip install --python .venv/bin/python dist/*.whl
-          uv run --no-sync python -c "import cairn; print('ok')"
+      # The installed-product smoke proves the wheel is the engine binary
+      # (no Python module inside) and runs from a fresh venv.
+      - name: Smoke the built wheel
+        run: bash scripts/rust_migration/wheel_smoke.sh dist/*.whl
 
       - uses: actions/upload-artifact@v6
         with:

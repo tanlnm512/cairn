@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Native document conversion in the engine (rust-only spec, FR-002/FR-003): `knowledge ingest --file` converts `.docx` to markdown (headings, paragraphs, emphasis, lists, tables, links) and extracts `.pdf` text with no Python present; the optional high-fidelity PDF converter moved to its own `cairn-intel-ingest` package (`pip install cairn-intel-ingest`) and is used automatically when importable, keeping the AGPL dependency (pymupdf4llm) out of the engine; the `cairn-intel[ingest]` extra is retired.
 
+### Changed
+- The PyPI wheel is the engine binary (rust-only spec, FR-004/FR-005/FR-006): maturin builds `cairn-intel` from the cargo workspace with the native `cairn` executable as its only payload (`py3-none-<platform>`, no Python launcher or module), so `pip install`, `pipx install` and `uv tool install cairn-intel` run the engine directly; wheels ship for manylinux and musllinux x86_64/aarch64 and macOS x86_64/arm64, the sdist compiles the engine with a Rust toolchain (vendored sqlite-vec and grammar sources included), and `scripts/rust_migration/wheel_smoke.sh` probes the installed product on each native release leg.
+
 ## [0.23.1] - 2026-10-25
 ### Added
 - PyPI wheels bundle the rust engine binary (spec D-011, exec-shim binding): the daemon defaults to rust when the bundled binary is present (`CAIRN_RUST_BIN` env > bundled package path > PATH; the python fallback and `CAIRN_DAEMON_IMPL` precedence are unchanged), the release pipeline injects the per-platform binary into the wheel builds while the sdist stays binary-free, and `scripts/rust_migration/wheel_smoke.sh` proves the installed product end to end (fresh venv, C-4 machine contracts, binary discovery).

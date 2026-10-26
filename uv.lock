@@ -150,7 +150,7 @@ filecache = [
 [[package]]
 name = "cairn-intel"
 version = "0.23.1"
-source = { editable = "." }
+source = { virtual = "." }
 
 [package.optional-dependencies]
 dev = [

@@ -1,11 +1,11 @@
 [build-system]
-requires = ["setuptools>=64.0"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.15,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "cairn-intel"
 version = "0.23.1"
-description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory (deprecated: install the standalone cairn binary instead; see README)"
+description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -25,8 +25,7 @@ classifiers = [
     "Topic :: Software Development",
     "Topic :: Software Development :: Libraries",
 ]
-# The package is the console-script launcher for the bundled engine binary plus
-# the sidecars below; the launcher itself needs nothing beyond the stdlib.
+# The wheel is the engine binary: nothing Python-side at runtime.
 dependencies = []
 
 [project.optional-dependencies]
@@ -62,31 +61,32 @@ dev = [
 # optional high-fidelity PDF converter lives in its own package at
 # packaging/cairn-intel-ingest (pip install cairn-intel-ingest).
 
-# Symbol-community analytics sidecar (`cairn communities`, cairn.communities):
-# Louvain partitioning via networkx. Opt-in because the engine never needs it;
-# the import is lazy and absence fails with an actionable install hint. Floor
-# 3.4 keeps `louvain_communities(seed=...)` available on every supported arm.
+# networkx backs the legacy cairn.communities module (lazy import; the engine
+# computes communities natively). Floor 3.4 keeps `louvain_communities(seed=...)`.
 graph-analytics = [
     "networkx>=3.4",
 ]
 
-[project.scripts]
-cairn = "cairn.console:main"
-
 [project.urls]
 Homepage = "https://github.com/tanlnm512/cairn"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+# The wheel is the cairn-cli binary installed as the `cairn` executable
+# (py3-none-<platform>); the sdist carries the cargo workspace. The vendored
+# sqlite-vec is reached through [patch.crates-io], which maturin's sdist
+# walker does not follow, so it is included explicitly.
+[tool.maturin]
+bindings = "bin"
+manifest-path = "rust/crates/cairn-cli/Cargo.toml"
+include = [{ path = "rust/vendor/sqlite-vec/**/*", format = "sdist" }]
 
-[tool.setuptools.package-data]
-# Injected engine binary: release/wheel builds copy the platform binary into
-# src/cairn/_bin/ immediately before packaging; the tree never commits it
-# (gitignored) and MANIFEST.in keeps it out of the sdist.
-"cairn" = ["_bin/*"]
+# Installing the project means compiling the engine, so uv manages only the
+# dev/extras environment; tests import the legacy src/ modules via pythonpath.
+[tool.uv]
+package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 markers = [
     "real_env: opts a test out of the suite-wide _hermetic_env fixture (justify in a comment)",
     # The infra tier is CI selection, NOT a quarantine: every marked test still
