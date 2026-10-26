@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-10-26
+### Fixed
+- The maturin sdist carries the declared `LICENSE` file (PyPI rejected the 0.24.0 sdist with `License-File LICENSE does not exist`); the 0.24.0 wheels already on PyPI are complete and unaffected, so source builds (`pip install --no-binary`) work again from 0.24.1. Release-tooling fixes that surfaced during the 0.24.0 Windows leg ride along: `wheel_smoke.sh` resolves the installed engine and the venv interpreter by their real `.exe` spellings before the extensionless forms (msys `ls`/`stat` report the extensionless name as existing beside the `.exe`, which direct execution tolerates and argument passing does not).
+
 ## [0.24.0] - 2026-10-26
 ### Added
 - Native `cairn communities` (rust-only spec, FR-001, decision D-R01): a seeded, deterministic Louvain partition computed in the engine over the structural edge kinds and weights the networkx sidecar used, writing the same `communities` and `symbol_communities` tables with the same CLI flags (`--db`, `--top-k`) and output shape; acceptance is property-based — the same seed always yields the same partition and fixture modularity is at least the networkx result within 1e-6 — pinned by owner tests and a cli_golden case.

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "cairn-intel"
-version = "0.24.0"
+version = "0.24.1"
 description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory"
 readme = "README.md"
 license = "MIT"
@@ -63,7 +63,10 @@ Homepage = "https://github.com/tanlnm512/cairn"
 [tool.maturin]
 bindings = "bin"
 manifest-path = "rust/crates/cairn-cli/Cargo.toml"
-include = [{ path = "rust/vendor/sqlite-vec/**/*", format = "sdist" }]
+include = [
+    { path = "LICENSE", format = "sdist" },
+    { path = "rust/vendor/sqlite-vec/**/*", format = "sdist" },
+]
 
 # Installing the project means compiling the engine, so uv manages only the
 # dev environment.
@@ -117,7 +120,7 @@ select = ["F"]
 # The custom template (.cz_templates/keepachangelog.j2) renders that draft in
 # the existing `## [X.Y.Z] - YYYY-MM-DD` format rather than commitizen's
 # default `## X.Y.Z (YYYY-MM-DD)`.
-version = "0.24.0"
+version = "0.24.1"
 version_scheme = "pep440"
 tag_format = "v$version"
 update_changelog_on_bump = false

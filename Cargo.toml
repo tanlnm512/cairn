@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.24.0" # wheel and binary share one version
+version = "0.24.1" # wheel and binary share one version
 edition = "2024"
 license = "MIT"
 authors = ["Tan Le"]
