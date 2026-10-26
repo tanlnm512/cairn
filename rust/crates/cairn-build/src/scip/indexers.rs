@@ -605,12 +605,24 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("scip-which-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
         std::fs::write(dir.join("tool"), b"not executable").expect("plain file");
-        // Non-executable candidates are skipped, matching shutil.which.
-        assert_eq!(find_on_path(&dir.to_string_lossy(), "tool"), None);
+        #[cfg(unix)]
+        {
+            // Non-executable candidates are skipped, matching shutil.which on POSIX.
+            assert_eq!(find_on_path(&dir.to_string_lossy(), "tool"), None);
+        }
+        #[cfg(windows)]
+        {
+            // No exec bit exists on Windows: a readable plain file is a candidate.
+            assert_eq!(
+                find_on_path(&dir.to_string_lossy(), "tool"),
+                Some(dir.join("tool"))
+            );
+        }
         // An empty PATH entry resolves relative to the cwd, where no `tool`
-        // exists; the lookup must neither panic nor match the skipped file.
+        // exists; the lookup must neither panic nor match the file above.
+        let sep = if cfg!(windows) { ";" } else { ":" };
         assert_eq!(
-            find_on_path(&format!("{}:", dir.to_string_lossy()), "tool"),
+            find_on_path(&format!("{}{sep}", dir.to_string_lossy()), "tool"),
             None
         );
         let _ = std::fs::remove_dir_all(&dir);
