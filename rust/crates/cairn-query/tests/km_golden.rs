@@ -148,7 +148,14 @@ fn normalize_text(text: &str, store_home: &Path) -> String {
     let canonical = store_home
         .canonicalize()
         .unwrap_or_else(|_| store_home.to_path_buf());
-    let canon = canonical.to_string_lossy().replace('\\', "/");
+    // canonicalize on Windows yields a `\\?\` verbatim prefix the tool output
+    // (already slash-normalized above) never carries; strip it both ways.
+    let canon = canonical
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_start_matches("//?/")
+        .trim_start_matches("UNC/")
+        .to_string();
     let home = store_home.to_string_lossy().replace('\\', "/");
     let mut out = norm.replace(&canon, "<STORE_HOME>");
     out = out.replace(&home, "<STORE_HOME>");
