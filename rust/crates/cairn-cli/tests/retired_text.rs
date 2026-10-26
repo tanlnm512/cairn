@@ -77,7 +77,10 @@ fn init_import_docs_names_the_replacement() {
 fn help_does_not_advertise_the_retired_transition() {
     let home = scratch("help");
     let (_, build_help) = cairn(&home, &["build", "--help"]);
-    assert!(build_help.contains("no pyright pass runs"), "{build_help}");
+    assert!(
+        build_help.contains("pyright LSP pass is gone"),
+        "{build_help}"
+    );
     assert!(!build_help.contains("not yet ported"), "{build_help}");
     let (_, connect_help) = cairn(&home, &["connect", "--help"]);
     assert!(!connect_help.contains("else python"), "{connect_help}");
