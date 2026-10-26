@@ -88,8 +88,10 @@ def test_parity_replay_needs_no_python_engine(tmp_path):
 def test_cli_golden_replay_needs_no_python_engine(tmp_path):
     root = _engine_free_tree(tmp_path)
     harness = root / "scripts" / "rust_migration" / "cli_golden.py"
+    # No --rust-bin pin: the harness builds the release binary itself, so a
+    # stale rust/target artifact can never be replayed against the goldens.
     proc = subprocess.run(
-        [sys.executable, "-S", str(harness), "--rust-bin", str(RUST_BIN)],
+        [sys.executable, "-S", str(harness)],
         capture_output=True,
         text=True,
         timeout=900,
