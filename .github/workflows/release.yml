@@ -120,6 +120,9 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           attestations: true   # SLSA build attestations on each artifact
+          # A retried publish (moved tag after a partial failure) skips files
+          # already on PyPI and uploads only what is missing.
+          skip-existing: true
 
   github-release:
     name: GitHub Release
