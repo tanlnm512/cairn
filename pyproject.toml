@@ -65,6 +65,7 @@ bindings = "bin"
 manifest-path = "rust/crates/cairn-cli/Cargo.toml"
 include = [
     { path = "LICENSE", format = "sdist" },
+    { path = "NOTICE", format = "sdist" },
     { path = "rust/vendor/sqlite-vec/**/*", format = "sdist" },
 ]
 
