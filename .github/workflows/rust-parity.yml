@@ -9,8 +9,8 @@ on:
     paths:
       - "rust/**"
       - "scripts/rust_migration/**"
-      - "pyproject.toml"
-      - "uv.lock"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/rust-parity.yml"
 
 permissions:
@@ -32,12 +32,6 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-      - name: Install (with dev extras)
-        run: uv sync --extra dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -46,12 +40,10 @@ jobs:
         run: cargo build --release --manifest-path Cargo.toml -p cairn-cli
       - name: Build serve_search example
         run: cargo build --release --manifest-path Cargo.toml -p cairn-daemon --example serve_search
-      - name: Engine-free parity oracle test
-        run: uv run --no-sync python -m pytest tests/test_parity_replay_engine_free.py -v
       - name: parity replay (self)
-        run: uv run --no-sync python scripts/rust_migration/parity.py --store self
+        run: cargo xtask parity --store self
       - name: cli golden
-        run: uv run --no-sync python scripts/rust_migration/cli_golden.py
+        run: cargo xtask cli-golden
       - name: G2 (base leg)
         run: bash scripts/rust_migration/g2_check.sh
 
@@ -63,12 +55,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-      - name: Install (with dev extras)
-        run: uv sync --extra dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -76,9 +62,9 @@ jobs:
       - name: Build rust cairn (release)
         run: cargo build --release --manifest-path Cargo.toml -p cairn-cli
       - name: parity replay (yarl)
-        run: uv run --no-sync python scripts/rust_migration/parity.py --store yarl
+        run: cargo xtask parity --store yarl
       - name: parity replay (attrs)
-        run: uv run --no-sync python scripts/rust_migration/parity.py --store attrs
+        run: cargo xtask parity --store attrs
 
   g2-legs:
     name: G2 (rebuild + staging legs)
@@ -87,12 +73,6 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-      - name: Install (with dev extras)
-        run: uv sync --extra dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

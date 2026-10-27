@@ -66,10 +66,6 @@ fn report(url: &str, started: bool, pid: Option<u32>) {
 
 /// Start or reuse the shared HTTP daemon and print its MCP URL.
 pub fn run(args: ConnectArgs) -> ExitCode {
-    if let Some(impl_name) = &args.impl_ {
-        // SAFETY: single-threaded CLI dispatch before any runtime threads spawn.
-        unsafe { std::env::set_var(lc::DAEMON_IMPL_ENV, impl_name) };
-    }
     // A mismatch aborts like the Python sys.exit(1): never fall through to a
     // start sequence against a foreign daemon.
     match try_reuse(args.port, &args.host) {

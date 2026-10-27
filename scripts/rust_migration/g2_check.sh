@@ -4,13 +4,13 @@
 # spec of record; no Python engine is driven).
 #
 # base: builds the pinned parity corpus (rust/golden/stores/self/corpus) with
-# the Rust `cairn build-graph`, runs kg_dump.py, normalizes volatile content
+# the Rust `cairn build-graph`, runs `cairn canonical-dump`, normalizes volatile content
 # at dump time (plan.md 2c: "id determinism handled at dump time"), and
-# requires kg_diff.py against rust/golden/dump/self-corpus.norm.txt to be
+# requires `xtask kg-diff` against rust/golden/dump/self-corpus.norm.txt to be
 # empty. Prints the build timings.
 #
 # Normalization is symmetric and content-derived, applied to BOTH sides
-# (kg_normalize.py):
+# (`xtask kg-normalize`):
 #   - dropped sections: build_runs / events / tool_metrics (run telemetry) and
 #     dataflow (CLI post-build derived index, outside the Phase 2 build path);
 #   - uuid/counter row ids rewritten to content keys (files/symbols/edges/
@@ -30,19 +30,9 @@ export PATH="$HOME/.cargo/bin:$PATH"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CORPUS="${1:-$REPO_ROOT}"
 WORKERS="${CAIRN_WORKERS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
-# Repo venv when present, else the active/PATH interpreter (containers).
-if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
-  PY="$REPO_ROOT/.venv/bin/python"
-elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
-  PY="$VIRTUAL_ENV/bin/python"
-else
-  PY="$(command -v python3 || command -v python)" || { echo "G2: no python interpreter" >&2; exit 1; }
-fi
-KG_DUMP="$REPO_ROOT/scripts/rust_migration/kg_dump.py"
-KG_NORMALIZE="$REPO_ROOT/scripts/rust_migration/kg_normalize.py"
-KG_DIFF="$REPO_ROOT/scripts/rust_migration/kg_diff.py"
 FROZEN_NORM="$REPO_ROOT/rust/golden/dump/self-corpus.norm.txt"
 PINNED_CORPUS="$REPO_ROOT/rust/golden/stores/self/corpus"
+xtask() { cargo run -q --manifest-path "$REPO_ROOT/Cargo.toml" -p xtask -- "$@"; }
 RS_CAIRN="${CAIRN_RUST_BIN:-$REPO_ROOT/rust/target/release/cairn}"
 WORK="$(mktemp -d /tmp/cairn-g2.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
@@ -67,7 +57,6 @@ parse_legs() {
 }
 
 parse_legs || exit 1
-[ -x "$PY" ] || fail "repo venv python not found at $PY"
 [ -d "$CORPUS" ] || fail "corpus not a directory: $CORPUS"
 
 # --- rust binary -------------------------------------------------------------
@@ -80,7 +69,7 @@ fi
 
 # --- dump-time normalization (plan.md 2c: id determinism at dump time) -------
 normalize() {
-  "$PY" "$KG_NORMALIZE" "$1" "$2"
+  xtask kg-normalize "$1" "$2"
 }
 
 dump_normalized() {
@@ -88,9 +77,9 @@ dump_normalized() {
   # dump never bakes in this machine's scratch path. Branch, not an empty-array
   # expansion: bash 3.2 treats that as unbound under set -u.
   if [ -n "${3:-}" ]; then
-    "$PY" "$KG_DUMP" "$1" --map-path "$3=<WORKSPACE>" -o "$WORK/$2.dump" || return 1
+    "$RS_CAIRN" canonical-dump "$1" --map-path "$3=<WORKSPACE>" -o "$WORK/$2.dump" || return 1
   else
-    "$PY" "$KG_DUMP" "$1" -o "$WORK/$2.dump" || return 1
+    "$RS_CAIRN" canonical-dump "$1" -o "$WORK/$2.dump" || return 1
   fi
   normalize "$WORK/$2.dump" "$WORK/$2.norm"
 }
@@ -117,21 +106,21 @@ leg_base() {
     > "$WORK/rs.build.log" 2>&1 \
     || { tail -20 "$WORK/rs.build.log"; echo "G2 base: FAIL — rust build-graph failed"; return 1; }
   t1=$(date +%s.%N)
-  RS_WALL=$("$PY" -c "print(f'{$t1 - $t0:.3f}')")
+  RS_WALL=$(awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.3f", b - a }')
   RS_TIMINGS=$(grep "^timings:" "$WORK/rs.build.log" | tail -1)
   RS_SUMMARY=$(grep '^{"repos"' "$WORK/rs.build.log" | tail -1)
   echo "rust build wall: ${RS_WALL}s  $RS_SUMMARY"
   echo "  $RS_TIMINGS"
 
-  dump_normalized "$WORK/rs.kg" rs "$WORK/corpus" || { echo "G2 base: FAIL — kg_dump / normalization (rust store)"; return 1; }
-  "$PY" "$KG_DIFF" "$FROZEN_NORM" "$WORK/rs.norm"
+  dump_normalized "$WORK/rs.kg" rs "$WORK/corpus" || { echo "G2 base: FAIL — canonical-dump / normalization (rust store)"; return 1; }
+  xtask kg-diff "$FROZEN_NORM" "$WORK/rs.norm"
   local diff=$?
   echo ""
   if [ "$diff" -eq 0 ]; then
     echo "G2 base: PASS — rust-built dump content-equal to the frozen python-recorded reference"
     return 0
   fi
-  echo "G2 base: FAIL — canonical dump differs from the frozen reference (kg_diff exit $diff)"
+  echo "G2 base: FAIL — canonical dump differs from the frozen reference (kg-diff exit $diff)"
   return 1
 }
 
@@ -145,7 +134,7 @@ fresh_baseline() {
 }
 
 compare_to_fresh() {
-  "$PY" "$KG_DIFF" "$WORK/fresh.norm" "$WORK/$1.norm"
+  xtask kg-diff "$WORK/fresh.norm" "$WORK/$1.norm"
 }
 
 leg_rebuild() {

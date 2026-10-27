@@ -4,16 +4,16 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Set by the PyPI launcher to its own interpreter before it execs the engine.
+/// User-set interpreter override for the optional `cairn-intel-ingest` converter.
 pub const SIDECAR_PYTHON_ENV: &str = "CAIRN_SIDECAR_PYTHON";
 
-/// The sidecar interpreter: the launcher's, else one next to this binary
+/// The sidecar interpreter: the override, else one next to this binary
 /// (venv bin dir), else the PATH python3.
 pub fn python() -> Option<PathBuf> {
-    if let Some(launcher) = std::env::var_os(SIDECAR_PYTHON_ENV) {
-        let launcher = PathBuf::from(launcher);
-        if launcher.is_file() {
-            return Some(launcher);
+    if let Some(over) = std::env::var_os(SIDECAR_PYTHON_ENV) {
+        let over = PathBuf::from(over);
+        if over.is_file() {
+            return Some(over);
         }
     }
     if let Ok(exe) = std::env::current_exe()

@@ -65,14 +65,14 @@ they actually ran — not just that they were claimed:
       acted on, and the telemetry signal exposing any degradation is named
       (spec §6.4 event catalog). A silent degrade is the bug class this codebase
       is built to avoid.
-- [ ] Tests are hermetic — no dependence on the dev machine's PATH/HOME/env
-      (the suite-wide `_hermetic_env` fixture is the default; use
-      `@pytest.mark.real_env` only with justification); Rust tests that
-      touch the store build into a scratch path, never the live one.
+- [ ] Tests are hermetic — no dependence on the dev machine's PATH/HOME/env;
+      Rust tests that touch the store build into a scratch path, never the
+      live one.
 - [ ] Tests added or updated to cover the change — a Rust owner test under
       `rust/` for engine behavior (`cargo test --manifest-path Cargo.toml
-      -p <crate>` for the fast loop, then `--workspace`), pytest for the
-      packaging, release-wiring and dev-script gates.
+      -p <crate>` for the fast loop, then `--workspace`), the `xtask` crate
+      for release-wiring and dev-gate contracts, pytest for the converter
+      package.
 - [ ] **Comment, doc & log brevity** — 1-line docstrings default, no commentary blocks,
       no decision logs in code, non-verbose logging (AGENTS.md §"Comment, doc, and log style").
 
@@ -100,8 +100,8 @@ Enforced by Layers 0-1; if any is red, fix before requesting review:
   licenses), release builds per target
 - pip-audit (hard gate) + conventional PR title (hard gate)
 - bandit / mypy (advisory — review any *new* findings they surface)
-- `rust-parity.yml`: the frozen oracles (`parity.py`, `cli_golden.py`,
-  `g2_check.sh`, `wheel_smoke.sh`) replay against the release binary on
+- `rust-parity.yml`: the frozen oracles (`cargo xtask parity`,
+  `cargo xtask cli-golden`, `g2_check.sh`, `wheel_smoke.sh`) replay against the release binary on
   `rust/**` PRs and nightly
 
 ---

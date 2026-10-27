@@ -1283,11 +1283,11 @@ fn check_daemon() -> CheckResult {
     match cairn_daemon::lifecycle::healthz_json(port, &host) {
         None => result("daemon", PASS, format!("no daemon serving at {url}"), None),
         Some(payload) => {
-            // The impl marker is rust-announced; a payload without it is the Python daemon.
+            // Payloads without an impl marker come from daemons of older installs.
             let impl_name = payload
                 .get("impl")
                 .and_then(Value::as_str)
-                .unwrap_or("python");
+                .unwrap_or("legacy");
             result(
                 "daemon",
                 PASS,

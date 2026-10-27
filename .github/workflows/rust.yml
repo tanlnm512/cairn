@@ -57,7 +57,11 @@ jobs:
         with:
           workspaces: ". -> rust/target"
       - name: cargo test
+        # No release build here: the replay tests skip via this env, and the
+        # real replays run in rust-parity.yml against a release build.
         run: cargo test --manifest-path Cargo.toml --workspace
+        env:
+          CAIRN_ALLOW_MISSING_GOLDENS: 1
 
   windows:
     name: windows (clippy + test + release build)
@@ -78,6 +82,8 @@ jobs:
       - name: cargo test
         # no-fail-fast surfaces every platform mismatch in one run.
         run: cargo test --manifest-path Cargo.toml --workspace --no-fail-fast
+        env:
+          CAIRN_ALLOW_MISSING_GOLDENS: 1
       - name: cargo build (release)
         run: cargo build --manifest-path Cargo.toml --release --target x86_64-pc-windows-msvc -p cairn-cli
 

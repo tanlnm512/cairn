@@ -14,7 +14,6 @@ fn cairn(home: &Path, args: &[&str]) -> (Option<i32>, String) {
         .args(args)
         .env("HOME", home)
         .env("CAIRN_HOME", home)
-        .env_remove("CAIRN_DAEMON_IMPL")
         .output()
         .expect("spawn cairn");
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();

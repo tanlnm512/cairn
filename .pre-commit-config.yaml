@@ -51,13 +51,13 @@ repos:
       - id: debug-statements    # catch pdb/breakpoint() left in
 
   # --- Comment-style ratchet: local mirror of the quality-ratchet CI job.
-  # The checker owns its sorted dev-script scope, so it never receives
+  # The checker owns its sorted Python scope, so it never receives
   # filenames and runs on every commit regardless of what is staged.
   - repo: local
     hooks:
       - id: check-comment-lengths
         name: check comment/docstring lengths (shrink-only baseline)
-        entry: uv run --no-sync python scripts/comment_style.py
+        entry: bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; exec cargo xtask comment-style'
         language: system
         pass_filenames: false
         always_run: true
@@ -81,7 +81,7 @@ repos:
         pass_filenames: false
         files: ^rust/(.*\.(rs|toml)|Cargo\.lock)$
 
-  # NOTE: scripts/verify_no_code_change.py is deliberately NOT wired here.
+  # NOTE: `cargo xtask verify-no-code-change` is deliberately NOT wired here.
   # It compares the *working tree* against HEAD, but pre-commit always stashes
   # unstaged changes and runs against the *staged* tree -- so as a hook it
   # would silently Skip precisely when you need it (unstaged comment edits).

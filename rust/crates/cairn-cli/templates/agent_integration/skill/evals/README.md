@@ -10,7 +10,7 @@ not purely prose anymore.
 There is now a **structural validation runner** wired to them. It does NOT
 run an agent or grade behavior -- it validates the frontmatter itself:
 
-- run `make evals` (or `python3 scripts/run_skill_evals.py` directly)
+- run `make evals` (or `cargo xtask skill-evals` directly)
 - it checks that every spec has the required frontmatter keys
   (`id`, `rule`, `title`, `scenario`, `expected_calls`, `wrong_calls`);
 - it checks that each `expected_calls`/`wrong_calls` entry has its required

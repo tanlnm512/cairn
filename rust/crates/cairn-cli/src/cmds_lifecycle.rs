@@ -1178,7 +1178,7 @@ fn source_root() -> Option<PathBuf> {
     let cwd = cwd.canonicalize().unwrap_or(cwd);
     let mut candidate: Option<&Path> = Some(&cwd);
     while let Some(dir) = candidate {
-        if dir.join("src").is_dir() && dir.join("pyproject.toml").is_file() {
+        if dir.join("rust/crates/xtask/Cargo.toml").is_file() {
             return Some(dir.to_path_buf());
         }
         candidate = dir.parent();
@@ -1409,20 +1409,16 @@ fn load_audit_sidecar(
 }
 
 fn comment_quality_gate(root: &Path) -> Value {
-    // The comment gate is defined over CPython tokenize/ast semantics; the
-    // binary runs the checkout's own checker script and reports unavailable
-    // where no python or no checker exists.
-    let script = root.join("scripts").join("comment_style.py");
-    let Some(python) = sidecar_python().filter(|_| script.is_file()) else {
+    // The checker is the checkout's own xtask; no cargo means no gate.
+    let Ok(output) = Command::new("cargo")
+        .args(["xtask", "comment-style", "--json", "--root"])
+        .arg(root)
+        .current_dir(root)
+        .output()
+    else {
         return json!({"status": "unavailable"});
     };
-    let output = Command::new(&python)
-        .arg(&script)
-        .args(["--json", "--root"])
-        .arg(root)
-        .output();
-    let parsed: Option<Value> = output
-        .ok()
+    let parsed: Option<Value> = Some(output)
         .filter(|o| o.status.success())
         .and_then(|o| serde_json::from_slice(&o.stdout).ok());
     match parsed {

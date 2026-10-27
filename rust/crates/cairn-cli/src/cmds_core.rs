@@ -1612,16 +1612,47 @@ fn impact(args: crate::cmds_core::ImpactArgs) -> ExitCode {
         .collect();
     let total = result.impacted.len();
     let empty = total == 0;
+    let collision = args.guard && !result.cycles.is_empty() && total > args.threshold;
+    let fallback = if collision {
+        match cairn_build::dataflow::get_dataflow(&conn, &args.symbol) {
+            Ok(row) => row,
+            Err(message) => return command_error(&message),
+        }
+    } else {
+        None
+    };
     if args.as_json {
         let mut object = Map::new();
-        object.insert("impacted".into(), Value::Array(impacted));
+        if !collision {
+            object.insert("impacted".into(), Value::Array(impacted));
+        }
         object.insert("cycles".into(), Value::Array(cycles));
         object.insert("total".into(), Value::from(total as i64));
         object.insert("truncated".into(), Value::from(result.truncated));
+        if args.guard {
+            let mut guard = Map::new();
+            guard.insert("collision".into(), Value::from(collision));
+            guard.insert("threshold".into(), Value::from(args.threshold as i64));
+            if collision {
+                let dataflow = fallback.as_ref().map_or(Value::Null, dataflow_json);
+                guard.insert("dataflow".into(), dataflow);
+            }
+            object.insert("guard".into(), Value::Object(guard));
+        }
         println!("{}", py_json::dumps(&Value::Object(object)));
         if empty {
             return ExitCode::FAILURE;
         }
+        return ExitCode::SUCCESS;
+    }
+    if collision {
+        print_collision_warning(
+            &conn,
+            &args.symbol,
+            total,
+            &result.cycles,
+            fallback.as_ref(),
+        );
         return ExitCode::SUCCESS;
     }
     if !result.cycles.is_empty() {
@@ -1669,6 +1700,40 @@ fn impact(args: crate::cmds_core::ImpactArgs) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+fn print_collision_warning(
+    conn: &Connection,
+    symbol: &str,
+    total: usize,
+    cycles: &[(String, i64)],
+    fallback: Option<&cairn_build::dataflow::DataflowRow>,
+) {
+    let shown: Vec<String> = cycles
+        .iter()
+        .take(8)
+        .map(|(s, _)| format!("'{s}'"))
+        .collect();
+    let more = if cycles.len() > 8 {
+        format!(" ... and {} more", cycles.len() - 8)
+    } else {
+        String::new()
+    };
+    println!(
+        "Warning: {symbol}: impact reports {} impacted symbols, but the traversal passed \
+         through common/colliding names [{}]{more} -- this reads as a name-collision \
+         artifact, not real coupling (Golden Rule 6). Not printing the raw dump.",
+        fmt_int(total as i64),
+        shown.join(", ")
+    );
+    println!("\nFalling back to the precomputed dataflow index:");
+    match fallback {
+        Some(row) => print_dataflow(row),
+        None => println!(
+            "{} Or re-run with a more specific qualified name.",
+            missing_dataflow_message(conn, symbol)
+        ),
+    }
 }
 
 /// deps handler.
@@ -3459,59 +3524,44 @@ fn dataflow_lookup(args: crate::cmds_core::DataflowLookupArgs) -> ExitCode {
         Err(message) => return command_error(&message),
     };
     let Some(row) = row else {
-        if cairn_build::dataflow::symbol_exists(&conn, &args.symbol) {
-            eprintln!(
-                "No dataflow entry for '{}': the index covers public symbols only.",
-                args.symbol
-            );
-        } else {
-            eprintln!(
-                "No dataflow entry for '{}'. Run `cairn dataflow build` first.",
-                args.symbol
-            );
-        }
+        eprintln!("{}", missing_dataflow_message(&conn, &args.symbol));
         return ExitCode::FAILURE;
     };
     if args.as_json {
-        let mut map = Map::new();
-        map.insert("symbol".into(), Value::from(row.symbol.clone()));
-        map.insert("repo".into(), Value::from(row.repo.clone()));
-        map.insert(
-            "within_repo".into(),
-            Value::Array(
-                row.within_repo
-                    .iter()
-                    .map(|s| Value::from(s.clone()))
-                    .collect(),
-            ),
-        );
-        map.insert(
-            "cross_repo".into(),
-            Value::Array(
-                row.cross_repo
-                    .iter()
-                    .map(|s| Value::from(s.clone()))
-                    .collect(),
-            ),
-        );
-        map.insert("updated".into(), number_value(row.updated));
-        if !row.analysis_errors.is_empty() {
-            map.insert(
-                "analysis_errors".into(),
-                Value::Array(
-                    row.analysis_errors
-                        .iter()
-                        .map(|s| Value::from(s.clone()))
-                        .collect(),
-                ),
-            );
-        }
-        if row.ambiguous {
-            map.insert("ambiguous".into(), Value::from(true));
-        }
-        println!("{}", py_json::dumps(&Value::Object(map)));
+        println!("{}", py_json::dumps(&dataflow_json(&row)));
         return ExitCode::SUCCESS;
     }
+    print_dataflow(&row);
+    ExitCode::SUCCESS
+}
+
+fn missing_dataflow_message(conn: &Connection, symbol: &str) -> String {
+    if cairn_build::dataflow::symbol_exists(conn, symbol) {
+        format!("No dataflow entry for '{symbol}': the index covers public symbols only.")
+    } else {
+        format!("No dataflow entry for '{symbol}'. Run `cairn dataflow build` first.")
+    }
+}
+
+fn dataflow_json(row: &cairn_build::dataflow::DataflowRow) -> Value {
+    let strings =
+        |items: &[String]| Value::Array(items.iter().map(|s| Value::from(s.clone())).collect());
+    let mut map = Map::new();
+    map.insert("symbol".into(), Value::from(row.symbol.clone()));
+    map.insert("repo".into(), Value::from(row.repo.clone()));
+    map.insert("within_repo".into(), strings(&row.within_repo));
+    map.insert("cross_repo".into(), strings(&row.cross_repo));
+    map.insert("updated".into(), number_value(row.updated));
+    if !row.analysis_errors.is_empty() {
+        map.insert("analysis_errors".into(), strings(&row.analysis_errors));
+    }
+    if row.ambiguous {
+        map.insert("ambiguous".into(), Value::from(true));
+    }
+    Value::Object(map)
+}
+
+fn print_dataflow(row: &cairn_build::dataflow::DataflowRow) {
     println!("Symbol: {}  (repo: {})", row.symbol, row.repo);
     if row.ambiguous {
         println!(
@@ -3538,7 +3588,6 @@ fn dataflow_lookup(args: crate::cmds_core::DataflowLookupArgs) -> ExitCode {
     } else {
         println!("Cross-repo consumers: (none)");
     }
-    ExitCode::SUCCESS
 }
 
 // --- cairn communities -------------------------------------------------------------
@@ -3896,6 +3945,12 @@ pub struct ImpactArgs {
     /// Also traverse unresolved name-only edges.
     #[arg(long = "fuzzy", default_value_t = false)]
     pub fuzzy: bool,
+    /// Flag cycle-carrying results above --threshold as name collisions and fall back to the dataflow index.
+    #[arg(long = "guard")]
+    pub guard: bool,
+    /// Impacted-symbol count above which --guard treats a cycle-carrying result as a collision.
+    #[arg(long = "threshold", default_value_t = 100, requires = "guard")]
+    pub threshold: usize,
 }
 
 #[derive(clap::Args)]

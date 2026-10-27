@@ -96,7 +96,7 @@ results — large enough to trigger a client-side "large MCP response" warning.
   symbols, treat it as a name-collision artifact, not real blast radius —
   cap `depth<=2`, note the collision, and don't paste the raw count into a
   report.
-- **Use `scripts/impact_guard.py <symbol>`** instead of calling the raw tool
+- **Use `cairn impact <symbol> --guard`** instead of calling the raw tool
   when you're unsure whether a name is "common enough" to explode. It runs
   the same query, inspects the `cycles` field the resolver already returns,
   and prints a clear collision warning (with a `cairn dataflow lookup` fallback)

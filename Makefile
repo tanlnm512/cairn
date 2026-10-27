@@ -16,7 +16,7 @@ dist:
 	@echo "  uv tool install ./dist/$$(ls dist/*.whl | head -1)"
 
 evals:
-	uv run python scripts/run_skill_evals.py
+	cargo xtask skill-evals
 
 # Clean-room CI replication: run the CI jobs in a bare Linux container via
 # Apple's `container` CLI (Virtualization framework -- no Docker needed).
@@ -35,7 +35,7 @@ ci-local:
 ci-local-all:
 	scripts/ci-local.sh test-all
 	@echo ""
-	@echo "clean-room matrix green (3.10-3.14)"
+	@echo "clean-room matrix green (3.10, 3.14)"
 
 ci-local-rust:
 	scripts/ci-local.sh rust
@@ -53,25 +53,25 @@ ci-local-parity:
 # Catches the failure mode where sub-agents/bulk edits silently touch code
 # while self-reporting "comments only." See docs/release-checklist.md.
 verify-no-code-change:
-	uv run python scripts/verify_no_code_change.py $(REF)
+	cargo xtask verify-no-code-change $(REF)
 
 # Quality ratchets; module flags travel through ARGS because make consumes a
 # literal --json itself, so the JSON spelling is ARGS=--json.
 audit-status:
-	@uv run --no-sync python scripts/audit_status.py $(ARGS)
+	@cargo xtask audit-status $(ARGS)
 
 comment-style:
-	@uv run --no-sync python scripts/comment_style.py $(ARGS)
+	@cargo xtask comment-style $(ARGS)
 
 # Rewrites the comment baseline after cleanup; refuses growth.
 comment-style-shrink:
-	@uv run --no-sync python scripts/comment_style.py --update $(ARGS)
+	@cargo xtask comment-style --update $(ARGS)
 
 # Maintainer-only main protection check; gh needs admin-scoped auth.
 # Deliberately not wired into CI.
 PROTECTION_REPO ?= tanlnm512/cairn
 verify-protection:
-	@uv run --no-sync python scripts/verify_protection.py \
+	@cargo xtask verify-protection \
 	  --repo $(PROTECTION_REPO) $(ARGS)
 
 # Release walkthrough -- prints the steps AND previews the next bump.
@@ -114,7 +114,7 @@ help:
 	@echo "  evals                  validate skill eval specs"
 	@echo "  ci-local               clean-room CI replication in a Linux container"
 	@echo "                         (PYTHON_VERSION=3.11 to pick; apple container, not docker)"
-	@echo "  ci-local-all           the full 3.10-3.14 test matrix, sequentially"
+	@echo "  ci-local-all           the 3.10 + 3.14 test matrix, sequentially"
 	@echo "  verify-no-code-change  AST-check that changed .py files are comment-only"
 	@echo "                         (REF=HEAD~1 to verify a commit; default: uncommitted)"
 	@echo "  audit-status           remaining-vs-total audit findings by priority"

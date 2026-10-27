@@ -10,7 +10,7 @@
 #   scripts/ci-local.sh [JOB] [PY_VERSION]    (JOB default: test, PY default: 3.12)
 #   make ci-local                              # test job, Python 3.12
 #   make ci-local PYTHON_VERSION=3.11          # test job on another version
-#   make ci-local-all                          # the full 3.10-3.14 matrix
+#   make ci-local-all                          # the 3.10 + 3.14 matrix
 #   scripts/ci-local.sh security               # pip-audit (hard) + bandit (advisory)
 #   scripts/ci-local.sh precommit              # pre-commit run --all-files
 #   scripts/ci-local.sh build                  # wheel + sdist + smoke (needs cargo)
@@ -39,7 +39,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MOUNT_POINT=/workspace
 CACHE_REL=.cache/ci-local
-VERSIONS_ALL=(3.10 3.11 3.12 3.13 3.14)
+VERSIONS_ALL=(3.10 3.14)
 
 log()  { printf '\033[1;34m[ci-local]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[ci-local]\033[0m %s\n' "$*" >&2; }
@@ -163,7 +163,7 @@ sync_dev() {
 
 # Rust in the container: toolchain + cargo-deny live in the cache; the cargo
 # target dir is per-arch and OUTSIDE the bind-mounted rust/target so container
-# (linux) builds never thrash the host's darwin artifacts. The oracle scripts
+# (linux) builds never thrash the host's darwin artifacts. The xtask oracles
 # honor CARGO_TARGET_DIR / CAIRN_RUST_BIN.
 ARCH_TAG="${CI_LOCAL_ARCH##*/}"
 export CARGO_HOME="$CACHE/cargo-home"
@@ -194,36 +194,32 @@ cd "$MOUNT_POINT"
 
 case "$JOB" in
   test)
-    # ci.yml: test job -- skill-eval validation, then the suite (the infra
-    # tier needs the release rust binary and runs in rust-parity.yml), then
-    # the optional converter package's own tests.
+    # ci.yml: test job -- the optional converter package's own tests.
     sync_dev
     log "installing the converter package (CI: Install converter package)"
     uv pip install packaging/cairn-intel-ingest
-    log "validating skill eval specs (CI: Validate skill eval specs)"
-    uv run --no-sync python scripts/run_skill_evals.py
-    log "suite (CI: Run test suite, infra tier excluded)"
-    uv run --no-sync pytest -q -m "not infra" --junitxml=test-results.xml
     log "converter package tests (CI: Run the converter package's tests)"
-    uv run --no-sync pytest -q packaging/cairn-intel-ingest/tests
+    uv run --no-sync pytest -q --junitxml=test-results.xml
     log "suite green (results: test-results.xml)"
     ;;
 
   security)
     # ci.yml: security job -- pip-audit is a HARD gate, bandit advisory over
-    # the dev scripts and the converter package.
+    # the converter package.
     sync_dev
     log "installing the converter package (CI: Install converter package)"
     uv pip install packaging/cairn-intel-ingest
     log "pip-audit (CI: hard gate)"
     uv run --no-sync pip-audit
     log "bandit (CI: advisory -- findings below don't fail)"
-    uv run --no-sync bandit -r scripts packaging -ii -ll || warn "bandit findings above (advisory in CI too)"
+    uv run --no-sync bandit -r packaging -ii -ll || warn "bandit findings above (advisory in CI too)"
     log "security job green"
     ;;
 
   precommit)
-    # ci.yml: pre-commit job -- all Layer-0 gates server-side.
+    # ci.yml: pre-commit job -- all Layer-0 gates server-side; the
+    # comment-style hook runs through cargo xtask.
+    ensure_cargo
     sync_dev
     log "pre-commit run --all-files (CI: Run all hooks)"
     uv run --no-sync pre-commit run --all-files
@@ -249,26 +245,20 @@ case "$JOB" in
     log "cargo clippy -D warnings (rust.yml: clippy)"
     cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
     log "cargo test --workspace (rust.yml: test)"
-    cargo test --manifest-path Cargo.toml --workspace
+    CAIRN_ALLOW_MISSING_GOLDENS=1 cargo test --manifest-path Cargo.toml --workspace
     log "cargo deny (rust.yml: deny)"
     ensure_cargo_deny
     cargo deny --config rust/deny.toml check advisories licenses
     ;;
 
   parity)
-    # rust-parity.yml PR leg -- engine-free oracle test, parity self,
-    # cli golden, G2 base; the scripts build the release binaries themselves
-    # into the isolated target dir.
+    # rust-parity.yml PR leg -- parity self, cli golden, G2 base; the
+    # oracles build the release binaries themselves into the isolated
+    # target dir.
     ensure_cargo
-    sync_dev
-    # Advisory locally: the wrapper rebuilds a runner-shaped toolchain env
-    # (passwd-listed uid, home layout) that mapped-uid containers lack.
-    log "engine-free parity oracle test (advisory locally; hard on GitHub)"
-    uv run --no-sync python -m pytest tests/test_parity_replay_engine_free.py -q \
-      || warn "engine-free wrapper red locally (env-shape); GitHub gates it"
-    log "parity replay self + cli golden (scripts build the binaries)"
-    uv run --no-sync python scripts/rust_migration/parity.py --store self
-    uv run --no-sync python scripts/rust_migration/cli_golden.py
+    log "parity replay self + cli golden (oracles build the binaries)"
+    cargo xtask parity --store self
+    cargo xtask cli-golden
     log "G2 base leg (rust-parity.yml)"
     bash scripts/rust_migration/g2_check.sh
     ;;

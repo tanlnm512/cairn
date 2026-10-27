@@ -34,13 +34,11 @@ test = [
 ]
 dev = [
     "pytest>=7.0",
-    # scripts/run_skill_evals.py parses the eval frontmatter.
-    "pyyaml>=6.0",
     "build",
     "ruff>=0.6",
-    # Review/audit pipeline (Layer 1 CI gates) over the dev scripts and the
-    # optional converter package. Run locally before pushing:
-    #   bandit -r scripts packaging -ii -ll -s B608
+    # Review/audit pipeline (Layer 1 CI gates) over the optional converter
+    # package. Run locally before pushing:
+    #   bandit -r packaging -ii -ll -s B608
     #   pip-audit
     "bandit>=1.7",
     "pip-audit>=2.7",
@@ -75,21 +73,14 @@ include = [
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-markers = [
-    "real_env: opts a test out of the suite-wide _hermetic_env fixture (justify in a comment)",
-    # The infra tier is CI selection, NOT a quarantine: every marked test still
-    # runs and must pass on each main push (ci.yml's main-only `-m infra` step);
-    # per-PR legs exclude it via an explicit `-m "not infra"`.
-    "infra: oracle-replay tests that need the release rust binary -- excluded from per-PR legs (pytest -m \"not infra\"), run on every main push (pytest -m infra)",
-]
+testpaths = ["packaging/cairn-intel-ingest/tests"]
 
 [tool.ruff]
 # Conservative gate: pyflakes (F) only. Catches real defects (undefined names,
 # unused imports, redefinitions) with a low false-positive rate. Style rules
 # (E, UP, BLE, S, etc.) are intentionally excluded -- the codebase predates
 # ruff and adopting them would be a dedicated cleanup PR, not a CI gate.
-src = ["scripts", "tests", "packaging"]
+src = ["packaging"]
 # Golden fixtures are test *input* data (deliberately-shaped source the parser
 # exercises), not test code -- linting them would rewrite the fixtures and
 # invalidate the very golden tests that consume them.
