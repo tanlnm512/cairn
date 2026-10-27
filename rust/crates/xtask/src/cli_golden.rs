@@ -1524,7 +1524,7 @@ mod tests {
     fn replay_of_the_cli_goldens_is_golden_equal() {
         let bin = parity::target_dir().join("release").join("cairn");
         if !bin.exists() {
-            eprintln!("skipped: {} absent", bin.display());
+            parity::require_release_artifact(&bin);
             return;
         }
         let args = Args {

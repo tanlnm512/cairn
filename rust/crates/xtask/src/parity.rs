@@ -46,6 +46,22 @@ pub(crate) fn target_dir() -> PathBuf {
         .unwrap_or_else(|| rust_workspace().join("target"))
 }
 
+/// Fail a replay test whose release artifact is absent, unless the caller
+/// opted out (CI runs the real replays in rust-parity.yml).
+#[cfg(test)]
+pub(crate) fn require_release_artifact(artifact: &Path) {
+    const ALLOW_MISSING: &str = "CAIRN_ALLOW_MISSING_GOLDENS";
+    if std::env::var_os(ALLOW_MISSING).is_some() {
+        eprintln!("skipped: {} absent", artifact.display());
+        return;
+    }
+    panic!(
+        "release artifact {} absent; build with \
+         `cargo build --release -p cairn-cli --examples` or set {ALLOW_MISSING}=1",
+        artifact.display()
+    );
+}
+
 fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -888,7 +904,7 @@ mod tests {
             .join("examples")
             .join(SERVE_EXAMPLE);
         if !serve.exists() {
-            eprintln!("skipped: {} absent", serve.display());
+            require_release_artifact(&serve);
             return;
         }
         let scratch = make_scratch("cairn-rust-parity-test-").unwrap_or_else(|_| panic!("scratch"));

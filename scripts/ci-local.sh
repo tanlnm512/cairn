@@ -245,7 +245,7 @@ case "$JOB" in
     log "cargo clippy -D warnings (rust.yml: clippy)"
     cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
     log "cargo test --workspace (rust.yml: test)"
-    cargo test --manifest-path Cargo.toml --workspace
+    CAIRN_ALLOW_MISSING_GOLDENS=1 cargo test --manifest-path Cargo.toml --workspace
     log "cargo deny (rust.yml: deny)"
     ensure_cargo_deny
     cargo deny --config rust/deny.toml check advisories licenses

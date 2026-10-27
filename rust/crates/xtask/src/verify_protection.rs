@@ -506,19 +506,22 @@ fn source_names(check: &Value) -> String {
     }
 }
 
-fn print_human(report: &Value) {
+/// Human report split by stream: (stdout lines, stderr lines).
+fn human_report(report: &Value) -> (Vec<String>, Vec<String>) {
+    let mut out = Vec::new();
+    let mut err = Vec::new();
     for e in report["source_errors"].as_array().into_iter().flatten() {
-        eprintln!(
+        err.push(format!(
             "ERROR {} {}: {}",
             py_str(&e["source"]),
             py_str(&e["endpoint"]),
             py_str(&e["message"])
-        );
+        ));
     }
     for check in report["checks"].as_array().into_iter().flatten() {
         let name = py_str(&check["name"]);
         if check["status"] == "pass" {
-            println!("PASS {name} ({})", source_names(check));
+            out.push(format!("PASS {name} ({})", source_names(check)));
             continue;
         }
         let details = if name == "required_status_checks" {
@@ -532,12 +535,23 @@ fn print_human(report: &Value) {
         } else {
             format!("observed: {}", py_str(&check["observed"]))
         };
-        eprintln!("FAIL {name} ({details}; {})", source_names(check));
+        err.push(format!("FAIL {name} ({details}; {})", source_names(check)));
     }
     if report["ok"] == true {
-        println!("protection verified");
+        out.push("protection verified".to_string());
     } else {
-        eprintln!("protection not verified");
+        err.push("protection not verified".to_string());
+    }
+    (out, err)
+}
+
+fn print_human(report: &Value) {
+    let (out, err) = human_report(report);
+    for line in out {
+        println!("{line}");
+    }
+    for line in err {
+        eprintln!("{line}");
     }
 }
 
@@ -721,6 +735,58 @@ mod tests {
             assert_eq!(report["ok"], false);
             assert_eq!(failed(&report), vec![expected], "case {case}");
         }
+    }
+
+    #[test]
+    fn mandatory_checks_pin_the_gated_check_names() {
+        assert_eq!(
+            BTreeSet::from(MANDATORY_CHECKS),
+            BTreeSet::from([
+                "Security (pip-audit + bandit)",
+                "Type check (mypy)",
+                "PR title (conventional commits)",
+                "pre-commit (all local gates)",
+                "Quality ratchet (audit debt + comment style)",
+                "Dependency review (PR)",
+                "Test (Python 3.14)",
+                "Closure budget gate (1000-file scaling point)",
+                "Verify DS-v2 seal",
+                "Container build (Dockerfile smoke)",
+            ])
+        );
+    }
+
+    #[test]
+    fn human_report_renders_failures_and_the_verdict() {
+        let rulesets = [ruleset(7, "refs/heads/main", "active", true, true, &[])];
+        let run = fake(Some(legacy(true, true, &[])), &rulesets, None);
+        let report = verify(&run, "example/repo", &["required-check"]).unwrap();
+        let (out, err) = human_report(&report);
+        assert!(out.iter().any(|line| line.starts_with("PASS ")), "{out:?}");
+        let fail = err
+            .iter()
+            .find(|line| line.starts_with("FAIL required_status_checks"))
+            .expect("FAIL line");
+        assert!(fail.contains("missing: required-check"), "{fail}");
+        assert!(err.contains(&"protection not verified".to_string()));
+
+        let rulesets = [ruleset(
+            7,
+            "refs/heads/main",
+            "active",
+            true,
+            false,
+            &["required-check"],
+        )];
+        let run = fake(
+            Some(legacy(false, false, &["required-check"])),
+            &rulesets,
+            None,
+        );
+        let report = verify(&run, "example/repo", &["required-check"]).unwrap();
+        let (out, err) = human_report(&report);
+        assert!(out.contains(&"protection verified".to_string()));
+        assert!(err.is_empty(), "{err:?}");
     }
 
     #[test]
