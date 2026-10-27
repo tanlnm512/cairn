@@ -45,7 +45,7 @@ fn open_store(ws: &Path) -> Connection {
     open_initialized(&db).expect("open store")
 }
 
-/// Seed files/symbols matching tests/fixtures/scip/make_fixture.py's scenario:
+/// Seed files/symbols matching `cargo xtask scip-fixture`'s scenario:
 /// spans are 1-based; Klass(8..12) contains method(9..9) for the innermost join.
 fn seed_graph(conn: &Connection, repo_id: &str) {
     conn.execute_batch(&format!(

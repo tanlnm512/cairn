@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `cairn impact --guard [--threshold N]` replaces the skill's `scripts/impact_guard.py` helper: a cycle-carrying result above the threshold prints a name-collision warning and the dataflow-index fallback instead of the raw dump (`--json` gains a `guard` object), and the agent skill no longer ships a Python script.
 - Dev tooling moved to `cargo xtask` (the parity and CLI-golden oracles, canonical-dump tools, perf harnesses, and the repo gates); Python remains only in the optional cairn-intel-ingest package.
+- `scripts/install.sh` builds from a checkout with `cargo install` (no Python required), `scripts/uninstall.sh` forwards to `cairn uninstall`, and the SCIP test fixture regenerates with `cargo xtask scip-fixture`.
 
 ## [0.24.1] - 2026-10-26
 ### Fixed
