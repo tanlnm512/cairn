@@ -129,6 +129,7 @@ pub(crate) fn random_hex(bytes: usize) -> String {
 
 /// Fresh private directory `<tmp>/<prefix><random>`.
 pub(crate) fn make_scratch(prefix: &str) -> Result<PathBuf, Halt> {
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
