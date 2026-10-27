@@ -608,7 +608,7 @@ pub(crate) fn realpath(path: &Path) -> PathBuf {
 }
 
 /// `str.splitlines()`: every Python line boundary, no trailing empty line.
-fn py_splitlines(text: &str) -> Vec<&str> {
+pub(crate) fn py_splitlines(text: &str) -> Vec<&str> {
     let mut lines = Vec::new();
     let mut start = 0;
     let mut chars = text.char_indices().peekable();

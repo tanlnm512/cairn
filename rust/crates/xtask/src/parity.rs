@@ -131,7 +131,7 @@ pub(crate) fn make_scratch(prefix: &str) -> Result<PathBuf, Halt> {
 // --- store wiring -------------------------------------------------------------
 
 /// `shutil.copy2`: contents, permissions and timestamps.
-fn copy_file(src: &Path, dst: &Path) -> Result<(), String> {
+pub(crate) fn copy_file(src: &Path, dst: &Path) -> Result<(), String> {
     let fail = |err: std::io::Error| format!("copy {} -> {}: {err}", src.display(), dst.display());
     fs::copy(src, dst).map_err(fail)?;
     let meta = fs::metadata(src).map_err(fail)?;
@@ -150,7 +150,7 @@ fn copy_file(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 /// `shutil.copytree`: recursive copy into a new directory, symlinks followed.
-fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
+pub(crate) fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|err| format!("mkdir {}: {err}", dst.display()))?;
     let entries = fs::read_dir(src).map_err(|err| format!("read {}: {err}", src.display()))?;
     for entry in entries {
@@ -216,7 +216,7 @@ pub(crate) fn refuse_live_store(db: &Path, knowledge: &Path) -> Result<(), Halt>
 
 // --- daemon -------------------------------------------------------------------
 
-fn path_with_cargo_bin() -> OsString {
+pub(crate) fn path_with_cargo_bin() -> OsString {
     let current = std::env::var_os("PATH").unwrap_or_default();
     let paths = std::iter::once(cargo_bin()).chain(std::env::split_paths(&current));
     std::env::join_paths(paths).unwrap_or(current)
@@ -730,7 +730,7 @@ fn verify_store(
     Ok((passed, failures))
 }
 
-fn shrink(diff: &str) -> String {
+pub(crate) fn shrink(diff: &str) -> String {
     if diff.chars().count() <= DIFF_PRINT_CHARS {
         return diff.to_string();
     }
