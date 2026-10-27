@@ -19,8 +19,8 @@ concurrency:
 jobs:
   # --- Security: supply-chain + code scanning -----------------------------
   # pip-audit is a HARD gate: a known-vulnerable dependency blocks the PR.
-  # bandit is ADVISORY (continue-on-error) over the remaining dev scripts and
-  # the optional converter package: it surfaces NEW security regressions
+  # bandit is ADVISORY (continue-on-error) over the optional converter
+  # package: it surfaces NEW security regressions
   # (eval/exec/pickle/shell/weak-crypto) without churning on known-benign
   # findings. The engine binary is audited on the Rust side (cargo-deny in
   # rust.yml).
@@ -45,9 +45,9 @@ jobs:
           uv pip install packaging/cairn-intel-ingest
       - name: pip-audit (hard gate -- known-vulnerable deps fail here)
         run: uv run --no-sync pip-audit
-      - name: bandit (advisory, dev scripts + converter package)
+      - name: bandit (advisory, converter package)
         continue-on-error: true
-        run: uv run --no-sync bandit -r scripts packaging -ii -ll
+        run: uv run --no-sync bandit -r packaging -ii -ll
 
   # --- Conventional Commit PR-title gate (hard) ---------------------------
   # Mirrors the commitizen convention that `cz bump` derives the SemVer bump
@@ -88,7 +88,7 @@ jobs:
   pre-commit:
     name: pre-commit (all local gates)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -100,6 +100,13 @@ jobs:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
       - uses: astral-sh/setup-uv@v10.1.0
+      # The comment-style hook runs `cargo xtask`, so every leg needs the toolchain.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> rust/target"
       - name: Install (with dev extras)
         run: uv sync --extra dev
       - name: Run all hooks
@@ -111,45 +118,42 @@ jobs:
 
   # --- Quality ratchet: audit-debt + comment-style stop-growth gates ------
   # Human modes keep the maintainer surface green; the JSON steps pin the
-  # machine-readable contract report and tooling consume.
+  # machine-readable contract report and tooling consume. The doc and
+  # skill-eval gates ride the same leg.
   quality-ratchet:
     name: Quality ratchet (audit debt + comment style)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-      - name: Install (with dev extras)
-        run: uv sync --extra dev
+          workspaces: ". -> rust/target"
       - name: Audit status (human gate)
         run: make audit-status
       - name: Comment style (human gate)
         run: make comment-style
       - name: Parse quality-gate JSON outputs
         run: |
-          uv run --no-sync python scripts/audit_status.py --json > audit-status.json
-          uv run --no-sync python scripts/comment_style.py --json > comment-style.json
-          python3 - <<'EOF'
-          import json
-          from pathlib import Path
-
-          audit = json.loads(Path("audit-status.json").read_text())
-          for priority in ("P0", "P1", "P2", "P3"):
-              counts = audit["totals"][priority]
-              assert set(counts) == {"total", "fixed", "remaining"}
-              assert 0 <= counts["remaining"] <= counts["total"]
-          assert audit["remaining"] == sum(
-              counts["remaining"] for counts in audit["totals"].values()
-          )
-
-          style = json.loads(Path("comment-style.json").read_text())
-          assert style["ok"] is True
-          assert isinstance(style["remaining"], int)
-          assert style["new"] == [] and style["stale"] == []
-          EOF
+          cargo xtask audit-status --json > audit-status.json
+          cargo xtask comment-style --json > comment-style.json
+          jq -e '
+            (["P0", "P1", "P2", "P3"] - (.totals | keys) == [])
+            and all(.totals[]; (keys == ["fixed", "remaining", "total"])
+              and .remaining >= 0 and .remaining <= .total)
+            and .remaining == ([.totals[].remaining] | add)
+          ' audit-status.json
+          jq -e '
+            .ok == true and (.remaining | type) == "number"
+            and .new == [] and .stale == []
+          ' comment-style.json
+      - name: Doc links resolve
+        run: cargo xtask check-doc-links
+      - name: Conformance table matches the fixtures
+        run: cargo xtask conformance-table --check
+      - name: Validate skill eval specs
+        run: cargo xtask skill-evals
 
   # --- Dependency review for PRs (supply-chain, complements pip-audit) -----
   # pip-audit scans the fully-resolved environment; this checks the *delta* a
@@ -181,8 +185,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Only dev scripts and the optional converter package run here; the
-        # converter declares >=3.10, so main covers its floor and ceiling.
+        # Only the optional converter package runs here; it declares
+        # >=3.10, so main covers its floor and ceiling.
         python-version: ${{ github.event_name != 'pull_request' && fromJSON('["3.10", "3.14"]') || fromJSON('["3.14"]') }}
 
     steps:
@@ -200,16 +204,8 @@ jobs:
           uv sync --extra dev --python ${{ matrix.python-version }}
           uv pip install --python ${{ matrix.python-version }} packaging/cairn-intel-ingest
 
-      - name: Validate skill eval specs
-        run: uv run --no-sync python scripts/run_skill_evals.py
-
-      - name: Run test suite
-        # The infra tier (oracle replays against the release binary) runs in
-        # rust-parity.yml, where the binary is built.
-        run: uv run --no-sync pytest -q -m "not infra" --durations=25 --junitxml=test-results.xml
-
       - name: Run the converter package's tests
-        run: uv run --no-sync pytest -q packaging/cairn-intel-ingest/tests
+        run: uv run --no-sync pytest -q --durations=25 --junitxml=test-results.xml
 
       - name: Publish test summary
         if: always()

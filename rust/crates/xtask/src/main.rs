@@ -16,6 +16,8 @@ mod kg_diff;
 mod kg_dump;
 mod kg_normalize;
 mod parity;
+#[cfg(test)]
+mod release_contract;
 mod skill_evals;
 mod verify_no_code_change;
 mod verify_protection;

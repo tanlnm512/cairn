@@ -21,9 +21,6 @@ jobs:
       CAIRN_TELEMETRY: "off"
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -47,7 +44,7 @@ jobs:
         env:
           SMOKE_ROOT: ${{ runner.temp }}/weekly-smoke
         run: >
-          python scripts/run_cli_smoke.py
+          cargo xtask cli-smoke
           .github/smoke/cli-commands.txt
           --fixture "$SMOKE_ROOT/yarl"
           --db "$SMOKE_ROOT/cairn.kg"
