@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 240" role="img" aria-labelledby="t">
+  <title id="t">cairn — verifiable codebase memory</title>
+  <g transform="translate(24 20) scale(0.39)">
+    <circle cx="256" cy="245" r="152" fill="none" stroke="#b45309" stroke-width="14"/>
+    <ellipse cx="256" cy="420" rx="118" ry="13" fill="#b45309" opacity="0.14"/>
+    <rect x="166" y="352" width="180" height="60" rx="30" fill="#7c2d12"/>
+    <rect x="182" y="302" width="140" height="52" rx="26" fill="#92400e"/>
+    <rect x="201" y="258" width="110" height="46" rx="23" fill="#b45309"/>
+    <rect x="214" y="220" width="84" height="40" rx="20" fill="#d97706"/>
+    <ellipse cx="256" cy="199" rx="30" ry="19" fill="#f59e0b"/>
+  </g>
+  <text x="196" y="150" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        font-size="96" font-weight="700" letter-spacing="-2" fill="#23201b">cairn</text>
+</svg>
