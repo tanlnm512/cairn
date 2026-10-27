@@ -152,6 +152,8 @@ jobs:
         run: cargo xtask check-doc-links
       - name: Conformance table matches the fixtures
         run: cargo xtask conformance-table --check
+      - name: SCIP fixture matches its generator
+        run: cargo xtask scip-fixture --check
       - name: Validate skill eval specs
         run: cargo xtask skill-evals
 
@@ -238,8 +240,8 @@ jobs:
           EOF
 
 
-  # Packaging canary, MAIN PUSHES ONLY: verifies `python -m build` (sdist +
-  # bin wheel, maturin backend) stays green on every merge so packaging
+  # Packaging canary, MAIN PUSHES ONLY: verifies `maturin build` + `maturin sdist`
+  # (bin wheel + sdist) stays green on every merge so packaging
   # breakage surfaces between releases, never at tag time (release.yml builds
   # the real multi-platform wheels there). PRs skip it deliberately -- the
   # engine compile buys no signal the test legs don't already give, and the
@@ -264,8 +266,8 @@ jobs:
 
       - name: Build distributions
         run: |
-          uv sync --extra dev
-          uv run --no-sync python -m build
+          uvx maturin build --release --out dist
+          uvx maturin sdist --out dist
 
       # The installed-product smoke proves the wheel is the engine binary
       # (no Python module inside) and runs from a fresh venv.
