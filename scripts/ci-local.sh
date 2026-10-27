@@ -10,7 +10,7 @@
 #   scripts/ci-local.sh [JOB] [PY_VERSION]    (JOB default: test, PY default: 3.12)
 #   make ci-local                              # test job, Python 3.12
 #   make ci-local PYTHON_VERSION=3.11          # test job on another version
-#   make ci-local-all                          # the full 3.10-3.14 matrix
+#   make ci-local-all                          # the 3.10 + 3.14 matrix
 #   scripts/ci-local.sh security               # pip-audit (hard) + bandit (advisory)
 #   scripts/ci-local.sh precommit              # pre-commit run --all-files
 #   scripts/ci-local.sh build                  # wheel + sdist + smoke (needs cargo)
@@ -39,7 +39,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MOUNT_POINT=/workspace
 CACHE_REL=.cache/ci-local
-VERSIONS_ALL=(3.10 3.11 3.12 3.13 3.14)
+VERSIONS_ALL=(3.10 3.14)
 
 log()  { printf '\033[1;34m[ci-local]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[ci-local]\033[0m %s\n' "$*" >&2; }

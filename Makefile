@@ -35,7 +35,7 @@ ci-local:
 ci-local-all:
 	scripts/ci-local.sh test-all
 	@echo ""
-	@echo "clean-room matrix green (3.10-3.14)"
+	@echo "clean-room matrix green (3.10, 3.14)"
 
 ci-local-rust:
 	scripts/ci-local.sh rust
@@ -114,7 +114,7 @@ help:
 	@echo "  evals                  validate skill eval specs"
 	@echo "  ci-local               clean-room CI replication in a Linux container"
 	@echo "                         (PYTHON_VERSION=3.11 to pick; apple container, not docker)"
-	@echo "  ci-local-all           the full 3.10-3.14 test matrix, sequentially"
+	@echo "  ci-local-all           the 3.10 + 3.14 test matrix, sequentially"
 	@echo "  verify-no-code-change  AST-check that changed .py files are comment-only"
 	@echo "                         (REF=HEAD~1 to verify a commit; default: uncommitted)"
 	@echo "  audit-status           remaining-vs-total audit findings by priority"

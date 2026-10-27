@@ -181,13 +181,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # pyproject declares >=3.10; cover the supported CPython range.
-        # PRs run the ceiling leg only (with xdist, minutes); every
-        # merge-group entry and push to main runs the FULL matrix, so a
-        # merge is always fully covered (with the queue enabled, the gate
-        # runs on the queued merge itself). 3.14 is declared in classifiers
-        # but very new -- wheel gaps fail loudly here, not silently pass.
-        python-version: ${{ github.event_name != 'pull_request' && fromJSON('["3.10", "3.11", "3.12", "3.13", "3.14"]') || fromJSON('["3.14"]') }}
+        # Only dev scripts and the optional converter package run here; the
+        # converter declares >=3.10, so main covers its floor and ceiling.
+        python-version: ${{ github.event_name != 'pull_request' && fromJSON('["3.10", "3.14"]') || fromJSON('["3.14"]') }}
 
     steps:
       - uses: actions/checkout@v5
