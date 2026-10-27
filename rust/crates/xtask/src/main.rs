@@ -18,6 +18,7 @@ mod kg_normalize;
 mod parity;
 #[cfg(test)]
 mod release_contract;
+mod scip_fixture;
 mod skill_evals;
 mod verify_no_code_change;
 mod verify_protection;
@@ -40,6 +41,7 @@ const COMMANDS: &[&str] = &[
     "verify-protection",
     "skill-evals",
     "cli-smoke",
+    "scip-fixture",
 ];
 
 fn main() -> ExitCode {
@@ -69,6 +71,7 @@ fn main() -> ExitCode {
         "verify-protection" => verify_protection::run(rest),
         "skill-evals" => skill_evals::run(rest),
         "cli-smoke" => cli_smoke::run(rest),
+        "scip-fixture" => scip_fixture::run(rest),
         other => {
             eprintln!(
                 "unknown command `{other}`; commands: {}",
