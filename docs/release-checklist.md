@@ -21,20 +21,14 @@ don't skip on "I'm sure it's fine."
 
 ## Tests
 - [ ] `cargo test --manifest-path Cargo.toml --workspace` — the engine
-      suite.
-- [ ] `uv run pytest tests/ -q` — the full local suite (default gate + infra
-      tier together; a bare `pytest` runs everything by design). CI runs the
-      default gate on PR legs (`-m "not infra"`) and the infra tier
-      (`-m infra`) on every main push. Note the pass/skip/fail count; compare
-      to the last green run.
-- [ ] `uv run pytest tests/ -m infra -q` — when cutting a release or touching
-      the frozen oracles (`rust/golden/`) or the binary, run the infra tier
-      explicitly too (PR CI legs skip it; it needs a release binary in
-      `rust/target/release/`).
-- [ ] No new `xfail` or `skip` slipped in to make a failure "pass." Moving a
-      whole file (or class) into the infra tier is deliberate CI selection
-      recorded in the pyproject marker description — per-test
-      skip-quarantining remains forbidden.
+      suite plus the dev-gate and release-wiring contracts (`xtask`). Note
+      the pass/ignore/fail count; compare to the last green run.
+- [ ] `cargo xtask parity --store self` and `cargo xtask cli-golden` — when
+      cutting a release or touching the frozen oracles (`rust/golden/`) or
+      the binary, replay the oracles against the release binary.
+- [ ] `uv run pytest -q` — the optional converter package's tests.
+- [ ] No new `#[ignore]`, `xfail` or `skip` slipped in to make a failure
+      "pass"; skip-quarantining is forbidden.
 
 ## Build verification (for changes touching indexing/embedding)
 - [ ] `cairn build` succeeds against the real workspace.
@@ -77,7 +71,7 @@ If a change is supposed to be refactor/doc-only/comments-only:
 If changes were made by sub-agents or bulk find-replace:
 - [ ] `make verify-no-code-change` passed (or `make verify-no-code-change REF=HEAD~1`
       for a just-made commit) — comments-only changes verified programmatically
-      via AST comparison (`scripts/verify_no_code_change.py`), not by reading diffs.
+      via AST comparison (`cargo xtask verify-no-code-change`), not by reading diffs.
 - [ ] `ruff check` clean.
 - [ ] No string literals (help text, print output, error messages) were
       silently rewritten — these are executable, not comments.
@@ -100,7 +94,7 @@ machine-readable output. It exits zero only when `main` has:
 - at least one required approving review;
 - force-push denial;
 - every status check named by `MANDATORY_CHECKS` in
-  `scripts/verify_protection.py`.
+  `rust/crates/xtask/src/verify_protection.rs`.
 
 ### Conventional commits (the prerequisite)
 `cz` reads the conventional-commit history since the last tag to compute the

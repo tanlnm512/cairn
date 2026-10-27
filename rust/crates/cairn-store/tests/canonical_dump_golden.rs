@@ -1,4 +1,4 @@
-//! Golden parity: the Rust canonical dump reproduces the Python `kg_dump.py` bytes.
+//! Golden parity: the canonical dump reproduces the frozen reference bytes.
 
 use std::collections::BTreeSet;
 use std::fs;

@@ -1,4 +1,4 @@
-//! Shrink-only comment-style gate over the dev-script trees.
+//! Shrink-only comment-style gate over the repo's Python trees.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
@@ -784,7 +784,7 @@ fn write_py_string(out: &mut String, text: &str) {
 #[derive(clap::Parser, Debug)]
 #[command(
     name = "comment-style",
-    about = "Enforce the shrink-only comment-style baseline over the dev-script trees."
+    about = "Enforce the shrink-only comment-style baseline over the repo's Python trees."
 )]
 struct Args {
     /// Emit machine-readable JSON.

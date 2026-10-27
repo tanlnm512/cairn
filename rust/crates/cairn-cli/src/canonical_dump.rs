@@ -1,4 +1,4 @@
-//! `cairn canonical-dump` subcommand: the Rust `kg_dump.py` CLI surface.
+//! `cairn canonical-dump` subcommand: the canonical store dump CLI surface.
 
 use std::collections::BTreeSet;
 use std::io::Write as _;
@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use cairn_store::conn::open_read_only;
 use cairn_store::dump::{DumpError, DumpOptions, TableClass, classify_tables, dump_store};
 
-/// Run the subcommand with `kg_dump.py`-compatible flags; exits 0/1/2 like argparse.
+/// Run the subcommand; exits 0 on success, 1 on dump failure, 2 on usage errors.
 pub fn run(args: &[String]) -> ExitCode {
     let parsed = match parse_args(args) {
         Ok(parsed) => parsed,

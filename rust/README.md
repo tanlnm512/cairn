@@ -8,8 +8,8 @@ equal it.
 
 - Frozen contracts: the `.kg` schema (C-1) and the 26-tool MCP surface (C-2),
   pinned by the goldens under `golden/`
-- Oracle replay: `scripts/rust_migration/` (canonical dump/diff, parity
-  runner, cli goldens, g2 dump-parity check, wheel smoke)
+- Oracle replay: `cargo xtask` (canonical dump/diff, parity runner, cli
+  goldens) plus `scripts/rust_migration/` (g2 dump-parity check, wheel smoke)
 - Gates: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
   -- -D warnings`, `cargo test --workspace` (CI leg `.github/workflows/rust.yml`)
 - Dependency and pin rulings (D-###): the migration spec, campaign ledger,

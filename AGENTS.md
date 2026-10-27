@@ -122,7 +122,7 @@ every change:
 
 The PR template (`.github/PULL_REQUEST_TEMPLATE.md`) carries the author
 checklist; `docs/review-checklist.md` is the procedure behind each box.
-Layers 0-1 (pre-commit + CI: tests, pip-audit, bandit over the dev scripts, PR-title, dependency-review) are automated;
+Layers 0-1 (pre-commit + CI: tests, pip-audit, bandit over the converter package, PR-title, dependency-review) are automated;
 this is the human/agent layer that catches what they can't.
 
 ## Comment, doc, and log style (mandatory, all files)

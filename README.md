@@ -283,13 +283,13 @@ Deep dives: [architecture](docs/architecture.md) ·
 CI replays frozen parity goldens against the release binary — MCP fixtures,
 canonical `.kg` dumps, and CLI captures over the pinned self corpus (a
 captured snapshot of this repository), all under `rust/golden/` and driven by
-`scripts/rust_migration/` — so engine output cannot silently drift. Try it on
+`cargo xtask` — so engine output cannot silently drift. Try it on
 a clone — the build takes seconds:
 
 ```bash
 git clone https://github.com/tanlnm512/cairn && cd cairn
 cairn build
-cairn def load_pinned_store         # -> scripts/rust_migration/parity.py
+cairn def load_pinned_store         # -> rust/crates/xtask/src/parity.rs
 cairn impact load_pinned_store      # -> real transitive callers (non-empty)
 sqlite3 "$(cairn config --db)" \
   "SELECT COUNT(*) FROM edges WHERE resolution='exact' AND target_id IS NULL"   # -> 0
@@ -413,15 +413,15 @@ cargo clippy --manifest-path Cargo.toml --workspace -- -D warnings
 cargo test --manifest-path Cargo.toml --workspace
 ```
 
-Python remains only for development: the frozen-oracle replay scripts
-(`scripts/rust_migration/`), the repo gates under `scripts/`, the pytest
-suite, and the optional converter package (`packaging/cairn-intel-ingest`):
+Repo dev gates and the frozen-oracle replays are the `xtask` crate; Python
+remains only in the optional converter package
+(`packaging/cairn-intel-ingest`):
 
 ```bash
-uv sync --extra dev
-uv run pytest -m "not infra"   # default gate: packaging, release wiring, doc gates, dev scripts
-uv run pytest -m infra         # oracle replay against the release binary (main pushes)
-make ci-local                  # clean-room CI replication in a Linux container
+cargo xtask                       # list the dev gates and oracle replays
+cargo xtask parity --store self   # oracle replay against the release binary
+uv sync --extra dev && uv run pytest -q   # the converter package's tests
+make ci-local                     # clean-room CI replication in a Linux container
 ```
 
 Releases are cut by tagging `vX.Y.Z`: the tag-triggered workflows build the

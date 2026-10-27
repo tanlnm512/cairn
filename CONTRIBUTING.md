@@ -44,31 +44,31 @@ Bypass once with `git commit --no-verify`; uninstall with
 There are two feedback loops:
 
 ```bash
-cargo test --manifest-path Cargo.toml --workspace   # the engine suite
-uv run pytest -q -m "not infra"                     # packaging, docs, dev-script gates
+cargo test --manifest-path Cargo.toml --workspace   # the engine + dev-gate suite
+cargo xtask parity --store self && cargo xtask cli-golden   # frozen-oracle replays
 ```
 
-The pytest `infra` tier (oracle replays against the release binary) runs on
-main pushes; run it locally with `uv run pytest -m infra` when touching the
-frozen oracles under `rust/golden/`. Run both loops before opening a PR.
+The oracle replays run against the release binary on `rust/**` PRs and
+nightly; run them locally when touching the frozen oracles under
+`rust/golden/`. Run both loops before opening a PR. The optional converter
+package keeps its own pytest suite (`uv run pytest -q`).
 
 ### Performance changes
 
 If your change touches daemon/build hot paths, measure with the recorded
-harnesses under `scripts/rust_migration/` — `baseline.py` (per-tool p95 over
-the pinned stores, with `--compare` against a recorded baseline) and
-`closure_bench.py` (closure wall time and peak WAL, with `--compare`).
+harnesses — `cargo xtask baseline` (per-tool p95 over the pinned stores,
+with `--compare` against a recorded baseline) and `cargo xtask closure-bench`
+(closure wall time and peak WAL, with `--compare`).
 Rebuild the release binary first; both compare modes fail on regression.
 
 ## Project layout
 
 The engine is the cargo workspace under `rust/` (one crate per concern:
 store, parse, build, query, daemon, cli — see
-[docs/architecture.md](docs/architecture.md)). Python remains for
-development only: the frozen-oracle replay scripts
-(`scripts/rust_migration/`), the repo gates under `scripts/`, the pytest
-suite under `tests/`, and the optional converter package under
-`packaging/cairn-intel-ingest/`.
+[docs/architecture.md](docs/architecture.md)). Repo dev gates and the
+frozen-oracle replays are the `xtask` crate (`cargo xtask <command>`; run it
+bare for the command list). Python remains only in the optional converter
+package under `packaging/cairn-intel-ingest/`.
 
 ## Codebase intelligence convention (read before editing)
 
@@ -99,8 +99,8 @@ See **AGENTS.md** for the full tool list, resolution-aware querying (precise vs
 
 1. Open a PR against `main`.
 2. Describe the change and link any related issue.
-3. Ensure `cargo test --workspace` and `uv run pytest -m "not infra"` pass
-   at minimum.
+3. Ensure `cargo test --workspace` passes at minimum (plus `uv run pytest`
+   when touching the converter package).
 4. Keep PRs scoped — one logical change each.
 5. Enable auto-merge on your PR (`gh pr merge --auto --merge`) so it merges
    the moment review and required checks land.

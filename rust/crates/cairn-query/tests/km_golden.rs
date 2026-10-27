@@ -2,8 +2,8 @@
 //! contract tests for `recall_memory`/`ask_compass` semantics whose capture
 //! corpus (the 490-file live memory bundle + full graph) is not checked in.
 //!
-//! Golden inputs are reconstructed exactly as `scripts/rust_migration/
-//! golden_record.py` built them: a fresh store + the recorder's own
+//! Golden inputs are reconstructed exactly as the golden recorder
+//! (`cargo xtask golden-record`) builds them: a fresh store + the recorder's own
 //! `seed_concepts` bytes (checked in under `rust/golden/km/bundle-seed/`).
 
 use std::fs;

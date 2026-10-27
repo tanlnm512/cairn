@@ -1,6 +1,6 @@
 //! Canonical per-table dump of a `.kg` store for cross-build content diffing.
 //!
-//! Byte-compatible with `scripts/rust_migration/kg_dump.py`: same format line,
+//! Byte-compatible with the frozen references under `rust/golden/dump/`: same format line,
 //! cell encoding (`\N` NULL, C99-hex floats, `x'<hex>'` blobs, escaped text),
 //! shadow/virtual-table skip rules, and sorted row order.
 
@@ -13,10 +13,10 @@ use rusqlite::types::ValueRef;
 
 use crate::conn::open_read_only;
 
-/// Format header line shared with `kg_dump.py`.
+/// Format header line of every canonical dump.
 pub const FORMAT_LINE: &str = "# cairn-canonical-dump 1";
 
-/// Table classification mirroring `kg_dump.classify_tables`.
+/// Which tables a dump exports and which it skips.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TableClass {
     /// Ordinary row-content table (the only exported class).
@@ -32,7 +32,7 @@ pub enum TableClass {
 }
 
 impl TableClass {
-    /// Classification label as printed by `kg_dump.py --list-tables`.
+    /// Classification label as printed by `cairn canonical-dump --list-tables`.
     pub fn as_str(self) -> &'static str {
         match self {
             TableClass::Content => "content",
@@ -44,7 +44,7 @@ impl TableClass {
     }
 }
 
-/// Dump options mirroring `kg_dump.py`'s `--map-path` / `--tables`.
+/// Dump options behind `cairn canonical-dump --map-path` / `--tables`.
 #[derive(Debug, Default)]
 pub struct DumpOptions {
     /// (from, to) rewrites applied inside text cells, in the given order.
