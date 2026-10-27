@@ -7,6 +7,7 @@ members = [
     "rust/crates/cairn-parse",
     "rust/crates/cairn-query",
     "rust/crates/cairn-store",
+    "rust/crates/xtask",
     "rust/vendor/tree-sitter-dart",
 ]
 

@@ -1,0 +1,24 @@
+[package]
+name = "xtask"
+description = "Repository dev gates and replay oracles (`cargo xtask <command>`)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+clap = { version = "=4.6.7", features = ["derive"] }
+regex = "1"
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "=0.10.9"
+yaml-rust2 = { version = "=0.13.0", default-features = false }
+tree-sitter = "=0.26.13"
+tree-sitter-python = "=0.23.6"
+walkdir = "=2.5.0"
+
+[lints]
+workspace = true

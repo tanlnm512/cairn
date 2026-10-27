@@ -2,3 +2,6 @@
 # golden-binary path keeps resolving after the manifest moved to the repo root.
 [build]
 target-dir = "rust/target"
+
+[alias]
+xtask = "run -q -p xtask --"
