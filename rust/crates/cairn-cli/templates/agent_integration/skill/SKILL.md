@@ -22,8 +22,6 @@ lives alongside it and is loaded on demand:
 - `references/tool-behaviors.md` -- empirically-verified gotchas per tool
 - `references/task-queue.md` -- LLM synthesis task queue (compass/wiki generation)
 - `references/cli-fallback.md` -- `cairn` CLI commands for when MCP is unavailable
-- `scripts/impact_guard.py` -- run instead of raw `impact_analysis`/`cairn impact`
-  when a name might be common/lifecycle-shaped (see Rule 6)
 - `evals/` -- scenario specs for the rules most likely to be silently violated
 
 ## Available MCP Tools (via cairn MCP server)
@@ -108,7 +106,7 @@ When fuzzy is right: auditing, dead-code hunting, exploring unfamiliar code.
 |-----------|------|-----|
 | "Where is ApiFactory defined?" | find_definition | Precise lookup |
 | "What calls this function?" | get_callers (precise; fuzzy for common names) | Within-repo graph traversal |
-| "What breaks if I change X?" | impact_analysis + cross_repo_deps (or `scripts/impact_guard.py` if X might be a common name) | Impact is within-repo (precise by default; fuzzy=True if suspiciously small); cross-repo needs cross_repo_deps |
+| "What breaks if I change X?" | impact_analysis + cross_repo_deps (or `cairn impact X --guard` if X might be a common name) | Impact is within-repo (precise by default; fuzzy=True if suspiciously small); cross-repo needs cross_repo_deps |
 | "How does dispatch work?" | ask_compass, then search_knowledge(type_filter="Wiki") | Router first; drill down if thin |
 | "What happens when entry runs? (ordered chain)" | trace_flow(entry) | Downward call chain -- explore's neighborhood is unordered |
 | "I need to edit PaymentVM.kt" | ask_compass(file_path="...") | Load compass + memory |
@@ -133,7 +131,7 @@ Full rationale + examples for each: `references/golden-rules.md`.
 3. **search_symbols is the default entry point.** FTS5 + BM25. For concept-based queries, use `semantic_search`. `explore` orchestrates both.
 4. **Index auto-refreshes at boot.** No per-query freshness check. Run `cairn stats` from CLI to verify.
 5. **typeHierarchy limited by tree-sitter.** Works for Kotlin/Java. Empty/incomplete for TypeScript, Python, Swift. Don't retry.
-6. **impact_analysis needs specific names; guard against response blowups.** Common names (`get`, `create`, lifecycle methods like `onCreate`) explode into hundreds/thousands of name-collision hits, which also risks a large-MCP-response warning. Use qualified names, prefer `cached=True` for public symbols, and cap `depth<=2` when the symbol is reached via a common/lifecycle name. If the result still returns 100+ impacted symbols for a narrow feature, treat it as a name-collision artifact — don't quote the raw count in your report, note it as noise and fall back to `get_callers` for the specific hop you need. Or just run `scripts/impact_guard.py <symbol>`, which does this check for you.
+6. **impact_analysis needs specific names; guard against response blowups.** Common names (`get`, `create`, lifecycle methods like `onCreate`) explode into hundreds/thousands of name-collision hits, which also risks a large-MCP-response warning. Use qualified names, prefer `cached=True` for public symbols, and cap `depth<=2` when the symbol is reached via a common/lifecycle name. If the result still returns 100+ impacted symbols for a narrow feature, treat it as a name-collision artifact — don't quote the raw count in your report, note it as noise and fall back to `get_callers` for the specific hop you need. Or just run `cairn impact <symbol> --guard`, which does this check for you.
 7. **explore before ask_compass** for structural questions. `explore` is pure L1 (always works); `ask_compass` depends on compass/wiki coverage.
 8. **Precise first, fuzzy retry.** Empty precise ≠ 'no callers'. Precise = ground truth for refactoring. Fuzzy = hypothesis for auditing.
 9. **impact_analysis + cross_repo_deps always together.** Neither alone gives the full multi-repo picture.

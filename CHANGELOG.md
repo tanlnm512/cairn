@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Changed
+- `cairn impact --guard [--threshold N]` replaces the skill's `scripts/impact_guard.py` helper: a cycle-carrying result above the threshold prints a name-collision warning and the dataflow-index fallback instead of the raw dump (`--json` gains a `guard` object), and the agent skill no longer ships a Python script.
 
 ## [0.24.1] - 2026-10-26
 ### Fixed

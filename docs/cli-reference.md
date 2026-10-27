@@ -54,7 +54,7 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 | `cairn callees <symbol>` | what this calls |
 | `cairn search <query>` | symbol search (FTS5, `*` wildcards) |
 | `cairn semantic <query>` | hybrid semantic search (`--limit`, `--threshold`, `--include-callers`, `--json`) |
-| `cairn impact <symbol>` | what breaks if changed (within-repo) |
+| `cairn impact <symbol>` | what breaks if changed (within-repo; `--guard` flags a cycle-carrying result above `--threshold` (default 100) as a name collision and prints the dataflow-index fallback instead, see [below](#cairn-impact---guard)) |
 | `cairn blast` | reverse-dependency radius of a git diff |
 | `cairn map` | deterministic repository orientation map |
 | `cairn communities` | Louvain subsystem clusters over the symbol graph (see [below](#cairn-communities)) |
@@ -69,6 +69,17 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 | `cairn taint --from <pattern> --to <pattern>` | inter-procedural taint path trace (`--fuzzy` adds ambiguous/unresolved hops; `--max-depth` caps the walk) |
 | `cairn review` | review loop: `--base <ref>` context pack, `--pre-submit [--gate]` memory guard, `--capture-event <file>` comment capture |
 | `cairn context <file>` | compass + memory + wiki context for a file |
+
+### `cairn impact --guard`
+
+- A result is a collision when it has a non-empty `cycles` list and more than
+  `--threshold` impacted symbols (default 100; `--threshold` requires `--guard`).
+- Text mode prints a collision warning naming up to 8 cycle symbols and the
+  `cairn dataflow lookup` view of the symbol instead of the per-depth dump;
+  below the threshold the output is unchanged.
+- `--json` adds `guard: {collision, threshold}`; on a collision `impacted` is
+  omitted and `guard.dataflow` carries the `cairn dataflow lookup --json`
+  object, or `null` when the symbol has no dataflow entry.
 
 ### `cairn blast`
 

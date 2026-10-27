@@ -1,31 +1,5 @@
 #!/usr/bin/env python3
-"""Structural validation runner for the skill eval specs.
-
-The evals in ``rust/crates/cairn-cli/templates/agent_integration/skill/evals/*.md``
-are scenario descriptions (prose), not executable assertions. This runner turns
-them into a CI-checkable artifact by validating the *structured frontmatter*
-each spec declares at its top:
-
-  1. every spec has the required frontmatter keys;
-  2. every ``expected_calls`` / ``wrong_calls`` entry has its required fields;
-  3. every referenced ``tool`` is a real registered MCP tool (the daemon's
-     ``catalog()`` in ``rust/crates/cairn-daemon/src/tools.rs``), a real
-     ``cairn`` CLI command (the clap subcommand enums in
-     ``rust/crates/cairn-cli/src/cmds_*.rs``), or a shipped script under
-     ``scripts/`` / the skill template's ``scripts/``.
-
-It is a STRUCTURAL validator only -- it does not (cannot, cheaply) run an agent
-and grade its behavior. Its value is catching drift: a spec whose frontmatter
-references a tool that was renamed/removed, a spec missing required fields, or
-a command in the prose that no longer exists in the CLI.
-
-Run::
-
-    python3 scripts/run_skill_evals.py
-    make evals
-
-Exits non-zero if any spec fails validation.
-"""
+"""Validate skill eval frontmatter: required keys, and every tool is a real MCP tool, `cairn` command, or script."""
 from __future__ import annotations
 
 import re
@@ -50,7 +24,7 @@ MCP_TOOLS_FILE = ROOT / "rust" / "crates" / "cairn-daemon" / "src" / "tools.rs"
 CLI_DIR = ROOT / "rust" / "crates" / "cairn-cli" / "src"
 # The clap families cli.rs flattens into the top level.
 TOP_LEVEL_ENUMS = ("CoreCommand", "KnowledgeCommand", "SystemCommand")
-SCRIPTS_DIRS = [ROOT / "scripts", SKILL_DIR / "scripts"]
+SCRIPTS_DIRS = [ROOT / "scripts"]
 
 # Frontmatter schema. ``expected_calls`` and ``wrong_calls`` are lists of dicts.
 REQUIRED_KEYS = ["id", "rule", "title", "scenario", "expected_calls", "wrong_calls"]
@@ -184,21 +158,7 @@ def resolve_tool(
     scripts: set[str],
     allow_unregistered_mcp: bool = False,
 ) -> tuple[bool, str]:
-    """Return ``(ok, reason)`` describing whether ``tool`` is a known surface.
-
-    Recognized forms:
-      * bare MCP tool name        -> ``impact_analysis``
-      * fully-qualified MCP name  -> ``mcp__cairn__rebuild_graph`` (the
-        tail after the last ``__`` must match a registered tool; an
-        *unregistered* tail is accepted only with ``allow_unregistered_mcp``,
-        for ``wrong_calls`` entries that document a nonexistent tool an agent
-        might wrongly invoke)
-      * ``cairn <cmd>`` / ``cairn <group> <cmd>`` CLI commands
-      * shipped script filenames  -> ``scripts/impact_guard.py``
-
-    The ``reason`` string classifies which surface matched (or why not) so the
-    report is legible.
-    """
+    """Return ``(ok, reason)``: whether ``tool`` is a registered MCP tool, a `cairn` command (flags ignored), or a script."""
     if not isinstance(tool, str) or not tool.strip():
         return False, "empty/missing tool name"
 
@@ -231,7 +191,7 @@ def resolve_tool(
         cleaned = t[3:].strip()
     else:
         cleaned = t
-    parts = cleaned.split()
+    parts = [p for p in cleaned.split() if not p.startswith("-")]
     if len(parts) == 2:
         grp, cmd = parts
         if grp in cli_commands and cmd in cli_commands[grp]:

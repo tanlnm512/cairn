@@ -10,7 +10,7 @@ within a session. Fall back to the `cairn` CLI only if MCP is unavailable
 2. `find_definition("<main-symbol>")` — confirm where the file's main symbol lives (derive main-symbol from the filename)
 3. `get_callers("<main-symbol>")` — within-repo dependents (precise by default; auto-retries fuzzy if empty)
 4. `cross_repo_deps("<repo>")` — cross-repo consumers (impact_analysis does NOT cross repos)
-5. `impact_analysis("<main-symbol>")` — within-repo blast radius (precise by default). If the name is common/lifecycle-shaped like `get`/`create`/`onCreate`, run `scripts/impact_guard.py <main-symbol>` instead — see Golden Rule 6
+5. `impact_analysis("<main-symbol>")` — within-repo blast radius (precise by default). If the name is common/lifecycle-shaped like `get`/`create`/`onCreate`, run `cairn impact <main-symbol> --guard` instead — see Golden Rule 6
 
 CLI fallback (if MCP unavailable): `cairn context $ARGUMENTS`, `cairn def`, `cairn callers`, `cairn deps`, `cairn impact`.
 

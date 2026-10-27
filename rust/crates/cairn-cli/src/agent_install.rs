@@ -578,14 +578,6 @@ fn load_json_or_none(path: &Path) -> Option<Value> {
     serde_json::from_str(&text).ok()
 }
 
-fn is_script(path: &Path) -> bool {
-    let in_scripts = path.components().any(|c| c.as_os_str() == "scripts");
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("py") | Some("sh")
-    ) && in_scripts
-}
-
 fn write_file(path: &Path, content: &str, force: bool, res: &mut InstallResult, dry_run: bool) {
     if path.exists() && !force {
         res.add(path, true);
@@ -597,19 +589,6 @@ fn write_file(path: &Path, content: &str, force: bool, res: &mut InstallResult, 
     }
     if atomic_write_text(path, content).is_err() {
         return;
-    }
-    if is_script(path)
-        && let Ok(meta) = std::fs::metadata(path)
-    {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            let mut perms = meta.permissions();
-            perms.set_mode(perms.mode() | 0o111);
-            let _ = std::fs::set_permissions(path, perms);
-        }
-        #[cfg(not(unix))]
-        let _ = meta;
     }
     res.add(path, false);
 }

@@ -67,7 +67,7 @@ What's your question?
 ├─ "Who calls X" / "what breaks if I change X"
 │    ├─ One hop:    get_callers(name)                        [precise]
 │    └─ Recursive:  impact_analysis(name) + cross_repo_deps  [Rule 6, 9]
-│         └─ Name might be common? scripts/impact_guard.py   [Rule 6]
+│         └─ Name might be common? cairn impact <X> --guard   [Rule 6]
 │
 ├─ "What does X do when it runs"
 │    ├─ One hop:    get_callees(name)                        [precise]

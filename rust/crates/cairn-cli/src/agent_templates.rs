@@ -90,10 +90,6 @@ pub const TEMPLATES: &[(&str, &str)] = &[
         "skill/references/tools.md",
         include_str!("../templates/agent_integration/skill/references/tools.md"),
     ),
-    (
-        "skill/scripts/impact_guard.py",
-        include_str!("../templates/agent_integration/skill/scripts/impact_guard.py"),
-    ),
 ];
 
 /// Embedded template content for `rel`, or None when the path is not vendored.
@@ -118,11 +114,11 @@ mod tests {
     #[test]
     fn skill_tree_covers_the_whole_vendored_package() {
         let paths: Vec<&str> = TEMPLATES.iter().map(|(name, _)| *name).collect();
-        assert_eq!(paths.len(), 23);
+        assert_eq!(paths.len(), 22);
         assert!(paths.iter().all(|p| p.starts_with("skill/")
             || p.starts_with("commands/")
             || p.starts_with("cursor/")));
-        assert_eq!(skill_tree().count(), 15);
+        assert_eq!(skill_tree().count(), 14);
     }
 
     #[test]

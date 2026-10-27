@@ -6,8 +6,7 @@ If MCP tools are unavailable, use CLI commands (`cairn` is on PATH in the venv):
 - `cairn callers <symbol>` -- who calls this
 - `cairn impact <symbol>` -- what breaks if changed (within-repo). See Golden
   Rule 6 (`references/golden-rules.md`) before running this on a common name
-  -- prefer `scripts/impact_guard.py <symbol>` if it's available in this
-  environment.
+  -- prefer `cairn impact <symbol> --guard` there.
 - `cairn deps <repo>` -- cross-repo dependency map
 - `cairn context <file>` -- load context for a file
 - `cairn ask "<question>"` -- router across all layers

@@ -112,20 +112,6 @@
       "paths": [
         "scripts/rust_migration/baseline.py"
       ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:f0273f47568733b3098f6e3abe29852f9845cd8da5086bbfc13af2047159ce21",
-      "paths": [
-        "scripts/run_skill_evals.py"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "docstring:f37333156640cec07a842248e32d5925c50905f2b68b34275776ec44bd6bb92f",
-      "paths": [
-        "scripts/run_skill_evals.py"
-      ]
     }
   ]
 }

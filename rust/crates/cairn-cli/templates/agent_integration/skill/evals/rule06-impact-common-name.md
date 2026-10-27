@@ -8,8 +8,8 @@ expected_calls:
     reason: run it but recognize the result as a name-collision artifact, not real coupling
   - tool: get_callers
     reason: re-resolve the real, narrow blast radius via the concrete class/interface method rather than the lifecycle entry point
-  - tool: scripts/impact_guard.py
-    reason: CLI helper that auto-detects the collision and falls back to a trustworthy dataflow number
+  - tool: cairn impact --guard
+    reason: CLI mode that auto-detects the collision and falls back to a trustworthy dataflow number
 wrong_calls:
   - tool: impact_analysis
     why: "quoting the raw inflated total (222, 1020, ...) to the user as if it were a verified blast radius"
@@ -45,7 +45,7 @@ codebase.
 3. Do not quote the raw total (`222`, `1020`, whatever it is that run) as the
    blast radius in a report to the user.
 4. Either re-run with a scoped/qualified name, cap `depth<=2`, or (if using
-   the CLI) run `scripts/impact_guard.py initAppTracking` and report its
+   the CLI) run `cairn impact initAppTracking --guard` and report its
    output instead -- it performs steps 1-3 automatically and falls back to
    `cairn dataflow lookup` for a trustworthy number.
 5. State the real, narrow blast radius explicitly: the call site in
@@ -58,7 +58,7 @@ codebase.
 An agent reports "changing this touches 1020 symbols" (or any similarly
 inflated number) as if it were a real, verified blast radius, causing the
 user to over-scope a review or refuse a safe change. This exact failure
-happened once in production use before this rule/script existed -- an
+happened once in production use before this rule/guard existed -- an
 `impact_analysis("initAppTracking")` call reported 1020 impacted symbols for
 what was actually a leaf feature with a blast radius of ~4 files, purely
 because the traversal walked through `onCreate`/`onViewCreated`/`render` name
