@@ -5,11 +5,11 @@
 # clients afterward, run `cairn install-agents` separately.
 #
 # Usage:
-#   ./scripts/install.sh --venv           # use venv instead of uv/pipx
+#   ./scripts/install.sh                  # cargo install from this checkout
+#   CARGO_INSTALL_ROOT=DIR ./scripts/install.sh   # install under DIR/bin
 #
 # Prerequisites:
-#   - A Rust toolchain when installing from a checkout (the wheel compiles
-#     the engine); prebuilt channels need none.
+#   - A Rust toolchain (cargo), see https://rustup.rs
 
 set -euo pipefail
 
@@ -26,107 +26,37 @@ ok()    { echo -e "${GREEN}✓${NC} $*"; }
 warn()  { echo -e "${YELLOW}⚠${NC} $*"; }
 fail()  { echo -e "${RED}✗${NC} $*"; exit 1; }
 
-# ─── Defaults ─────────────────────────────────────────────────────────────────
-USE_VENV=false
-
 # ─── Parse args ───────────────────────────────────────────────────────────────
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --venv)         USE_VENV=true ;;
-    -h|--help)
-      sed -n '2,10p' "$0" | sed 's/^# //' | sed 's/^#//'
-      exit 0 ;;
-    *) fail "Unknown option: $1 (use --help)" ;;
-  esac
-  shift
-done
+case "${1:-}" in
+  "") ;;
+  -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) fail "Unknown option: $1 (use --help)" ;;
+esac
 
 # ─── Resolve directories ─────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ─── Step 0: Find a suitable Python ───────────────────────────────────────
+# ─── Step 1: Check prerequisites ──────────────────────────────────────────
 info "Checking prerequisites..."
-
-PYTHON=""
-for candidate in python3.12 python3.11 python3.10 python3; do
-  if "$candidate" -c "import sys; assert sys.version_info >= (3, 10)" 2>/dev/null; then
-    PYTHON="$candidate"
-    break
-  fi
-done
-
-if [[ -z "$PYTHON" ]]; then
-  fail "Python >= 3.10 required. Found: $(python3 --version 2>&1 || echo 'not found')"
-fi
-PY_VER="$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-ok "Python $PY_VER ($PYTHON)"
-
-# ─── Step 1: Clean stale build artifacts ───────────────────────────────────
-# setuptools' build_py copies into build/lib by mtime, not content hash:
-# a stale build/ or *.egg-info can be repackaged into the new wheel even
-# with `uv tool install --force`. uv's package cache must also be cleared
-# (`uv cache clean cairn-intel`, scoped to this package) or the old wheel
-# is served again. Unconditional — cheap and has no downside.
-info "Cleaning stale build artifacts..."
-rm -rf "$PROJECT_DIR"/build "$PROJECT_DIR"/dist "$PROJECT_DIR"/*.egg-info
-ok "Removed build/, dist/, *.egg-info"
-
-if command -v uv >/dev/null 2>&1; then
-  uv cache clean cairn-intel >/dev/null 2>&1 || true
-  ok "Cleared uv's cached build for cairn-intel"
-fi
+command -v cargo >/dev/null 2>&1 \
+  || fail "cargo not found. Install a Rust toolchain: https://rustup.rs"
+ok "$(cargo --version)"
 
 # ─── Step 2: Install cairn binary ─────────────────────────────────────────
 info "Installing cairn binary..."
+cargo install --locked --path "$PROJECT_DIR/rust/crates/cairn-cli"
+ok "Installed cairn"
 
-if $USE_VENV; then
-  VENV_DIR="$PROJECT_DIR/.venv"
-  if [[ -d "$VENV_DIR" ]]; then
-    ok "venv exists at $VENV_DIR"
-  else
-    "$PYTHON" -m venv "$VENV_DIR"
-    ok "Created venv at $VENV_DIR"
-  fi
-  source "$VENV_DIR/bin/activate"
-  pip install -e "${PROJECT_DIR}[dev]" >/dev/null 2>&1
-  ok "Installed cairn (editable, venv mode)"
-  CAIRN_CMD="$VENV_DIR/bin/cairn"
-else
-  # Prefer uv, fall back to pipx, then venv
-  if command -v uv >/dev/null 2>&1; then
-    uv tool install --force "$PROJECT_DIR" >/dev/null 2>&1
-    ok "Installed cairn via uv"
-  elif command -v pipx >/dev/null 2>&1; then
-    pipx install --force "$PROJECT_DIR" >/dev/null 2>&1
-    ok "Installed cairn via pipx"
-  else
-    warn "Neither uv nor pipx found. Falling back to venv..."
-    VENV_DIR="$PROJECT_DIR/.venv"
-    "$PYTHON" -m venv "$VENV_DIR"
-    source "$VENV_DIR/bin/activate"
-    pip install -e "${PROJECT_DIR}[dev]" >/dev/null 2>&1
-    ok "Installed cairn (venv fallback)"
-    CAIRN_CMD="$VENV_DIR/bin/cairn"
-  fi
-fi
+INSTALL_ROOT="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}"
+CAIRN_CMD="$INSTALL_ROOT/bin/cairn"
+[[ -x "$CAIRN_CMD" ]] || fail "cairn binary not found at $CAIRN_CMD"
 
-# Resolve cairn command path
-if [[ -z "${CAIRN_CMD:-}" ]]; then
-  CAIRN_CMD="$(command -v cairn 2>/dev/null || true)"
-fi
-if [[ -z "$CAIRN_CMD" || ! -x "$CAIRN_CMD" ]] && command -v uv >/dev/null 2>&1; then
-  UV_BIN_DIR="$(uv tool dir --bin 2>/dev/null || true)"
-  if [[ -n "$UV_BIN_DIR" && -x "$UV_BIN_DIR/cairn" ]]; then
-    CAIRN_CMD="$UV_BIN_DIR/cairn"
-  fi
-fi
-if [[ -z "$CAIRN_CMD" || ! -x "$CAIRN_CMD" ]]; then
-  fail "cairn binary not found. Try: $0 --venv"
-fi
-
-CAIRN_VERSION=$("$CAIRN_CMD" --version 2>/dev/null || echo "unknown")
+CAIRN_VERSION="$("$CAIRN_CMD" --version 2>/dev/null)" || fail "$CAIRN_CMD --version failed"
 ok "cairn --version: $CAIRN_VERSION"
+if [[ "$(command -v cairn 2>/dev/null || true)" != "$CAIRN_CMD" ]]; then
+  warn "$INSTALL_ROOT/bin is not first on PATH for cairn"
+fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────
 echo ""
@@ -144,4 +74,4 @@ echo "    cairn --version"
 echo "    cairn stats                        # (after cairn init)"
 echo ""
 echo "  Uninstall:"
-echo "    ./scripts/uninstall.sh"
+echo "    cairn uninstall            # or ./scripts/uninstall.sh"

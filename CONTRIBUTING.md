@@ -22,9 +22,9 @@ uv sync --extra dev
 cargo build --release --manifest-path Cargo.toml -p cairn-cli
 ```
 
-Installing the PyPI package means compiling the engine, so development
-installs use the cargo build above (or `scripts/install.sh`, which drives
-uv/pipx); a Rust toolchain is required either way. The optional
+Development installs use the cargo build above, or `scripts/install.sh`
+(`cargo install --locked` from this checkout); a Rust toolchain is
+required either way. The optional
 high-fidelity PDF converter package lives under
 `packaging/cairn-intel-ingest/`.
 
