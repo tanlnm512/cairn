@@ -86,7 +86,7 @@ pub enum SystemCommand {
         /// HTTP daemon host (loopback).
         #[arg(long, default_value = cairn_daemon::lifecycle::DEFAULT_HOST)]
         host: String,
-        /// Daemon launcher a start execs (default: rust; 'python' resolves to the `cairn` on PATH, and the PyPI launcher execs the same engine; CAIRN_DAEMON_IMPL overrides).
+        /// Ignored; accepted for compatibility.
         #[arg(long = "impl")]
         impl_: Option<String>,
     },

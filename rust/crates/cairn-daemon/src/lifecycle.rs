@@ -16,7 +16,6 @@ pub const LEGACY_LABEL: &str = "dev.cairn.sse";
 pub const DEFAULT_PORT: u16 = 9876;
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 /// Selects the implementation a daemon start launches (`rust` or `python`).
-pub const DAEMON_IMPL_ENV: &str = "CAIRN_DAEMON_IMPL";
 /// Path of the Rust daemon binary a rust-impl start execs.
 pub const RUST_BIN_ENV: &str = "CAIRN_RUST_BIN";
 const LAUNCHCTL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -266,7 +265,7 @@ pub fn write_plist_file(path: &Path, plist: &LaunchdPlist) -> std::io::Result<Pa
 // --- stray sweep ------------------------------------------------------------
 
 /// True when `cmdline` is a real `cairn serve` server invocation (anchored,
-/// subcommands excluded); recognizes both a native binary and a shebang exec.
+/// subcommands excluded); the shebang form only matches strays from old installs.
 pub fn is_cairn_serve_cmdline(cmdline: &str) -> bool {
     let mut tokens: Vec<&str> = cmdline.split_whitespace().collect();
     if tokens.len() >= 3
@@ -784,28 +783,6 @@ pub fn healthz_json(port: u16, host: &str) -> Option<Value> {
 
 // --- impl selection -----------------------------------------------------------
 
-/// Implementation a start launches: CAIRN_DAEMON_IMPL when set, else `rust`
-/// when the Rust daemon binary is available, else `python` (the PyPI
-/// launcher, which execs the same Rust engine).
-pub fn daemon_impl() -> &'static str {
-    let chosen = std::env::var(DAEMON_IMPL_ENV)
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
-    if !chosen.is_empty() {
-        return if chosen.eq_ignore_ascii_case("rust") {
-            "rust"
-        } else {
-            "python"
-        };
-    }
-    if rust_bin().is_some() {
-        "rust"
-    } else {
-        "python"
-    }
-}
-
 /// Rust daemon binary path: CAIRN_RUST_BIN, else this process when named
 /// `cairn` (the Rust binary is itself the Rust daemon); None when neither.
 pub fn rust_bin() -> Option<String> {
@@ -821,17 +798,9 @@ pub fn rust_bin() -> Option<String> {
         .map(|exe| exe.to_string_lossy().into_owned())
 }
 
-/// Binary a daemon start execs: the Rust binary when impl=rust, else cg_bin().
+/// Binary a daemon start execs: the Rust binary, else cg_bin().
 pub fn daemon_bin() -> Result<String, String> {
-    if daemon_impl() == "python" {
-        return Ok(cg_bin());
-    }
-    rust_bin().ok_or_else(|| {
-        format!(
-            "{DAEMON_IMPL_ENV}=rust selected but no Rust daemon binary found; \
-             set {RUST_BIN_ENV} to the Rust cairn binary."
-        )
-    })
+    Ok(rust_bin().unwrap_or_else(cg_bin))
 }
 
 // --- bind discovery -------------------------------------------------------------
