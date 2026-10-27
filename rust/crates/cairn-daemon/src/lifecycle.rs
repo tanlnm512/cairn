@@ -15,8 +15,7 @@ pub const LABEL: &str = "dev.cairn.mcp";
 pub const LEGACY_LABEL: &str = "dev.cairn.sse";
 pub const DEFAULT_PORT: u16 = 9876;
 pub const DEFAULT_HOST: &str = "127.0.0.1";
-/// Selects the implementation a daemon start launches (`rust` or `python`).
-/// Path of the Rust daemon binary a rust-impl start execs.
+/// Path of the Rust daemon binary a daemon start execs.
 pub const RUST_BIN_ENV: &str = "CAIRN_RUST_BIN";
 const LAUNCHCTL_TIMEOUT: Duration = Duration::from_secs(15);
 const PROCBE_TIMEOUT: Duration = Duration::from_secs(5);

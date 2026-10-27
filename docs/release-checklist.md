@@ -39,8 +39,8 @@ don't skip on "I'm sure it's fine."
 
 ## "No behavior changed" claims
 If a change is supposed to be refactor/doc-only/comments-only:
-- [ ] AST-verify the Python side (`scripts/`, `tests/`, `packaging/`):
-      `uv run python -m compileall -q scripts/ tests/ packaging/` passes, AND
+- [ ] AST-verify the Python side (`packaging/`, `tests/fixtures/`):
+      `uv run python -m compileall -q packaging/ tests/fixtures/` passes, AND
       `make verify-no-code-change` (see [below](#agent--bulk-edit-safety)) —
       self-reports of "no code changed" are unreliable; sub-agents and
       late-night edits silently drift into executable code.
