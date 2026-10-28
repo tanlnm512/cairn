@@ -140,7 +140,7 @@ pub enum SystemCommand {
         #[arg(long)]
         workspace: Option<String>,
     },
-    /// Uninstall cairn: agent wiring, hooks, graph store, and the binary.
+    /// Uninstall cairn: agent wiring, hooks, graph store; the binary step reports its removal.
     Uninstall {
         /// Remove everything for ALL workspaces (the entire ~/.cairn).
         #[arg(long)]
@@ -154,7 +154,7 @@ pub enum SystemCommand {
         /// Remove graph + knowledge data only.
         #[arg(long = "graph-only")]
         graph_only: bool,
-        /// Remove the cairn binary only.
+        /// Report the cairn binary and its removal command only.
         #[arg(long = "package-only")]
         package_only: bool,
         /// Limit agent removal to these clients (repeatable).

@@ -289,7 +289,7 @@
   {
    "label": "version",
    "exit": 0,
-   "stdout": "⠿ cairn-intel 0.24.1\n",
+   "stdout": "⠿ cairn 0.24.1\n",
    "stderr": ""
   },
   {

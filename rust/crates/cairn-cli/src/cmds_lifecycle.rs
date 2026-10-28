@@ -21,7 +21,7 @@ use crate::store_paths;
 // --- version -----------------------------------------------------------------
 
 pub fn run_version() -> ExitCode {
-    display::info(&format!("cairn-intel {}", env!("CARGO_PKG_VERSION")));
+    display::info(&format!("cairn {}", env!("CARGO_PKG_VERSION")));
     ExitCode::SUCCESS
 }
 

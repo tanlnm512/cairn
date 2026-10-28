@@ -8,7 +8,7 @@ evals:
 # No host PATH/HOME/agent CLIs/state -- the same environment a GitHub runner
 # has. Catches non-hermetic tests (green locally only because of the dev
 # machine) BEFORE pushing. Mirrors .github/workflows/ci.yml job-by-job;
-# venv/pip/pre-commit caches persist under .cache/ci-local/ (gitignored).
+# Rust toolchain, cargo, and prek caches persist under .cache/ci-local/ (gitignored).
 # Jobs: scripts/ci-local.sh [precommit|build|rust|parity|smoke]
 # CI_LOCAL_ARCH=linux/amd64 runs the x86-64 image via Rosetta for runner parity.
 ci-local:

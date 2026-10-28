@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **cairn-intel** (the `cairn` local codebase intelligence
+All notable changes to **cairn** (the local codebase intelligence
 system) are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
