@@ -47,7 +47,7 @@ jobs:
           requireScope: false
 
   # --- pre-commit: server-side enforcement of all Layer-0 gates ------------
-  # Closes the gap where a dev who skipped `pre-commit install` could bypass
+  # Closes the gap where a dev who skipped `prek install` could bypass
   # local gates. This is the single server-side home for ALL Layer-0 checks --
   # gitleaks (secrets), the yaml/toml/large-file checks, and the cargo hooks
   # all live in .pre-commit-config.yaml and are binding only because this job
@@ -56,17 +56,15 @@ jobs:
     name: pre-commit (all local gates)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      PREK_VERSION: "0.5.7"
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Cache pre-commit hook envs
+      - name: Cache prek hook envs
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
-      - uses: astral-sh/setup-uv@v10.1.0
+          path: ~/.cache/prek
+          key: prek-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
       # The comment-style hook runs `cargo xtask`, so every leg needs the toolchain.
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -74,12 +72,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> rust/target"
-      - name: Install (with dev extras)
-        run: uv sync --extra dev
+      - name: Install prek
+        run: curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/j178/prek/releases/download/v${PREK_VERSION}/prek-installer.sh" | sh
       - name: Run all hooks
         # PR legs skip the two cargo hooks (~5 of the job's 6 minutes): Rust
         # CI runs both on every PR already. Main and the merge queue run all.
-        run: uv run --no-sync pre-commit run --all-files
+        run: prek run --all-files
         env:
           SKIP: ${{ github.event_name == 'pull_request' && 'cargo-fmt,cargo-clippy' || '' }}
 
@@ -136,16 +134,6 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/dependency-review-action@v4
-        with:
-          # filelock's fix series (4.2+) requires py>=3.11; the py3.10 marker
-          # leg of uv.lock pins 4.1.0 for the dev-only virtualenv chain.
-          allow-ghsas: >-
-            GHSA-2g95-wg33-c5x2,
-            GHSA-567q-5qvw-pf92,
-            GHSA-9vhv-jxww-xfm5,
-            GHSA-crv4-6mhj-j5jh,
-            GHSA-jqc4-5cvw-7w85,
-            GHSA-v4x8-3wr5-3wq8
 
   # Packaging canary, MAIN PUSHES ONLY: verifies `maturin build` + `maturin sdist`
   # (bin wheel + sdist) stays green on every merge so packaging

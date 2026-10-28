@@ -9,7 +9,7 @@
      in every implementer payload. One principle per article, MUST-strength. -->
 
 ## Articles
-- **C-01 — Shipping workflow**: every change lands via `branch → pre-commit run --all-files → conventional commit → push feature branch → PR (audit checklist filled) → watch CI`; never push directly to `main`; never `git commit --no-verify` past a pre-commit failure.
+- **C-01 — Shipping workflow**: every change lands via `branch → prek run --all-files → conventional commit → push feature branch → PR (audit checklist filled) → watch CI`; never push directly to `main`; never `git commit --no-verify` past a pre-commit failure.
 - **C-02 — Test-first**: every new behavior ships with a failing-test-first task; no implementation task is done without its test case passing.
 - **C-03 — Dependency gate**: no new runtime dependency without a tech-spec `D-###` decision recording why and what it costs.
 - **C-04 — Test isolation**: no eager `cairn.cli`/`cairn.mcp_server` imports in test modules; never patch the global `subprocess.Popen`; tests using `tmp_path` must not leak workspaces into the real `~/.cairn`.

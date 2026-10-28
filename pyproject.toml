@@ -32,9 +32,6 @@ dependencies = []
 dev = [
     # PEP 517 front end the wheel smoke drives, as a pip user's build would.
     "build",
-    # Local review/audit gate (Layer 0 of the review pipeline): defines the
-    # pre-commit hooks (.pre-commit-config.yaml) that run before every commit.
-    "pre-commit>=4.0",
     # Release tooling: `cz bump` bumps the version across version_files and
     # tags the release; CHANGELOG.md stays hand-maintained. See
     # docs/release-checklist.md "Cutting a release".

@@ -16,7 +16,7 @@ All AI coding agents working in this workspace should use these tools.
 
 TRIGGER: the moment you finish editing and are about to commit, push, or open a
 PR — STOP and follow the shipping procedure end to end:
-`branch → pre-commit run --all-files → conventional commit → push feature branch
+`branch → prek run --all-files → conventional commit → push feature branch
 → PR (fill the audit checklist) → watch CI → fix on the same branch → post-merge
 cairn update + record_memory`.
 

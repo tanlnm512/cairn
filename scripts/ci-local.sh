@@ -9,7 +9,7 @@
 # Usage:
 #   scripts/ci-local.sh [JOB] [PY_VERSION]    (JOB default: precommit, PY default: 3.12)
 #   make ci-local                              # precommit job
-#   scripts/ci-local.sh precommit              # pre-commit run --all-files
+#   scripts/ci-local.sh precommit              # prek run --all-files
 #   scripts/ci-local.sh build                  # wheel + sdist + smoke (needs cargo)
 #   scripts/ci-local.sh rust                   # rust.yml ubuntu legs: fmt/clippy/test/deny
 #   scripts/ci-local.sh parity                 # rust-parity.yml PR leg: oracles + G2 base
@@ -24,7 +24,7 @@
 #   CI_LOCAL_CPUS     CPU count for the container (default: runtime default)
 #   CI_LOCAL_MEMORY   container memory, e.g. 8G (default: runtime default)
 #
-# Caching: the venv, pip cache, and pre-commit envs live in <repo>/.cache/
+# Caching: the venv, pip cache, and prek envs live in <repo>/.cache/
 # ci-local/ inside the bind-mounted workspace, so they persist across runs
 # (gitignored). Delete that directory to force a cold rebuild.
 #
@@ -121,7 +121,8 @@ CACHE="$MOUNT_POINT/$CACHE_REL"
 mkdir -p "$CACHE/home" "$CACHE/pip"
 export HOME="$CACHE/home"
 export PIP_CACHE_DIR="$CACHE/pip"
-export PRE_COMMIT_HOME="$CACHE/pre-commit"
+export PREK_HOME="$CACHE/prek"
+PREK_VERSION="$(sed -n 's/^ *PREK_VERSION: "\(.*\)"$/\1/p' "$MOUNT_POINT/.github/workflows/ci.yml")"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 UV_BIN="$CACHE/uv/bin"
@@ -174,6 +175,14 @@ ensure_cargo_deny() {
     || die "cargo-deny install failed"
 }
 
+ensure_prek() {
+  command -v prek >/dev/null 2>&1 && return 0
+  log "installing prek (CI: prek-installer.sh)"
+  curl --proto '=https' --tlsv1.2 -LsSf \
+    "https://github.com/j178/prek/releases/download/v${PREK_VERSION}/prek-installer.sh" \
+    | sh >/dev/null 2>&1 || die "prek install failed"
+}
+
 cd "$MOUNT_POINT"
 
 case "$JOB" in
@@ -181,9 +190,9 @@ case "$JOB" in
     # ci.yml: pre-commit job -- all Layer-0 gates server-side; the
     # comment-style hook runs through cargo xtask.
     ensure_cargo
-    sync_dev
-    log "pre-commit run --all-files (CI: Run all hooks)"
-    uv run --no-sync pre-commit run --all-files
+    ensure_prek
+    log "prek run --all-files (CI: Run all hooks)"
+    prek run --all-files
     ;;
 
   build)

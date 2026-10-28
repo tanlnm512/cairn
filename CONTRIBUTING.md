@@ -26,11 +26,12 @@ Development installs use the cargo build above, or `scripts/install.sh`
 (`cargo install --locked` from this checkout); a Rust toolchain is
 required either way.
 
-Install the pre-commit hooks (the same gates CI's pre-commit job runs):
+Install the git hooks with [prek](https://github.com/j178/prek) (the same
+gates CI's pre-commit job runs):
 
 ```bash
 git config --unset core.hooksPath   # only if an older checkout set it
-uv run pre-commit install
+prek install
 ```
 
 ## Running tests

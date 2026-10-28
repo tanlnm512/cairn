@@ -1,8 +1,9 @@
 # Layer 0 of the review/audit pipeline: the local gate.
 #
-# Install (once):  uv run pre-commit install
-# Update revs:     uv run pre-commit autoupdate
-# Run on everything: uv run pre-commit run --all-files
+# Runner: prek (`cargo binstall prek`, `brew install prek` or `uv tool install prek`).
+# Install (once):  prek install
+# Update revs:     prek auto-update
+# Run on everything: prek run --all-files
 
 repos:
   # --- Secret scanning. Catches API keys / tokens / .env blobs before they
@@ -13,10 +14,8 @@ repos:
     hooks:
       - id: gitleaks
 
-  # --- Read-only hygiene. Zero first-run churn: none of these modify files,
-  # they only fail. Safe to adopt on a mature codebase without a cleanup commit.
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+  # --- Read-only hygiene: prek's native hooks; none modify files.
+  - repo: builtin
     hooks:
       - id: check-yaml          # workflows, agent templates, .cairn YAML
       - id: check-toml          # Cargo and pyproject manifests
