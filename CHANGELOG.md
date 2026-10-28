@@ -22,10 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The commit gates run under prek (`prek install`) instead of pre-commit, with native yaml/toml/merge-conflict/large-file hooks.
 - `cargo xtask comment-style` gates long comment and doc blocks in the Rust crates (shrink-only baseline), and `cargo xtask verify-protection` requires the Rust CI gates and fails on required checks no workflow emits.
 
-### Fixed
-- `cairn doctor --fix` migrates agent hook commands that still run the retired `python -m cairn.hooks.claude_hooks` module (which fail with `ModuleNotFoundError` once the wheel is the engine binary) to `cairn hooks run`, keeping a `.bak`; the `agent_hooks` check now points at `--fix`.
-
 ### Removed
+- Retired stubs and upgrade shims: the `download-reranker` command; the `build --lsp`, `init --import-docs`, `init --from-legacy` and `embed --install-deps/--download-model/--adopt-server-model` flags (now unknown-argument errors); the `doctor` `agent_hooks` check and every migration of `python -m cairn.hooks.claude_hooks` hook commands; pruning of the retired `impact_guard.py` skill file; unloading the `dev.cairn.sse` LaunchAgent; the automatic `./cairn` legacy-store copy in `init`; the dashboard's one-segment `/wiki/<page>` redirect; and the rebuild of pre-`(symbol, repo)` `dataflow` tables.
 - The optional `cairn-intel-ingest` PDF converter package and the `CAIRN_SIDECAR_PYTHON` override: `knowledge ingest` always converts PDFs natively (paragraph text). The repo now carries no Python code outside test corpora.
 - `cairn uninstall` no longer probes a Python interpreter for source-tree build debris of the retired Python package.
 - The Python-only dev gates: the pytest and pip-audit/bandit CI jobs, the ruff and debug-statements pre-commit hooks, `scripts/install-dev-hooks.sh`, and `cargo xtask verify-no-code-change`.

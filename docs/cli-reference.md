@@ -233,7 +233,7 @@ contested).
 | Command | Purpose |
 |---|---|
 | `cairn status` | build state, parse errors, resource health |
-| `cairn doctor [--json] [--fix]` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). Store-internal checks (schema integrity, embedding backend, ANN index, embedding server, freshness, parse errors, resolver edge signals — WARN when reference edges predate the `edges` signal columns, run `cairn build` to rebuild — lock contention, tool health, memory staleness, effective config) plus `daemon` (which process serves `/mcp`), `environment` (store existence, client-registration consistency — FAIL on a provable wrong-store or unreachable daemon endpoint; cairn-owned stdio/SSE registrations are flagged and, under `--fix`, repointed to the URL+key form — platform supportability, binary coherence) and `agent_hooks` (agent hook files still naming the retired Python hook runner; `--fix` rewrites them to `cairn hooks run`, keeping a `.bak`). The last three also run on the db-unavailable degraded path. |
+| `cairn doctor [--json] [--fix]` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). Store-internal checks (schema integrity, embedding backend, ANN index, embedding server, freshness, parse errors, resolver edge signals — WARN when reference edges predate the `edges` signal columns, run `cairn build` to rebuild — lock contention, tool health, memory staleness, effective config) plus `daemon` (which process serves `/mcp`), `environment` (store existence, client-registration consistency — FAIL on a provable wrong-store or unreachable daemon endpoint; cairn-owned stdio/SSE registrations are flagged and, under `--fix`, repointed to the URL+key form — platform supportability, binary coherence). The last two also run on the db-unavailable degraded path. |
 | `cairn metrics` / `report` | tool metrics (`--builds`/`--quality`/`--contention`/`--tasks` add telemetry sections) and the redacted diagnostic bundle (`--json`, `--out <file>`; never uploads) |
 | `cairn validate` / `validate-paths [--mark]` / `verify <doc>` | OKF conformance, stale file/symbol references, the deterministic critic on one document |
 | `cairn viz [--export FILE]` | render graph diagrams (`--format mermaid|dot|json`, `--scope symbol|module|impact|repo|deps`); `--export` writes one self-contained HTML file |
@@ -263,8 +263,6 @@ contested).
   and exits 1; `init --with-hooks` prints the guidance as a warning and init
   still succeeds. Neither path writes partial hooks.
 - `cairn hooks run <entrypoint>` is the agent-hook runner that
-  `install-agents` writes into Claude/Cursor hook configs; `cairn doctor`'s
-  `agent_hooks` check flags configs still naming the retired Python runner,
-  and `cairn doctor --fix` migrates them.
+  `install-agents` writes into Claude/Cursor hook configs.
 
 Global: `-v/--verbose` for debug logging.

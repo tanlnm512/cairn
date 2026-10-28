@@ -308,7 +308,7 @@ fn db_arg(db: &Option<String>) -> String {
 
 // --- cairn init --------------------------------------------------------------
 
-/// init handler: register + legacy migration + first build.
+/// init handler: register + first build.
 fn init(args: crate::cmds_core::InitArgs) -> ExitCode {
     let ws = match &args.ws_arg {
         Some(ws) => store_paths::resolve_path(Path::new(ws)),
@@ -326,49 +326,6 @@ fn init(args: crate::cmds_core::InitArgs) -> ExitCode {
     rail.step("Store", Some(&store.home.to_string_lossy()));
     rail.detail(".kg", &store.db.to_string_lossy());
     rail.detail(".knowledge", &store.knowledge.to_string_lossy());
-
-    let mut migrated: Vec<String> = Vec::new();
-    let legacy = match &args.legacy_dir {
-        Some(dir) => store_paths::resolve_path(Path::new(dir)),
-        None => ws.join("cairn"),
-    };
-    let legacy_db = legacy.join(".kg");
-    let legacy_kn = legacy.join(".knowledge");
-    if legacy_db.exists() && !store.db.exists() {
-        let size_kb = std::fs::metadata(&legacy_db)
-            .map(|m| m.len() / 1024)
-            .unwrap_or(0);
-        if let Some(parent) = store.db.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let migrate_tmp = store.db.with_extension("kg.migrate-tmp");
-        match std::fs::copy(&legacy_db, &migrate_tmp) {
-            Ok(_) => match std::fs::rename(&migrate_tmp, &store.db) {
-                Ok(()) => migrated.push(format!(".kg ({size_kb} KB)")),
-                Err(e) => {
-                    let _ = std::fs::remove_file(&migrate_tmp);
-                    rail.warn(&format!("legacy .kg migration failed: {e}"));
-                }
-            },
-            Err(e) => {
-                let _ = std::fs::remove_file(&migrate_tmp);
-                rail.warn(&format!("legacy .kg migration failed: {e}"));
-            }
-        }
-    }
-    if legacy_kn.is_dir() {
-        let mut copied = 0usize;
-        collect_knowledge_copies(&legacy_kn, &legacy_kn, &store.knowledge, &mut copied);
-        if copied > 0 {
-            migrated.push(format!(".knowledge/ ({copied} files)"));
-        }
-    }
-    if !migrated.is_empty() {
-        rail.step(
-            &format!("Migrated from {}", legacy.display()),
-            Some(&migrated.join(", ")),
-        );
-    }
 
     if !args.no_build && !store.db.exists() {
         rail.start("Scanning files");
@@ -417,31 +374,6 @@ fn init(args: crate::cmds_core::InitArgs) -> ExitCode {
     rail.close("Done");
     display::dim("`cairn config` to verify; `cairn serve` for the MCP server.");
     ExitCode::SUCCESS
-}
-
-/// Recursively copy unseen knowledge files (skip .DS_Store), counting copies.
-fn collect_knowledge_copies(root: &Path, dir: &Path, dest_root: &Path, copied: &mut usize) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in entries {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if path.is_dir() {
-            collect_knowledge_copies(root, &path, dest_root, copied);
-        } else if name != ".DS_Store" {
-            let rel = path.strip_prefix(root).unwrap_or(&path);
-            let dst = dest_root.join(rel);
-            if let Some(parent) = dst.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if !dst.exists() && std::fs::copy(&path, &dst).is_ok() {
-                *copied += 1;
-            }
-        }
-    }
 }
 
 /// OS CSPRNG bytes for key material; None when the source is unavailable.
@@ -3703,9 +3635,6 @@ pub struct InitArgs {
     /// Workspace root (default: cwd).
     #[arg(long = "workspace")]
     pub ws_arg: Option<String>,
-    /// Migrate .kg + .knowledge from this cairn dir (e.g. ./cairn).
-    #[arg(long = "from-legacy")]
-    pub legacy_dir: Option<String>,
     /// Register without building the graph.
     #[arg(long = "no-build", default_value_t = false)]
     pub no_build: bool,

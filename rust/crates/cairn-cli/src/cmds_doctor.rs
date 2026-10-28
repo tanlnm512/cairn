@@ -79,13 +79,9 @@ pub fn run(args: DoctorArgs) -> ExitCode {
     let mut actions: Option<Vec<Value>> = None;
     if args.fix {
         actions = Some(apply_doctor_fixes());
-        for (name, rerun) in [
-            ("environment", check_environment(&db)),
-            ("agent_hooks", check_agent_hooks()),
-        ] {
-            if let Some(slot) = results.iter_mut().find(|r| r.name == name) {
-                *slot = rerun;
-            }
+        let environment = check_environment(&db);
+        if let Some(slot) = results.iter_mut().find(|r| r.name == "environment") {
+            *slot = environment;
         }
     }
     if args.as_json {
@@ -142,7 +138,6 @@ pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
             "store not found at {db} -- run `cairn init` + `cairn build` first"
         ));
         degraded.push(check_environment(db));
-        degraded.push(check_agent_hooks());
         return degraded;
     }
     let conn = match open_store(path) {
@@ -150,7 +145,6 @@ pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
         Err(e) => {
             let mut degraded = db_unavailable_results(&e.to_string());
             degraded.push(check_environment(db));
-            degraded.push(check_agent_hooks());
             return degraded;
         }
     };
@@ -165,7 +159,6 @@ pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
     results.push(check_config());
     results.push(check_daemon());
     results.push(check_environment(db));
-    results.push(check_agent_hooks());
     results
 }
 
@@ -1302,43 +1295,6 @@ fn check_daemon() -> CheckResult {
     }
 }
 
-// --- agent hooks (retired python runner) -------------------------------------------------------------
-
-/// Hook files whose cairn commands may still name the retired python module runner.
-fn agent_hook_files() -> Vec<PathBuf> {
-    let ws = crate::store_paths::resolve_workspace(None);
-    let home = home_dir();
-    vec![
-        ws.join(".claude").join("settings.json"),
-        home.join(".claude").join("settings.json"),
-        ws.join(".cursor").join("hooks.json"),
-        home.join(".cursor").join("hooks.json"),
-    ]
-}
-
-fn check_agent_hooks() -> CheckResult {
-    let stale: Vec<String> = agent_hook_files()
-        .into_iter()
-        .filter(|path| path.is_file())
-        .filter_map(|path| {
-            let count = crate::agent_install::retired_hook_commands(&path).len();
-            (count > 0).then(|| format!("{} ({count})", path.display()))
-        })
-        .collect();
-    if stale.is_empty() {
-        return result("agent_hooks", PASS, "no retired hook commands", None);
-    }
-    result(
-        "agent_hooks",
-        WARN,
-        format!(
-            "retired `python -m cairn.hooks.claude_hooks` commands in {}",
-            stale.join(", ")
-        ),
-        Some("run `cairn doctor --fix` to migrate them to `cairn hooks run`".to_string()),
-    )
-}
-
 // --- 11. environment wiring ---------------------------------------------------------------------------
 
 fn check_environment(db: &str) -> CheckResult {
@@ -1535,7 +1491,6 @@ const UNREADABLE_CONFIG: &str = "unreadable-config";
 const MALFORMED_CONFIG: &str = "malformed-config";
 const UNREPLACEABLE: &str = "unrecognized-shape";
 const WRITE_FAILED: &str = "write-failed";
-const MIGRATED_HOOKS: &str = "migrated-hooks";
 
 /// Stale = stdio spawn-shaped, or a non-daemon endpoint.
 fn stale_registration(entry: &Value, daemon_url: &str) -> bool {
@@ -1642,7 +1597,6 @@ fn apply_doctor_fixes() -> Vec<Value> {
             }));
         }
     }
-    actions.extend(migrate_agent_hooks());
     actions
 }
 
@@ -1663,33 +1617,6 @@ fn backup_and_write(path: &Path, data: &Value) -> bool {
     ));
     crate::agent_install::copy_to_backup(path, &backup)
         && std::fs::write(path, py_json::dumps(data) + "\n").is_ok()
-}
-
-/// Rewrite retired python-runner hook commands in every scanned hook file; action records out.
-fn migrate_agent_hooks() -> Vec<Value> {
-    agent_hook_files()
-        .into_iter()
-        .filter(|path| path.is_file())
-        .filter(|path| !agent_install::retired_hook_commands(path).is_empty())
-        .map(|path| migrate_hook_file(&path))
-        .collect()
-}
-
-fn migrate_hook_file(path: &Path) -> Value {
-    let config = scrub_safe_display(path, &home_dir());
-    let action = |name: &str, count: usize| json!({"client": "hooks", "config": config, "action": name, "count": count});
-    if changed_within_a_minute(path) {
-        return action(REFUSED_RECENT, 0);
-    }
-    let Some(mut data) = load_json_object(path) else {
-        return action(MALFORMED_CONFIG, 0);
-    };
-    let count = agent_install::migrate_retired_hook_commands(&mut data);
-    if backup_and_write(path, &data) {
-        action(MIGRATED_HOOKS, count)
-    } else {
-        action(WRITE_FAILED, 0)
-    }
 }
 
 fn load_json_object(path: &Path) -> Option<Value> {
@@ -1745,18 +1672,11 @@ fn fix_summary_lines(actions: &[Value]) -> Vec<String> {
                 "failed to update {config}: backup or write error; fix the file \
                  and re-run `cairn doctor --fix`"
             ),
-            MIGRATED_HOOKS => format!(
-                "migrated {} retired hook command(s) in {config} to `cairn hooks run`",
-                action.get("count").and_then(Value::as_u64).unwrap_or(0)
-            ),
             other => format!("{client} {config}: {other} ({url})"),
         };
         lines.push(line);
     }
-    if actions
-        .iter()
-        .any(|a| a.get("client") != Some(&json!("hooks")))
-    {
+    if !actions.is_empty() {
         lines.push(FIX_TRADEOFF.to_string());
     }
     lines
@@ -2118,59 +2038,6 @@ mod tests {
             "detail must name the serving impl or its absence: {}",
             report.detail
         );
-    }
-
-    #[test]
-    fn agent_hooks_check_flags_retired_python_hook_commands() {
-        let env = crate::test_env::EnvScope::new("doctor-hooks");
-        let ws = env.dir().join("ws");
-        std::fs::create_dir_all(ws.join(".claude")).expect("ws");
-        // SAFETY: EnvScope holds the env lock and restores CAIRN_WORKSPACE on drop.
-        unsafe { std::env::set_var("CAIRN_WORKSPACE", &ws) };
-        let settings = ws.join(".claude").join("settings.json");
-
-        let retired = json!({"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [
-            {"type": "command", "command": "'/usr/bin/python3' -m cairn.hooks.claude_hooks post_edit"},
-            {"type": "command", "command": "user-lint --fix"}
-        ]}]}});
-        std::fs::write(&settings, retired.to_string()).expect("settings");
-        let report = check_agent_hooks();
-        assert_eq!(report.name, "agent_hooks");
-        assert_eq!(report.status, WARN, "{}", report.detail);
-        assert!(report.detail.contains("settings.json"), "{}", report.detail);
-        assert!(
-            report
-                .hint
-                .as_deref()
-                .is_some_and(|h| h.contains("cairn doctor --fix")),
-            "{:?}",
-            report.hint
-        );
-
-        let actions = migrate_agent_hooks();
-        assert_eq!(actions[0]["action"], REFUSED_RECENT, "{actions:?}");
-
-        let an_hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
-        std::fs::File::options()
-            .write(true)
-            .open(&settings)
-            .and_then(|f| f.set_modified(an_hour_ago))
-            .expect("backdate");
-        let actions = migrate_agent_hooks();
-        assert_eq!(actions[0]["action"], MIGRATED_HOOKS, "{actions:?}");
-        assert_eq!(actions[0]["count"], 1);
-        let hooks: Value =
-            serde_json::from_str(&std::fs::read_to_string(&settings).expect("read")).expect("json");
-        let commands = &hooks["hooks"]["PostToolUse"][0]["hooks"];
-        assert!(
-            commands[0]["command"]
-                .as_str()
-                .is_some_and(|c| c.ends_with(" hooks run post_edit")),
-            "{commands}"
-        );
-        assert_eq!(commands[1]["command"], "user-lint --fix");
-        assert_eq!(check_agent_hooks().status, PASS);
-        assert!(migrate_agent_hooks().is_empty());
     }
 
     #[test]

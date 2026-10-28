@@ -15974,7 +15974,6 @@
 corpus	corpus	.	python	\N	<TS>
 [table schema_meta]
 # columns: key	value
-dataflow.pk_symbol_repo	applied
 edges.call_arity	applied
 edges.receiver_type	applied
 edges.ref_name	applied

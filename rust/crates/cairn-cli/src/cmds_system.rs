@@ -21,7 +21,7 @@ pub enum SystemCommand {
         /// Emit JSON.
         #[arg(long)]
         json: bool,
-        /// Repoint stale cairn-owned registrations to the daemon URL and migrate retired hook commands.
+        /// Repoint stale cairn-owned stdio/SSE registrations to the daemon URL.
         #[arg(long)]
         fix: bool,
     },
