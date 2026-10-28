@@ -86,22 +86,3 @@ jobs:
           G2_LEGS: rebuild,staging
         run: bash scripts/rust_migration/g2_check.sh
 
-  wheel-smoke:
-    name: wheel smoke
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-      - name: Install (with dev extras)
-        run: uv sync --extra dev
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> rust/target"
-      - name: wheel smoke
-        run: bash scripts/rust_migration/wheel_smoke.sh

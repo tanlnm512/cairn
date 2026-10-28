@@ -140,45 +140,6 @@ jobs:
     steps:
       - uses: actions/dependency-review-action@v4
 
-  # Packaging canary, MAIN PUSHES ONLY: verifies `maturin build` + `maturin sdist`
-  # (bin wheel + sdist) stays green on every merge so packaging
-  # breakage surfaces between releases, never at tag time (release.yml builds
-  # the real multi-platform wheels there). PRs skip it deliberately -- the
-  # engine compile buys no signal rust.yml's legs don't already give, and the
-  # canary still runs on the merge commit itself.
-  build:
-    name: Build wheel + sdist
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    needs: pre-commit
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> rust/target"
-
-      - name: Build distributions
-        run: |
-          uvx maturin build --release --out dist
-          uvx maturin sdist --out dist
-
-      # The installed-product smoke proves the wheel is the engine binary
-      # (no Python module inside) and runs from a fresh venv.
-      - name: Smoke the built wheel
-        run: bash scripts/rust_migration/wheel_smoke.sh dist/*.whl
-
-      - uses: actions/upload-artifact@v6
-        with:
-          name: dist
-          path: dist/
-
   container:
     name: Container build (Dockerfile smoke)
     # ~8 minutes compiling the engine in Docker with no cache; the image

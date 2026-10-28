@@ -2,9 +2,9 @@ name: Rust release
 
 # Build the Rust `cairn` binary for the distribution matrix on tag push (v*),
 # attach tarballs + sha256 checksums to the GitHub Release that release.yml
-# owns (one v* tag ships wheels + vsix + binaries), push an updated formula to
-# the Homebrew tap, and publish the workspace crates to crates.io so plain
-# `cargo binstall cairn-cli` resolves. Independent of release.yml (PyPI).
+# owns (one v* tag ships binaries + the extension vsix), push an updated
+# formula to the Homebrew tap, and publish the workspace crates to crates.io
+# so plain `cargo binstall cairn-cli` resolves.
 
 on:
   push:

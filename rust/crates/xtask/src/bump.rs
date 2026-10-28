@@ -177,9 +177,7 @@ fn workspace_version(cargo_toml: &str) -> Result<String, String> {
 fn execute(args: &Args) -> Result<(), String> {
     let root = repo_root();
     let cargo_path = root.join("Cargo.toml");
-    let pyproject_path = root.join("pyproject.toml");
     let cargo_toml = fs::read_to_string(&cargo_path).map_err(|e| e.to_string())?;
-    let pyproject = fs::read_to_string(&pyproject_path).map_err(|e| e.to_string())?;
     let current = workspace_version(&cargo_toml)?;
     let tag = format!("v{current}");
     git(
@@ -204,7 +202,7 @@ fn execute(args: &Args) -> Result<(), String> {
 
     if args.dry_run {
         let today = &cairn_build::timefmt::now_iso()[..10];
-        println!("files: Cargo.toml, Cargo.lock, pyproject.toml\n");
+        println!("files: Cargo.toml, Cargo.lock\n");
         print!("{}", changelog_draft(&next, today, &commits));
         return Ok(());
     }
@@ -213,9 +211,7 @@ fn execute(args: &Args) -> Result<(), String> {
     }
 
     let cargo_toml = set_section_version(&cargo_toml, "workspace.package", &current, &next)?;
-    let pyproject = set_section_version(&pyproject, "project", &current, &next)?;
     fs::write(&cargo_path, cargo_toml).map_err(|e| e.to_string())?;
-    fs::write(&pyproject_path, pyproject).map_err(|e| e.to_string())?;
     let status = Command::new("cargo")
         .args(["update", "--workspace", "--offline"])
         .current_dir(&root)
@@ -228,10 +224,7 @@ fn execute(args: &Args) -> Result<(), String> {
         return Ok(());
     }
 
-    git(
-        &root,
-        &["add", "Cargo.toml", "Cargo.lock", "pyproject.toml"],
-    )?;
+    git(&root, &["add", "Cargo.toml", "Cargo.lock"])?;
     git(
         &root,
         &["commit", "-m", &format!("bump: version {current} → {next}")],

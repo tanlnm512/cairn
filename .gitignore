@@ -1,32 +1,3 @@
-# ---- Python ----
-__pycache__/
-*.py[cod]
-*$py.class
-# Compiled extension modules built in-place by editable installs
-*.so
-*.egg-info/
-*.egg
-build/
-dist/
-wheels/
-*.whl
-*.tar.gz
-
-# ---- Virtual envs ----
-.venv/
-venv/
-env/
-.python-version
-
-# ---- Test / coverage ----
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
-test-results.xml
-.tox/
-
 # ---- Local CI replication (scripts/ci-local.sh, apple container) ----
 .cache/
 bench-current.json

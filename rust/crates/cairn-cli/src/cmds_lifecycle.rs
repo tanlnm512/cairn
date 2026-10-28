@@ -1,5 +1,5 @@
-//! Lifecycle/ops commands (system status/sync/metrics/report, upgrade,
-//! uninstall, version).
+//! Lifecycle/ops commands (system status/sync/metrics/report, uninstall,
+//! version).
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -955,7 +955,6 @@ fn build_report(db: &str) -> Value {
     let conn = open_report_conn(db);
     let mut versions = Map::new();
     versions.insert("cairn".into(), json!(env!("CARGO_PKG_VERSION")));
-    versions.insert("python".into(), Value::Null);
     versions.insert(
         "platform".into(),
         json!(format!(
@@ -1429,20 +1428,6 @@ fn comment_quality_gate(root: &Path) -> Value {
     }
 }
 
-/// The interpreter owning a pip/venv install: one beside this binary, else the PATH python3.
-fn pip_python() -> String {
-    let beside_exe = std::env::current_exe().ok().and_then(|exe| {
-        let dir = exe.parent()?.to_path_buf();
-        ["python3", "python"]
-            .into_iter()
-            .map(|name| dir.join(name))
-            .find(|candidate| candidate.is_file())
-    });
-    beside_exe
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "python3".into())
-}
-
 fn report_config() -> Map<String, Value> {
     let env_or = |name: &str, default: &str| {
         std::env::var(name)
@@ -1627,7 +1612,6 @@ fn render_report(bundle: &Value) -> String {
     };
     lines.push("## Versions".into());
     lines.push(format!("cairn: {}", field("cairn")));
-    lines.push(format!("python: {}", field("python")));
     lines.push(format!("platform: {}", field("platform")));
     lines.push(format!("sqlite: {}", field("sqlite")));
     lines.push(format!(
@@ -1741,180 +1725,6 @@ fn render_report(bundle: &Value) -> String {
         }
     }
     lines.join("\n")
-}
-
-// --- upgrade -----------------------------------------------------------------
-
-pub struct UpgradeArgs {
-    pub check: bool,
-}
-
-pub fn run_upgrade(args: UpgradeArgs) -> ExitCode {
-    let current = env!("CARGO_PKG_VERSION");
-    let latest = pypi_latest();
-    let Some(latest) = latest else {
-        if args.check {
-            display::info(&format!("cairn-intel {current} (could not reach PyPI)"));
-        } else {
-            display::warning(
-                "Cannot check for upgrades (PyPI unreachable). \
-                 Install manually: pip install --upgrade cairn-intel",
-            );
-        }
-        return ExitCode::SUCCESS;
-    };
-    if args.check {
-        display::info(&format!("cairn-intel {current} (latest: {latest})"));
-        return ExitCode::SUCCESS;
-    }
-    if is_up_to_date(current, &latest) {
-        display::success(&format!("cairn-intel {current} (already up to date)"));
-        return ExitCode::SUCCESS;
-    }
-    let method = detect_install_method();
-    display::info(&format!(
-        "Upgrading cairn-intel {current} -> {latest} (via {method})"
-    ));
-    if !reinstall(&method, &latest) {
-        return ExitCode::FAILURE;
-    }
-    ExitCode::SUCCESS
-}
-
-/// Latest published version from PyPI; the binary ships no TLS stack, so the probe rides curl.
-fn pypi_latest() -> Option<String> {
-    let output = Command::new("curl")
-        .args([
-            "-fsSL",
-            "--max-time",
-            "5",
-            "-H",
-            "Accept: application/json",
-            "https://pypi.org/pypi/cairn-intel/json",
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let body: Value = serde_json::from_slice(&output.stdout).ok()?;
-    let version = body["info"]["version"].as_str()?.trim();
-    (!version.is_empty()).then(|| version.to_string())
-}
-
-fn is_up_to_date(current: &str, latest: &str) -> bool {
-    let parse = |v: &str| -> Vec<u64> {
-        v.trim_start_matches('v')
-            .split('.')
-            .map(|part| part.split(['-', '+']).next().unwrap_or(""))
-            .map(|part| part.parse::<u64>().unwrap_or(0))
-            .collect()
-    };
-    let (c, l) = (parse(current), parse(latest));
-    if c == l {
-        return true;
-    }
-    let width = c.len().max(l.len());
-    let pad = |v: &[u64]| {
-        let mut out = v.to_vec();
-        out.resize(width, 0);
-        out
-    };
-    let (c, l) = (pad(&c), pad(&l));
-    if c == l {
-        return true;
-    }
-    c > l
-}
-
-/// The `.venv` root this binary runs from, mirroring python's
-/// pkg_root/.venv-is-an-ancestor-of-sys.executable check.
-fn exe_venv_root() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    exe.ancestors()
-        .find(|path| path.file_name().is_some_and(|n| n == ".venv"))
-        .map(Path::to_path_buf)
-}
-
-fn detect_install_method() -> String {
-    // `uv tool list` vs `pipx list`: only uv nests the listing under `tool`.
-    for (tool, list_args) in [
-        ("uv", ["tool", "list"].as_slice()),
-        ("pipx", ["list"].as_slice()),
-    ] {
-        if let Ok(output) = Command::new(tool).args(list_args).output()
-            && output.status.success()
-            && String::from_utf8_lossy(&output.stdout).contains("cairn-intel")
-        {
-            return tool.into();
-        }
-    }
-    if exe_venv_root().is_some() {
-        return "venv".into();
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        let exe = exe.to_string_lossy();
-        if exe.contains("venv") || exe.contains("virtualenv") || exe.contains(".local") {
-            return "pip".into();
-        }
-    }
-    "unknown".into()
-}
-
-fn reinstall(method: &str, version: &str) -> bool {
-    let spec = format!("cairn-intel=={version}");
-    let cmd: Vec<String> = match method {
-        "uv" => vec![
-            "uv".into(),
-            "tool".into(),
-            "install".into(),
-            "--force".into(),
-            spec,
-        ],
-        "pipx" => vec!["pipx".into(), "install".into(), "--force".into(), spec],
-        "pip" | "venv" => {
-            vec![
-                pip_python(),
-                "-m".into(),
-                "pip".into(),
-                "install".into(),
-                "--upgrade".into(),
-                spec,
-            ]
-        }
-        _ => {
-            display::warning(&format!(
-                "Cannot auto-upgrade (unknown install method). \
-                 Run manually: pip install --upgrade {spec}"
-            ));
-            return false;
-        }
-    };
-    display::dim(&format!("Running: {}", cmd.join(" ")));
-    match Command::new(&cmd[0]).args(&cmd[1..]).output() {
-        Ok(output) if output.status.success() => {
-            display::success(&format!("Upgraded cairn-intel -> {version}"));
-            true
-        }
-        Ok(output) => {
-            installer_failure(&cmd, &output.stdout, &output.stderr);
-            false
-        }
-        Err(_) => {
-            installer_failure(&cmd, &[], &[]);
-            false
-        }
-    }
-}
-
-fn installer_failure(cmd: &[String], stdout: &[u8], stderr: &[u8]) {
-    let _ = std::io::stdout().write_all(stdout);
-    let _ = std::io::stderr().write_all(stderr);
-    display::warning(&format!(
-        "Upgrade failed. The full installer output is above; \
-         to retry manually: {}",
-        cmd.join(" ")
-    ));
 }
 
 // --- uninstall ---------------------------------------------------------------
@@ -2087,7 +1897,7 @@ pub fn run_uninstall(args: UninstallArgs) -> ExitCode {
     println!("    CLAUDE.md, AGENTS.md  — instruction files (created create-if-absent only)");
     println!("    Source code            — your repos are untouched");
     println!();
-    println!("  To reinstall: pip install cairn-intel  (or ./scripts/install.sh)");
+    println!("  To reinstall: ./scripts/install.sh  (or brew install / cargo binstall cairn-cli)");
     ExitCode::SUCCESS
 }
 
@@ -2281,67 +2091,15 @@ fn prune_registry(reg_path: &Path, workspace: &Path) {
     }
 }
 
-fn remove_binary(dry_run: bool) {
+fn remove_binary(_dry_run: bool) {
     println!("➜ cairn binary");
-    let installed_via = detect_install_method();
-    if installed_via == "unknown" {
-        println!("  (cairn not found via uv/pipx/pip/venv — nothing to remove)");
+    let Ok(exe) = std::env::current_exe() else {
+        println!("  (cannot resolve the running binary)");
         return;
-    }
-    println!("  installed via: {installed_via}");
-    let python = pip_python();
-    let venv_root = exe_venv_root();
-    if dry_run {
-        let cmd: Vec<String> = match installed_via.as_str() {
-            "uv" => vec![
-                "uv".into(),
-                "tool".into(),
-                "uninstall".into(),
-                "cairn-intel".into(),
-            ],
-            "pipx" => vec!["pipx".into(), "uninstall".into(), "cairn-intel".into()],
-            "pip" => vec![
-                python,
-                "-m".into(),
-                "pip".into(),
-                "uninstall".into(),
-                "-y".into(),
-                "cairn-intel".into(),
-            ],
-            _ => vec![format!(
-                "rm -rf {}",
-                venv_root
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "<pkg>/.venv".into())
-            )],
-        };
-        println!("  would: {}", cmd.join(" "));
-        return;
-    }
-    match installed_via.as_str() {
-        "uv" => {
-            let _ = Command::new("uv")
-                .args(["tool", "uninstall", "cairn-intel"])
-                .status();
-        }
-        "pipx" => {
-            let _ = Command::new("pipx")
-                .args(["uninstall", "cairn-intel"])
-                .status();
-        }
-        "pip" => {
-            let _ = Command::new(&python)
-                .args(["-m", "pip", "uninstall", "-y", "cairn-intel"])
-                .status();
-        }
-        "venv" => {
-            if let Some(venv) = venv_root {
-                let _ = std::fs::remove_dir_all(venv);
-            }
-        }
-        _ => {}
-    }
-    println!("  ✓ done");
+    };
+    println!("  binary: {}", exe.display());
+    println!("  remove it with the channel that owns it:");
+    println!("    brew uninstall cairn | cargo uninstall cairn-cli | rm <binary>");
 }
 
 #[cfg(test)]
@@ -2479,14 +2237,6 @@ mod tests {
         let err = collect_audit_status(&dir).unwrap_err();
         assert!(err.contains("declares 3 findings"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn is_up_to_date_compares_dotted_versions() {
-        assert!(is_up_to_date("0.23.0", "0.23.0"));
-        assert!(is_up_to_date("0.24.0", "0.23.9"));
-        assert!(is_up_to_date("0.23", "0.23.0"));
-        assert!(!is_up_to_date("0.22.9", "0.23.0"));
     }
 
     #[test]

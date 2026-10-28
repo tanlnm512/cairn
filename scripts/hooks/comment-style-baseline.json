@@ -3,13 +3,6 @@
   "violations": [
     {
       "count": 1,
-      "fingerprint": "comment:68154f8fe8911c52965fbc0271e97cdb98f414ee7fd1aefb41411d413627d94c",
-      "paths": [
-        "rust/crates/cairn-parse/src/parser_jvm.rs"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "comment:dbff20e82bb54391dcfdf374172c7d9ea843d086b044d651449d07c8d946f20c",
       "paths": [
         "rust/crates/cairn-build/tests/closure_semantics.rs"

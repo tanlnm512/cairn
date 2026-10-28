@@ -1,19 +1,4 @@
-.PHONY: dist evals ci-local ci-local-rust ci-local-parity audit-status comment-style comment-style-shrink verify-protection release help
-
-# Build the bin wheel + sdist into dist/ for the HOST platform only (the
-# release workflow's maturin matrix builds the full platform set).
-# Produces:
-#   dist/cairn_intel-<version>-py3-none-<platform>.whl
-#   dist/cairn_intel-<version>.tar.gz
-dist:
-	rm -rf dist
-	uv build
-	@echo ""
-	@echo "Built:"
-	@ls -lh dist/
-	@echo ""
-	@echo "Install with:"
-	@echo "  uv tool install ./dist/$$(ls dist/*.whl | head -1)"
+.PHONY: evals ci-local ci-local-rust ci-local-parity audit-status comment-style comment-style-shrink verify-protection release help
 
 evals:
 	cargo xtask skill-evals
@@ -74,7 +59,7 @@ release:
 	@echo "│     (use the draft printed below as a starting point)."
 	@echo "│"
 	@echo "│  2. cargo xtask bump"
-	@echo "│     Moves Cargo.toml, Cargo.lock and pyproject.toml, commits,"
+	@echo "│     Moves Cargo.toml and Cargo.lock, commits,"
 	@echo "│     tags vX.Y.Z. CHANGELOG stays hand-maintained."
 	@echo "│"
 	@echo "│  3. Land the release commits on main, then push the tag."
@@ -83,7 +68,7 @@ release:
 	@echo "│       - tag-first: push the tag now, sync main via PR after."
 	@echo "│     git push origin vX.Y.Z"
 	@echo "│     The tag push triggers .github/workflows/release.yml:"
-	@echo "│     build -> publish to PyPI -> cut GitHub Release."
+	@echo "│     cut the GitHub Release + attach binary tarballs."
 	@echo "│"
 	@echo "│  Watch: gh run watch \$$(gh run list --workflow=release.yml -L1 -q '.[0].databaseId')"
 	@echo "└──────────────────────────────────────────────────────────────"
@@ -93,9 +78,8 @@ release:
 	@cargo xtask bump --dry-run
 
 help:
-	@echo "Targets: dist evals ci-local ci-local-rust ci-local-parity audit-status comment-style comment-style-shrink verify-protection release help"
+	@echo "Targets: evals ci-local ci-local-rust ci-local-parity audit-status comment-style comment-style-shrink verify-protection release help"
 	@echo ""
-	@echo "  dist                   build wheel + sdist into dist/ (for distribution)"
 	@echo "  evals                  validate skill eval specs"
 	@echo "  ci-local               clean-room CI replication in a Linux container"
 	@echo "                         (apple container, not docker)"

@@ -592,7 +592,7 @@ fn find_root() -> PathBuf {
         .and_then(fs::canonicalize)
         .unwrap_or_default();
     cwd.ancestors()
-        .find(|candidate| candidate.join("pyproject.toml").is_file())
+        .find(|candidate| candidate.join("Cargo.toml").is_file() && candidate.join("rust").is_dir())
         .map_or_else(|| cwd.clone(), Path::to_path_buf)
 }
 

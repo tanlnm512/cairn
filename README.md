@@ -12,9 +12,7 @@ The precise call graph, without the guesswork · every answer re-derivable from 
 
 </div>
 
-[![PyPI version](https://img.shields.io/pypi/v/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
-[![License: MIT](https://img.shields.io/pypi/l/cairn-intel.svg)](LICENSE)
-[![Python versions](https://img.shields.io/pypi/pyversions/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
+[![License: MIT](https://img.shields.io/github/license/tanlnm512/cairn)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/tanlnm512/cairn/ci.yml?branch=main&label=CI)](https://github.com/tanlnm512/cairn/actions/workflows/ci.yml)
 
 cairn parses your repos with tree-sitter into a **resolution-labeled structural
@@ -51,23 +49,15 @@ Every channel ships the same engine binary:
 
 ```bash
 brew install tanlnm512/cairn/cairn                 # Homebrew tap
-pip install cairn-intel                            # or: uv tool install / pipx install
 cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli
 ```
 
 Release tarballs (aarch64 / x86_64 on macOS and Linux, musl-static on
 Linux) are on the [releases page](https://github.com/tanlnm512/cairn/releases),
 and `cargo install --path rust/crates/cairn-cli` builds from a clone. Release
-tags populate the tarballs, the wheels, the Homebrew formula, and the
-binstall metadata.
-
-The PyPI package is the engine binary itself: maturin builds the wheel from
-the cargo workspace, its only payload is the platform `cairn` executable, and
-it declares no runtime dependencies and ships no Python. `docx` and PDF
-conversion run natively in the engine.
-`cairn upgrade` updates PyPI installs in place (detects `uv tool` / `pipx` /
-`pip`; `--check` previews without changing anything); Homebrew and cargo
-installs upgrade through their own channel.
+tags populate the tarballs, the Homebrew formula, and the binstall metadata;
+`docx` and PDF conversion run natively in the engine. Every channel
+(Homebrew, cargo, tarball) upgrades through its own package manager.
 
 **2. Wire up your agent(s)**
 
@@ -318,7 +308,6 @@ channel runs the same binary. The essentials:
 | `cairn memory / compass / wiki / task / knowledge …` | The layered stores + LLM task queue (memory: `share`/`check` multi-agent verbs, `timeline <symbol>`, `search --as-of <date>`) |
 | `cairn communities` | Louvain subsystem clusters over structural edges (seeded, deterministic; writes the `communities` tables) |
 | `cairn install-agents` / `cairn uninstall` | Wire / remove agent integration |
-| `cairn upgrade` | In-place update for PyPI installs (`--check` to preview) |
 | `cairn doctor` | Health checks (PASS/WARN/FAIL; exit code gates CI) |
 | `cairn report` | Redacted diagnostic bundle for bug reports (never uploads) |
 
@@ -366,8 +355,7 @@ effective value and where it came from):
 ## Supported Platforms & Agents
 
 - **Platforms** — macOS aarch64 / x86_64, Linux aarch64 / x86_64 (static
-  musl) and Windows x86_64. The PyPI wheels cover macOS arm64 + x86_64,
-  manylinux / musllinux x86_64 + aarch64, and Windows `win_amd64`;
+  musl) and Windows x86_64, all shipped as release tarballs;
   `make ci-local` replicates CI in a clean Linux container.
 - **Agents** — Claude Code, Cursor, ZCode, Droid, opencode, agy, kilo, omp —
   wired by `cairn install-agents`, or any MCP client via the
@@ -416,8 +404,8 @@ make ci-local                     # clean-room CI replication in a Linux contain
 ```
 
 Releases are cut by tagging `vX.Y.Z`: the tag-triggered workflows build the
-wheels, the platform binaries, the Homebrew formula, and the crates.io
-publish (see [docs/release-checklist.md](docs/release-checklist.md)).
+platform binaries, the Homebrew formula, and the crates.io publish (see
+[docs/release-checklist.md](docs/release-checklist.md)).
 Contributions follow [docs/review-checklist.md](docs/review-checklist.md).
 
 ## Dependency Licenses

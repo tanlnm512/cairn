@@ -20,13 +20,6 @@ Zlib). The lockfile is the authoritative inventory; `cargo deny list` in
 rust/ renders it.
 
 ================================================================================
-PyPI package
-================================================================================
-
-The `cairn-intel` wheel is the engine binary (a maturin bin wheel): it
-contains no Python code and declares no runtime dependencies.
-
-================================================================================
 Vendored content (dashboard static assets)
 ================================================================================
 

@@ -1270,15 +1270,9 @@ impl JavaParser {
 mod tests {
     use super::*;
 
-    // Node-type revalidation: the pinned tree-sitter-kotlin crate's parser.c
-    // and node-types.json are byte-identical to vendor/tree-sitter-kotlin's
-    // (md5 892464b4dac74f0c1a50986572b6cfa7), so coverage is exact. Mismatches:
-    // kotlin.py also queries interface_declaration, enum_declaration,
-    // function_value_parameter, and type_reference, which NEITHER grammar
-    // produces (defensive dead checks kept for parity); java.py's class_type
-    // is likewise absent from tree_sitter_java 0.23.5 on both the PyPI wheel
-    // and the crate (same version pin). All live node kinds below must exist
-    // in the crate grammars.
+    // The pinned crate and vendor tree-sitter-kotlin grammars are
+    // byte-identical (md5 892464b4dac74f0c1a50986572b6cfa7), so coverage is
+    // exact; dead-check entries name node kinds NEITHER grammar produces.
     const KOTLIN_QUERIED: &[(&str, bool)] = &[
         ("import", false),
         ("import_header", true),

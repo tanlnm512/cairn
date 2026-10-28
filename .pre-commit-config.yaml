@@ -1,6 +1,6 @@
 # Layer 0 of the review/audit pipeline: the local gate.
 #
-# Runner: prek (`cargo binstall prek`, `brew install prek` or `uv tool install prek`).
+# Runner: prek (`cargo binstall prek` or `brew install prek`).
 # Install (once):  prek install
 # Update revs:     prek auto-update
 # Run on everything: prek run --all-files
@@ -18,7 +18,7 @@ repos:
   - repo: builtin
     hooks:
       - id: check-yaml          # workflows, agent templates, .cairn YAML
-      - id: check-toml          # Cargo and pyproject manifests
+      - id: check-toml          # Cargo manifests
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=500]

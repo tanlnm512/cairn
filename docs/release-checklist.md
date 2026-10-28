@@ -117,8 +117,8 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix`/`refactor`/`perf`
    cargo xtask bump
    ```
    This moves the Cargo workspace version (`Cargo.toml`
-   `[workspace.package]`), the workspace entries in `Cargo.lock`, and
-   `[project]` `version` in `pyproject.toml` together, commits as
+   `[workspace.package]`) and the workspace entries in `Cargo.lock`
+   together, commits as
    `bump: version A → B`, and tags `vB`; it refuses a dirty tree.
    `release-rust.yml` refuses a tag that does not equal the workspace
    version. (If the pre-release checklist above isn't done yet, run
@@ -139,27 +139,21 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix`/`refactor`/`perf`
      git checkout main && git pull --ff-only
      ```
    - **Tag-first path** (used for 0.7.0): push the tag immediately to trigger
-     the release, then sync `main` via a PR afterward. PyPI publishes from the
-     tag, so the release isn't blocked on `main` — but `main` MUST be synced
+     the release, then sync `main` via a PR afterward. The release publishes
+     from the tag, so it isn't blocked on `main` — but `main` MUST be synced
      afterward so it matches the released tag.
 
    Either way, the tag push triggers the pipelines:
    ```sh
    git push origin v$version
    ```
-   `.github/workflows/release.yml` builds the per-platform bin wheels with
-   maturin (the engine binary is each wheel's only payload) + the sdist,
-   publishes to PyPI via Trusted Publishing, and cuts the GitHub Release from
-   the `[X.Y.Z]` CHANGELOG section; `release-rust.yml` (below) attaches the
-   binary tarballs and updates the Homebrew tap and crates.io. Watch it:
+   `.github/workflows/release.yml` cuts the GitHub Release from the
+   `[X.Y.Z]` CHANGELOG section; `release-rust.yml` (below) builds and
+   attaches the binary tarballs and updates the Homebrew tap and crates.io.
+   Watch it:
    `gh run watch $(gh run list --workflow=release.yml -L1 -q '.[0].databaseId')`.
 
 ### Notes
-- **First release of a new PyPI project**: register a *pending* Trusted
-  Publisher on pypi.org before the first tag push (Account settings →
-  Publishing → add a pending publisher with owner/repo/workflow/`pypi`
-  environment). The first successful publish converts it to a normal publisher
-  and creates the project.
 - **Rust distribution channels** (`.github/workflows/release-rust.yml`, same
   `v*` tag): tarballs + checksums attach to the GitHub Release unconditionally;
   the Homebrew tap push and the crates.io publish each skip with a workflow
@@ -188,7 +182,7 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix`/`refactor`/`perf`
   ```sh
   awk -v v="X.Y.Z" '/^## \[/ { if ($0 ~ "\\["v"\\]") { in=1; print; next } else in=0 } in { print }' CHANGELOG.md
   ```
-- **Recovery if the release workflow partially fails**: PyPI publish and GitHub
-  Release are separate jobs. If publish succeeds but release fails, the
-  artifacts are safe on PyPI — cut the GitHub Release manually with
-  `gh release create vX.Y.Z --notes-file <(awk …)` against the existing tag.
+- **Recovery if the release workflow partially fails**: the Release object and
+  its tarballs come from separate workflows. If `release-rust.yml` fails after
+  the Release exists, re-run it; tarballs can also be attached manually with
+  `gh release upload vX.Y.Z dist/*`.

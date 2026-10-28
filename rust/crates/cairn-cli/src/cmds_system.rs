@@ -174,11 +174,6 @@ pub enum SystemCommand {
         yes: bool,
     },
     /// Upgrade cairn. Detects install method and updates in place.
-    Upgrade {
-        /// Only check, don't upgrade.
-        #[arg(long)]
-        check: bool,
-    },
     /// Print the installed cairn version.
     Version,
     /// Hook management: git hooks, and the agent hook entrypoints.
@@ -363,9 +358,6 @@ pub fn run(command: SystemCommand) -> ExitCode {
             dry_run,
             yes,
         }),
-        SystemCommand::Upgrade { check } => {
-            cmds_lifecycle::run_upgrade(cmds_lifecycle::UpgradeArgs { check })
-        }
         SystemCommand::Version => cmds_lifecycle::run_version(),
         SystemCommand::Connect { port, host, impl_ } => {
             cmds_connect::run(cmds_connect::ConnectArgs { port, host, impl_ })

@@ -8,9 +8,8 @@ explicitly in scripts — `CAIRN_HOME` and friends are read at process start,
 not per call.
 
 One engine serves every install channel: the `cairn` binary (Homebrew tap,
-`cargo binstall`, release tarball) is the whole surface below, and the PyPI
-package installs that same binary as the `cairn` executable (a maturin bin
-wheel — no launcher, no interpreter at runtime). `cairn --help` and `cairn <command> --help` are authoritative.
+`cargo binstall`, release tarball) is the whole surface below.
+`cairn --help` and `cairn <command> --help` are authoritative.
 
 Machine contracts (`config --json`/`--db`/`--mcp-config` shapes, stdout-pure
 JSON modes, exit codes) are pinned by the frozen CLI goldens under
@@ -238,7 +237,7 @@ contested).
 | `cairn validate` / `validate-paths [--mark]` / `verify <doc>` | OKF conformance, stale file/symbol references, the deterministic critic on one document |
 | `cairn viz [--export FILE]` | render graph diagrams (`--format mermaid|dot|json`, `--scope symbol|module|impact|repo|deps`); `--export` writes one self-contained HTML file |
 | `cairn hooks install|uninstall|run <entrypoint>` | manage the cairn git hooks — post-commit + post-checkout (see [below](#cairn-hooks)) — and run an agent hook entrypoint (`post_edit`, `session_end`, `post_tool_failure`, `session_start`) over the JSON payload on stdin |
-| `cairn version` / `upgrade [--check]` | version; in-place upgrade of PyPI installs (`uv tool` / `pipx` / `pip` detected — other channels upgrade themselves) |
+| `cairn version` | print the installed version |
 | `cairn sync` | re-index size/mtime-drifted files |
 
 ### `cairn hooks`

@@ -97,7 +97,7 @@ Enforced by Layers 0-1; if any is red, fix before requesting review:
   licenses), release builds per target
 - conventional PR title (hard gate)
 - `rust-parity.yml`: the frozen oracles (`cargo xtask parity`,
-  `cargo xtask cli-golden`, `g2_check.sh`, `wheel_smoke.sh`) replay against the release binary on
+  `cargo xtask cli-golden`, `g2_check.sh`) replay against the release binary on
   `rust/**` PRs and nightly
 
 ---

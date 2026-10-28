@@ -5,13 +5,10 @@ Python trees. Every path below was read from the tree; re-verify with
 `rg --files rust/crates` before citing.
 
 ## Distribution
-- One engine binary, `cairn`, built from `rust/crates/cairn-cli`. The cargo
-  workspace version and the PyPI version are the same number
-  (`Cargo.toml` `[workspace.package]`, `pyproject.toml` `[project]`).
-- Channels: GitHub release tarballs, a Homebrew tap and crates.io/binstall
-  (`.github/workflows/release-rust.yml`), and the PyPI wheel `cairn-intel`
-  (`.github/workflows/release.yml`). The wheel is the engine binary itself
-  (maturin bin wheel, no Python module).
+- One engine binary, `cairn`, built from `rust/crates/cairn-cli` and versioned
+  by `Cargo.toml` `[workspace.package]`.
+- Channels: GitHub release tarballs, a Homebrew tap, and crates.io/binstall
+  (`.github/workflows/release-rust.yml`).
 
 ## Cargo workspace (`rust/`)
 | Crate | Role |
@@ -36,8 +33,7 @@ Vendored: `rust/vendor/tree-sitter-dart` (workspace member) and
 ## Development tooling
 - `rust/crates/xtask/`: repo gates, replay oracles, canonical-dump tooling
   and the measured gates (`cargo xtask` lists them).
-- `scripts/`: installers and `rust_migration/` (`g2_check.sh`,
-  `wheel_smoke.sh`).
+- `scripts/`: installers and `rust_migration/` (`g2_check.sh`).
 - `tests/fixtures/`: SCIP-indexing fixture repos.
 - `packaging/`: the Homebrew formula template.
 

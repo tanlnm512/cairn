@@ -1,7 +1,7 @@
 # Tech stack & conventions: cairn
 
 Stack, build and test runners, and gates. Cited from `Cargo.toml`,
-`pyproject.toml`, `.pre-commit-config.yaml` and `.github/workflows/`.
+`.pre-commit-config.yaml` and `.github/workflows/`.
 
 ## Stack
 - Rust, edition 2024, one cargo workspace (manifest at the repo root, crates
@@ -11,13 +11,6 @@ Stack, build and test runners, and gates. Cited from `Cargo.toml`,
   patch), tree-sitter with 15 grammar crates, rayon, clap, notify, prost,
   minijinja.
 - Release profile strips symbols (`[profile.release] strip = true`).
-- Python ≥ 3.10 only for the wheel build (`python -m build` in the wheel
-  smoke). The wheel has no runtime dependencies and no Python code.
-- Wheel build: maturin (`[tool.maturin] bindings = "bin"` over
-  `rust/crates/cairn-cli/Cargo.toml`) packages the engine binary as the
-  `cairn` executable, tagged `py3-none-<platform>` with no Python module
-  inside; the sdist carries the cargo workspace including the vendored
-  sqlite-vec and grammar sources.
 
 ## Build and test
 - `cargo build --release -p cairn-cli` (from `rust/`, or pass
@@ -25,8 +18,8 @@ Stack, build and test runners, and gates. Cited from `Cargo.toml`,
 - `cargo test --workspace --no-fail-fast`; `cargo clippy --workspace
   --all-targets -- -D warnings`; `cargo fmt --all -- --check`.
 - Oracles: `cargo xtask parity --store {self,yarl,attrs}`,
-  `cargo xtask cli-golden`, `g2_check.sh` (`G2_LEGS=base,rebuild,staging`),
-  `wheel_smoke.sh`. They reuse whatever release binary the target dir holds;
+  `cargo xtask cli-golden`, `g2_check.sh` (`G2_LEGS=base,rebuild,staging`).
+  They reuse whatever release binary the target dir holds;
   rebuild it first.
 
 ## Gates
@@ -38,10 +31,10 @@ Stack, build and test runners, and gates. Cited from `Cargo.toml`,
 
 | Workflow | Trigger | Jobs |
 |---|---|---|
-| `ci.yml` | push, PR, merge queue | PR title, pre-commit, quality ratchet, dependency review, build, container |
+| `ci.yml` | push, PR, merge queue | PR title, pre-commit, quality ratchet, dependency review, container |
 | `rust.yml` | push, PR, merge queue | fmt, clippy, test, deny, release build matrix (macOS and Linux gnu/musl targets) |
-| `rust-parity.yml` | PR (cheap subset), nightly, dispatch | parity, parity-stores, g2-legs, wheel-smoke |
-| `release.yml` | tag | wheels + sdist, PyPI publish, GitHub release |
+| `rust-parity.yml` | PR (cheap subset), nightly, dispatch | parity, parity-stores, g2-legs |
+| `release.yml` | tag | GitHub release |
 | `release-rust.yml` | tag | binaries, GitHub release, Homebrew tap, crates.io |
 | `weekly-smoke.yml` | weekly, dispatch | smoke |
 | `review.yml` | PR | advisory review |

@@ -17,5 +17,5 @@
 ## Rationale
 - C-01: the PR gates (pre-commit, PR-title/dependency-review, audit checklist) are the repo's Layers 0-3 review pipeline; bypassing them skips review entirely.
 - C-02: cairn's regression surface (multi-client config merging, daemon lifecycle, doctor checks) is too wide for untested landings; the failing-test-first task is what proves a TC actually covers the behavior.
-- C-03: every runtime dep widens the wheel/platform matrix (see the musllinux/Intel-macOS drops in 0.14.0); additions must be a recorded decision, not an import-time accident.
+- C-03: every runtime dep widens the platform matrix (see the musllinux/Intel-macOS drops in 0.14.0); additions must be a recorded decision, not an import-time accident.
 - C-04: these three gotchas have each broken CI or leaked state onto dev machines empirically; they are cheap to state and expensive to rediscover.

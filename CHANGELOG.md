@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- The PyPI wheel channel is retired: `pyproject.toml`, `uv.lock`, the maturin builds, and every wheel/publish job are gone. A `v*` tag now cuts the GitHub Release (changelog notes) while `release-rust.yml` attaches the binary tarballs, updates the Homebrew tap, and publishes to crates.io; Homebrew, `cargo binstall`, and the tarballs are the install channels.
+- `cairn uninstall` reports the running binary and its channel-appropriate removal command instead of driving pip/pipx/uv; `cairn report` no longer prints a `python` line.
+- Local CI replication (`scripts/ci-local.sh`) runs on a debian container with only the rust toolchain and prek (the python image, uv provisioning, and the wheel-smoke/build jobs are gone).
 - `cairn impact --guard [--threshold N]` replaces the skill's `scripts/impact_guard.py` helper: a cycle-carrying result above the threshold prints a name-collision warning and the dataflow-index fallback instead of the raw dump (`--json` gains a `guard` object), and the agent skill no longer ships a Python script.
 - Dev tooling moved to `cargo xtask` (the parity and CLI-golden oracles, canonical-dump tools, perf harnesses, and the repo gates).
 - `scripts/install.sh` builds from a checkout with `cargo install` (no Python required), `scripts/uninstall.sh` forwards to `cairn uninstall`, and the SCIP test fixture regenerates with `cargo xtask scip-fixture`.
@@ -24,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust doc comments state contracts directly: provenance pointers to the retired Python implementation (parser registry, scanner filter tiers, pragma parity, MCP tool text contracts) and to deleted Python-era scripts (`tests/fixtures/golden/regenerate.py`, `scripts/regen_scip_proto.sh`) are gone; the golden-test normalization docs describe the committed `expected.json` schema instead.
 
 ### Removed
+- The `cairn upgrade` command (and its `--check` flag): it existed to pip/pipx/uv-upgrade the wheel installs; every remaining channel (Homebrew, cargo, tarball) upgrades through its own package manager. The `upgrade --check` cli-golden case is retired with it.
+- The ci.yml wheel/sdist packaging canary and the rust-parity nightly wheel-smoke job.
+- The PyPI wheel channel's packaging files (`pyproject.toml`, `uv.lock`) and `scripts/rust_migration/wheel_smoke.sh`.
 - Retired stubs and upgrade shims: the `download-reranker` command; the `build --lsp`, `init --import-docs`, `init --from-legacy` and `embed --install-deps/--download-model/--adopt-server-model` flags (now unknown-argument errors); the `doctor` `agent_hooks` check and every migration of `python -m cairn.hooks.claude_hooks` hook commands; pruning of the retired `impact_guard.py` skill file; unloading the `dev.cairn.sse` LaunchAgent; the automatic `./cairn` legacy-store copy in `init`; the dashboard's one-segment `/wiki/<page>` redirect; and the rebuild of pre-`(symbol, repo)` `dataflow` tables.
 - The optional `cairn-intel-ingest` PDF converter package and the `CAIRN_SIDECAR_PYTHON` override: `knowledge ingest` always converts PDFs natively (paragraph text). The repo now carries no Python code outside test corpora.
 - `cairn uninstall` no longer probes a Python interpreter for source-tree build debris of the retired Python package.

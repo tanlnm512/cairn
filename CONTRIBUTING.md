@@ -8,17 +8,14 @@ parsers — are genuinely welcome and have a real impact.
 
 ## Development setup
 
-cairn is a **Rust binary**; Python 3.10+ is used only for the dev tooling
-(wheel builds). MIT-licensed.
+cairn is a **Rust binary**; the dev gates run on `cargo` and prek.
+MIT-licensed.
 
 ```bash
 git clone https://github.com/tanlnm512/cairn.git
 cd cairn
 
-# Dev tooling (a uv.lock is committed at the repo root):
-uv sync --extra dev
-
-# The engine itself:
+# The engine:
 cargo build --release --manifest-path Cargo.toml -p cairn-cli
 ```
 
@@ -130,7 +127,7 @@ license notice in the file or add it to `NOTICE`.
 File bugs via **GitHub Issues**. Please include:
 
 - cairn version (`cairn version`)
-- OS and install channel (Homebrew / cargo / tarball / PyPI)
+- OS and install channel (Homebrew / cargo / tarball)
 - Steps to reproduce, expected vs. actual behavior, and any relevant logs
 
 For security-sensitive reports, see **SECURITY.md** instead of a public issue.

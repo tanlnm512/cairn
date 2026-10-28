@@ -14,8 +14,7 @@ lives, and which crate owns which job.
 
 Cairn is a local codebase-intelligence system for AI coding agents, shipped
 as one static `cairn` binary (Homebrew tap, `cargo binstall`, release
-tarball, or bundled inside the `cairn-intel` PyPI wheel, whose console script
-execs it). It parses a workspace into a SQLite symbol/call graph, layers
+or release tarball). It parses a workspace into a SQLite symbol/call graph, layers
 hybrid retrieval on top, and keeps durable knowledge (documents, memories,
 compass/wiki guides) in an Open Knowledge Format (OKF) bundle. Everything is
 local; no LLM is called in-process — LLM-quality synthesis runs through a
