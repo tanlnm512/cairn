@@ -656,7 +656,7 @@ fn memory_demote_delete_decay_promote_lifecycle() {
     assert_eq!(canonical.ext_str("memory_status"), Some("canonical"));
 
     // delete_memory only manages memory/-namespace concepts: a promoted memory
-    // now lives under compass/ and is refused (Python parity).
+    // now lives under compass/ and is refused.
     assert!(
         !fx.bundle
             .read_concept(&promoted)

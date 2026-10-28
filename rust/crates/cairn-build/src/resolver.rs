@@ -7,7 +7,7 @@ use rusqlite::Connection;
 /// Languages whose `calls` edges stay name-based on the repair path.
 pub const GENERIC_TIER_LANGUAGES: &[&str] = &["rust"];
 
-/// Names bound per `IN (...)` list, matching the Python `_SQLITE_IN_CHUNK`.
+/// Names bound per `IN (...)` list (SQLite parameter-limit chunking).
 const SQLITE_IN_CHUNK: usize = 400;
 
 /// Symbol kinds that are members of a type (never types themselves).

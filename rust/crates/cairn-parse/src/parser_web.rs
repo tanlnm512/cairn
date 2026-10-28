@@ -1321,7 +1321,7 @@ export function Page() {
             imports,
             vec![
                 resolved_dir.join("mod").to_string_lossy().into_owned(),
-                // index resolution keeps the /index suffix, like the Python resolver.
+                // index resolution keeps the /index suffix.
                 resolved_dir
                     .join("pkg/index")
                     .to_string_lossy()

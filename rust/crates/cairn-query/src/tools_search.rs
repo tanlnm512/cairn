@@ -149,7 +149,7 @@ fn like_rows(
 }
 
 /// Search symbols by name/docstring, ranked by bm25, with the LIKE fallback and
-/// non-prefix LIKE merge (the Python `lexical.search_symbols` contract).
+/// non-prefix LIKE merge.
 pub fn search_symbols(
     conn: &Connection,
     pattern: &str,
@@ -179,7 +179,7 @@ pub fn search_symbols(
     Ok(rows)
 }
 
-/// Render the `search_symbols` prose response (the Python tool text contract).
+/// Render the `search_symbols` prose response.
 pub fn render_search_symbols(pattern: &str, rows: &[SymbolRow]) -> String {
     let total = rows.len();
     if total == 0 {
@@ -435,7 +435,7 @@ pub fn semantic_env(rerank: Option<bool>) -> SemanticEnv {
 
 // --- hash embedder -----------------------------------------------------------
 
-/// Deterministic unit-norm hash vector for text (the Python `_hash_vec` contract).
+/// Deterministic unit-norm hash vector for text.
 pub fn hash_vec(text: &str) -> Vec<f64> {
     let mut vec = vec![0.0f64; DEFAULT_DIM];
     let mut seen: HashSet<String> = HashSet::new();
@@ -905,7 +905,7 @@ fn round4(x: f64) -> f64 {
 
 // --- semantic pipeline -------------------------------------------------------
 
-/// One semantic-search match (the Python tool's `matches` entry).
+/// One semantic-search match (a `matches` entry).
 #[derive(Clone)]
 pub struct SemanticMatch {
     pub id: String,
@@ -1291,7 +1291,7 @@ pub fn semantic_search(
     candidates
 }
 
-/// Render the semantic-search prose response (the Python tool text contract).
+/// Render the semantic-search prose response.
 /// Neighbor lines render only when attached; the attachment lands with the
 /// traversal port.
 pub fn render_semantic_search(query: &str, rows: &[SemanticMatch], fusion_on: bool) -> String {

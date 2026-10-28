@@ -21,12 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `wheel_smoke.sh` probes the wheel with shell tools (`unzip`/`7z`, `jq`, `od`) instead of inline Python.
 - The commit gates run under prek (`prek install`) instead of pre-commit, with native yaml/toml/merge-conflict/large-file hooks.
 - `cargo xtask comment-style` gates long comment and doc blocks in the Rust crates (shrink-only baseline), and `cargo xtask verify-protection` requires the Rust CI gates and fails on required checks no workflow emits.
+- Rust doc comments state contracts directly: provenance pointers to the retired Python implementation (parser registry, scanner filter tiers, pragma parity, MCP tool text contracts) and to deleted Python-era scripts (`tests/fixtures/golden/regenerate.py`, `scripts/regen_scip_proto.sh`) are gone; the golden-test normalization docs describe the committed `expected.json` schema instead.
 
 ### Removed
 - Retired stubs and upgrade shims: the `download-reranker` command; the `build --lsp`, `init --import-docs`, `init --from-legacy` and `embed --install-deps/--download-model/--adopt-server-model` flags (now unknown-argument errors); the `doctor` `agent_hooks` check and every migration of `python -m cairn.hooks.claude_hooks` hook commands; pruning of the retired `impact_guard.py` skill file; unloading the `dev.cairn.sse` LaunchAgent; the automatic `./cairn` legacy-store copy in `init`; the dashboard's one-segment `/wiki/<page>` redirect; and the rebuild of pre-`(symbol, repo)` `dataflow` tables.
 - The optional `cairn-intel-ingest` PDF converter package and the `CAIRN_SIDECAR_PYTHON` override: `knowledge ingest` always converts PDFs natively (paragraph text). The repo now carries no Python code outside test corpora.
 - `cairn uninstall` no longer probes a Python interpreter for source-tree build debris of the retired Python package.
 - The Python-only dev gates: the pytest and pip-audit/bandit CI jobs, the ruff and debug-statements pre-commit hooks, `scripts/install-dev-hooks.sh`, and `cargo xtask verify-no-code-change`.
+- Dead Python-era fixture tooling: the `tests/fixtures/__init__.py` package markers and `tests/fixtures/scip-indexing/generate_heavy.py` (unrunnable in this tree — it required the retired `src/cairn/parsers/_scip_pb2.py`). The committed parser-golden and SCIP fixtures remain; both regenerate from git history when needed.
 
 ## [0.24.1] - 2026-10-26
 ### Fixed

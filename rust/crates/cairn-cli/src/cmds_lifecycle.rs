@@ -189,8 +189,8 @@ pub fn run_sync(args: SyncArgs) -> ExitCode {
     println!();
     let mut errors = result.errors.clone();
     if result.reindexed > 0 || result.deleted > 0 {
-        // An absent closure stays absent, mirroring the python prestate rule;
-        // the dataflow and scip-overlay legs wait on the 4c-3 builders.
+        // An absent closure stays absent (prestate rule); the dataflow and
+        // scip-overlay legs keep their prestate.
         if closure_built
             && let Err(e) = cairn_build::closure::build_transitive_closure(&mut conn, 4)
         {
@@ -1531,8 +1531,8 @@ mod privacy {
     }
 }
 
-/// Collapse absolute filesystem paths to `[PATH]/<basename>` (the python
-/// lookbehind regexes, hand-rolled: rust regex has no lookaround).
+/// Collapse absolute filesystem paths to `[PATH]/<basename>` (hand-rolled;
+/// rust regex has no lookaround).
 fn redact_paths(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let is_path_char = |c: char| !c.is_whitespace() && c != '"' && c != '\'';

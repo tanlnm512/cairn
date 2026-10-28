@@ -45,7 +45,7 @@ impl Drop for TempStore {
     }
 }
 
-// --- fixture normalization (ported from the recorder's scrub rules) ----------
+// --- fixture normalization (the recorder's scrub rules) ----------
 
 type Rule = Box<dyn Fn(&str) -> String>;
 

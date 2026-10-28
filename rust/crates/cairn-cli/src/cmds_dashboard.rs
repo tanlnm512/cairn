@@ -47,7 +47,7 @@ fn banner_lines(host: &str, port: u16, db: &Path) -> Vec<String> {
 /// Start the loopback-only read-only web dashboard; blocks until interrupted.
 pub fn run(args: DashboardArgs) -> ExitCode {
     if !is_loopback_host(&args.host) {
-        // Usage errors exit 2 like the Python click.UsageError path.
+        // Usage errors exit 2.
         let mut cmd = clap::Command::new("cairn dashboard");
         let error = cmd.error(
             clap::error::ErrorKind::InvalidValue,

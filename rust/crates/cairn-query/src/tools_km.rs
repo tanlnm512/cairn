@@ -1,9 +1,5 @@
 //! Knowledge/memory-family tools: recall/record, memory lifecycle, knowledge docs, compass router.
-//!
-//! Ports `src/cairn/mcp_server/tools_memory.py`, `tools_knowledge.py`,
-//! `tools_compass.py`, and the `cairn.memory` / `cairn.knowledge` /
-//! `cairn.okf` / `cairn.refs` modules they call. Responses are byte-parity
-//! with the Python tools (see `rust/golden/mcp/*.json`).
+//! Responses are byte-parity frozen in `rust/golden/mcp/*.json`.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -21,7 +17,7 @@ use crate::tools_search::{cosine_scan, embed_query, rrf_fuse, semantic_env, sema
 
 // --- errors -----------------------------------------------------------------
 
-/// Tool failure: the message a Python tool would have raised with.
+/// Tool failure: the error message to surface.
 #[derive(Debug, Clone)]
 pub struct ToolError(pub String);
 
@@ -1064,7 +1060,7 @@ thread_local! {
 }
 
 /// RAII guard for the bundle mutation lock: flock on `.okf.lock`, reentrant
-/// per thread (a nested acquire is a no-op, matching the Python lock).
+/// per thread (a nested acquire is a no-op).
 pub struct BundleLockGuard<'a> {
     bundle: &'a Bundle,
     key: String,
@@ -2010,7 +2006,7 @@ pub fn consolidate_memories(
             concepts.push(c);
         }
     }
-    // Insertion-ordered groups keyed by the lowercased title (Python dict order).
+    // Insertion-ordered groups keyed by the lowercased title.
     let mut groups: Vec<(String, Vec<Concept>)> = Vec::new();
     for c in concepts {
         let key = c.title.as_deref().unwrap_or("").trim().to_lowercase();

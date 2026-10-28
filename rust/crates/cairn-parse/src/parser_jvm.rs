@@ -1464,7 +1464,7 @@ class Owner(private val repo: Repo) : Base(), AutoCloseable {
             .filter(|e| e.kind == "calls")
             .map(|e| (e.target_name.clone(), e.receiver_type.as_deref()))
             .collect();
-        // Matches the Python parser edge for edge, including the nested
+        // Matches the expected edges, including the nested
         // `fetch`/`deliver` pair from a chained call.
         assert_eq!(
             calls,

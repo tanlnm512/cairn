@@ -1,6 +1,6 @@
-//! SCIP import contract: prost decodes the Python-runtime fixture, the
+//! SCIP import contract: prost decodes the committed fixture, the
 //! overlay writes exactly the position-joined edges, and generation
-//! classification matches the Python registry semantics.
+//! classification matches the registry semantics.
 
 use std::fs;
 use std::path::{Path, PathBuf};

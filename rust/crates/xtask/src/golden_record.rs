@@ -645,7 +645,7 @@ fn truncate_chars(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
 
-/// Python truthiness of an optional JSON value.
+/// Truthiness of an optional JSON value (null, false, zero, empty are false).
 pub(crate) fn is_truthy(value: Option<&Value>) -> bool {
     match value {
         None | Some(Value::Null) => false,

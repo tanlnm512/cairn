@@ -228,11 +228,9 @@ fn normalize_dump(lines: &[String]) -> NormTables {
                     } else {
                         "nn".to_string()
                     };
-                    // For a resolved edge target_name is derivable from
-                    // target_id, and the build paths write it differently:
-                    // a rebuild inserts the name on contains edges while a
-                    // graft's repair pass nulls it (observed identically in
-                    // the Python implementation).
+                    // target_name is derivable from target_id on resolved
+                    // edges: a rebuild inserts it on contains edges, a
+                    // graft's repair pass nulls it.
                     if raw_target != "\\N" {
                         r[tname_i] = "<RESOLVED>".to_string();
                     }

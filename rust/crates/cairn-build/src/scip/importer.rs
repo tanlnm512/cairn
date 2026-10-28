@@ -52,7 +52,7 @@ const TS_SITES_SQL: &str = "SELECT e.kind, e.line, e.target_id, e.resolution \
      WHERE s.file_id = ? AND e.kind IN ('calls','references') \
      AND coalesce(e.source, '') != 'scip'";
 
-/// Counterpart of the Python import record dict; field names mirror its keys.
+/// One SCIP import record; field names mirror the import-row keys.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct ImportRecord {
     pub index: String,
@@ -77,7 +77,7 @@ type SpanRow = (String, i64, i64);
 /// (start_line, end_line, start_char, end_char), 0-based inclusive lines.
 type Span = [i64; 4];
 
-/// One planned edge row; the Python 8-tuple handed to `INSERT_EDGE`.
+/// One planned edge row for `INSERT_EDGE`.
 struct EdgeRow {
     id: String,
     source_id: String,

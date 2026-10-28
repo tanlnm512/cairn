@@ -1,4 +1,4 @@
-//! Schema DDL mirror: base tables plus the additive-migration column order of the Python store.
+//! Schema DDL: base tables plus the additive-migration column order.
 
 use std::path::Path;
 use std::time::Duration;
@@ -487,10 +487,9 @@ pub fn note_memory_validity_backfill(conn: &Connection, db_path: &Path) -> rusql
     Ok(())
 }
 
-/// Open a store with the Python `get_db` parity: writable pragmas, schema
-/// application, and the memory-validity backfill marker (the writable
-/// counterpart of `conn::open_read_only`; plain pragma-only opens use
-/// `conn::open_writable`).
+/// Open a store fully: writable pragmas, schema application, and the
+/// memory-validity backfill marker (the writable counterpart of
+/// `conn::open_read_only`; pragma-only opens use `conn::open_writable`).
 pub fn open_initialized(path: &Path) -> Result<Connection, rusqlite::Error> {
     crate::conn::register_vec0();
     let conn = Connection::open(path)?;
@@ -603,8 +602,8 @@ mod tests {
         );
         conn.close().expect("close");
 
-        // The store matches the python-built probe store's content-table set
-        // (the live parity check lives in the G2 gate script).
+        // The store matches the expected content-table set (the live parity
+        // check lives in the G2 gate script).
         let conn = crate::conn::open_read_only(&path).expect("read-only reopen");
         let classes = crate::dump::classify_tables(&conn).expect("classify");
         let content: Vec<&String> = classes

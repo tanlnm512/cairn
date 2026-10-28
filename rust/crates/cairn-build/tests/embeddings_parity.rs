@@ -1,4 +1,4 @@
-//! 2f parity: the Rust embed pass reproduces the Python `cairn embed` golden.
+//! Embed pass parity against the committed golden.
 
 use std::collections::HashMap;
 use std::fs;

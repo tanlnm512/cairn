@@ -94,7 +94,7 @@ fn source_table_ident(source: VecSource) -> &'static str {
 }
 
 /// Outcome of a wholesale vec0 rebuild: indexed rows, or the skip reason
-/// (byte-identical to the Python user-visible strings).
+/// (user-visible strings).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RebuildOutcome {
     Built {

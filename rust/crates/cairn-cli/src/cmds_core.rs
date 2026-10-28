@@ -1797,7 +1797,7 @@ fn federated_search(args: crate::cmds_core::FederatedSearchArgs) -> ExitCode {
         }
         rankings.push(ranking);
     }
-    // RRF-fuse the per-store rankings, keeping the python rounding.
+    // RRF-fuse the per-store rankings, keeping fixed-precision rounding.
     let hits_by_doc = hits;
     let fused = cairn_query::tools_search::rrf_fuse(&rankings, 60);
     let mut fused_hits: Vec<Value> = Vec::new();

@@ -559,7 +559,7 @@ fn symbol_graph_href(symbol: &str, store_suffix: &str) -> String {
 }
 
 /// Map only verified symbol refs to graph links using escaped span keys,
-/// keeping first-seen order (the Python dict's insertion order).
+/// keeping first-seen order.
 fn wiki_ref_map(concept: &Concept, row: &Value, store_suffix: &str) -> Vec<(String, String)> {
     let mut refs: Vec<(String, String)> = Vec::new();
     let has = |key: &str, refs: &[(String, String)]| refs.iter().any(|(k, _)| k == key);

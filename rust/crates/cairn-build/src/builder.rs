@@ -33,7 +33,7 @@ const CALLABLE_OR_TYPE_KINDS: &[&str] = &[
     "implementation",
 ];
 
-/// Build-result counts mirroring the Python summary dict.
+/// Build-result counts.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct BuildSummary {
     pub repos: usize,
@@ -49,8 +49,7 @@ pub struct BuildSummary {
     pub scip: Option<ScipReport>,
 }
 
-/// Aggregated counts of the applied SCIP indexes, mirroring the Python `scip`
-/// summary entry.
+/// Aggregated counts of the applied SCIP indexes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 pub struct ScipReport {
     pub edges: usize,

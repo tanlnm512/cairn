@@ -1855,7 +1855,7 @@ mod tests {
         let obj = value.as_object().expect("object");
         let keys: Vec<&String> = obj.keys().collect();
         assert_eq!(keys, ["name", "status", "detail", "hint"]);
-        // An unset hint serializes as an explicit null (the Python json.dumps shape).
+        // An unset hint serializes as an explicit null.
         let row = result("x", WARN, "d", None);
         assert!(matches!(row.to_json().get("hint"), Some(Value::Null)));
     }

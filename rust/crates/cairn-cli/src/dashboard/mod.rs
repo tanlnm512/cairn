@@ -715,7 +715,7 @@ async fn communities(State(state): State<AppState>, uri: Uri, headers: HeaderMap
 
 // --- route handlers: history / tokens / chains + exports ---
 
-/// RFC 4180 text with the Python csv module's minimal quoting and CRLF rows.
+/// RFC 4180 text with minimal quoting and CRLF rows.
 fn csv_text(rows: &[Value]) -> String {
     let mut out = String::new();
     let Some(first) = rows.first() else {

@@ -38,8 +38,8 @@ repos:
         pass_filenames: false
         always_run: true
 
-  # --- Rust gates: local mirror of the Rust CI leg. GATE-only like ruff
-  # above (fmt runs with --check, never rewrites). The standard rustup bin
+  # --- Rust gates: local mirror of the Rust CI leg. GATE-only (fmt runs
+  # with --check, never rewrites). The standard rustup bin
   # dir is prepended to PATH so non-interactive shells find the toolchain;
   # runs only when rust/ files are staged.
   - repo: local

@@ -301,7 +301,7 @@ fn failure_record_args(data: &Map<String, Value>) -> Option<Vec<String>> {
     ])
 }
 
-/// Python truthiness of a JSON value.
+/// Truthiness of a JSON value (null, false, zero, and empty are false).
 fn truthy(value: Option<&Value>) -> bool {
     match value {
         None | Some(Value::Null) => false,

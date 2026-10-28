@@ -10,13 +10,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "comment:7e783635f502668b75299f6f6ee43a7fa5f85e5d9c9a7af70b96652bc1bcc24f",
-      "paths": [
-        "rust/crates/cairn-build/tests/incremental_graft.rs"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "comment:dbff20e82bb54391dcfdf374172c7d9ea843d086b044d651449d07c8d946f20c",
       "paths": [
         "rust/crates/cairn-build/tests/closure_semantics.rs"
@@ -59,23 +52,9 @@
     },
     {
       "count": 1,
-      "fingerprint": "doc:a386ccd6b695ac2bd0dac3c048df914cc0589fa955d3e2529d416b5baf273188",
-      "paths": [
-        "rust/crates/cairn-store/src/schema.rs"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "doc:a5ffa6ad8720c94710a061fecdaa230e34ac88194613ae1bb27bb2053d3dafd1",
       "paths": [
         "rust/crates/cairn-store/src/dump.rs"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "doc:ad3cbc1603509504903711158d3bb1ca675f1515fe1dff0793807afd591c7653",
-      "paths": [
-        "rust/crates/cairn-query/src/tools_km.rs"
       ]
     },
     {
@@ -90,20 +69,6 @@
       "fingerprint": "doc:cda8e0e81d411bf7e25ddbe32a47fb0280d9301397b3b998d7ed8ce63d4c42b8",
       "paths": [
         "rust/crates/cairn-query/src/tasks.rs"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "doc:d7782ddadd7912ad4cedc9ec97ad04d536cf18d21afbf8ba4c01d35e07abc1da",
-      "paths": [
-        "rust/crates/cairn-build/src/closure.rs"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "doc:deb07878c271f145b3e0c4628ba376fb1cecc0d2fdd8f4463c1ec3636de1c8d2",
-      "paths": [
-        "rust/crates/cairn-build/src/scip/mod.rs"
       ]
     }
   ]

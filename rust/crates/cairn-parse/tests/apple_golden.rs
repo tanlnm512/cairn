@@ -1,4 +1,4 @@
-//! Golden parity: the Rust apple parsers reproduce the Python golden JSON.
+//! Golden parity: the apple parsers reproduce the committed golden JSON.
 
 use std::fs;
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ fn golden_dir() -> PathBuf {
         .join("tests/fixtures/golden")
 }
 
-/// Same shape and sort keys as tests/fixtures/golden/regenerate.py:normalise().
+/// Same shape and sort keys as the expected.json schema.
 fn normalise(parsed: &ParsedFile) -> Value {
     let mut symbols: Vec<Value> = parsed
         .symbols
