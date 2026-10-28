@@ -47,21 +47,33 @@ else
 fi
 VERSION="$(basename "$WHEEL" | cut -d- -f2)"
 
-"$PY" - "$WHEEL" <<'EOF' || fail "wheel is not a bin wheel"
-import sys, zipfile
-from pathlib import Path
-path = Path(sys.argv[1])
-dist, version, tags = path.name.split("-", 2)
-assert dist == "cairn_intel", path.name
-assert tags.startswith("py3-none-") and not path.name.endswith("-any.whl"), path.name
-names = zipfile.ZipFile(path).namelist()
-assert not [n for n in names if n.endswith(".py")], [n for n in names if n.endswith(".py")]
-assert not [n for n in names if n.startswith("cairn/")], "python package inside the wheel"
-exe = ".exe" if "win" in tags else ""
-scripts = sorted(n for n in names if "/scripts/" in n)
-assert scripts == [f"cairn_intel-{version}.data/scripts/cairn{exe}"], scripts
-print("bin wheel OK:", path.name)
-EOF
+# Wheel entry names: unzip on Linux/macOS runners, 7-Zip on Windows ones.
+wheel_names() {
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -Z1 "$1"
+  elif command -v 7z >/dev/null 2>&1; then
+    7z l -ba -slt "$1" | sed -n 's/^Path = //p' | tr '\\' /
+  else
+    fail "neither unzip nor 7z on PATH to list the wheel"
+  fi
+}
+
+WHEEL_NAME="$(basename "$WHEEL")"
+TAGS="${WHEEL_NAME#cairn_intel-"$VERSION"-}"
+[ "${WHEEL_NAME%%-*}" = cairn_intel ] || fail "wheel is not cairn_intel: $WHEEL_NAME"
+case "$TAGS" in
+  py3-none-any.whl) fail "wheel is pure-python, not a bin wheel: $WHEEL_NAME" ;;
+  py3-none-*) ;;
+  *) fail "wheel is not tagged py3-none-<platform>: $WHEEL_NAME" ;;
+esac
+NAMES="$(wheel_names "$WHEEL" | tr -d '\r')" || fail "cannot list $WHEEL_NAME"
+PY_ENTRIES="$(printf '%s\n' "$NAMES" | grep -E '\.py$|^cairn/' || true)"
+[ -z "$PY_ENTRIES" ] || fail "python entries inside the wheel: $PY_ENTRIES"
+case "$TAGS" in *win*) EXE=.exe ;; *) EXE= ;; esac
+SCRIPTS="$(printf '%s\n' "$NAMES" | grep '/scripts/' || true)"
+[ "$SCRIPTS" = "cairn_intel-$VERSION.data/scripts/cairn$EXE" ] \
+  || fail "the engine must be the only script, got: $SCRIPTS"
+echo "bin wheel OK: $WHEEL_NAME"
 
 # --- fresh venv + install ------------------------------------------------------
 "$PY" -m venv "$WORK/venv" || fail "fresh venv"
@@ -96,23 +108,19 @@ case "$out" in
   *) fail "cairn --version reported '$out', wheel is $VERSION" ;;
 esac
 
-"$VENV_PY" - "$CAIRN" <<'EOF' || fail "cairn config --json machine contract (C-4)"
-import json, subprocess, sys
-r = subprocess.run([sys.argv[1], "config", "--json"], capture_output=True, text=True)
-assert r.returncode == 0, r.stderr
-data = json.loads(r.stdout)  # stdout must be pure JSON
-assert set(data) == {"cairn_home", "workspace", "db", "knowledge", "scip"}, sorted(data)
-print("config --json OK:", r.stdout.strip())
-EOF
+config="$("$CAIRN" config --json)" || fail "cairn config --json"
+printf '%s' "$config" \
+  | jq -es 'length == 1 and (.[0] | keys) == ["cairn_home", "db", "knowledge", "scip", "workspace"]' >/dev/null \
+  || fail "cairn config --json machine contract (C-4): $config"
+echo "config --json OK: $config"
 
-"$PY" - "$CAIRN" <<'EOF' || fail "installed cairn is not the native engine"
-import sys
-head = open(sys.argv[1], "rb").read(4)
-assert not head.startswith(b"#!"), "a #! launcher script, not the engine"
-macho = {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xce", b"\xca\xfe\xba\xbe"}
-assert head == b"\x7fELF" or head in macho or head[:2] == b"MZ", head
-print("native executable OK:", sys.argv[1])
-EOF
+MAGIC="$(head -c 4 "$CAIRN" | od -An -tx1 | tr -d ' \n')"
+case "$MAGIC" in
+  2321*) fail "installed cairn is a #! launcher script, not the engine" ;;
+  7f454c46 | cffaedfe | feedfacf | cefaedfe | feedface | cafebabe | 4d5a*) ;;
+  *) fail "installed cairn is not a native executable (magic $MAGIC)" ;;
+esac
+echo "native executable OK: $CAIRN"
 
 # --- tool installers ------------------------------------------------------------
 if command -v uv >/dev/null 2>&1; then

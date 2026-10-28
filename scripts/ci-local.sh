@@ -83,13 +83,14 @@ if [[ -z "${CI_LOCAL_INNER:-}" ]]; then
       [[ -n "${CI_LOCAL_MEMORY:-}" ]] && RES_FLAGS+=(--memory "$CI_LOCAL_MEMORY") ;;
   esac
 
-  # GitHub's ubuntu runners carry lsof/fuser; the stock python image does not,
-  # and the daemon's db-holder verification refuses to act without them.
-  IMAGE_TAG="ci-local-python:$PY"
+  # GitHub's ubuntu runners carry lsof/fuser, jq and unzip; the stock python
+  # image does not (the daemon's db-holder verification and the wheel smoke need them).
   BUILD_DIR="$REPO/.cache/ci-local/build/$PY"
   mkdir -p "$BUILD_DIR"
-  printf 'FROM python:%s-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends lsof psmisc procps && rm -rf /var/lib/apt/lists/*\n' "$PY" \
+  printf 'FROM python:%s-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends lsof psmisc procps jq unzip && rm -rf /var/lib/apt/lists/*\n' "$PY" \
     > "$BUILD_DIR/Containerfile"
+  # Tagged by content so a Containerfile change rebuilds instead of reusing a stale image.
+  IMAGE_TAG="ci-local-python:$PY-$(shasum -a 256 "$BUILD_DIR/Containerfile" | cut -c1-12)"
   if ! container image list 2>/dev/null | awk '{print $1":"$2}' | grep -qx "$IMAGE_TAG"; then
     log "building derived image $IMAGE_TAG (github-runner parity tooling)"
     container build --tag "$IMAGE_TAG" "$BUILD_DIR" >/dev/null
