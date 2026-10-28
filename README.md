@@ -12,9 +12,7 @@ The precise call graph, without the guesswork · every answer re-derivable from 
 
 </div>
 
-[![PyPI version](https://img.shields.io/pypi/v/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
-[![License: MIT](https://img.shields.io/pypi/l/cairn-intel.svg)](LICENSE)
-[![Python versions](https://img.shields.io/pypi/pyversions/cairn-intel.svg)](https://pypi.org/project/cairn-intel/)
+[![License: MIT](https://img.shields.io/github/license/tanlnm512/cairn)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/tanlnm512/cairn/ci.yml?branch=main&label=CI)](https://github.com/tanlnm512/cairn/actions/workflows/ci.yml)
 
 cairn parses your repos with tree-sitter into a **resolution-labeled structural
@@ -51,25 +49,15 @@ Every channel ships the same engine binary:
 
 ```bash
 brew install tanlnm512/cairn/cairn                 # Homebrew tap
-pip install cairn-intel                            # or: uv tool install / pipx install
 cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli
 ```
 
 Release tarballs (aarch64 / x86_64 on macOS and Linux, musl-static on
 Linux) are on the [releases page](https://github.com/tanlnm512/cairn/releases),
 and `cargo install --path rust/crates/cairn-cli` builds from a clone. Release
-tags populate the tarballs, the wheels, the Homebrew formula, and the
-binstall metadata.
-
-The PyPI package is the engine binary itself: maturin builds the wheel from
-the cargo workspace, its only payload is the platform `cairn` executable, and
-it declares no runtime dependencies and ships no Python. `docx` and PDF
-conversion run natively in the engine; the optional
-[`cairn-intel-ingest`](packaging/cairn-intel-ingest) package (`pip install
-cairn-intel-ingest`) adds higher-fidelity PDF conversion when present.
-`cairn upgrade` updates PyPI installs in place (detects `uv tool` / `pipx` /
-`pip`; `--check` previews without changing anything); Homebrew and cargo
-installs upgrade through their own channel.
+tags populate the tarballs, the Homebrew formula, and the binstall metadata;
+`docx` and PDF conversion run natively in the engine. Every channel
+(Homebrew, cargo, tarball) upgrades through its own package manager.
 
 **2. Wire up your agent(s)**
 
@@ -187,7 +175,7 @@ fundamentally cannot see.
   Point `CAIRN_EMBED_BACKEND` at a local OpenAI-compatible embeddings server
   (`omlx`, `ollama`, or `server` + `CAIRN_EMBED_BASE_URL`) for bge-m3-class
   vectors with no model download inside cairn. No cross-encoder reranker
-  ships in this build (`cairn download-reranker` says so).
+  ships in this build.
 - **Synthesized docs need an LLM pass.** Compass/wiki generation runs through
   the task queue (`cairn task`) with the critic gate — deterministic, but it
   won't happen purely locally without any model access.
@@ -320,7 +308,6 @@ channel runs the same binary. The essentials:
 | `cairn memory / compass / wiki / task / knowledge …` | The layered stores + LLM task queue (memory: `share`/`check` multi-agent verbs, `timeline <symbol>`, `search --as-of <date>`) |
 | `cairn communities` | Louvain subsystem clusters over structural edges (seeded, deterministic; writes the `communities` tables) |
 | `cairn install-agents` / `cairn uninstall` | Wire / remove agent integration |
-| `cairn upgrade` | In-place update for PyPI installs (`--check` to preview) |
 | `cairn doctor` | Health checks (PASS/WARN/FAIL; exit code gates CI) |
 | `cairn report` | Redacted diagnostic bundle for bug reports (never uploads) |
 
@@ -347,12 +334,9 @@ the default is `false`. `"exclude"` globs drop paths from indexing (this
 repository's own `cairn.json` excludes `rust/`).
 
 The engine is dependency-light and network-free: every command runs from the
-binary alone on every install channel. The one optional add-on is the
-[`cairn-intel-ingest`](packaging/cairn-intel-ingest) package — a separately
-installed high-fidelity PDF converter the engine uses automatically when
-importable (`cairn knowledge ingest --file`; `cairn.json`'s `ingest` key
-holds the classification rules). Without it the engine extracts PDF text
-natively.
+binary alone on every install channel. `cairn knowledge ingest --file`
+converts `docx` and PDF natively (PDF yields paragraph text; `cairn.json`'s
+`ingest` key holds the classification rules).
 
 Key environment knobs (`cairn doctor`'s `config` check prints every
 effective value and where it came from):
@@ -367,13 +351,11 @@ effective value and where it came from):
 | `CAIRN_READ_ONLY=1` | open the store read-only, skipping the pre-query freshness refresh (what `cairn serve --read-only` sets for the daemon) |
 | `CAIRN_TELEMETRY=off` | master kill switch for the local telemetry tables |
 | `CAIRN_RUST_BIN` | daemon start: exec this engine binary instead of the running one |
-| `CAIRN_SIDECAR_PYTHON` | the optional converter package: run it with this interpreter |
 
 ## Supported Platforms & Agents
 
 - **Platforms** — macOS aarch64 / x86_64, Linux aarch64 / x86_64 (static
-  musl) and Windows x86_64. The PyPI wheels cover macOS arm64 + x86_64,
-  manylinux / musllinux x86_64 + aarch64, and Windows `win_amd64`;
+  musl) and Windows x86_64, all shipped as release tarballs;
   `make ci-local` replicates CI in a clean Linux container.
 - **Agents** — Claude Code, Cursor, ZCode, Droid, opencode, agy, kilo, omp —
   wired by `cairn install-agents`, or any MCP client via the
@@ -413,20 +395,17 @@ cargo clippy --manifest-path Cargo.toml --workspace -- -D warnings
 cargo test --manifest-path Cargo.toml --workspace
 ```
 
-Repo dev gates and the frozen-oracle replays are the `xtask` crate; Python
-remains only in the optional converter package
-(`packaging/cairn-intel-ingest`):
+Repo dev gates and the frozen-oracle replays are the `xtask` crate:
 
 ```bash
 cargo xtask                       # list the dev gates and oracle replays
 cargo xtask parity --store self   # oracle replay against the release binary
-uv sync --extra dev && uv run pytest -q   # the converter package's tests
 make ci-local                     # clean-room CI replication in a Linux container
 ```
 
 Releases are cut by tagging `vX.Y.Z`: the tag-triggered workflows build the
-wheels, the platform binaries, the Homebrew formula, and the crates.io
-publish (see [docs/release-checklist.md](docs/release-checklist.md)).
+platform binaries, the Homebrew formula, and the crates.io publish (see
+[docs/release-checklist.md](docs/release-checklist.md)).
 Contributions follow [docs/review-checklist.md](docs/review-checklist.md).
 
 ## Dependency Licenses
@@ -434,9 +413,7 @@ Contributions follow [docs/review-checklist.md](docs/review-checklist.md).
 MIT-licensed. The binary links only permissive crates (MIT, Apache-2.0,
 BSD, ISC, Zlib, Unicode-3.0, CC0-1.0); `Cargo.lock` is the
 authoritative inventory and cargo-deny gates it against that allow-list on
-every change — see [NOTICE](NOTICE). The optional `cairn-intel-ingest`
-package carries the one copyleft dependency in the ecosystem (PyMuPDF,
-AGPL-3.0) and never links into the engine. An embeddings server configured
+every change — see [NOTICE](NOTICE). An embeddings server configured
 through `CAIRN_EMBED_BACKEND` stays outside cairn's dependency tree entirely.
 
 ## Status

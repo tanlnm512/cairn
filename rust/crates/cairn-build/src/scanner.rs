@@ -1,5 +1,5 @@
 //! Repo scanner: discover repos and enumerate source files by language with
-//! the Python scanner's 4-layer filter (skip dirs, gitignore, config, size).
+//! a 4-layer filter (skip dirs, gitignore, config, size).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::config::load_config;
 use crate::gitignore::GitIgnoreSpec;
 
-/// Extension -> language mapping mirroring the Python scanner.
+/// Extension -> language mapping.
 pub fn extension_language(suffix: &str) -> Option<&'static str> {
     Some(match suffix {
         ".kt" => "kotlin",
@@ -35,7 +35,7 @@ pub fn extension_language(suffix: &str) -> Option<&'static str> {
     })
 }
 
-/// Directories never scanned, mirroring the Python DEFAULT_SKIP_DIRS.
+/// Directories never scanned.
 pub const DEFAULT_SKIP_DIRS: &[&str] = &[
     // build output
     "build",
@@ -289,7 +289,7 @@ fn load_gitignores(repo_root: &Path) -> Vec<(PathBuf, GitIgnoreSpec)> {
     specs
 }
 
-/// Every `.gitignore` path under root (mirrors the Python rglob walk).
+/// Every `.gitignore` path under root.
 fn find_gitignore_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -420,8 +420,8 @@ pub fn classify_file(
     (true, String::new())
 }
 
-/// One repo's file walk mirroring the Python `_iter_repo_files`:
-/// sorted names, pruned skip/symlink/nested-repo dirs, symlink files skipped.
+/// One repo's file walk: sorted names, pruned skip/symlink/nested-repo
+/// dirs, symlink files skipped.
 fn walk_repo_files(repo_path: &Path) -> Vec<PathBuf> {
     let mut boundaries: HashSet<String> = HashSet::new();
     for dir in descendant_directories(repo_path) {

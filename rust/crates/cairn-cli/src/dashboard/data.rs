@@ -12,7 +12,7 @@ use cairn_query::tools_search;
 /// `bench.agent_suite` chars-per-token divisor (heuristic mode).
 pub const CHARS_PER_TOKEN: i64 = 4;
 
-/// The only tokenizer mode without the Python exact tokenizer (plan §9).
+/// Tokenizer mode that estimates from the CHARS_PER_TOKEN divisor.
 pub const HEURISTIC_MODE: &str = "heuristic (chars/4)";
 
 pub const GRAPH_SCOPES: [&str; 5] = ["symbol", "module", "impact", "deps", "repo"];
@@ -423,7 +423,7 @@ pub fn current_model_stamp() -> Option<String> {
     let name = tools_search::backend_name();
     match name.as_str() {
         "server" | "omlx" | "ollama" => tools_search::server_model_stamp(&name).ok(),
-        // Local inference is not ported (plan §9): local resolves to hash.
+        // Local inference is unavailable: local resolves to hash.
         "local" | "hash" => Some(tools_search::HASH_MODEL.to_string()),
         _ => None,
     }
@@ -946,9 +946,9 @@ pub fn get_session_chains(
         &bind(&params),
     );
 
-    // Group by session_id preserving first-seen order (Python dict insertion
-    // order). Rows arrive ORDER BY session_id, so the hash index keeps the
-    // grouping linear on large tool_metrics tables.
+    // Group by session_id preserving first-seen order. Rows arrive ORDER BY
+    // session_id, so the hash index keeps the grouping linear on large
+    // tool_metrics tables.
     let mut grouped: Vec<(Value, Vec<&Value>)> = Vec::new();
     let mut session_index: std::collections::HashMap<String, usize> = Default::default();
     for row in &rows {

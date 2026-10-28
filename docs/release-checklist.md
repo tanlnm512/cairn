@@ -16,8 +16,8 @@ don't skip on "I'm sure it's fine."
 | [`## Concurrency / DB locks`](#concurrency--db-locks) | Parallel serve/build and read-only-daemon checks. |
 | [`## Portability (the .kg is shared across machines)`](#portability-the-kg-is-shared-across-machines) | Repo-relative path checks for the cross-machine store. |
 | [`## Breaking changes`](#breaking-changes) | Schema additivity, CLI/MCP signature shape, and CHANGELOG state. |
-| [`## Agent / bulk-edit safety`](#agent--bulk-edit-safety) | Programmatic no-code-change verification for sub-agent or bulk edits. |
-| [`## Cutting a release`](#cutting-a-release) | Conventional commits, the changelog-first rule, the `cz` bump, and the tag-push paths. |
+| [`## Agent / bulk-edit safety`](#agent--bulk-edit-safety) | Verification gates for sub-agent or bulk edits. |
+| [`## Cutting a release`](#cutting-a-release) | Conventional commits, the changelog-first rule, `cargo xtask bump`, and the tag-push paths. |
 
 ## Tests
 - [ ] `cargo test --manifest-path Cargo.toml --workspace` — the engine
@@ -26,7 +26,6 @@ don't skip on "I'm sure it's fine."
 - [ ] `cargo xtask parity --store self` and `cargo xtask cli-golden` — when
       cutting a release or touching the frozen oracles (`rust/golden/`) or
       the binary, replay the oracles against the release binary.
-- [ ] `uv run pytest -q` — the optional converter package's tests.
 - [ ] No new `#[ignore]`, `xfail` or `skip` slipped in to make a failure
       "pass"; skip-quarantining is forbidden.
 
@@ -39,11 +38,9 @@ don't skip on "I'm sure it's fine."
 
 ## "No behavior changed" claims
 If a change is supposed to be refactor/doc-only/comments-only:
-- [ ] AST-verify the Python side (`packaging/`, `tests/fixtures/`):
-      `uv run python -m compileall -q packaging/ tests/fixtures/` passes, AND
-      `make verify-no-code-change` (see [below](#agent--bulk-edit-safety)) —
-      self-reports of "no code changed" are unreliable; sub-agents and
-      late-night edits silently drift into executable code.
+- [ ] `cargo test --workspace` and the golden oracles stay green — self-reports
+      of "no code changed" are unreliable; sub-agents and late-night edits
+      silently drift into executable code.
 - [ ] `git diff` the actual lines — read what changed, don't trust the commit
       message.
 
@@ -69,20 +66,16 @@ If a change is supposed to be refactor/doc-only/comments-only:
 
 ## Agent / bulk-edit safety
 If changes were made by sub-agents or bulk find-replace:
-- [ ] `make verify-no-code-change` passed (or `make verify-no-code-change REF=HEAD~1`
-      for a just-made commit) — comments-only changes verified programmatically
-      via AST comparison (`cargo xtask verify-no-code-change`), not by reading diffs.
-- [ ] `ruff check` clean.
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` clean and the
+      test suite green.
 - [ ] No string literals (help text, print output, error messages) were
       silently rewritten — these are executable, not comments.
 
 ## Cutting a release
 
-The version bump, version-file updates, and tagging are automated with
-[commitizen](https://commitizen-tools.github.io/commitizen/) (`cz`), configured
-in `pyproject.toml` under `[tool.commitizen]`. The CHANGELOG stays hand-curated
-— `cz` drafts it, a human finalizes it. Install it once with
-`uv sync --extra dev`.
+The version bump, version-file updates, and tagging are automated by
+`cargo xtask bump`. The CHANGELOG stays hand-curated — `bump --dry-run`
+drafts it, a human finalizes it.
 
 ### Main branch protection
 `make verify-protection` is maintainer-run: `gh` must be authenticated with
@@ -97,43 +90,40 @@ machine-readable output. It exits zero only when `main` has:
   `rust/crates/xtask/src/verify_protection.rs`.
 
 ### Conventional commits (the prerequisite)
-`cz` reads the conventional-commit history since the last tag to compute the
-bump and draft the changelog. This project already follows the convention:
+`cargo xtask bump` reads the conventional-commit history since the last tag
+to compute the bump and draft the changelog. This project already follows the convention:
 `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `ci:`, `chore:`, with an
-optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
-`BREAKING CHANGE:` footer (or `feat!:`/`fix!:`) → MAJOR.
+optional `(scope)`. Keep doing that. `feat` → MINOR, `fix`/`refactor`/`perf`
+→ PATCH, and a `BREAKING CHANGE:` footer (or `feat!:`/`fix!:`) → MAJOR.
 
 ### Release steps (run locally, on `main` after merging the PR cycle)
 1. **Preview** the bump and the auto-drafted changelog section:
    ```sh
-   cz bump --dry-run --changelog-to-stdout
+   cargo xtask bump --dry-run
    ```
-   This prints the proposed `X.Y.Z`, which `version_files` it will touch, and
-   a commit-derived changelog section. Nothing is written.
+   This prints the proposed `X.Y.Z`, the files it will touch, and a
+   commit-derived changelog section. Nothing is written.
 
 2. **Finalize `CHANGELOG.md` first.** Move the accumulated `[Unreleased]`
    entries under a dated header (`## [X.Y.Z] - YYYY-MM-DD`), expanding the
    terse auto-draft into the project's prose style if the release warrants it.
-   Why manually: commitizen's generator emits one-line entries from commit
-   subjects, which would discard the rich multi-paragraph entries this project
-   keeps (e.g. the 0.6.1 notes). `update_changelog_on_bump = false` in
-   `pyproject.toml` enforces this — `cz bump` will never rewrite CHANGELOG.md.
+   The draft is one line per commit subject; the project keeps richer
+   entries, so `bump` never writes CHANGELOG.md.
    Commit this change on its own (`docs: prepare X.Y.Z changelog`) before the
    bump so the bump commit only touches version files.
 
 3. **Bump** the version, commit, and tag in one step:
    ```sh
-   cz bump --yes
+   cargo xtask bump
    ```
-   This updates `version` in `pyproject.toml`, commits as
-   `bump: version A -> B`, and tags `v$version`. (If the pre-release
-   checklist above isn't done yet, run
-   `cz bump --version-files-only` to update files without committing/tagging.)
-   The Cargo workspace version (`Cargo.toml` `[workspace.package]`) is
-   not a `cz` version file: bump it to the same `X.Y.Z` in the changelog
-   commit — `release-rust.yml` refuses a tag that does not equal the
-   workspace version, and the crates.io publish would otherwise 404 every
-   binstall `pkg-url` at that version.
+   This moves the Cargo workspace version (`Cargo.toml`
+   `[workspace.package]`) and the workspace entries in `Cargo.lock`
+   together, commits as
+   `bump: version A → B`, and tags `vB`; it refuses a dirty tree.
+   `release-rust.yml` refuses a tag that does not equal the workspace
+   version. (If the pre-release checklist above isn't done yet, run
+   `cargo xtask bump --files-only` to update files without committing or
+   tagging.)
 
 4. **Land the release commits on `main`, then push the tag.** `main` is
    branch-protected (changes must go through a PR with required status checks),
@@ -149,27 +139,21 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
      git checkout main && git pull --ff-only
      ```
    - **Tag-first path** (used for 0.7.0): push the tag immediately to trigger
-     the release, then sync `main` via a PR afterward. PyPI publishes from the
-     tag, so the release isn't blocked on `main` — but `main` MUST be synced
+     the release, then sync `main` via a PR afterward. The release publishes
+     from the tag, so it isn't blocked on `main` — but `main` MUST be synced
      afterward so it matches the released tag.
 
    Either way, the tag push triggers the pipelines:
    ```sh
    git push origin v$version
    ```
-   `.github/workflows/release.yml` builds the per-platform bin wheels with
-   maturin (the engine binary is each wheel's only payload) + the sdist,
-   publishes to PyPI via Trusted Publishing, and cuts the GitHub Release from
-   the `[X.Y.Z]` CHANGELOG section; `release-rust.yml` (below) attaches the
-   binary tarballs and updates the Homebrew tap and crates.io. Watch it:
+   `.github/workflows/release.yml` cuts the GitHub Release from the
+   `[X.Y.Z]` CHANGELOG section; `release-rust.yml` (below) builds and
+   attaches the binary tarballs and updates the Homebrew tap and crates.io.
+   Watch it:
    `gh run watch $(gh run list --workflow=release.yml -L1 -q '.[0].databaseId')`.
 
 ### Notes
-- **First release of a new PyPI project**: register a *pending* Trusted
-  Publisher on pypi.org before the first tag push (Account settings →
-  Publishing → add a pending publisher with owner/repo/workflow/`pypi`
-  environment). The first successful publish converts it to a normal publisher
-  and creates the project.
 - **Rust distribution channels** (`.github/workflows/release-rust.yml`, same
   `v*` tag): tarballs + checksums attach to the GitHub Release unconditionally;
   the Homebrew tap push and the crates.io publish each skip with a workflow
@@ -198,7 +182,7 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
   ```sh
   awk -v v="X.Y.Z" '/^## \[/ { if ($0 ~ "\\["v"\\]") { in=1; print; next } else in=0 } in { print }' CHANGELOG.md
   ```
-- **Recovery if the release workflow partially fails**: PyPI publish and GitHub
-  Release are separate jobs. If publish succeeds but release fails, the
-  artifacts are safe on PyPI — cut the GitHub Release manually with
-  `gh release create vX.Y.Z --notes-file <(awk …)` against the existing tag.
+- **Recovery if the release workflow partially fails**: the Release object and
+  its tarballs come from separate workflows. If `release-rust.yml` fails after
+  the Release exists, re-run it; tarballs can also be attached manually with
+  `gh release upload vX.Y.Z dist/*`.

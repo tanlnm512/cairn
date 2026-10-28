@@ -1,4 +1,4 @@
-//! Parsed-file data model mirroring the Python parser contract.
+//! Parsed-file data model shared by every parser.
 
 use sha2::{Digest, Sha256};
 

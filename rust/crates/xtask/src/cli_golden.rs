@@ -24,8 +24,6 @@ use crate::parity::{self, DB_NAME, Halt};
 
 const CMD_TIMEOUT: Duration = Duration::from_secs(120);
 const SCHEMA: &str = "cairn-rust-golden-cli/1";
-/// `upgrade` legs pin a dead loopback proxy so the PyPI probe fails deterministically.
-const DEAD_PROXY: &str = "http://127.0.0.1:9";
 const CAPTURE_TRANSCRIPT: &str =
     r#"[{"role": "user", "content": "learned to run the golden capture"}]"#;
 const GOLDEN_TASKS: [&str; 6] = [
@@ -146,7 +144,6 @@ const COMMANDS: &[&[&str]] = &[
     &["metrics", "--contention"],
     &["metrics", "--tasks"],
     &["sync"],
-    &["download-reranker"],
     // The mutating graph-analytics legs (dataflow build, embed) run last so the lookups keep pinned rows.
     &["grep", "--json", "DEFAULT_DB_PATH"],
     &["grep", "def resolve_store"],
@@ -898,7 +895,6 @@ impl Reseed {
 
 fn env_overrides(words: &[&str]) -> &'static [(&'static str, &'static str)] {
     match words.get(..2) {
-        Some(["upgrade", "--check"]) => &[("https_proxy", DEAD_PROXY), ("HTTPS_PROXY", DEAD_PROXY)],
         // ANN on draws indeterminate progress segments carrying elapsed seconds with no `%` token.
         Some(["embed", "--limit"]) => &[("CAIRN_ANN_BACKEND", "off")],
         _ => &[],
@@ -957,7 +953,6 @@ fn golden_commands(scratch: &Path) -> Result<Vec<Vec<String>>, Halt> {
             "--dry-run".into(),
             "--graph-only".into(),
         ],
-        vec!["upgrade".into(), "--check".into()],
         vec![
             "sync".into(),
             "--workspace".into(),

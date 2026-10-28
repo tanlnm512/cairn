@@ -285,7 +285,7 @@ pub(crate) fn children(node: Node<'_>) -> Vec<Node<'_>> {
 mod tests {
     use super::*;
 
-    /// Mirrors the Python reference tier (`parsers/rust.py`) config.
+    /// Reference-tier config for the rust grammar.
     struct RustTier;
 
     impl GenericTier for RustTier {

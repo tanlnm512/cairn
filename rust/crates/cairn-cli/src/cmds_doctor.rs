@@ -138,7 +138,6 @@ pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
             "store not found at {db} -- run `cairn init` + `cairn build` first"
         ));
         degraded.push(check_environment(db));
-        degraded.push(check_agent_hooks());
         return degraded;
     }
     let conn = match open_store(path) {
@@ -146,7 +145,6 @@ pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
         Err(e) => {
             let mut degraded = db_unavailable_results(&e.to_string());
             degraded.push(check_environment(db));
-            degraded.push(check_agent_hooks());
             return degraded;
         }
     };
@@ -161,7 +159,6 @@ pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
     results.push(check_config());
     results.push(check_daemon());
     results.push(check_environment(db));
-    results.push(check_agent_hooks());
     results
 }
 
@@ -1298,43 +1295,6 @@ fn check_daemon() -> CheckResult {
     }
 }
 
-// --- agent hooks (retired python runner) -------------------------------------------------------------
-
-/// Hook files whose cairn commands may still name the retired python module runner.
-fn agent_hook_files() -> Vec<PathBuf> {
-    let ws = crate::store_paths::resolve_workspace(None);
-    let home = home_dir();
-    vec![
-        ws.join(".claude").join("settings.json"),
-        home.join(".claude").join("settings.json"),
-        ws.join(".cursor").join("hooks.json"),
-        home.join(".cursor").join("hooks.json"),
-    ]
-}
-
-fn check_agent_hooks() -> CheckResult {
-    let stale: Vec<String> = agent_hook_files()
-        .into_iter()
-        .filter(|path| path.is_file())
-        .filter_map(|path| {
-            let count = crate::agent_install::retired_hook_commands(&path).len();
-            (count > 0).then(|| format!("{} ({count})", path.display()))
-        })
-        .collect();
-    if stale.is_empty() {
-        return result("agent_hooks", PASS, "no retired hook commands", None);
-    }
-    result(
-        "agent_hooks",
-        WARN,
-        format!(
-            "retired `python -m cairn.hooks.claude_hooks` commands in {}",
-            stale.join(", ")
-        ),
-        Some("run `cairn install-agents` to migrate them to `cairn hooks run`".to_string()),
-    )
-}
-
 // --- 11. environment wiring ---------------------------------------------------------------------------
 
 fn check_environment(db: &str) -> CheckResult {
@@ -1618,13 +1578,7 @@ fn apply_doctor_fixes() -> Vec<Value> {
                 actions.push(action(SKIPPED_WORKSPACE));
                 continue;
             }
-            let recent = path
-                .metadata()
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .is_some_and(|age| age.as_secs_f64() > now_epoch() - 60.0);
-            if recent {
+            if changed_within_a_minute(&path) {
                 actions.push(action(REFUSED_RECENT));
                 continue;
             }
@@ -1636,23 +1590,33 @@ fn apply_doctor_fixes() -> Vec<Value> {
                 actions.push(action(UNREPLACEABLE));
                 continue;
             }
-            // Backup beside the file, then write (the merge module's contract).
-            let backup = path.with_file_name(format!(
-                "{}.bak",
-                path.file_name().unwrap_or_default().to_string_lossy()
-            ));
-            if !crate::agent_install::copy_to_backup(&path, &backup) {
-                actions.push(action(WRITE_FAILED));
-                continue;
-            }
-            let body = py_json::dumps(&data) + "\n";
-            match std::fs::write(&path, body) {
-                Ok(()) => actions.push(action(REPOINTED)),
-                Err(_) => actions.push(action(WRITE_FAILED)),
-            }
+            actions.push(action(if backup_and_write(&path, &data) {
+                REPOINTED
+            } else {
+                WRITE_FAILED
+            }));
         }
     }
     actions
+}
+
+/// A client may be mid-write on a file changed in the last minute.
+fn changed_within_a_minute(path: &Path) -> bool {
+    path.metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .is_some_and(|age| age.as_secs_f64() > now_epoch() - 60.0)
+}
+
+/// Backup beside the file, then write (the merge module's contract).
+fn backup_and_write(path: &Path, data: &Value) -> bool {
+    let backup = path.with_file_name(format!(
+        "{}.bak",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    crate::agent_install::copy_to_backup(path, &backup)
+        && std::fs::write(path, py_json::dumps(data) + "\n").is_ok()
 }
 
 fn load_json_object(path: &Path) -> Option<Value> {
@@ -1705,7 +1669,7 @@ fn fix_summary_lines(actions: &[Value]) -> Vec<String> {
                  edit it manually"
             ),
             WRITE_FAILED => format!(
-                "failed to repoint {config}: backup or write error; fix the file \
+                "failed to update {config}: backup or write error; fix the file \
                  and re-run `cairn doctor --fix`"
             ),
             other => format!("{client} {config}: {other} ({url})"),
@@ -1891,7 +1855,7 @@ mod tests {
         let obj = value.as_object().expect("object");
         let keys: Vec<&String> = obj.keys().collect();
         assert_eq!(keys, ["name", "status", "detail", "hint"]);
-        // An unset hint serializes as an explicit null (the Python json.dumps shape).
+        // An unset hint serializes as an explicit null.
         let row = result("x", WARN, "d", None);
         assert!(matches!(row.to_json().get("hint"), Some(Value::Null)));
     }
@@ -2074,40 +2038,6 @@ mod tests {
             "detail must name the serving impl or its absence: {}",
             report.detail
         );
-    }
-
-    #[test]
-    fn agent_hooks_check_flags_retired_python_hook_commands() {
-        let env = crate::test_env::EnvScope::new("doctor-hooks");
-        let ws = env.dir().join("ws");
-        std::fs::create_dir_all(ws.join(".claude")).expect("ws");
-        // SAFETY: EnvScope holds the env lock and restores CAIRN_WORKSPACE on drop.
-        unsafe { std::env::set_var("CAIRN_WORKSPACE", &ws) };
-        let settings = ws.join(".claude").join("settings.json");
-
-        let retired = json!({"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [
-            {"type": "command", "command": "'/usr/bin/python3' -m cairn.hooks.claude_hooks post_edit"}
-        ]}]}});
-        std::fs::write(&settings, retired.to_string()).expect("settings");
-        let report = check_agent_hooks();
-        assert_eq!(report.name, "agent_hooks");
-        assert_eq!(report.status, WARN, "{}", report.detail);
-        assert!(report.detail.contains("settings.json"), "{}", report.detail);
-        assert!(
-            report
-                .hint
-                .as_deref()
-                .is_some_and(|h| h.contains("cairn install-agents")),
-            "{:?}",
-            report.hint
-        );
-
-        let migrated = json!({"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [
-            {"type": "command", "command": "'/usr/local/bin/cairn' hooks run post_edit"}
-        ]}]}});
-        std::fs::write(&settings, migrated.to_string()).expect("settings");
-        let report = check_agent_hooks();
-        assert_eq!(report.status, PASS, "{}", report.detail);
     }
 
     #[test]

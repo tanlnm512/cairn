@@ -27,14 +27,6 @@ class Cairn < Formula
     bin.install "cairn"
   end
 
-  def caveats
-    <<~EOS
-      Binary-only formula. The Python-side extras (document ingest, local
-      embeddings) are not included; install the cairn-intel PyPI package
-      for those.
-    EOS
-  end
-
   test do
     assert_match version.to_s, shell_output("#{bin}/cairn --version")
   end

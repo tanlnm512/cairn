@@ -451,14 +451,11 @@ pub fn claude_hook_command(entrypoint: &str) -> String {
     )
 }
 
-/// Substrings identifying a cairn-written hook command for `entrypoint`:
-/// the binary form plus the retired python-module forms.
-fn hook_command_markers(entrypoint: &str) -> [String; 4] {
+/// Substrings identifying a cairn-written hook command for `entrypoint`.
+fn hook_command_markers(entrypoint: &str) -> [String; 2] {
     [
         format!("cairn' hooks run {entrypoint}"),
         format!("cairn hooks run {entrypoint}"),
-        format!("cairn.hooks.claude_hooks {entrypoint}"),
-        format!("src.hooks.claude_hooks {entrypoint}"),
     ]
 }
 
@@ -524,24 +521,6 @@ fn entry_commands(entry: &Map<String, Value>) -> Vec<String> {
     commands
 }
 
-/// Hook commands in `path` that still invoke the retired python module runner.
-pub(crate) fn retired_hook_commands(path: &Path) -> Vec<String> {
-    let Some(data) = load_json_or_none(path) else {
-        return Vec::new();
-    };
-    let Some(hooks) = data.get("hooks").and_then(Value::as_object) else {
-        return Vec::new();
-    };
-    hooks
-        .values()
-        .filter_map(Value::as_array)
-        .flatten()
-        .filter_map(Value::as_object)
-        .flat_map(entry_commands)
-        .filter(|cmd| cmd.contains(".hooks.claude_hooks "))
-        .collect()
-}
-
 fn entry_entrypoints(entry: &Map<String, Value>) -> Vec<&'static str> {
     let mut found = Vec::new();
     for cmd in entry_commands(entry) {
@@ -593,53 +572,7 @@ fn write_file(path: &Path, content: &str, force: bool, res: &mut InstallResult, 
     res.add(path, false);
 }
 
-// --- retired skill files ---------------------------------------------------------------
-
-const RETIRED_SKILL_FILES: &[(&str, &[&str])] = &[(
-    "scripts/impact_guard.py",
-    &[
-        "30681b4293c375bde26d3f8f5b68ebfd0f0e64fcf2b7aeb1cf666764a5dd8bf2",
-        "6798330e2d0847107f6e8cb2c46da16b9344d44a3973d687ebfacc59e54e5f81",
-        "722f3482eeddbb9cf98d3251dad882e6703a29e5e4fa71a6b9d1d5893f049c41",
-        "87f429cb4017e44e485891bf65ad0d1c7fa8768a7057aee6f30051c792cf4c60",
-        "b5bd59626529ebc6092a7dcdbee62ea0f35fd5ab6a65d473aa6196dcdb334f48",
-        "c2972b4ddf2e711b82f87f0c94e1a7061887818f7c88df22ad606744c29a6229",
-        "f3995bef85f865d0fa6eaa8e1b75cb84c69c3f25778392d01fa2a728bc3dfa0d",
-        "f40189b9f731fa58fee17d95ae37fd292033b041d99126152dc4bb70d68b7480",
-    ],
-)];
-
-fn prune_retired(
-    skill_dir: &Path,
-    retired: &[(&str, &[&str])],
-    res: &mut InstallResult,
-    dry_run: bool,
-) {
-    use sha2::{Digest, Sha256};
-    for (rel, hashes) in retired {
-        let path = skill_dir.join(rel);
-        let Ok(bytes) = std::fs::read(&path) else {
-            continue;
-        };
-        let digest = format!("{:x}", Sha256::digest(&bytes));
-        if !hashes.contains(&digest.as_str()) {
-            continue;
-        }
-        if dry_run {
-            res.written
-                .push(format!("would remove retired {}", path.display()));
-        } else if std::fs::remove_file(&path).is_ok() {
-            res.written
-                .push(format!("removed retired {}", path.display()));
-            if let Some(parent) = path.parent().filter(|p| *p != skill_dir) {
-                rmdir_if_empty(parent, res);
-            }
-        }
-    }
-}
-
 fn write_tree(dest_dir: &Path, force: bool, res: &mut InstallResult, dry_run: bool) {
-    prune_retired(dest_dir, RETIRED_SKILL_FILES, res, dry_run);
     for (rel, content) in templates::skill_tree() {
         write_file(&dest_dir.join(rel), content, force, res, dry_run);
     }
@@ -1063,7 +996,6 @@ fn rm_tree_if_cairn(path: &Path, res: &mut InstallResult) {
         ));
         return;
     }
-    prune_retired(path, RETIRED_SKILL_FILES, res, false);
     let mut kept = 0usize;
     let mut files: Vec<PathBuf> = walk_files(path);
     files.sort();
@@ -3390,53 +3322,6 @@ mod tests {
     }
 
     #[test]
-    fn install_migrates_retired_python_module_hooks_to_the_binary_command() {
-        let _env = crate::test_env::EnvScope::new("agent-install");
-        let dir = tmp_dir("claude-legacy-hooks");
-        let legacy = "'/usr/bin/python3' -m cairn.hooks.claude_hooks post_edit";
-        write_config(
-            &dir.join(".claude/settings.json"),
-            &json!({
-                "hooks": {
-                    "PostToolUse": [
-                        {"matcher": "Edit|Write|MultiEdit", "hooks": [
-                            {"type": "command", "command": legacy}
-                        ]},
-                        {"matcher": "Bash", "hooks": [
-                            {"type": "command", "command": "/usr/bin/user-hook"}
-                        ]},
-                    ],
-                },
-            }),
-        );
-        install(
-            &dir,
-            Some(&["claude".to_string()]),
-            false,
-            false,
-            false,
-            "workspace",
-        )
-        .expect("install");
-        let settings = read_config(&dir.join(".claude/settings.json"));
-        let commands: Vec<String> = settings["hooks"]["PostToolUse"]
-            .as_array()
-            .expect("entries")
-            .iter()
-            .flat_map(|entry| entry["hooks"].as_array().cloned().unwrap_or_default())
-            .filter_map(|h| h["command"].as_str().map(str::to_string))
-            .collect();
-        assert!(!commands.iter().any(|c| c == legacy), "{commands:?}");
-        assert!(commands.iter().any(|c| c == "/usr/bin/user-hook"));
-        let post_edit: Vec<&String> = commands
-            .iter()
-            .filter(|c| c.ends_with(" hooks run post_edit"))
-            .collect();
-        assert_eq!(post_edit.len(), 1, "{commands:?}");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn uninstall_preserves_user_hooks_and_servers() {
         let dir = tmp_dir("claude-user");
         let settings = json!({
@@ -3599,34 +3484,6 @@ mod tests {
         let report = uninstall(&dir, Some(&["kilo".to_string()]), "workspace").expect("uninstall");
         assert!(skill.exists(), "modified template file must be kept");
         assert!(report.results[0].written.is_empty() || report.cross_tool.is_some());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn retired_skill_file_is_pruned_only_when_it_matches_a_shipped_hash() {
-        use sha2::{Digest, Sha256};
-        let dir = tmp_dir("retired");
-        let stale = b"shipped once";
-        let hash = format!("{:x}", Sha256::digest(stale));
-        let table: &[(&str, &[&str])] = &[("scripts/old.py", &[hash.as_str()])];
-        let file = dir.join("scripts/old.py");
-        std::fs::create_dir_all(file.parent().expect("parent")).expect("mkdir");
-
-        std::fs::write(&file, stale).expect("write");
-        let mut res = InstallResult::new("test");
-        prune_retired(&dir, table, &mut res, true);
-        assert!(file.exists(), "dry run must not delete");
-        assert!(res.written[0].starts_with("would remove retired"));
-
-        let mut res = InstallResult::new("test");
-        prune_retired(&dir, table, &mut res, false);
-        assert!(!file.exists(), "stale shipped copy must be removed");
-        assert!(!dir.join("scripts").exists(), "empty scripts dir pruned");
-
-        std::fs::create_dir_all(file.parent().expect("parent")).expect("mkdir");
-        std::fs::write(&file, b"user edit").expect("write");
-        prune_retired(&dir, table, &mut InstallResult::new("test"), false);
-        assert!(file.exists(), "user-modified file must be kept");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

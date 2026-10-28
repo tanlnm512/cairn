@@ -147,7 +147,7 @@ fn unauthorized() -> Response {
     response
 }
 
-/// Bearer gate: 401 on bad credentials; /healthz passes through (the Python middleware contract).
+/// Bearer gate: 401 on bad credentials; /healthz passes through (the middleware contract).
 async fn bearer_gate(State(expected): State<String>, req: Request, next: Next) -> Response {
     if req.uri().path() == HEALTHZ_PATH {
         return next.run(req).await;

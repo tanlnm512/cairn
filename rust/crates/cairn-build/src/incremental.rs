@@ -12,7 +12,7 @@ use crate::parse_dispatch;
 use crate::scanner;
 use crate::timefmt::mtime_f64;
 
-/// Counts and failures of one reindex pass, mirroring the Python result dict.
+/// Counts and failures of one reindex pass.
 #[derive(Debug, Clone, Default)]
 pub struct ReindexResult {
     pub reindexed: usize,
@@ -20,7 +20,7 @@ pub struct ReindexResult {
     pub errors: Vec<String>,
 }
 
-/// Summary of one `incremental_update`, mirroring the Python summary dict.
+/// Summary of one `incremental_update` pass.
 #[derive(Debug, Clone, Default)]
 pub struct UpdateSummary {
     pub repos_scanned: usize,
@@ -39,7 +39,7 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
             return result;
         }
     };
-    // Queued signals grouped by repo (insertion-ordered like the Python dict)
+    // Queued signals grouped by repo (insertion-ordered)
     // for the batched resolver re-run, plus the names whose global candidate
     // count changed for incoming-edge repair.
     let mut repo_edges: RepoEdges = Vec::new();

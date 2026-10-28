@@ -1,4 +1,4 @@
-//! Golden parity for the script-family parsers against the Python fixtures
+//! Golden parity for the script-family parsers against the fixtures
 //! under tests/fixtures/golden: normalized output must equal expected.json.
 
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ fn expected(lang: &str) -> Value {
         .expect("parse expected.json")
 }
 
-/// Mirrors tests/fixtures/golden/regenerate.py::normalise.
+/// Normalises to the expected.json schema (sorted symbols and edges).
 fn normalise(parsed: &ParsedFile) -> Value {
     let mut symbols: Vec<Value> = parsed
         .symbols

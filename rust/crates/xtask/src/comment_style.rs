@@ -1,4 +1,4 @@
-//! Shrink-only comment-style gate over the repo's Python trees.
+//! Shrink-only comment-style gate over the repo's Rust crates.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
@@ -17,8 +17,8 @@ use tree_sitter::{Node, Parser, Tree};
 const MAX_BLOCK_LINES: usize = 3;
 const BASELINE_SCHEMA_VERSION: u64 = 1;
 const DEFAULT_BASELINE: [&str; 3] = ["scripts", "hooks", "comment-style-baseline.json"];
-// tests/ stays out: fixture and scenario prose is test input, not shipped code.
-const SOURCE_ROOTS: [&str; 2] = ["scripts", "packaging"];
+const SOURCE_ROOTS: [&str; 1] = ["rust/crates"];
+const GENERATED_HEADER_LINES: usize = 5;
 
 #[derive(Debug)]
 struct CommentStyleError(String);
@@ -67,69 +67,30 @@ impl Violation {
     }
 }
 
-// --- Python source model (tree-sitter) ---
+// --- Rust source model (tree-sitter) ---
 
-/// Parse Python source; any ERROR/MISSING node fails with the first offending line.
-pub(crate) fn parse_python(source: &str) -> std::result::Result<Tree, String> {
+fn parse_rust(source: &str) -> std::result::Result<Tree, String> {
     let mut parser = Parser::new();
     parser
-        .set_language(&tree_sitter_python::LANGUAGE.into())
+        .set_language(&tree_sitter_rust::LANGUAGE.into())
         .map_err(|err| err.to_string())?;
-    let tree = parser
+    parser
         .parse(source, None)
-        .ok_or_else(|| "parser produced no tree".to_string())?;
-    if tree.root_node().has_error() {
-        let line = first_error_line(tree.root_node()).unwrap_or(1);
-        return Err(format!("invalid syntax (line {line})"));
-    }
-    Ok(tree)
+        .ok_or_else(|| "parser produced no tree".to_string())
 }
 
-fn first_error_line(node: Node) -> Option<usize> {
-    if node.is_error() || node.is_missing() {
-        return Some(node.start_position().row + 1);
-    }
-    let mut cursor = node.walk();
-    let children: Vec<Node> = node.children(&mut cursor).collect();
-    children
-        .into_iter()
-        .filter(Node::has_error)
-        .find_map(first_error_line)
-}
-
-/// Decode source bytes the way `tokenize.open` reads them: BOM dropped, universal newlines.
-pub(crate) fn decode_source(bytes: &[u8]) -> std::result::Result<String, String> {
+/// Decode source bytes: BOM dropped, universal newlines.
+fn decode_source(bytes: &[u8]) -> std::result::Result<String, String> {
     let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
     let text = std::str::from_utf8(bytes).map_err(|err| format!("invalid UTF-8: {err}"))?;
     Ok(text.replace("\r\n", "\n").replace('\r', "\n"))
 }
 
-/// A module/class/function whose first statement is a plain `str` literal expression.
-pub(crate) struct Docstring<'t> {
-    pub(crate) statement: Node<'t>,
-    pub(crate) value: String,
-}
-
-/// Every docstring statement in the tree, in document order.
-pub(crate) fn docstrings<'t>(tree: &'t Tree, source: &str) -> Vec<Docstring<'t>> {
-    let mut found = Vec::new();
-    for node in preorder(tree.root_node()) {
-        let body = match node.kind() {
-            "module" => Some(node),
-            "class_definition" | "function_definition" => node.child_by_field_name("body"),
-            _ => None,
-        };
-        let Some(statement) = body.and_then(first_statement) else {
-            continue;
-        };
-        if statement.kind() != "expression_statement" {
-            continue;
-        }
-        if let Some(value) = single_child(statement).and_then(|expr| str_value(expr, source)) {
-            found.push(Docstring { statement, value });
-        }
-    }
-    found
+fn is_generated(source: &str) -> bool {
+    source
+        .lines()
+        .take(GENERATED_HEADER_LINES)
+        .any(|line| line.contains("@generated") || line.contains("DO NOT EDIT"))
 }
 
 fn preorder(root: Node) -> Vec<Node> {
@@ -144,279 +105,101 @@ fn preorder(root: Node) -> Vec<Node> {
     nodes
 }
 
-fn named_non_comment(node: Node) -> Vec<Node> {
-    let mut cursor = node.walk();
-    node.named_children(&mut cursor)
-        .filter(|child| child.kind() != "comment")
-        .collect()
-}
-
-fn first_statement(body: Node) -> Option<Node> {
-    named_non_comment(body).into_iter().next()
-}
-
-fn single_child(node: Node) -> Option<Node> {
-    match named_non_comment(node).as_slice() {
-        [only] => Some(*only),
-        _ => None,
-    }
-}
-
-fn str_value(expr: Node, source: &str) -> Option<String> {
-    match expr.kind() {
-        "parenthesized_expression" => single_child(expr).and_then(|inner| str_value(inner, source)),
-        "string" => string_literal_value(&source[expr.byte_range()]),
-        "concatenated_string" => {
-            let mut value = String::new();
-            for part in named_non_comment(expr) {
-                value.push_str(&string_literal_value(&source[part.byte_range()])?);
-            }
-            Some(value)
-        }
-        _ => None,
-    }
-}
-
-/// Value of a `str` literal token; `None` for bytes, f-strings, and t-strings.
-pub(crate) fn string_literal_value(literal: &str) -> Option<String> {
-    let prefix_len = literal.find(['"', '\''])?;
-    let prefix = literal[..prefix_len].to_ascii_lowercase();
-    if prefix.contains(['b', 'f', 't']) {
+/// `doc` for `///`, `//!`, `/** */` and `/*! */`; `comment` for any other comment node.
+fn comment_kind(node: Node) -> Option<&'static str> {
+    if !matches!(node.kind(), "line_comment" | "block_comment") {
         return None;
     }
-    let body = &literal[prefix_len..];
-    let quote_len = if body.starts_with("\"\"\"") || body.starts_with("'''") {
-        3
-    } else {
-        1
-    };
-    let content = body.get(quote_len..body.len().checked_sub(quote_len)?)?;
-    Some(if prefix.contains('r') {
-        content.to_string()
-    } else {
-        unescape(content)
-    })
+    let mut cursor = node.walk();
+    let is_doc = node.children(&mut cursor).any(|child| {
+        matches!(
+            child.kind(),
+            "outer_doc_comment_marker" | "inner_doc_comment_marker"
+        )
+    });
+    Some(if is_doc { "doc" } else { "comment" })
 }
 
-fn unescape(content: &str) -> String {
-    let mut out = String::with_capacity(content.len());
-    let mut chars = content.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        let Some(escape) = chars.next() else {
-            out.push('\\');
-            break;
-        };
-        let simple = match escape {
-            '\n' => Some(None),
-            '\\' | '\'' | '"' => Some(Some(escape)),
-            'a' => Some(Some('\x07')),
-            'b' => Some(Some('\x08')),
-            'f' => Some(Some('\x0c')),
-            'n' => Some(Some('\n')),
-            'r' => Some(Some('\r')),
-            't' => Some(Some('\t')),
-            'v' => Some(Some('\x0b')),
-            _ => None,
-        };
-        if let Some(decoded) = simple {
-            out.extend(decoded);
-            continue;
-        }
-        let (radix, width) = match escape {
-            '0'..='7' => (8, 3),
-            'x' => (16, 2),
-            'u' => (16, 4),
-            'U' => (16, 8),
-            _ => {
-                out.push('\\');
-                out.push(escape);
-                continue;
-            }
-        };
-        let mut digits = String::new();
-        if radix == 8 {
-            digits.push(escape);
-        }
-        while digits.len() < width {
-            match chars.peek() {
-                Some(d) if d.is_digit(radix) => digits.push(chars.next().unwrap_or_default()),
-                _ => break,
-            }
-        }
-        match u32::from_str_radix(&digits, radix)
-            .ok()
-            .and_then(char::from_u32)
-        {
-            Some(decoded) if radix == 8 || digits.len() == width => out.push(decoded),
-            _ => {
-                out.push('\\');
-                if radix != 8 {
-                    out.push(escape);
-                }
-                out.push_str(&digits);
-            }
-        }
-    }
-    out
-}
-
-fn expand_tabs(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut column = 0;
-    for c in text.chars() {
-        match c {
-            '\t' => {
-                let spaces = 8 - column % 8;
-                out.extend(std::iter::repeat_n(' ', spaces));
-                column += spaces;
-            }
-            '\n' | '\r' => {
-                out.push(c);
-                column = 0;
-            }
-            _ => {
-                out.push(c);
-                column += 1;
-            }
-        }
-    }
-    out
-}
-
-/// `inspect.cleandoc` (space-only margin stripping).
-fn cleandoc(doc: &str) -> String {
-    let mut lines: Vec<String> = expand_tabs(doc).split('\n').map(str::to_string).collect();
-    let margin = lines
+fn strip_marker(line: &str) -> &str {
+    let text = line.trim_start();
+    ["//!", "///", "//"]
         .iter()
-        .skip(1)
-        .filter_map(|line| {
-            let content = line.trim_start_matches(' ').chars().count();
-            (content > 0).then(|| line.chars().count() - content)
-        })
-        .min();
-    if let Some(first) = lines.first_mut() {
-        *first = first.trim_start_matches(' ').to_string();
-    }
-    if let Some(margin) = margin {
-        for line in lines.iter_mut().skip(1) {
-            *line = line.chars().skip(margin).collect();
-        }
-    }
-    while lines.last().is_some_and(String::is_empty) {
-        lines.pop();
-    }
-    let leading = lines.iter().take_while(|line| line.is_empty()).count();
-    lines.drain(..leading);
-    lines.join("\n")
-}
-
-fn is_py_space(c: char) -> bool {
-    c.is_whitespace() || ('\x1c'..='\x1f').contains(&c)
-}
-
-/// `str.splitlines()` boundaries.
-fn py_splitlines(text: &str) -> Vec<&str> {
-    let mut lines = Vec::new();
-    let mut start = 0;
-    let mut iter = text.char_indices().peekable();
-    while let Some((index, c)) = iter.next() {
-        let is_break = matches!(
-            c,
-            '\n' | '\r'
-                | '\x0b'
-                | '\x0c'
-                | '\x1c'
-                | '\x1d'
-                | '\x1e'
-                | '\u{85}'
-                | '\u{2028}'
-                | '\u{2029}'
-        );
-        if !is_break {
-            continue;
-        }
-        lines.push(&text[start..index]);
-        let mut end = index + c.len_utf8();
-        if c == '\r' && iter.peek().is_some_and(|&(_, next)| next == '\n') {
-            iter.next();
-            end += 1;
-        }
-        start = end;
-    }
-    if start < text.len() {
-        lines.push(&text[start..]);
-    }
-    lines
-}
-
-fn strip_comment(line: &str) -> &str {
-    let text = line.trim_start_matches(is_py_space);
-    text.strip_prefix('#')
-        .map_or(text, |rest| rest.trim_start_matches(is_py_space))
+        .find_map(|marker| text.strip_prefix(marker))
+        .unwrap_or(text)
+        .trim_start()
 }
 
 // --- Scan ---
 
-fn comment_only_rows(tree: &Tree, lines: &[&str]) -> Vec<usize> {
-    preorder(tree.root_node())
-        .into_iter()
-        .filter(|node| node.kind() == "comment")
-        .map(|node| node.start_position().row + 1)
-        .filter(|&row| {
-            lines
-                .get(row - 1)
-                .is_some_and(|line| line.trim_start_matches(is_py_space).starts_with('#'))
-        })
-        .collect()
+/// 1-based rows holding nothing but comment text, keyed to their comment kind.
+fn comment_only_rows(tree: &Tree, lines: &[&str]) -> BTreeMap<usize, &'static str> {
+    let mut rows = BTreeMap::new();
+    for node in preorder(tree.root_node()) {
+        let Some(kind) = comment_kind(node) else {
+            continue;
+        };
+        let (start, end) = (node.start_position(), node.end_position());
+        // A line comment's span may end at column 0 of the next row.
+        let end_row = if end.column == 0 && end.row > start.row {
+            end.row - 1
+        } else {
+            end.row
+        };
+        let leads_line = lines
+            .get(start.row)
+            .is_some_and(|line| line[..start.column.min(line.len())].trim().is_empty());
+        let ends_line = end.row > end_row
+            || lines.get(end.row).is_some_and(|line| {
+                line.get(end.column..)
+                    .is_none_or(|rest| rest.trim().is_empty())
+            });
+        if leads_line && ends_line {
+            for row in start.row..=end_row {
+                rows.entry(row + 1).or_insert(kind);
+            }
+        }
+    }
+    rows
 }
 
-fn runs(rows: &[usize]) -> Vec<(usize, usize)> {
-    let mut runs: Vec<(usize, usize)> = Vec::new();
-    for &row in rows {
+fn runs(rows: &BTreeMap<usize, &'static str>) -> Vec<(&'static str, usize, usize)> {
+    let mut runs: Vec<(&'static str, usize, usize)> = Vec::new();
+    for (&row, &kind) in rows {
         match runs.last_mut() {
-            Some(last) if row == last.1 + 1 => last.1 = row,
-            _ => runs.push((row, row)),
+            Some(last) if last.0 == kind && row == last.2 + 1 => last.2 = row,
+            _ => runs.push((kind, row, row)),
         }
     }
     runs
 }
 
 fn file_violations(rel: &str, source: &str) -> std::result::Result<Vec<Violation>, String> {
-    let tree = parse_python(source)?;
-    let lines = py_splitlines(source);
-    let mut violations = Vec::new();
-    for (start, end) in runs(&comment_only_rows(&tree, &lines)) {
-        if end - start < MAX_BLOCK_LINES {
-            continue;
-        }
-        let text: Vec<&str> = (start..=end)
-            .map(|row| strip_comment(lines[row - 1]))
-            .collect();
-        violations.push(Violation::new("comment", rel, start, end, &text.join("\n")));
+    if is_generated(source) {
+        return Ok(Vec::new());
     }
-    for docstring in docstrings(&tree, source) {
-        let start = docstring.statement.start_position().row + 1;
-        let end = docstring.statement.end_position().row + 1;
-        if end - start < MAX_BLOCK_LINES {
-            continue;
-        }
-        let text = cleandoc(&docstring.value);
-        violations.push(Violation::new("docstring", rel, start, end, &text));
-    }
+    let tree = parse_rust(source)?;
+    let lines: Vec<&str> = source.split('\n').collect();
+    let violations = runs(&comment_only_rows(&tree, &lines))
+        .into_iter()
+        .filter(|(_, start, end)| end - start >= MAX_BLOCK_LINES)
+        .map(|(kind, start, end)| {
+            let text: Vec<&str> = (start..=end)
+                .map(|row| strip_marker(lines[row - 1]))
+                .collect();
+            Violation::new(kind, rel, start, end, &text.join("\n"))
+        })
+        .collect();
     Ok(violations)
 }
 
-fn py_files(source_root: &Path) -> Vec<PathBuf> {
+fn rs_files(source_root: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = walkdir::WalkDir::new(source_root)
         .into_iter()
         .filter_map(std::result::Result::ok)
         .filter(|entry| !entry.file_type().is_dir())
         .map(walkdir::DirEntry::into_path)
-        .filter(|path| path.extension().is_some_and(|ext| ext == "py"))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .filter(|path| !posix(path).contains("/fixtures/"))
         .collect();
     files.sort_by_key(|path| posix(path));
     files
@@ -441,7 +224,7 @@ fn scan_comment_violations(root: &Path) -> Result<Vec<Violation>> {
     }
     let mut violations = Vec::new();
     for source_root in roots {
-        for path in py_files(&source_root) {
+        for path in rs_files(&source_root) {
             let rel = posix(path.strip_prefix(root).unwrap_or(&path));
             let found = fs::read(&path)
                 .map_err(|err| err.to_string())
@@ -522,7 +305,7 @@ fn write_baseline(path: &Path, violations: &[Violation]) -> Result<()> {
 
 fn fingerprint_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\A(?:comment|docstring):[0-9a-f]{64}\z").expect("valid regex"))
+    RE.get_or_init(|| Regex::new(r"\A(?:comment|doc):[0-9a-f]{64}\z").expect("valid regex"))
 }
 
 fn load_baseline(path: &Path) -> Result<Vec<BaselineEntry>> {
@@ -784,7 +567,7 @@ fn write_py_string(out: &mut String, text: &str) {
 #[derive(clap::Parser, Debug)]
 #[command(
     name = "comment-style",
-    about = "Enforce the shrink-only comment-style baseline over the repo's Python trees."
+    about = "Enforce the shrink-only comment-style baseline over the repo's Rust crates."
 )]
 struct Args {
     /// Emit machine-readable JSON.
@@ -809,7 +592,7 @@ fn find_root() -> PathBuf {
         .and_then(fs::canonicalize)
         .unwrap_or_default();
     cwd.ancestors()
-        .find(|candidate| candidate.join("pyproject.toml").is_file())
+        .find(|candidate| candidate.join("Cargo.toml").is_file() && candidate.join("rust").is_dir())
         .map_or_else(|| cwd.clone(), Path::to_path_buf)
 }
 
@@ -892,7 +675,7 @@ fn failure_lines(result: &CheckResult) -> Vec<String> {
         let label = if v.kind == "comment" {
             "comment block"
         } else {
-            "docstring"
+            "doc comment"
         };
         format!(
             "new {label}: {}:{}-{} ({} lines)",
@@ -974,59 +757,23 @@ pub fn run(args: &[String]) -> ExitCode {
 mod tests {
     use super::*;
 
-    const LETTER_BLOCK: &str = "# alpha\n# beta\n# gamma\n# delta\n";
-    const WORD_BLOCK: &str = "# north\n# south\n# east\n# west\n";
-
-    // Pinned hashes: the baseline file format depends on these exact fingerprints.
-    const PARITY_FIXTURE: &str = concat!(
-        r#""""Module summary.
-
-"#,
-        "\tTabbed line with \\x41 escape and \\101 octal\n",
-        r#"    indented\tline
-"""
-
-
-class Owner:
-    r"""Raw \n docstring
-        kept
-          as-is
-    """
-
-    def method(self):
-        ("implicit "
-         'concatenation'
-         """ spans
-         lines""")
-
-
-def not_docstrings():
-    f"""f-string
-    is
-    not
-    a docstring"""
-
-
-# café comment
-#   indented
-#
-# end
-"#
-    );
+    const LETTER_BLOCK: &str = "// alpha\n// beta\n// gamma\n// delta\n";
+    const WORD_BLOCK: &str = "// north\n// south\n// east\n// west\n";
+    const SCAN_ROOT: &str = "rust/crates";
 
     fn repo(name: &str, files: &[(&str, &str)]) -> PathBuf {
         let root =
             std::env::temp_dir().join(format!("xtask-comment-style-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::create_dir_all(root.join(SCAN_ROOT)).unwrap();
         for (rel, text) in files {
-            write_script(&root, rel, text);
+            write_source(&root, rel, text);
         }
         root
     }
 
-    fn write_script(root: &Path, rel: &str, text: &str) {
-        fs::write(root.join("scripts").join(rel), text).unwrap();
+    fn write_source(root: &Path, rel: &str, text: &str) {
+        fs::write(root.join(SCAN_ROOT).join(rel), text).unwrap();
     }
 
     fn spans(violations: &[Violation]) -> Vec<(&str, &str, usize, usize)> {
@@ -1048,101 +795,113 @@ def not_docstrings():
         let root = repo(
             "blocks",
             &[
-                ("a.py", &format!("{LETTER_BLOCK}\n# one\n# two\n# three\n")),
-                ("blank.py", "# one\n# two\n\n# three\n# four\n"),
                 (
-                    "code.py",
-                    "# one\n# two\n# three\nX = 1\n# four\n# five\n# six\n",
+                    "a.rs",
+                    &format!("{LETTER_BLOCK}\n// one\n// two\n// three\n"),
+                ),
+                ("blank.rs", "// one\n// two\n\n// three\n// four\n"),
+                (
+                    "code.rs",
+                    "// one\n// two\n// three\nconst X: u8 = 1;\n// four\n// five\n// six\n",
                 ),
                 (
-                    "trailing.py",
-                    "a = 1  # one\nb = 2  # two\nc = 3  # three\nd = 4  # four\n",
+                    "trailing.rs",
+                    "const A: u8 = 1; // one\nconst B: u8 = 2; // two\nconst C: u8 = 3; // three\nconst D: u8 = 4; // four\n",
                 ),
-                ("mixed.py", "# one\n# two\n# three\nX = 1  # four\n"),
+                (
+                    "mixed.rs",
+                    "// one\n// two\n// three\nconst X: u8 = 1; // four\n",
+                ),
+                (
+                    "kinds.rs",
+                    "/// one\n/// two\n// three\n// four\nfn f() {}\n",
+                ),
+                (
+                    "literal.rs",
+                    "const S: &str = \"\n// a\n// b\n// c\n// d\n\";\n",
+                ),
+                ("module.rs", "//! one\n//! two\n//! three\n//! four\n"),
+                ("block.rs", "/*\n one\n two\n*/\nfn g() {}\n"),
+                (
+                    "gen.rs",
+                    &format!("// @generated by a tool\n{LETTER_BLOCK}"),
+                ),
             ],
         );
 
         let violations = scan_comment_violations(&root).unwrap();
 
-        assert_eq!(spans(&violations), [("comment", "scripts/a.py", 1, 4)]);
+        assert_eq!(
+            spans(&violations),
+            [
+                ("comment", "rust/crates/a.rs", 1, 4),
+                ("comment", "rust/crates/block.rs", 1, 4),
+                ("doc", "rust/crates/module.rs", 1, 4),
+            ]
+        );
         assert_eq!(violations[0].length, 4);
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn fingerprints_match_the_python_gate_byte_for_byte() {
-        let root = repo("parity", &[("doc.py", PARITY_FIXTURE)]);
+    fn fingerprints_hash_marker_stripped_text_regardless_of_indent() {
+        let root = repo(
+            "fingerprint",
+            &[
+                ("flat.rs", LETTER_BLOCK),
+                (
+                    "nested.rs",
+                    "fn f() {\n    // alpha\n    // beta\n    // gamma\n    // delta\n}\n",
+                ),
+            ],
+        );
 
-        let found: Vec<(usize, usize, String)> = scan_comment_violations(&root)
-            .unwrap()
-            .into_iter()
-            .map(|v| (v.line, v.end_line, v.fingerprint))
-            .collect();
+        let found = scan_comment_violations(&root).unwrap();
 
-        let expected = [
-            (
-                1,
-                5,
-                "docstring:536ef99445a37cba23d1092038e0ea923f4f97de291441ad13693e1b6ac3887c",
-            ),
-            (
-                9,
-                12,
-                "docstring:c2aa7da03c1be3beb782b0d2d6785e610359fb8ad789e8d833cce0f622fe6bec",
-            ),
-            (
-                15,
-                18,
-                "docstring:227f63dc9f7bca9533a12e4f909909973dd3ebf69d517ac42e8c39d78a3cdaab",
-            ),
-            (
-                28,
-                31,
-                "comment:9c6eaa680293d5d19e6a5d9cc580125a27fa0044bdaa28010c21ee9c7d2c9f66",
-            ),
-        ]
-        .map(|(line, end, fp)| (line, end, fp.to_string()));
-        assert_eq!(found, expected);
+        let expected = format!(
+            "comment:{:x}",
+            Sha256::digest("alpha\nbeta\ngamma\ndelta".as_bytes())
+        );
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().all(|v| v.fingerprint == expected), "{found:?}");
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn scan_fails_closed_on_broken_syntax_and_missing_trees() {
-        let root = repo("broken", &[("broken.py", "def broken(:\n    pass\n")]);
-        assert!(error_of(scan_comment_violations(&root)).contains("scripts/broken.py"));
-
-        fs::remove_dir_all(root.join("scripts")).unwrap();
+    fn scan_fails_closed_on_missing_trees() {
+        let root = repo("missing", &[]);
+        fs::remove_dir_all(root.join(SCAN_ROOT)).unwrap();
         assert!(error_of(scan_comment_violations(&root)).contains("no source trees found"));
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn check_requires_exact_occurrence_counts() {
-        let root = repo("counts", &[("a.py", LETTER_BLOCK), ("b.py", LETTER_BLOCK)]);
+        let root = repo("counts", &[("a.rs", LETTER_BLOCK), ("b.rs", LETTER_BLOCK)]);
         let baseline = root.join("baseline.json");
         run_init(&root, &baseline, true).unwrap();
         assert!(check_comment_baseline(&root, &baseline).unwrap().ok());
 
-        write_script(&root, "c.py", LETTER_BLOCK);
+        write_source(&root, "c.rs", LETTER_BLOCK);
         let grown = check_comment_baseline(&root, &baseline).unwrap();
-        assert_eq!(spans(&grown.new), [("comment", "scripts/c.py", 1, 4)]);
+        assert_eq!(spans(&grown.new), [("comment", "rust/crates/c.rs", 1, 4)]);
         assert!(grown.stale.is_empty());
         assert_eq!(run_check(&root, &baseline, true).unwrap(), 1);
 
-        fs::remove_file(root.join("scripts/c.py")).unwrap();
-        write_script(&root, "b.py", "X = 1\n");
+        fs::remove_file(root.join("rust/crates/c.rs")).unwrap();
+        write_source(&root, "b.rs", "const X: u8 = 1;\n");
         let shrunk = check_comment_baseline(&root, &baseline).unwrap();
         assert!(shrunk.new.is_empty());
         let stale = &shrunk.stale[0];
         assert_eq!((stale.expected, stale.found), (2, 1));
-        assert_eq!(stale.paths, ["scripts/a.py", "scripts/b.py"]);
+        assert_eq!(stale.paths, ["rust/crates/a.rs", "rust/crates/b.rs"]);
         assert_eq!(run_check(&root, &baseline, false).unwrap(), 1);
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn untrusted_baselines_fail_naming_the_file() {
-        let root = repo("malformed", &[("a.py", "X = 1\n")]);
+        let root = repo("malformed", &[("a.rs", "const X: u8 = 1;\n")]);
         let baseline = root.join("baseline.json");
         let fp = format!("comment:{}", "a".repeat(64));
         let cases = [
@@ -1168,19 +927,19 @@ def not_docstrings():
 
     #[test]
     fn writers_never_overwrite_or_grow_the_baseline() {
-        let root = repo("writers", &[("a.py", LETTER_BLOCK), ("b.py", WORD_BLOCK)]);
+        let root = repo("writers", &[("a.rs", LETTER_BLOCK), ("b.rs", WORD_BLOCK)]);
         let baseline = root.join("baseline.json");
         run_init(&root, &baseline, false).unwrap();
         let initial = fs::read(&baseline).unwrap();
         assert!(error_of(run_init(&root, &baseline, false)).contains("baseline.json"));
         assert_eq!(fs::read(&baseline).unwrap(), initial);
 
-        write_script(&root, "a.py", "X = 1\n");
+        write_source(&root, "a.rs", "const X: u8 = 1;\n");
         run_update(&root, &baseline, false).unwrap();
         let shrunk = fs::read(&baseline).unwrap();
         assert_eq!(run_check(&root, &baseline, false).unwrap(), 0);
 
-        write_script(&root, "c.py", LETTER_BLOCK);
+        write_source(&root, "c.rs", LETTER_BLOCK);
         assert!(error_of(run_update(&root, &baseline, false)).contains("growth"));
         assert_eq!(fs::read(&baseline).unwrap(), shrunk);
         fs::remove_dir_all(root).unwrap();

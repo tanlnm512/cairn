@@ -715,7 +715,7 @@ async fn communities(State(state): State<AppState>, uri: Uri, headers: HeaderMap
 
 // --- route handlers: history / tokens / chains + exports ---
 
-/// RFC 4180 text with the Python csv module's minimal quoting and CRLF rows.
+/// RFC 4180 text with minimal quoting and CRLF rows.
 fn csv_text(rows: &[Value]) -> String {
     let mut out = String::new();
     let Some(first) = rows.first() else {
@@ -1454,40 +1454,6 @@ async fn wiki(State(state): State<AppState>, uri: Uri, headers: HeaderMap) -> Re
     )
 }
 
-async fn wiki_page(
-    State(state): State<AppState>,
-    AxumPath(page_id): AxumPath<String>,
-    uri: Uri,
-) -> Response {
-    let params = Params::parse(uri.query().unwrap_or(""));
-    let Ok(selection) = resolve_selection(&state, Some(&params), None) else {
-        return selection_missing_response(params.str_or("store").as_str());
-    };
-    let page = match kb::get_wiki_page(&selection.knowledge, &page_id, None, "") {
-        Ok(page) => page,
-        Err(error) => return wiki_unreadable(&state, &uri, &error, &selection.store_key),
-    };
-    let Some(page) = page else {
-        return not_found_page(
-            "Wiki page not found",
-            "No rendered article exists for this page id.",
-            "/wiki",
-            "Back to the wiki",
-        );
-    };
-    // Legacy one-segment URL: temporary redirect to the canonical repo-qualified URL.
-    let mut target = format!(
-        "/wiki/{}/{}",
-        shell::urlencode(page["repo"].as_str().unwrap_or("")),
-        shell::urlencode(page["page_id"].as_str().unwrap_or(""))
-    );
-    if !selection.store_key.is_empty() {
-        target.push_str("?store=");
-        target.push_str(&shell::urlencode(&selection.store_key));
-    }
-    (StatusCode::TEMPORARY_REDIRECT, [("Location", target)]).into_response()
-}
-
 async fn wiki_page_repo(
     State(state): State<AppState>,
     AxumPath((repo, page_id)): AxumPath<(String, String)>,
@@ -1897,7 +1863,6 @@ pub fn router(state: AppState) -> Router {
         .route("/knowledge/{family}/{slug}", get(knowledge_doc))
         .route("/wiki", get(wiki))
         .route("/wiki/{repo}/{page_id}", get(wiki_page_repo))
-        .route("/wiki/{page_id}", get(wiki_page))
         .route("/embeddings", get(embeddings))
         .route("/database", get(database))
         .route("/settings", get(settings_page))

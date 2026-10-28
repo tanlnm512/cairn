@@ -137,7 +137,7 @@ fn prop_default(name: &str, type_: &str, description: &str, default: Value) -> V
     value
 }
 
-/// The full registered tool surface (one entry per ported cairn-query tool).
+/// The full registered tool surface (one entry per cairn-query tool).
 pub fn catalog() -> Vec<Tool> {
     vec![
         text_tool(
@@ -580,7 +580,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
         }
         "explore" => {
             // A writable-capable conn: explore credits the tribal memories it
-            // renders (analytics write, the Python `_conn()` contract).
+            // renders (analytics write, `_conn()` contract).
             let conn = ctx.conn()?;
             flow::explore_text(
                 &conn,

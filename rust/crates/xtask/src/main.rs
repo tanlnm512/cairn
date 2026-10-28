@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 mod audit_status;
 mod baseline;
+mod bump;
 mod check_doc_links;
 mod cli_golden;
 mod cli_smoke;
@@ -20,7 +21,6 @@ mod parity;
 mod release_contract;
 mod scip_fixture;
 mod skill_evals;
-mod verify_no_code_change;
 mod verify_protection;
 
 const COMMANDS: &[&str] = &[
@@ -34,7 +34,6 @@ const COMMANDS: &[&str] = &[
     "baseline",
     "closure-bench",
     "comment-style",
-    "verify-no-code-change",
     "check-doc-links",
     "conformance-table",
     "audit-status",
@@ -42,6 +41,7 @@ const COMMANDS: &[&str] = &[
     "skill-evals",
     "cli-smoke",
     "scip-fixture",
+    "bump",
 ];
 
 fn main() -> ExitCode {
@@ -64,7 +64,6 @@ fn main() -> ExitCode {
         "baseline" => baseline::run(rest),
         "closure-bench" => closure_bench::run(rest),
         "comment-style" => comment_style::run(rest),
-        "verify-no-code-change" => verify_no_code_change::run(rest),
         "check-doc-links" => check_doc_links::run(rest),
         "conformance-table" => conformance_table::run(rest),
         "audit-status" => audit_status::run(rest),
@@ -72,6 +71,7 @@ fn main() -> ExitCode {
         "skill-evals" => skill_evals::run(rest),
         "cli-smoke" => cli_smoke::run(rest),
         "scip-fixture" => scip_fixture::run(rest),
+        "bump" => bump::run(rest),
         other => {
             eprintln!(
                 "unknown command `{other}`; commands: {}",

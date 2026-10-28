@@ -165,7 +165,7 @@ const TYPE_SCOPE_NODES: &[&str] = &[
     "extension_declaration",
 ];
 
-/// Swift symbol/edge extraction ported from the Python SwiftParser.
+/// Swift symbol/edge extraction.
 pub struct SwiftParser;
 
 impl SwiftParser {
@@ -723,7 +723,7 @@ pub fn resolve_relative_objc_import(importer: &Path, spec: &str) -> Option<Strin
     )
 }
 
-/// Objective-C symbol/edge extraction ported from the Python ObjCParser.
+/// Objective-C symbol/edge extraction.
 pub struct ObjCParser;
 
 impl ObjCParser {

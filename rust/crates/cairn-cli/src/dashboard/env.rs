@@ -321,7 +321,7 @@ fn f64_of(value: &Value) -> Option<f64> {
     value.to_string().trim().parse::<f64>().ok()
 }
 
-/// Epoch seconds as the Python `%Y-%m-%d %H:%M:%S UTC` wall clock.
+/// Epoch seconds as a `%Y-%m-%d %H:%M:%S UTC` wall clock.
 pub fn human_epoch(secs: i64) -> Option<String> {
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);

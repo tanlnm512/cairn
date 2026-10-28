@@ -14,8 +14,7 @@ lives, and which crate owns which job.
 
 Cairn is a local codebase-intelligence system for AI coding agents, shipped
 as one static `cairn` binary (Homebrew tap, `cargo binstall`, release
-tarball, or bundled inside the `cairn-intel` PyPI wheel, whose console script
-execs it). It parses a workspace into a SQLite symbol/call graph, layers
+or release tarball). It parses a workspace into a SQLite symbol/call graph, layers
 hybrid retrieval on top, and keeps durable knowledge (documents, memories,
 compass/wiki guides) in an Open Knowledge Format (OKF) bundle. Everything is
 local; no LLM is called in-process — LLM-quality synthesis runs through a
@@ -43,8 +42,7 @@ decoupled task queue.
 ### Resolution tiers, Rust sources, and worktree behavior
 
 - The resolver labels every call edge `exact` / `ambiguous` / `unresolved`
-  (see [indexing.md](indexing.md)); `cairn build --lsp` exits 1 naming the
-  retired pyright upgrade pass.
+  (see [indexing.md](indexing.md)).
 - Rust sources use the generic tree-sitter tier with a pinned grammar. It
   records definitions and spans, keeps call edges `unresolved`, and records
   `.rs` files as parser-unavailable skips when the grammar cannot load.

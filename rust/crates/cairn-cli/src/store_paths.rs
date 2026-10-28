@@ -201,16 +201,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn store_key_matches_the_python_sha256_prefix() {
-        // python -c "import hashlib; print(hashlib.sha256(b'/tmp/ws').hexdigest()[:16])"
+    fn store_key_is_the_sha256_prefix_of_the_path() {
+        // printf %s /tmp/ws | shasum -a 256 | cut -c1-16
         let key = store_key(Path::new("/tmp/ws"));
-        let expected = {
-            use sha2::Digest as _;
-            let d = Sha256::digest(b"/tmp/ws");
-            d.iter().map(|b| format!("{b:02x}")).collect::<String>()[..16].to_string()
-        };
-        assert_eq!(key, expected);
-        assert_eq!(key.len(), 16);
+        assert_eq!(key, "b011ea26cc731e1a");
     }
 
     #[test]

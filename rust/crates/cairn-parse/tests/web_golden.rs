@@ -1,4 +1,4 @@
-//! Golden parity for the web parsers against the Python-recorded fixtures.
+//! Golden parity for the web parsers against the committed fixtures.
 
 use std::path::{Path, PathBuf};
 
@@ -11,7 +11,7 @@ fn golden_path(lang: &str, file: &str) -> PathBuf {
         .join(format!("../../../tests/fixtures/golden/{lang}/{file}"))
 }
 
-/// Reproduces tests/fixtures/golden/regenerate.py normalise() exactly.
+/// Reproduces the expected.json schema exactly.
 fn normalized(parsed: &ParsedFile) -> Value {
     let mut symbols: Vec<Value> = parsed
         .symbols
@@ -118,7 +118,7 @@ fn assert_golden(lang: &str, sample: &str, parser: WebParser) {
     assert_eq!(
         normalized(&parsed),
         expected,
-        "{lang} parse diverges from the Python golden"
+        "{lang} parse diverges from the committed golden"
     );
 }
 

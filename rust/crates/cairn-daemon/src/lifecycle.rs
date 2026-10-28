@@ -11,8 +11,6 @@ use serde_json::Value;
 
 /// LaunchAgent label of the shared daemon.
 pub const LABEL: &str = "dev.cairn.mcp";
-/// Retired SSE-label agent unloaded before the first load of the current label.
-pub const LEGACY_LABEL: &str = "dev.cairn.sse";
 pub const DEFAULT_PORT: u16 = 9876;
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 /// Path of the Rust daemon binary a daemon start execs.
@@ -21,7 +19,6 @@ const LAUNCHCTL_TIMEOUT: Duration = Duration::from_secs(15);
 const PROCBE_TIMEOUT: Duration = Duration::from_secs(5);
 const HEALTHZ_TIMEOUT: Duration = Duration::from_secs(2);
 const START_LOCK_TIMEOUT: Duration = Duration::from_secs(120);
-static LEGACY_UNLOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// `cairn serve <sub>` lifecycle subcommands: transient CLI invocations, never
 /// servers -- the stray sweeper must not target them.
@@ -858,19 +855,6 @@ pub fn daemon_bind() -> (Option<u16>, Option<String>) {
 
 // --- launchd load / unload --------------------------------------------------------
 
-fn unload_legacy_label_once() {
-    if LEGACY_UNLOADED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        return;
-    }
-    let legacy_plist = agents_dir().join(format!("{LEGACY_LABEL}.plist"));
-    if !legacy_plist.exists() {
-        return;
-    }
-    let _ = launchctl(&["unload", &legacy_plist.to_string_lossy()]);
-    // Without this, launchd re-launches the retired agent at every login.
-    let _ = std::fs::remove_file(&legacy_plist);
-}
-
 /// Load (and start) the LaunchAgent; Err carries the failure reason.
 pub fn load() -> Result<(), String> {
     if !is_macos() {
@@ -883,7 +867,6 @@ pub fn load() -> Result<(), String> {
             path.display()
         ));
     }
-    unload_legacy_label_once();
     match launchctl(&["load", &path.to_string_lossy()]) {
         None => Err(format!(
             "launchctl load timed out after {}s",

@@ -1,4 +1,4 @@
-//! Golden parity: the Rust JVM parsers reproduce the Python golden JSON.
+//! Golden parity: the JVM parsers reproduce the committed golden JSON.
 
 use std::path::PathBuf;
 
@@ -18,7 +18,7 @@ fn expected(lang: &str) -> Value {
         .expect("parse expected.json")
 }
 
-/// Mirrors tests/fixtures/golden/regenerate.py::normalise.
+/// Normalises to the expected.json schema (sorted symbols and edges).
 fn normalise(parsed: &ParsedFile) -> Value {
     let mut symbols: Vec<Value> = parsed
         .symbols

@@ -1,4 +1,4 @@
-//! Connection factory: read-only `.kg` opens with the Python `get_db` pragma parity.
+//! Connection factory: read-only `.kg` opens with full pragma parity.
 
 use std::path::Path;
 use std::sync::Once;
@@ -30,8 +30,8 @@ pub(crate) fn register_vec0() {
 }
 
 /// Open a `.kg` store read-only with pragma parity (`foreign_keys`, `mmap_size`,
-/// `busy_timeout`); `journal_mode = WAL` is writable-only in the Python source
-/// and is inherited from the file header here.
+/// `busy_timeout`); `journal_mode = WAL` is writable-only and is inherited
+/// from the file header here.
 pub fn open_read_only(path: &Path) -> Result<Connection, rusqlite::Error> {
     register_vec0();
     let conn = Connection::open_with_flags(

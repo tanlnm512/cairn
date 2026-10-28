@@ -16,7 +16,7 @@ All AI coding agents working in this workspace should use these tools.
 
 TRIGGER: the moment you finish editing and are about to commit, push, or open a
 PR — STOP and follow the shipping procedure end to end:
-`branch → pre-commit run --all-files → conventional commit → push feature branch
+`branch → prek run --all-files → conventional commit → push feature branch
 → PR (fill the audit checklist) → watch CI → fix on the same branch → post-merge
 cairn update + record_memory`.
 
@@ -122,7 +122,7 @@ every change:
 
 The PR template (`.github/PULL_REQUEST_TEMPLATE.md`) carries the author
 checklist; `docs/review-checklist.md` is the procedure behind each box.
-Layers 0-1 (pre-commit + CI: tests, pip-audit, bandit over the converter package, PR-title, dependency-review) are automated;
+Layers 0-1 (pre-commit + CI: tests, cargo-deny, PR-title, dependency-review) are automated;
 this is the human/agent layer that catches what they can't.
 
 ## Comment, doc, and log style (mandatory, all files)
@@ -206,9 +206,8 @@ graph/compass/memory; `search_knowledge(query, type_filter="Wiki")` queries page
 ## CLI Fallback (if MCP tools are unavailable)
 
 Every install channel runs the same `cairn` engine binary — Homebrew tap,
-`cargo binstall`, release tarball, or the PyPI wheel, which installs the
-engine binary itself as the `cairn` executable. It serves this fallback
-against the workspace store directly:
+`cargo binstall`, or a release tarball. It serves this fallback against the
+workspace store directly:
 
 - `cairn def <symbol>` -- find definition
 - `cairn callers <symbol>` / `cairn callees <symbol>` -- who calls this / what it calls

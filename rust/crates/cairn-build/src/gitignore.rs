@@ -1,4 +1,4 @@
-//! gitignore matcher mirroring the Python `pathspec` 1.1.1 `GitIgnoreSpec` semantics.
+//! gitignore matcher with `pathspec` 1.1.1 `GitIgnoreSpec` semantics.
 
 use regex::Regex;
 

@@ -2,7 +2,7 @@ name: Extension release
 
 # Package the VS Code extension vsix on tag push (v*), verify it installs and
 # activates on a clean runner, then attach it to the GitHub Release for the
-# tag. Independent of release.yml (PyPI distribution): one v* tag ships both.
+# tag (one v* tag ships the binaries, the vsix, and the Release notes).
 
 on:
   push:

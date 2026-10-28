@@ -15,8 +15,8 @@ pub fn is_language_available(language: &str) -> bool {
     registry::is_language_available(language)
 }
 
-/// Parse one file with the parser for `language`; errors mirror the Python
-/// per-file contract (a failed parse is a parse_errors row, never a build abort).
+/// Parse one file with the parser for `language`; a failed parse is a
+/// parse_errors row, never a build abort.
 pub fn parse_language_file(language: &str, path: &Path) -> Result<ParsedFile, String> {
     let result =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse_inner(language, path)));

@@ -8,11 +8,8 @@ explicitly in scripts — `CAIRN_HOME` and friends are read at process start,
 not per call.
 
 One engine serves every install channel: the `cairn` binary (Homebrew tap,
-`cargo binstall`, release tarball) is the whole surface below, and the PyPI
-package installs that same binary as the `cairn` executable (a maturin bin
-wheel — no launcher, no interpreter at runtime). The optional
-`cairn-intel-ingest` package adds higher-fidelity PDF conversion when
-installed. `cairn --help` and `cairn <command> --help` are authoritative.
+`cargo binstall`, release tarball) is the whole surface below.
+`cairn --help` and `cairn <command> --help` are authoritative.
 
 Machine contracts (`config --json`/`--db`/`--mcp-config` shapes, stdout-pure
 JSON modes, exit codes) are pinned by the frozen CLI goldens under
@@ -22,8 +19,8 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 
 | Command | Purpose |
 |---|---|
-| `cairn init [--with-hooks] [--no-build] [--import-docs]` | register the workspace and run a first build; `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)); `--import-docs` is accepted and retired — use `cairn knowledge import <dir>`; `--from-legacy <dir>` migrates an old in-repo store |
-| `cairn build [--staging] [--with-closure] [--repo R]` | full workspace rebuild (see [indexing.md](indexing.md)); `--staging` builds into a temp DB and atomic-swaps it under the build lock; `--lsp` exits 1 naming the retired pyright upgrade pass |
+| `cairn init [--with-hooks] [--no-build]` | register the workspace and run a first build; `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)) |
+| `cairn build [--staging] [--with-closure] [--repo R]` | full workspace rebuild (see [indexing.md](indexing.md)); `--staging` builds into a temp DB and atomic-swaps it under the build lock |
 | `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
 | `cairn stats` | graph statistics |
 | `cairn checkpoint` | checkpoint the WAL into the main file |
@@ -145,15 +142,12 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 | Command | Purpose |
 |---|---|
 | `cairn embed` | compute/refresh symbol embeddings with the configured backend (`--batch-size`, `--limit`, `--no-reap`, `--build-index` rebuilds the vec0 ANN index, `--no-multivector` stores one vector per symbol) |
-| `cairn download-reranker` | exits 2: this build ships no native cross-encoder reranker |
 
 The backend is `CAIRN_EMBED_BACKEND`: `local` (the default) resolves to the
 dep-free `hash-256-v1` embedder and `cairn embed` warns that the vectors are
 token-overlap only; `omlx`, `ollama`, or `server` + `CAIRN_EMBED_BASE_URL`
 embed through a local OpenAI-compatible server (`CAIRN_EMBED_SERVER_MODEL`,
-default `bge-m3`; `CAIRN_EMBED_API_KEY` optional). The retired
-local-inference flags `--install-deps`, `--download-model`, and
-`--adopt-server-model` exit 1 naming the replacement.
+default `bge-m3`; `CAIRN_EMBED_API_KEY` optional).
 
 ## Knowledge
 
@@ -161,7 +155,7 @@ Group: `cairn knowledge …`
 
 | Subcommand | Purpose |
 |---|---|
-| `ingest` | staged doc ingestion; `--file`/`--dir`/`--repo` sources, `--ingest` to execute, `--include-drafts`, `--outbox`. Markdown, DOCX and PDF convert natively; a PDF prefers the optional `cairn-intel-ingest` package when importable (`python -m cairn_intel_ingest`, resolved via `CAIRN_SIDECAR_PYTHON`, then an interpreter beside the binary, then `PATH`), else the engine extracts the text itself |
+| `ingest` | staged doc ingestion; `--file`/`--dir`/`--repo` sources, `--ingest` to execute, `--include-drafts`, `--outbox`. Markdown, DOCX and PDF convert natively (PDF yields paragraph text) |
 | `rebuild` | recompute the derived `knowledge_edges` / `knowledge_doc_refs` index tables from the bundle (runs automatically after `ingest --ingest`; idempotent); island detection then queues `doc-link` tasks for detached pair-units (deduped per member set) |
 | `islands` | list doc-graph islands (detached pair-units) and their `doc-link` task state |
 | `related <doc_id>` | stored relationship neighbors of one doc, one line per edge with relation (`relates-to`/`supersedes`/`superseded-by`/`references`), kind (`extracted`/`inferred`/`derived`), and direction; `--json` emits the full rows. Unknown ids exit non-zero with a named error |
@@ -238,12 +232,12 @@ contested).
 | Command | Purpose |
 |---|---|
 | `cairn status` | build state, parse errors, resource health |
-| `cairn doctor [--json] [--fix]` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). Store-internal checks (schema integrity, embedding backend, ANN index, embedding server, freshness, parse errors, resolver edge signals — WARN when reference edges predate the `edges` signal columns, run `cairn build` to rebuild — lock contention, tool health, memory staleness, effective config) plus `daemon` (which process serves `/mcp`), `environment` (store existence, client-registration consistency — FAIL on a provable wrong-store or unreachable daemon endpoint; cairn-owned stdio/SSE registrations are flagged and, under `--fix`, repointed to the URL+key form — platform supportability, binary coherence) and `agent_hooks` (agent hook files still naming the retired Python hook runner; `cairn install-agents` migrates them). The last three also run on the db-unavailable degraded path. |
+| `cairn doctor [--json] [--fix]` | degradation check (exit 0 = PASS/WARN, 1 = FAIL). Store-internal checks (schema integrity, embedding backend, ANN index, embedding server, freshness, parse errors, resolver edge signals — WARN when reference edges predate the `edges` signal columns, run `cairn build` to rebuild — lock contention, tool health, memory staleness, effective config) plus `daemon` (which process serves `/mcp`), `environment` (store existence, client-registration consistency — FAIL on a provable wrong-store or unreachable daemon endpoint; cairn-owned stdio/SSE registrations are flagged and, under `--fix`, repointed to the URL+key form — platform supportability, binary coherence). The last two also run on the db-unavailable degraded path. |
 | `cairn metrics` / `report` | tool metrics (`--builds`/`--quality`/`--contention`/`--tasks` add telemetry sections) and the redacted diagnostic bundle (`--json`, `--out <file>`; never uploads) |
 | `cairn validate` / `validate-paths [--mark]` / `verify <doc>` | OKF conformance, stale file/symbol references, the deterministic critic on one document |
 | `cairn viz [--export FILE]` | render graph diagrams (`--format mermaid|dot|json`, `--scope symbol|module|impact|repo|deps`); `--export` writes one self-contained HTML file |
 | `cairn hooks install|uninstall|run <entrypoint>` | manage the cairn git hooks — post-commit + post-checkout (see [below](#cairn-hooks)) — and run an agent hook entrypoint (`post_edit`, `session_end`, `post_tool_failure`, `session_start`) over the JSON payload on stdin |
-| `cairn version` / `upgrade [--check]` | version; in-place upgrade of PyPI installs (`uv tool` / `pipx` / `pip` detected — other channels upgrade themselves) |
+| `cairn version` | print the installed version |
 | `cairn sync` | re-index size/mtime-drifted files |
 
 ### `cairn hooks`
@@ -268,7 +262,6 @@ contested).
   and exits 1; `init --with-hooks` prints the guidance as a warning and init
   still succeeds. Neither path writes partial hooks.
 - `cairn hooks run <entrypoint>` is the agent-hook runner that
-  `install-agents` writes into Claude/Cursor hook configs; `cairn doctor`'s
-  `agent_hooks` check flags configs still naming the retired Python runner.
+  `install-agents` writes into Claude/Cursor hook configs.
 
 Global: `-v/--verbose` for debug logging.

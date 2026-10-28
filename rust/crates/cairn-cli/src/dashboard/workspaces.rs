@@ -115,7 +115,7 @@ fn stat_kg(cairn_home: &Path, key: &str) -> (Option<u64>, Option<i64>) {
 }
 
 /// One read-only tool-call count: zero valid, None unreadable; a store
-/// predating tool_metrics reads as zero (the Python "no such table" branch).
+/// predating tool_metrics reads as zero (the missing-table branch).
 fn count_tool_calls(kg_path: &Path) -> Option<i64> {
     let conn = open_read_only(kg_path)?;
     match conn.query_row("SELECT COUNT(*) FROM tool_metrics", [], |row| {

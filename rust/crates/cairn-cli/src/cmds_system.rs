@@ -140,7 +140,7 @@ pub enum SystemCommand {
         #[arg(long)]
         workspace: Option<String>,
     },
-    /// Uninstall cairn: agent wiring, hooks, graph store, and the binary.
+    /// Uninstall cairn: agent wiring, hooks, graph store; the binary step reports its removal.
     Uninstall {
         /// Remove everything for ALL workspaces (the entire ~/.cairn).
         #[arg(long)]
@@ -154,7 +154,7 @@ pub enum SystemCommand {
         /// Remove graph + knowledge data only.
         #[arg(long = "graph-only")]
         graph_only: bool,
-        /// Remove the cairn binary only.
+        /// Report the cairn binary and its removal command only.
         #[arg(long = "package-only")]
         package_only: bool,
         /// Limit agent removal to these clients (repeatable).
@@ -174,24 +174,12 @@ pub enum SystemCommand {
         yes: bool,
     },
     /// Upgrade cairn. Detects install method and updates in place.
-    Upgrade {
-        /// Only check, don't upgrade.
-        #[arg(long)]
-        check: bool,
-    },
     /// Print the installed cairn version.
     Version,
     /// Hook management: git hooks, and the agent hook entrypoints.
     Hooks {
         #[command(subcommand)]
         command: HooksGroup,
-    },
-    /// Exit 2: no cross-encoder reranker ships in this build, so semantic_search runs without the rerank stage.
-    #[command(name = "download-reranker")]
-    DownloadReranker {
-        /// Accepted for compatibility; nothing is downloaded.
-        #[arg(long)]
-        model: Option<String>,
     },
     /// Start the HTTP MCP server daemon in the foreground, or manage the shared daemon.
     Serve {
@@ -370,13 +358,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
             dry_run,
             yes,
         }),
-        SystemCommand::Upgrade { check } => {
-            cmds_lifecycle::run_upgrade(cmds_lifecycle::UpgradeArgs { check })
-        }
         SystemCommand::Version => cmds_lifecycle::run_version(),
-        SystemCommand::DownloadReranker { model } => {
-            cmds_lifecycle::run_download_reranker(cmds_lifecycle::DownloadRerankerArgs { model })
-        }
         SystemCommand::Connect { port, host, impl_ } => {
             cmds_connect::run(cmds_connect::ConnectArgs { port, host, impl_ })
         }

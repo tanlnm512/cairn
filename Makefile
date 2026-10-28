@@ -1,19 +1,4 @@
-.PHONY: dist evals ci-local ci-local-all ci-local-rust ci-local-parity verify-no-code-change audit-status comment-style comment-style-shrink verify-protection release help
-
-# Build the bin wheel + sdist into dist/ for the HOST platform only (the
-# release workflow's maturin matrix builds the full platform set).
-# Produces:
-#   dist/cairn_intel-<version>-py3-none-<platform>.whl
-#   dist/cairn_intel-<version>.tar.gz
-dist:
-	rm -rf dist
-	uv build
-	@echo ""
-	@echo "Built:"
-	@ls -lh dist/
-	@echo ""
-	@echo "Install with:"
-	@echo "  uv tool install ./dist/$$(ls dist/*.whl | head -1)"
+.PHONY: evals ci-local ci-local-rust ci-local-parity audit-status comment-style comment-style-shrink verify-protection release help
 
 evals:
 	cargo xtask skill-evals
@@ -23,19 +8,13 @@ evals:
 # No host PATH/HOME/agent CLIs/state -- the same environment a GitHub runner
 # has. Catches non-hermetic tests (green locally only because of the dev
 # machine) BEFORE pushing. Mirrors .github/workflows/ci.yml job-by-job;
-# venv/pip/pre-commit caches persist under .cache/ci-local/ (gitignored).
-# Jobs: scripts/ci-local.sh [test|test-all|security|precommit|build|rust|parity|smoke]
+# Rust toolchain, cargo, and prek caches persist under .cache/ci-local/ (gitignored).
+# Jobs: scripts/ci-local.sh [precommit|build|rust|parity|smoke]
 # CI_LOCAL_ARCH=linux/amd64 runs the x86-64 image via Rosetta for runner parity.
-PYTHON_VERSION ?= 3.12
 ci-local:
-	scripts/ci-local.sh test $(PYTHON_VERSION)
+	scripts/ci-local.sh precommit
 	@echo ""
-	@echo "clean-room suite green"
-
-ci-local-all:
-	scripts/ci-local.sh test-all
-	@echo ""
-	@echo "clean-room matrix green (3.10, 3.14)"
+	@echo "clean-room pre-commit gates green"
 
 ci-local-rust:
 	scripts/ci-local.sh rust
@@ -46,14 +25,6 @@ ci-local-parity:
 	scripts/ci-local.sh parity
 	@echo ""
 	@echo "clean-room parity gates green (self replay + golden + G2 base)"
-
-# Verify a "comments/docstrings-only" change didn't alter executable code.
-# Compares AST (docstrings blanked) of changed .py files. Run before staging
-# uncommitted edits, or pass REF=HEAD~1 to verify a just-made commit.
-# Catches the failure mode where sub-agents/bulk edits silently touch code
-# while self-reporting "comments only." See docs/release-checklist.md.
-verify-no-code-change:
-	cargo xtask verify-no-code-change $(REF)
 
 # Quality ratchets; module flags travel through ARGS because make consumes a
 # literal --json itself, so the JSON spelling is ARGS=--json.
@@ -75,7 +46,7 @@ verify-protection:
 	  --repo $(PROTECTION_REPO) $(ARGS)
 
 # Release walkthrough -- prints the steps AND previews the next bump.
-# Does NOT modify anything; the dry-run just shows what cz would do.
+# Does NOT modify anything; the dry-run just shows what bump would do.
 # Full details: docs/release-checklist.md "Cutting a release".
 release:
 	@echo "┌─ Release checklist ───────────────────────────────────────────"
@@ -87,8 +58,8 @@ release:
 	@echo "│  1. Finalize CHANGELOG.md: move [Unreleased] -> [X.Y.Z] - YYYY-MM-DD"
 	@echo "│     (use the draft printed below as a starting point)."
 	@echo "│"
-	@echo "│  2. cz bump --yes"
-	@echo "│     Bumps version in pyproject.toml + __init__.py, commits,"
+	@echo "│  2. cargo xtask bump"
+	@echo "│     Moves Cargo.toml and Cargo.lock, commits,"
 	@echo "│     tags vX.Y.Z. CHANGELOG stays hand-maintained."
 	@echo "│"
 	@echo "│  3. Land the release commits on main, then push the tag."
@@ -97,29 +68,26 @@ release:
 	@echo "│       - tag-first: push the tag now, sync main via PR after."
 	@echo "│     git push origin vX.Y.Z"
 	@echo "│     The tag push triggers .github/workflows/release.yml:"
-	@echo "│     build -> publish to PyPI -> cut GitHub Release."
+	@echo "│     cut the GitHub Release + attach binary tarballs."
 	@echo "│"
 	@echo "│  Watch: gh run watch \$$(gh run list --workflow=release.yml -L1 -q '.[0].databaseId')"
 	@echo "└──────────────────────────────────────────────────────────────"
 	@echo ""
 	@echo "Preview of the next bump (dry-run, nothing is written):"
 	@echo ""
-	@uv run cz bump --dry-run --changelog-to-stdout || \
-		echo "(cz not available -- run 'uv sync --extra dev' first)"
+	@cargo xtask bump --dry-run
 
 help:
-	@echo "Targets: dist evals ci-local ci-local-all verify-no-code-change audit-status comment-style comment-style-shrink verify-protection release help"
+	@echo "Targets: evals ci-local ci-local-rust ci-local-parity audit-status comment-style comment-style-shrink verify-protection release help"
 	@echo ""
-	@echo "  dist                   build wheel + sdist into dist/ (for distribution)"
 	@echo "  evals                  validate skill eval specs"
 	@echo "  ci-local               clean-room CI replication in a Linux container"
-	@echo "                         (PYTHON_VERSION=3.11 to pick; apple container, not docker)"
-	@echo "  ci-local-all           the 3.10 + 3.14 test matrix, sequentially"
-	@echo "  verify-no-code-change  AST-check that changed .py files are comment-only"
-	@echo "                         (REF=HEAD~1 to verify a commit; default: uncommitted)"
+	@echo "                         (apple container, not docker)"
+	@echo "  ci-local-rust          clean-room rust gates (fmt/clippy/test/deny)"
+	@echo "  ci-local-parity        clean-room parity gates"
 	@echo "  audit-status           remaining-vs-total audit findings by priority"
 	@echo "                         (ARGS=--json for machine-readable output)"
-	@echo "  comment-style          gate long comment/docstring blocks against the baseline"
+	@echo "  comment-style          gate long Rust comment/doc blocks against the baseline"
 	@echo "                         (ARGS=--json for machine-readable output)"
 	@echo "  comment-style-shrink   rewrite the baseline after cleanup; refuses growth"
 	@echo "  verify-protection      maintainer-only main branch protection check"

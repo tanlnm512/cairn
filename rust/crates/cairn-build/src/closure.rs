@@ -8,7 +8,7 @@ use rusqlite::Connection;
 /// Edge kinds the closure follows, sorted so seed order is kind-major.
 pub const STRUCTURAL_EDGE_KINDS: [&str; 4] = ["call", "calls", "extends", "implements"];
 
-/// Default closure depth matching the Python dataflow builder.
+/// Default closure depth.
 pub const CLOSURE_MAX_DEPTH: usize = 4;
 
 /// Rows buffered per transaction; each commit lets SQLite checkpoint the WAL.
@@ -377,10 +377,9 @@ fn emit(
     Ok(())
 }
 
-/// Insert one committed batch; rows are ordered like the Python builder's
-/// global (source_id, target_name, distance) sort so index inserts append
-/// instead of seeking. Row tuples are unique per level, so this is
-/// content-neutral.
+/// Insert one committed batch ordered by the global (source_id, target_name,
+/// distance) sort so index inserts append. Rows are unique per level
+/// (content-neutral).
 fn flush(conn: &mut Connection, graph: &Graph, batch: &mut Vec<Row>) -> Result<(), String> {
     batch.sort_by(|a, b| {
         (a.key.src(), a.key.name(), a.distance).cmp(&(b.key.src(), b.key.name(), b.distance))

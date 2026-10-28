@@ -1,32 +1,11 @@
 # Layer 0 of the review/audit pipeline: the local gate.
 #
-# Design rules this file follows (see the corresponding pyproject.toml comment
-# at [tool.ruff]): the codebase predates ruff and intentionally gates on
-# pyflakes (F) only -- real defects, low false-positive rate. This config
-# inherits that selection from pyproject rather than re-declaring rules, so the
-# gate stays in lockstep with CI.
-#
-# Install (once):  uv run pre-commit install
-# Update revs:     uv run pre-commit autoupdate
-# Run on everything: uv run pre-commit run --all-files
-
-default_language_version:
-  python: python3
+# Runner: prek (`cargo binstall prek` or `brew install prek`).
+# Install (once):  prek install
+# Update revs:     prek auto-update
+# Run on everything: prek run --all-files
 
 repos:
-  # --- Lint. Bare `ruff check` mirrors CI exactly: reads the F-only selection
-  # from pyproject, no --fix (the hook should GATE, not rewrite files -- the
-  # codebase has not adopted automated formatting). Adding ruff-format is
-  # deliberately deferred to a dedicated cleanup PR, same as the CI stance.
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.2
-    hooks:
-      - id: ruff
-        # The pinned parity-store corpus copies are third-party data whose
-        # own lint configs ruff would resolve nearest-first; linting pinned
-        # data has no fixable finding, only a red gate over immutable bytes.
-        exclude: ^rust/golden/stores/.*/corpus/
-
   # --- Secret scanning. Catches API keys / tokens / .env blobs before they
   # reach the remote. Cheap insurance for a repo that ships agent-integration
   # templates and CLI wiring.
@@ -35,35 +14,32 @@ repos:
     hooks:
       - id: gitleaks
 
-  # --- Read-only hygiene. Zero first-run churn: none of these modify files,
-  # they only fail. Safe to adopt on a mature codebase without a cleanup commit.
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+  # --- Read-only hygiene: prek's native hooks; none modify files.
+  - repo: builtin
     hooks:
       - id: check-yaml          # workflows, agent templates, .cairn YAML
-      - id: check-toml          # pyproject.toml
+      - id: check-toml          # Cargo manifests
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=500]
         # Docs diagram artifacts, pinned parity-store bytes, and the frozen
         # canonical-dump reference are large by design.
         exclude: ^docs/diagrams/|^rust/golden/(stores|nav|search|spike)/.*\.kg$|^rust/golden/dump/self-corpus\.norm\.txt$
-      - id: debug-statements    # catch pdb/breakpoint() left in
 
   # --- Comment-style ratchet: local mirror of the quality-ratchet CI job.
-  # The checker owns its sorted Python scope, so it never receives
+  # The checker owns its scope (rust/crates), so it never receives
   # filenames and runs on every commit regardless of what is staged.
   - repo: local
     hooks:
       - id: check-comment-lengths
-        name: check comment/docstring lengths (shrink-only baseline)
+        name: check comment/doc-block lengths (shrink-only baseline)
         entry: bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; exec cargo xtask comment-style'
         language: system
         pass_filenames: false
         always_run: true
 
-  # --- Rust gates: local mirror of the Rust CI leg. GATE-only like ruff
-  # above (fmt runs with --check, never rewrites). The standard rustup bin
+  # --- Rust gates: local mirror of the Rust CI leg. GATE-only (fmt runs
+  # with --check, never rewrites). The standard rustup bin
   # dir is prepended to PATH so non-interactive shells find the toolchain;
   # runs only when rust/ files are staged.
   - repo: local

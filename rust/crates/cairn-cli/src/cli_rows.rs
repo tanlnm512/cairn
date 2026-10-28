@@ -1,4 +1,4 @@
-//! CLI-shaped graph row queries: `dict(row)` parity with the python commands.
+//! CLI-shaped graph row queries rendering rows as dictionaries.
 
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OptionalExtension, Row};
@@ -157,7 +157,7 @@ pub fn get_callees_rows(
     query_rows(conn, &sql, &refs)
 }
 
-/// `bm25`-ranked FTS rows; LIKE rows carry no `rank` key (the python shapes).
+/// `bm25`-ranked FTS rows; LIKE rows carry no `rank` key.
 pub fn search_symbol_rows(
     conn: &Connection,
     pattern: &str,

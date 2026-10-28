@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# G2 gate (rust-migration 2c): canonical dump diff of a fresh Rust store
-# against the frozen Python-recorded reference (the Rust goldens are the
-# spec of record; no Python engine is driven).
+# G2 gate: canonical dump diff of a fresh store against the frozen
+# reference dump (the goldens are the spec of record).
 #
 # base: builds the pinned parity corpus (rust/golden/stores/self/corpus) with
 # the Rust `cairn build-graph`, runs `cairn canonical-dump`, normalizes volatile content
@@ -93,7 +92,7 @@ stage_pinned_corpus() {
   printf 'gitdir: pinned-parity-corpus\n' > "$dst/.git"
 }
 
-# --- leg base: rust fresh store vs the frozen python-recorded reference ------
+# --- leg base: fresh store vs the frozen reference dump ----------------------
 leg_base() {
   [ -f "$FROZEN_NORM" ] || { echo "G2 base: FAIL — frozen reference missing: $FROZEN_NORM"; return 1; }
   [ -d "$PINNED_CORPUS" ] || { echo "G2 base: FAIL — pinned corpus missing: $PINNED_CORPUS"; return 1; }
@@ -117,7 +116,7 @@ leg_base() {
   local diff=$?
   echo ""
   if [ "$diff" -eq 0 ]; then
-    echo "G2 base: PASS — rust-built dump content-equal to the frozen python-recorded reference"
+    echo "G2 base: PASS — fresh dump content-equal to the frozen reference"
     return 0
   fi
   echo "G2 base: FAIL — canonical dump differs from the frozen reference (kg-diff exit $diff)"

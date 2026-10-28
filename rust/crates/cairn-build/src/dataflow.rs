@@ -1,4 +1,4 @@
-//! Precomputed dataflow index for public/exported symbols (`graph/dataflow.py`).
+//! Precomputed dataflow index for public/exported symbols.
 
 use std::collections::BTreeSet;
 use std::path::Path;

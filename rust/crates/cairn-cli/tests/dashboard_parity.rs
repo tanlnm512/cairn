@@ -550,14 +550,6 @@ async fn wiki_routes_parity() {
         "staleness chip renders: {body}"
     );
 
-    let (status, _, headers) = server.get("/wiki/overview").await;
-    assert_eq!(
-        status,
-        StatusCode::TEMPORARY_REDIRECT,
-        "legacy URL redirects"
-    );
-    assert_eq!(headers.get("location").unwrap(), "/wiki/yarl/overview");
-
     let (status, body, _) = server.get("/wiki/yarl/missing").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body.contains("Wiki page not found"), "{body}");

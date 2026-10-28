@@ -1755,7 +1755,7 @@ mod tests {
         }
     }
 
-    /// Same shape as tests/fixtures/golden/regenerate.normalise.
+    /// Same shape as the parser-golden expected.json schema.
     fn normalise(parsed: &ParsedFile) -> serde_json::Value {
         let mut symbols: Vec<_> = parsed
             .symbols
@@ -1851,7 +1851,7 @@ mod tests {
             assert_eq!(
                 normalise(&parsed),
                 expected,
-                "{lang} parser output diverged from the Python golden"
+                "{lang} parser output diverged from the committed golden"
             );
         }
     }

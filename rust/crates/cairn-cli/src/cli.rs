@@ -12,7 +12,7 @@ use crate::cmds_system::{self, SystemCommand};
 #[command(
     name = "cairn",
     version,
-    about = "cairn-intel: local codebase intelligence system.",
+    about = "cairn: local codebase intelligence system.",
     arg_required_else_help = true
 )]
 pub struct Cli {

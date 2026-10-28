@@ -9,10 +9,6 @@
    "CAIRN_WATCH": "0"
   },
   "refreshed": {
-   "download-reranker": {
-    "reference": "rust/target/release/cairn",
-    "captured_at": "2026-10-24T23:58:26.559258+00:00"
-   },
    "report --db <STORE_HOME>/missing.kg": {
     "reference": "rust/target/release/cairn",
     "captured_at": "2026-10-26T19:21:19.603091+00:00"
@@ -20,10 +16,6 @@
    "version": {
     "reference": "rust/target/release/cairn",
     "captured_at": "2026-10-26T19:21:18.480470+00:00"
-   },
-   "upgrade --check": {
-    "reference": "rust/target/release/cairn",
-    "captured_at": "2026-10-26T19:21:21.007781+00:00"
    },
    "communities --top-k 2": {
     "reference": "rust/target/release/cairn",
@@ -297,7 +289,7 @@
   {
    "label": "version",
    "exit": 0,
-   "stdout": "⠿ cairn-intel 0.24.1\n",
+   "stdout": "⠿ cairn 0.24.1\n",
    "stderr": ""
   },
   {
@@ -341,12 +333,6 @@
    "exit": 0,
    "stdout": "✓ No changes detected. Graph is up to date.\n",
    "stderr": ""
-  },
-  {
-   "label": "download-reranker",
-   "exit": 2,
-   "stdout": "",
-   "stderr": "download-reranker is unavailable: this build has no native cross-encoder reranker, so semantic_search runs without the rerank stage.\n"
   },
   {
    "label": "grep --json DEFAULT_DB_PATH",
@@ -915,19 +901,13 @@
   {
    "label": "report --db <STORE_HOME>/missing.kg",
    "exit": 0,
-   "stdout": "cairn report — redacted diagnostic bundle\n# Secrets scrubbed via memory.privacy.strip_private_data; absolute paths collapsed to [PATH]/<basename>. Safe to paste into a GitHub issue.\ngenerated: <ISO>\n\n## Versions\ncairn: 0.24.1\npython: <ENV>\nplatform: <ENV>\nsqlite: <ENV>\ndb_schema_user_version: <ENV>\n\n## Doctor\nFAIL schema: cannot open database: store not found at [PATH]/missing.kg -- run `cairn init` + `cairn build` first\nWARN embeddings: database unavailable (see schema)\nWARN ann: database unavailable (see schema)\nWARN embed_server: database unavailable (see schema)\nWARN freshness: database unavailable (see schema)\nWARN parse_errors: database unavailable (see schema)\nWARN edge_signals: database unavailable (see schema)\nWARN concurrency: database unavailable (see schema)\nWARN tool_health: database unavailable (see schema)\nWARN memory_staleness: database unavailable (see schema)\nPASS config: workers=<unset>; read_only=<unset>; fusion=<unset>; ann_backend=<unset (=sqlite-vec)>; telemetry=off; log_level=ERROR; embed_backend=hash (env); embed_base_url=<preset> (default); embed_server_model=bge-m3 (default); embed_timeout=30 (default); embed_server_batch=32 (default); embed_model_stamp=<derived> (default); api_key=<unset>\nPASS daemon: <DAEMON>\nWARN environment: store not found at [PATH]/missing.kg\n      hint: run `cairn init` + `cairn build` first\nPASS agent_hooks: no retired hook commands\n\n## Recent error events (0)\n  none\n\n## Recent tool errors (0)\n  none\n\n## Resolution\n  none\n\n## Quality gates\naudit_status: unavailable\ncomment_style: unavailable\n\n## Config\nworkers: <unset>\nread_only: <unset>\nfusion: <unset>\nann_backend: <unset (=sqlite-vec)>\nembed_backend: hash\ntelemetry: off\nlog_level: ERROR\n",
+   "stdout": "cairn report — redacted diagnostic bundle\n# Secrets scrubbed via memory.privacy.strip_private_data; absolute paths collapsed to [PATH]/<basename>. Safe to paste into a GitHub issue.\ngenerated: <ISO>\n\n## Versions\ncairn: 0.24.1\nplatform: <ENV>\nsqlite: <ENV>\ndb_schema_user_version: <ENV>\n\n## Doctor\nFAIL schema: cannot open database: store not found at [PATH]/missing.kg -- run `cairn init` + `cairn build` first\nWARN embeddings: database unavailable (see schema)\nWARN ann: database unavailable (see schema)\nWARN embed_server: database unavailable (see schema)\nWARN freshness: database unavailable (see schema)\nWARN parse_errors: database unavailable (see schema)\nWARN edge_signals: database unavailable (see schema)\nWARN concurrency: database unavailable (see schema)\nWARN tool_health: database unavailable (see schema)\nWARN memory_staleness: database unavailable (see schema)\nPASS config: workers=<unset>; read_only=<unset>; fusion=<unset>; ann_backend=<unset (=sqlite-vec)>; telemetry=off; log_level=ERROR; embed_backend=hash (env); embed_base_url=<preset> (default); embed_server_model=bge-m3 (default); embed_timeout=30 (default); embed_server_batch=32 (default); embed_model_stamp=<derived> (default); api_key=<unset>\nPASS daemon: <DAEMON>\nWARN environment: store not found at [PATH]/missing.kg\n      hint: run `cairn init` + `cairn build` first\n\n## Recent error events (0)\n  none\n\n## Recent tool errors (0)\n  none\n\n## Resolution\n  none\n\n## Quality gates\naudit_status: unavailable\ncomment_style: unavailable\n\n## Config\nworkers: <unset>\nread_only: <unset>\nfusion: <unset>\nann_backend: <unset (=sqlite-vec)>\nembed_backend: hash\ntelemetry: off\nlog_level: ERROR\n",
    "stderr": ""
   },
   {
    "label": "uninstall --dry-run --graph-only",
    "exit": 0,
-   "stdout": "\nCairn Uninstaller\n(dry-run: nothing will be deleted)\n\n➜ Graph and knowledge data\n  removing: <CAIRN_HOME>/<STORE_KEY>\n  size:     15 MB\n  would: rm -rf <CAIRN_HOME>/<STORE_KEY>\n\n\nDry-run complete — nothing was deleted\n\n  Remaining (never removed):\n    CLAUDE.md, AGENTS.md  — instruction files (created create-if-absent only)\n    Source code            — your repos are untouched\n\n  To reinstall: pip install cairn-intel  (or ./scripts/install.sh)\n",
-   "stderr": ""
-  },
-  {
-   "label": "upgrade --check",
-   "exit": 0,
-   "stdout": "⠿ cairn-intel 0.24.1 (could not reach PyPI)\n",
+   "stdout": "\nCairn Uninstaller\n(dry-run: nothing will be deleted)\n\n➜ Graph and knowledge data\n  removing: <CAIRN_HOME>/<STORE_KEY>\n  size:     15 MB\n  would: rm -rf <CAIRN_HOME>/<STORE_KEY>\n\n\nDry-run complete — nothing was deleted\n\n  Remaining (never removed):\n    CLAUDE.md, AGENTS.md  — instruction files (created create-if-absent only)\n    Source code            — your repos are untouched\n\n  To reinstall: ./scripts/install.sh  (or brew install / cargo binstall cairn-cli)\n",
    "stderr": ""
   },
   {

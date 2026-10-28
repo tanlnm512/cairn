@@ -308,7 +308,7 @@ fn db_arg(db: &Option<String>) -> String {
 
 // --- cairn init --------------------------------------------------------------
 
-/// init handler: register + legacy migration + first build.
+/// init handler: register + first build.
 fn init(args: crate::cmds_core::InitArgs) -> ExitCode {
     let ws = match &args.ws_arg {
         Some(ws) => store_paths::resolve_path(Path::new(ws)),
@@ -326,49 +326,6 @@ fn init(args: crate::cmds_core::InitArgs) -> ExitCode {
     rail.step("Store", Some(&store.home.to_string_lossy()));
     rail.detail(".kg", &store.db.to_string_lossy());
     rail.detail(".knowledge", &store.knowledge.to_string_lossy());
-
-    let mut migrated: Vec<String> = Vec::new();
-    let legacy = match &args.legacy_dir {
-        Some(dir) => store_paths::resolve_path(Path::new(dir)),
-        None => ws.join("cairn"),
-    };
-    let legacy_db = legacy.join(".kg");
-    let legacy_kn = legacy.join(".knowledge");
-    if legacy_db.exists() && !store.db.exists() {
-        let size_kb = std::fs::metadata(&legacy_db)
-            .map(|m| m.len() / 1024)
-            .unwrap_or(0);
-        if let Some(parent) = store.db.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let migrate_tmp = store.db.with_extension("kg.migrate-tmp");
-        match std::fs::copy(&legacy_db, &migrate_tmp) {
-            Ok(_) => match std::fs::rename(&migrate_tmp, &store.db) {
-                Ok(()) => migrated.push(format!(".kg ({size_kb} KB)")),
-                Err(e) => {
-                    let _ = std::fs::remove_file(&migrate_tmp);
-                    rail.warn(&format!("legacy .kg migration failed: {e}"));
-                }
-            },
-            Err(e) => {
-                let _ = std::fs::remove_file(&migrate_tmp);
-                rail.warn(&format!("legacy .kg migration failed: {e}"));
-            }
-        }
-    }
-    if legacy_kn.is_dir() {
-        let mut copied = 0usize;
-        collect_knowledge_copies(&legacy_kn, &legacy_kn, &store.knowledge, &mut copied);
-        if copied > 0 {
-            migrated.push(format!(".knowledge/ ({copied} files)"));
-        }
-    }
-    if !migrated.is_empty() {
-        rail.step(
-            &format!("Migrated from {}", legacy.display()),
-            Some(&migrated.join(", ")),
-        );
-    }
 
     if !args.no_build && !store.db.exists() {
         rail.start("Scanning files");
@@ -408,11 +365,6 @@ fn init(args: crate::cmds_core::InitArgs) -> ExitCode {
         rail.warn("Graph already present. Use `cairn build` to rebuild.");
     }
 
-    if args.import_docs {
-        rail.warn(
-            "--import-docs is retired: run `cairn knowledge import <dir>` for markdown import",
-        );
-    }
     if args.with_hooks
         && crate::cmds_system::run_hooks_install(args.ws_arg.clone()) != ExitCode::SUCCESS
     {
@@ -422,31 +374,6 @@ fn init(args: crate::cmds_core::InitArgs) -> ExitCode {
     rail.close("Done");
     display::dim("`cairn config` to verify; `cairn serve` for the MCP server.");
     ExitCode::SUCCESS
-}
-
-/// Recursively copy unseen knowledge files (skip .DS_Store), counting copies.
-fn collect_knowledge_copies(root: &Path, dir: &Path, dest_root: &Path, copied: &mut usize) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in entries {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if path.is_dir() {
-            collect_knowledge_copies(root, &path, dest_root, copied);
-        } else if name != ".DS_Store" {
-            let rel = path.strip_prefix(root).unwrap_or(&path);
-            let dst = dest_root.join(rel);
-            if let Some(parent) = dst.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if !dst.exists() && std::fs::copy(&path, &dst).is_ok() {
-                *copied += 1;
-            }
-        }
-    }
 }
 
 /// OS CSPRNG bytes for key material; None when the source is unavailable.
@@ -855,14 +782,6 @@ fn string_map_nested(
 
 /// build handler: full rebuild into the store (staging swaps atomically).
 fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
-    if args.lsp == Some(true) {
-        return command_error(
-            "cairn build --lsp is retired: the pyright LSP edge-upgrade pass was \
-             removed with the Python engine and no engine LSP pass replaces it. \
-             Run the build without --lsp; ambiguous edges stay resolved by the \
-             indexer.",
-        );
-    }
     if args.staging && args.repo.is_some() {
         return usage_error(
             "--staging cannot be combined with --repo: a staged single-repo \
@@ -1878,7 +1797,7 @@ fn federated_search(args: crate::cmds_core::FederatedSearchArgs) -> ExitCode {
         }
         rankings.push(ranking);
     }
-    // RRF-fuse the per-store rankings, keeping the python rounding.
+    // RRF-fuse the per-store rankings, keeping fixed-precision rounding.
     let hits_by_doc = hits;
     let fused = cairn_query::tools_search::rrf_fuse(&rankings, 60);
     let mut fused_hits: Vec<Value> = Vec::new();
@@ -2388,28 +2307,8 @@ fn attach_neighbors(conn: &Connection, name: &str, callers: bool) -> Vec<Value> 
     out
 }
 
-/// A retired local-inference flag: exit 1 naming the shipped backends instead.
-fn retired_embed_flag(flag: &str) -> ExitCode {
-    display::error(&format!(
-        "{flag} is retired: this build ships no local inference. Set \
-         CAIRN_EMBED_BACKEND=omlx or ollama (or server + CAIRN_EMBED_BASE_URL, model via \
-         CAIRN_EMBED_SERVER_MODEL) to embed through an OpenAI-compatible server, or \
-         CAIRN_EMBED_BACKEND=hash for the dep-free backend."
-    ));
-    ExitCode::FAILURE
-}
-
 /// embed handler.
 fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
-    if args.install_deps {
-        return retired_embed_flag("--install-deps");
-    }
-    if args.download_model {
-        return retired_embed_flag("--download-model");
-    }
-    if args.adopt_server_model.is_some() {
-        return retired_embed_flag("--adopt-server-model");
-    }
     let env = tools_search::semantic_env(None);
     if env.backend == EffectiveBackend::Unavailable {
         return exit_backend_unavailable();
@@ -3736,15 +3635,9 @@ pub struct InitArgs {
     /// Workspace root (default: cwd).
     #[arg(long = "workspace")]
     pub ws_arg: Option<String>,
-    /// Migrate .kg + .knowledge from this cairn dir (e.g. ./cairn).
-    #[arg(long = "from-legacy")]
-    pub legacy_dir: Option<String>,
     /// Register without building the graph.
     #[arg(long = "no-build", default_value_t = false)]
     pub no_build: bool,
-    /// Retired: run `cairn knowledge import <dir>`; accepted and warns.
-    #[arg(long = "import-docs", default_value_t = false)]
-    pub import_docs: bool,
     /// Install cairn git hooks (post-commit, post-checkout) in discovered repos.
     #[arg(long = "with-hooks", default_value_t = false)]
     pub with_hooks: bool,
@@ -3783,9 +3676,6 @@ pub struct BuildArgs {
     /// Build to temp DB and atomic-swap for zero downtime.
     #[arg(long = "staging", default_value_t = false)]
     pub staging: bool,
-    /// Retired: the pyright LSP pass is gone; --lsp exits with an error.
-    #[arg(long = "lsp", num_args = 0..=1, require_equals = false, default_missing_value = "true")]
-    pub lsp: Option<bool>,
     /// Materialize the transitive closure (skipped by default).
     #[arg(long = "with-closure", default_value_t = false)]
     pub with_closure: bool,
@@ -4077,18 +3967,9 @@ pub struct EmbedArgs {
     /// Rebuild native ANN index after embedding.
     #[arg(long = "build-index")]
     pub build_index: bool,
-    /// Retired: no local-inference install ships; exits 1 naming the replacement.
-    #[arg(long = "install-deps")]
-    pub install_deps: bool,
-    /// Retired: no model download ships; exits 1 naming the replacement.
-    #[arg(long = "download-model")]
-    pub download_model: bool,
     /// Store one vector per symbol (the single-vector build).
     #[arg(long = "no-multivector", default_value_t = false)]
     pub no_multivector: bool,
-    /// Retired: configure the server backend through CAIRN_EMBED_* instead; exits 1.
-    #[arg(long = "adopt-server-model", num_args = 0..=1, default_missing_value = "")]
-    pub adopt_server_model: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -4426,7 +4307,6 @@ mod tests {
             db: Some(db_str.clone()),
             verbose: false,
             staging: true,
-            lsp: None,
             with_closure: false,
         });
 

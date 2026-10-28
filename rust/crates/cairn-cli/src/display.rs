@@ -1,4 +1,4 @@
-//! Shared display theme for the CLI; color tokens mirror the Python `cli.display` THEME.
+//! Shared display theme for the CLI color tokens.
 
 use std::io::IsTerminal;
 
@@ -29,7 +29,7 @@ fn paint_with(color: bool, style: &str, text: &str) -> String {
     }
 }
 
-/// Console width the python rich console wraps at (non-TTY default).
+/// Console width text wraps at (non-TTY default).
 pub const CONSOLE_WIDTH: usize = 80;
 
 /// Print through the rich-console fold: greedy word wrap at the console width,

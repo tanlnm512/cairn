@@ -1,4 +1,4 @@
-//! Language-to-grammar routes mirroring the Python parser registry.
+//! Language-to-grammar routes for the parse registry.
 
 use tree_sitter::{Language, Parser};
 

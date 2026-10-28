@@ -66,8 +66,8 @@ fn report(url: &str, started: bool, pid: Option<u32>) {
 
 /// Start or reuse the shared HTTP daemon and print its MCP URL.
 pub fn run(args: ConnectArgs) -> ExitCode {
-    // A mismatch aborts like the Python sys.exit(1): never fall through to a
-    // start sequence against a foreign daemon.
+    // A mismatch aborts: never fall through to a start sequence against a
+    // foreign daemon.
     match try_reuse(args.port, &args.host) {
         ReuseDecision::Reuse => {
             report(&lc::mcp_url(args.port, &args.host), false, None);
@@ -144,7 +144,7 @@ mod tests {
             reuse_decision(Some(&json!({"db": mine})), mine, url),
             ReuseDecision::Reuse
         ));
-        // Payload without a db field -> reuse (the Python truthiness contract).
+        // Payload without a db field -> reuse.
         assert!(matches!(
             reuse_decision(Some(&json!({"status": "ok"})), mine, url),
             ReuseDecision::Reuse

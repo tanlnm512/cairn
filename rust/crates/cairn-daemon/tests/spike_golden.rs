@@ -23,7 +23,7 @@ fn fixture_store(root: &std::path::Path, fixture: &Value, default: &str) -> Path
     root.join(fixture["replay_store"].as_str().unwrap_or(default))
 }
 
-// --- fixture normalization (ported from the recorder's scrub rules) ----------
+// --- fixture normalization (the recorder's scrub rules) ----------
 
 fn normalize_text(text: &str, rules: &[Rule]) -> String {
     let mut out = text.to_string();
