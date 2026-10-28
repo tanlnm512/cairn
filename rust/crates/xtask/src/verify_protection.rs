@@ -12,14 +12,17 @@ use serde_json::{Value, json};
 
 use crate::audit_status::py_json_pretty;
 
-const MANDATORY_CHECKS: [&str; 7] = [
+const MANDATORY_CHECKS: [&str; 10] = [
     "PR title (conventional commits)",
     "pre-commit (all local gates)",
     "Quality ratchet (audit debt + comment style)",
     "Dependency review (PR)",
-    "Closure budget gate (1000-file scaling point)",
-    "Verify DS-v2 seal",
     "Container build (Dockerfile smoke)",
+    "fmt",
+    "clippy (-D warnings)",
+    "test",
+    "windows (clippy + test + release build)",
+    "cargo-deny (advisories + licenses)",
 ];
 const GH_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -467,6 +470,13 @@ fn verify(run: Runner, repo: &str, mandatory: &[&str]) -> Result<Value, String> 
         .into_iter()
         .filter(|m| !observed.contains(*m))
         .collect();
+    // A required check no workflow emits blocks every merge.
+    let unexpected: Vec<&str> = observed
+        .iter()
+        .map(String::as_str)
+        .filter(|o| !mandatory.contains(o))
+        .collect();
+    let checks_ok = missing.is_empty() && unexpected.is_empty();
 
     let errors = Value::Array(source_errors.clone());
     let status = |ok: bool| if ok { "pass" } else { "fail" };
@@ -475,8 +485,9 @@ fn verify(run: Runner, repo: &str, mandatory: &[&str]) -> Result<Value, String> 
                "observed": observed_reviews, "provenance": review_sources, "errors": errors}),
         json!({"name": "force_push_denial", "status": status(!force_sources.is_empty()),
                "observed": !force_sources.is_empty(), "provenance": force_sources, "errors": errors}),
-        json!({"name": "required_status_checks", "status": status(missing.is_empty()),
-               "observed": observed, "missing": missing, "provenance": status_sources, "errors": errors}),
+        json!({"name": "required_status_checks", "status": status(checks_ok),
+               "observed": observed, "missing": missing, "unexpected": unexpected,
+               "provenance": status_sources, "errors": errors}),
     ];
     let ok = checks.iter().all(|c| c["status"] == "pass") && source_errors.is_empty();
     Ok(json!({
@@ -522,13 +533,20 @@ fn human_report(report: &Value) -> (Vec<String>, Vec<String>) {
             continue;
         }
         let details = if name == "required_status_checks" {
-            let missing: Vec<String> = check["missing"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(py_str)
-                .collect();
-            format!("missing: {}", missing.join(", "))
+            let names = |key: &str| -> String {
+                let list: Vec<String> = check[key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(py_str)
+                    .collect();
+                list.join(", ")
+            };
+            format!(
+                "missing: {}; unexpected: {}",
+                names("missing"),
+                names("unexpected")
+            )
         } else {
             format!("observed: {}", py_str(&check["observed"]))
         };
@@ -694,7 +712,12 @@ mod tests {
             &rulesets,
             None,
         );
-        let report = verify(&run, "example/repo", &["legacy-check", "ruleset-check"]).unwrap();
+        let report = verify(
+            &run,
+            "example/repo",
+            &["legacy-check", "other-check", "ruleset-check"],
+        )
+        .unwrap();
         assert_eq!(report["ok"], true);
         let checks = report["checks"].as_array().unwrap();
         assert_eq!(checks[0]["provenance"][0]["source"], "ruleset:7");
@@ -711,13 +734,14 @@ mod tests {
             ("reviews", "required_reviews"),
             ("force", "force_push_denial"),
             ("checks", "required_status_checks"),
+            ("unexpected", "required_status_checks"),
         ] {
             let reviews = case != "reviews";
             let force = case == "force";
-            let checks: &[&str] = if case == "checks" {
-                &[]
-            } else {
-                &["required-check"]
+            let checks: &[&str] = match case {
+                "checks" => &[],
+                "unexpected" => &["required-check", "retired-check"],
+                _ => &["required-check"],
             };
             let rulesets = [ruleset(
                 7,
@@ -743,9 +767,12 @@ mod tests {
                 "pre-commit (all local gates)",
                 "Quality ratchet (audit debt + comment style)",
                 "Dependency review (PR)",
-                "Closure budget gate (1000-file scaling point)",
-                "Verify DS-v2 seal",
                 "Container build (Dockerfile smoke)",
+                "fmt",
+                "clippy (-D warnings)",
+                "test",
+                "windows (clippy + test + release build)",
+                "cargo-deny (advisories + licenses)",
             ])
         );
     }

@@ -28,12 +28,12 @@ repos:
         exclude: ^docs/diagrams/|^rust/golden/(stores|nav|search|spike)/.*\.kg$|^rust/golden/dump/self-corpus\.norm\.txt$
 
   # --- Comment-style ratchet: local mirror of the quality-ratchet CI job.
-  # The checker owns its sorted Python scope, so it never receives
+  # The checker owns its scope (rust/crates), so it never receives
   # filenames and runs on every commit regardless of what is staged.
   - repo: local
     hooks:
       - id: check-comment-lengths
-        name: check comment/docstring lengths (shrink-only baseline)
+        name: check comment/doc-block lengths (shrink-only baseline)
         entry: bash -c 'export PATH="$HOME/.cargo/bin:$PATH"; exec cargo xtask comment-style'
         language: system
         pass_filenames: false

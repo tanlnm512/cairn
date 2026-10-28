@@ -31,7 +31,7 @@ Stack, build and test runners, and gates. Cited from `Cargo.toml`,
 
 ## Gates
 - Pre-commit (`.pre-commit-config.yaml`): gitleaks, YAML/TOML/merge
-  checks, large files, the comment/docstring length
+  checks, large files, the Rust comment/doc-block length
   ratchet (`check-comment-lengths`, shrink-only baseline), cargo fmt, cargo
   clippy.
 - CI workflows:

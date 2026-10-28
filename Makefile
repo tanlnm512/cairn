@@ -104,7 +104,7 @@ help:
 	@echo "  ci-local-parity        clean-room parity gates"
 	@echo "  audit-status           remaining-vs-total audit findings by priority"
 	@echo "                         (ARGS=--json for machine-readable output)"
-	@echo "  comment-style          gate long comment/docstring blocks against the baseline"
+	@echo "  comment-style          gate long Rust comment/doc blocks against the baseline"
 	@echo "                         (ARGS=--json for machine-readable output)"
 	@echo "  comment-style-shrink   rewrite the baseline after cleanup; refuses growth"
 	@echo "  verify-protection      maintainer-only main branch protection check"

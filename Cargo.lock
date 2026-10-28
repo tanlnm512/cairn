@@ -2371,7 +2371,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tree-sitter",
- "tree-sitter-python",
+ "tree-sitter-rust",
  "walkdir",
  "yaml-rust2",
 ]

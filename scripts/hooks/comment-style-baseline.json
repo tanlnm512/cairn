@@ -1,4 +1,110 @@
 {
   "schema_version": 1,
-  "violations": []
+  "violations": [
+    {
+      "count": 1,
+      "fingerprint": "comment:68154f8fe8911c52965fbc0271e97cdb98f414ee7fd1aefb41411d413627d94c",
+      "paths": [
+        "rust/crates/cairn-parse/src/parser_jvm.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "comment:7e783635f502668b75299f6f6ee43a7fa5f85e5d9c9a7af70b96652bc1bcc24f",
+      "paths": [
+        "rust/crates/cairn-build/tests/incremental_graft.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "comment:dbff20e82bb54391dcfdf374172c7d9ea843d086b044d651449d07c8d946f20c",
+      "paths": [
+        "rust/crates/cairn-build/tests/closure_semantics.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:3e65912c48918524462b99bccb8fae0f5e2d1faf85f01a14718bc4ba6d081323",
+      "paths": [
+        "rust/crates/cairn-build/tests/incremental_graft.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:4b98b649f8549befb2ad82de1bedab9c94737e190d9a56859b3dd2fddb800b0e",
+      "paths": [
+        "rust/crates/cairn-query/tests/nav_golden.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:6087e80081b1fcf51280cdc4cc898f138e59e10c6a1a0c4a11ecd7a0972c5fb1",
+      "paths": [
+        "rust/crates/cairn-build/src/builder.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:805669a4db8cfb322d3659dc5d38a220654b650b93495e66a930784d8eb2d409",
+      "paths": [
+        "rust/crates/cairn-daemon/tests/auth_lifecycle.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:a1e324d2764729223dea733375e2d6d3ab685522a56a06a0ecfbc59f30237ed2",
+      "paths": [
+        "rust/crates/cairn-query/tests/km_golden.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:a386ccd6b695ac2bd0dac3c048df914cc0589fa955d3e2529d416b5baf273188",
+      "paths": [
+        "rust/crates/cairn-store/src/schema.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:a5ffa6ad8720c94710a061fecdaa230e34ac88194613ae1bb27bb2053d3dafd1",
+      "paths": [
+        "rust/crates/cairn-store/src/dump.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:ad3cbc1603509504903711158d3bb1ca675f1515fe1dff0793807afd591c7653",
+      "paths": [
+        "rust/crates/cairn-query/src/tools_km.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:c1fd0e3e5a723a44f09abd0d06ddc127f3db0e111838e6d489327030f532404a",
+      "paths": [
+        "rust/crates/cairn-cli/src/agent_hooks.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:cda8e0e81d411bf7e25ddbe32a47fb0280d9301397b3b998d7ed8ce63d4c42b8",
+      "paths": [
+        "rust/crates/cairn-query/src/tasks.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:d7782ddadd7912ad4cedc9ec97ad04d536cf18d21afbf8ba4c01d35e07abc1da",
+      "paths": [
+        "rust/crates/cairn-build/src/closure.rs"
+      ]
+    },
+    {
+      "count": 1,
+      "fingerprint": "doc:deb07878c271f145b3e0c4628ba376fb1cecc0d2fdd8f4463c1ec3636de1c8d2",
+      "paths": [
+        "rust/crates/cairn-build/src/scip/mod.rs"
+      ]
+    }
+  ]
 }

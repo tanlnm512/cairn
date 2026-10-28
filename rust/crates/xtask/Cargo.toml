@@ -20,7 +20,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "=0.10.9"
 yaml-rust2 = { version = "=0.13.0", default-features = false }
 tree-sitter = "=0.26.13"
-tree-sitter-python = "=0.23.6"
+tree-sitter-rust = "=0.24.2"
 walkdir = "=2.5.0"
 
 [lints]
