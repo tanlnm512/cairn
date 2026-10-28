@@ -186,13 +186,6 @@ pub enum SystemCommand {
         #[command(subcommand)]
         command: HooksGroup,
     },
-    /// Exit 2: no cross-encoder reranker ships in this build, so semantic_search runs without the rerank stage.
-    #[command(name = "download-reranker")]
-    DownloadReranker {
-        /// Accepted for compatibility; nothing is downloaded.
-        #[arg(long)]
-        model: Option<String>,
-    },
     /// Start the HTTP MCP server daemon in the foreground, or manage the shared daemon.
     Serve {
         /// SQLite DB path (default: central store).
@@ -374,9 +367,6 @@ pub fn run(command: SystemCommand) -> ExitCode {
             cmds_lifecycle::run_upgrade(cmds_lifecycle::UpgradeArgs { check })
         }
         SystemCommand::Version => cmds_lifecycle::run_version(),
-        SystemCommand::DownloadReranker { model } => {
-            cmds_lifecycle::run_download_reranker(cmds_lifecycle::DownloadRerankerArgs { model })
-        }
         SystemCommand::Connect { port, host, impl_ } => {
             cmds_connect::run(cmds_connect::ConnectArgs { port, host, impl_ })
         }

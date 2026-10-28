@@ -185,7 +185,7 @@ fundamentally cannot see.
   Point `CAIRN_EMBED_BACKEND` at a local OpenAI-compatible embeddings server
   (`omlx`, `ollama`, or `server` + `CAIRN_EMBED_BASE_URL`) for bge-m3-class
   vectors with no model download inside cairn. No cross-encoder reranker
-  ships in this build (`cairn download-reranker` says so).
+  ships in this build.
 - **Synthesized docs need an LLM pass.** Compass/wiki generation runs through
   the task queue (`cairn task`) with the critic gate — deterministic, but it
   won't happen purely locally without any model access.

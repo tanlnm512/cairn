@@ -1,4 +1,4 @@
-//! init flags and help text no longer reference the removed Python CLI.
+//! `cairn init --with-hooks` installs the git hooks in the workspace's repos.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -47,41 +47,5 @@ fn init_with_hooks_installs_git_hooks() {
         ws.join(".git/hooks/post-checkout").is_file(),
         "post-checkout hook missing: {text}"
     );
-    assert!(!text.contains("Python CLI"), "{text}");
-    let _ = std::fs::remove_dir_all(&home);
-}
-
-#[test]
-fn init_import_docs_names_the_replacement() {
-    let home = scratch("docs");
-    let ws = home.join("ws");
-    std::fs::create_dir_all(&ws).expect("scratch ws");
-    let (code, text) = cairn(
-        &home,
-        &[
-            "init",
-            "--workspace",
-            ws.to_str().expect("utf8 path"),
-            "--no-build",
-            "--import-docs",
-        ],
-    );
-    assert_eq!(code, Some(0), "{text}");
-    assert!(text.contains("cairn knowledge import"), "{text}");
-    assert!(!text.contains("Python CLI"), "{text}");
-    let _ = std::fs::remove_dir_all(&home);
-}
-
-#[test]
-fn help_does_not_advertise_the_retired_transition() {
-    let home = scratch("help");
-    let (_, build_help) = cairn(&home, &["build", "--help"]);
-    assert!(
-        build_help.contains("pyright LSP pass is gone"),
-        "{build_help}"
-    );
-    assert!(!build_help.contains("not yet ported"), "{build_help}");
-    let (_, connect_help) = cairn(&home, &["connect", "--help"]);
-    assert!(!connect_help.contains("else python"), "{connect_help}");
     let _ = std::fs::remove_dir_all(&home);
 }

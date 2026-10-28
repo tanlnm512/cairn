@@ -43,8 +43,7 @@ decoupled task queue.
 ### Resolution tiers, Rust sources, and worktree behavior
 
 - The resolver labels every call edge `exact` / `ambiguous` / `unresolved`
-  (see [indexing.md](indexing.md)); `cairn build --lsp` exits 1 naming the
-  retired pyright upgrade pass.
+  (see [indexing.md](indexing.md)).
 - Rust sources use the generic tree-sitter tier with a pinned grammar. It
   records definitions and spans, keeps call edges `unresolved`, and records
   `.rs` files as parser-unavailable skips when the grammar cannot load.

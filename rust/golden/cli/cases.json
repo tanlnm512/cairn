@@ -9,10 +9,6 @@
    "CAIRN_WATCH": "0"
   },
   "refreshed": {
-   "download-reranker": {
-    "reference": "rust/target/release/cairn",
-    "captured_at": "2026-10-24T23:58:26.559258+00:00"
-   },
    "report --db <STORE_HOME>/missing.kg": {
     "reference": "rust/target/release/cairn",
     "captured_at": "2026-10-26T19:21:19.603091+00:00"
@@ -341,12 +337,6 @@
    "exit": 0,
    "stdout": "✓ No changes detected. Graph is up to date.\n",
    "stderr": ""
-  },
-  {
-   "label": "download-reranker",
-   "exit": 2,
-   "stdout": "",
-   "stderr": "download-reranker is unavailable: this build has no native cross-encoder reranker, so semantic_search runs without the rerank stage.\n"
   },
   {
    "label": "grep --json DEFAULT_DB_PATH",

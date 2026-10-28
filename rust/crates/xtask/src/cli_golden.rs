@@ -146,7 +146,6 @@ const COMMANDS: &[&[&str]] = &[
     &["metrics", "--contention"],
     &["metrics", "--tasks"],
     &["sync"],
-    &["download-reranker"],
     // The mutating graph-analytics legs (dataflow build, embed) run last so the lookups keep pinned rows.
     &["grep", "--json", "DEFAULT_DB_PATH"],
     &["grep", "def resolve_store"],

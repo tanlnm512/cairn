@@ -20,8 +20,8 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 
 | Command | Purpose |
 |---|---|
-| `cairn init [--with-hooks] [--no-build] [--import-docs]` | register the workspace and run a first build; `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)); `--import-docs` is accepted and retired — use `cairn knowledge import <dir>`; `--from-legacy <dir>` migrates an old in-repo store |
-| `cairn build [--staging] [--with-closure] [--repo R]` | full workspace rebuild (see [indexing.md](indexing.md)); `--staging` builds into a temp DB and atomic-swaps it under the build lock; `--lsp` exits 1 naming the retired pyright upgrade pass |
+| `cairn init [--with-hooks] [--no-build]` | register the workspace and run a first build; `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)) |
+| `cairn build [--staging] [--with-closure] [--repo R]` | full workspace rebuild (see [indexing.md](indexing.md)); `--staging` builds into a temp DB and atomic-swaps it under the build lock |
 | `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
 | `cairn stats` | graph statistics |
 | `cairn checkpoint` | checkpoint the WAL into the main file |
@@ -143,15 +143,12 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 | Command | Purpose |
 |---|---|
 | `cairn embed` | compute/refresh symbol embeddings with the configured backend (`--batch-size`, `--limit`, `--no-reap`, `--build-index` rebuilds the vec0 ANN index, `--no-multivector` stores one vector per symbol) |
-| `cairn download-reranker` | exits 2: this build ships no native cross-encoder reranker |
 
 The backend is `CAIRN_EMBED_BACKEND`: `local` (the default) resolves to the
 dep-free `hash-256-v1` embedder and `cairn embed` warns that the vectors are
 token-overlap only; `omlx`, `ollama`, or `server` + `CAIRN_EMBED_BASE_URL`
 embed through a local OpenAI-compatible server (`CAIRN_EMBED_SERVER_MODEL`,
-default `bge-m3`; `CAIRN_EMBED_API_KEY` optional). The retired
-local-inference flags `--install-deps`, `--download-model`, and
-`--adopt-server-model` exit 1 naming the replacement.
+default `bge-m3`; `CAIRN_EMBED_API_KEY` optional).
 
 ## Knowledge
 

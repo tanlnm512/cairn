@@ -63,8 +63,7 @@ Entry: `cairn-build` `builder.rs::build_graph`, run under the store's
 
    The resolver also stores its signals on the edge (`ref_name`,
    `receiver_type`, `call_arity`) so incremental repair can re-resolve
-   with the same inputs. `--lsp` exits 1 naming the retired pyright
-   upgrade pass.
+   with the same inputs.
 
 8. **Derived indexes** — `cairn build --with-closure` materializes
    `transitive_edges` (multi-hop calls at O(1)); the precomputed impact

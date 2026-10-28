@@ -1,5 +1,5 @@
 //! Lifecycle/ops commands (system status/sync/metrics/report, upgrade,
-//! uninstall, version, download-reranker ports).
+//! uninstall, version).
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -2342,19 +2342,6 @@ fn remove_binary(dry_run: bool) {
         _ => {}
     }
     println!("  ✓ done");
-}
-
-// --- download-reranker --------------------------------------------------------
-
-pub struct DownloadRerankerArgs {
-    pub model: Option<String>,
-}
-
-const RERANKER_UNAVAILABLE: &str = "download-reranker is unavailable: this build has no native cross-encoder reranker, so semantic_search runs without the rerank stage.";
-
-pub fn run_download_reranker(_args: DownloadRerankerArgs) -> ExitCode {
-    eprintln!("{RERANKER_UNAVAILABLE}");
-    ExitCode::from(2)
 }
 
 #[cfg(test)]
