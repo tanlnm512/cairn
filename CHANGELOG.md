@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dev tooling moved to `cargo xtask` (the parity and CLI-golden oracles, canonical-dump tools, perf harnesses, and the repo gates).
 - `scripts/install.sh` builds from a checkout with `cargo install` (no Python required), `scripts/uninstall.sh` forwards to `cairn uninstall`, and the SCIP test fixture regenerates with `cargo xtask scip-fixture`.
 - `cairn upgrade` queries PyPI through `curl` instead of a Python interpreter.
+- Release bumps run through `cargo xtask bump` (commitizen retired): it moves the Cargo workspace version, `Cargo.lock` and `pyproject.toml` together, commits and tags; `--dry-run` drafts the changelog section.
+- The commit gates run under prek (`prek install`) instead of pre-commit, with native yaml/toml/merge-conflict/large-file hooks.
+- `cargo xtask comment-style` gates long comment and doc blocks in the Rust crates (shrink-only baseline), and `cargo xtask verify-protection` requires the Rust CI gates and fails on required checks no workflow emits.
 
 ### Removed
 - The optional `cairn-intel-ingest` PDF converter package and the `CAIRN_SIDECAR_PYTHON` override: `knowledge ingest` always converts PDFs natively (paragraph text). The repo now carries no Python code outside test corpora.
