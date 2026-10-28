@@ -7,11 +7,8 @@
 # (modulo GitHub-only jobs: PR title, dependency review, artifact uploads).
 #
 # Usage:
-#   scripts/ci-local.sh [JOB] [PY_VERSION]    (JOB default: test, PY default: 3.12)
-#   make ci-local                              # test job, Python 3.12
-#   make ci-local PYTHON_VERSION=3.11          # test job on another version
-#   make ci-local-all                          # the 3.10 + 3.14 matrix
-#   scripts/ci-local.sh security               # pip-audit (hard) + bandit (advisory)
+#   scripts/ci-local.sh [JOB] [PY_VERSION]    (JOB default: precommit, PY default: 3.12)
+#   make ci-local                              # precommit job
 #   scripts/ci-local.sh precommit              # pre-commit run --all-files
 #   scripts/ci-local.sh build                  # wheel + sdist + smoke (needs cargo)
 #   scripts/ci-local.sh rust                   # rust.yml ubuntu legs: fmt/clippy/test/deny
@@ -39,7 +36,6 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MOUNT_POINT=/workspace
 CACHE_REL=.cache/ci-local
-VERSIONS_ALL=(3.10 3.14)
 
 log()  { printf '\033[1;34m[ci-local]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[ci-local]\033[0m %s\n' "$*" >&2; }
@@ -56,30 +52,18 @@ usage() {
 if [[ -z "${CI_LOCAL_INNER:-}" ]]; then
   command -v container >/dev/null 2>&1 || die "apple \`container\` CLI not found (brew install container)"
 
-  JOB="${1:-test}"
-  PY="${2:-${PYTHON_VERSION:-3.12}}"
+  JOB="${1:-precommit}"
+  PY="${2:-3.12}"
   case "$JOB" in
     -h|--help|help) usage 0 ;;
-    test|test-all|security|precommit|build|rust|parity|smoke) ;;
-    *) die "unknown job '$JOB' (test|test-all|security|precommit|build|rust|parity|smoke)" ;;
+    precommit|build|rust|parity|smoke) ;;
+    *) die "unknown job '$JOB' (precommit|build|rust|parity|smoke)" ;;
   esac
 
   # Boot the container system service if needed (idempotent, ~10s cold).
   if ! container system status >/dev/null 2>&1; then
     log "starting container system service..."
     container system start >/dev/null
-  fi
-
-  if [[ "$JOB" == "test-all" ]]; then
-    log "full matrix: ${VERSIONS_ALL[*]} (sequential, like CI's fail-fast=false matrix)"
-    fail=0
-    for v in "${VERSIONS_ALL[@]}"; do
-      log "── Test (Python $v) ──────────────────────────────────"
-      "$0" test "$v" || fail=1
-    done
-    if [[ $fail -ne 0 ]]; then die "matrix red: at least one version failed"; fi
-    log "matrix green across ${VERSIONS_ALL[*]}"
-    exit 0
   fi
 
   ARCH_FLAGS=()
@@ -193,29 +177,6 @@ ensure_cargo_deny() {
 cd "$MOUNT_POINT"
 
 case "$JOB" in
-  test)
-    # ci.yml: test job -- the optional converter package's own tests.
-    sync_dev
-    log "installing the converter package (CI: Install converter package)"
-    uv pip install packaging/cairn-intel-ingest
-    log "converter package tests (CI: Run the converter package's tests)"
-    uv run --no-sync pytest -q --junitxml=test-results.xml
-    log "suite green (results: test-results.xml)"
-    ;;
-
-  security)
-    # ci.yml: security job -- pip-audit is a HARD gate, bandit advisory over
-    # the converter package.
-    sync_dev
-    log "installing the converter package (CI: Install converter package)"
-    uv pip install packaging/cairn-intel-ingest
-    log "pip-audit (CI: hard gate)"
-    uv run --no-sync pip-audit
-    log "bandit (CI: advisory -- findings below don't fail)"
-    uv run --no-sync bandit -r packaging -ii -ll || warn "bandit findings above (advisory in CI too)"
-    log "security job green"
-    ;;
-
   precommit)
     # ci.yml: pre-commit job -- all Layer-0 gates server-side; the
     # comment-style hook runs through cargo xtask.
@@ -229,12 +190,11 @@ case "$JOB" in
     # ci.yml: build job -- distributions + installed-product smoke (no
     # upload). maturin compiles the engine, so the container needs cargo.
     ensure_cargo
-    sync_dev
-    log "python -m build (CI: Build distributions)"
-    uv run --no-sync python -m build
+    log "maturin build + sdist (CI: Build distributions)"
+    uvx maturin build --release --out dist
+    uvx maturin sdist --out dist
     log "installed-product smoke (CI: Smoke the built wheel)"
-    uv pip install dist/*.whl
-    uv run cairn --version
+    bash scripts/rust_migration/wheel_smoke.sh dist/*.whl
     ;;
 
   rust)

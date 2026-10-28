@@ -33,16 +33,13 @@ Vendored: `rust/vendor/tree-sitter-dart` (workspace member) and
   daemon on loopback).
 - Dashboard: `cairn dashboard`.
 
-## Development-only Python trees
-- `scripts/`: repo gates (`comment_style.py`, `audit_status.py`,
-  `check_doc_links.py`), installers, and `rust_migration/` — the replay
-  oracles (`parity.py`, `cli_golden.py`), canonical-dump tooling
-  (`kg_dump.py`, `kg_diff.py`, `kg_normalize.py`), the measured gates
-  (`baseline.py`, `closure_bench.py`), `g2_check.sh` and `wheel_smoke.sh`.
-- `tests/`: pytest suite for packaging, release distribution and
-  documentation gates (`testpaths` in `pyproject.toml`).
-- `packaging/`: the optional `cairn-intel-ingest` converter package (with
-  its own tests) and the Homebrew formula template.
+## Development tooling
+- `rust/crates/xtask/`: repo gates, replay oracles, canonical-dump tooling
+  and the measured gates (`cargo xtask` lists them).
+- `scripts/`: installers and `rust_migration/` (`g2_check.sh`,
+  `wheel_smoke.sh`).
+- `tests/fixtures/`: SCIP-indexing fixture repos.
+- `packaging/`: the Homebrew formula template.
 
 ## Tests and oracles
 - Rust: unit tests in each crate, integration suites under

@@ -14,8 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 - `cairn impact --guard [--threshold N]` replaces the skill's `scripts/impact_guard.py` helper: a cycle-carrying result above the threshold prints a name-collision warning and the dataflow-index fallback instead of the raw dump (`--json` gains a `guard` object), and the agent skill no longer ships a Python script.
-- Dev tooling moved to `cargo xtask` (the parity and CLI-golden oracles, canonical-dump tools, perf harnesses, and the repo gates); Python remains only in the optional cairn-intel-ingest package.
+- Dev tooling moved to `cargo xtask` (the parity and CLI-golden oracles, canonical-dump tools, perf harnesses, and the repo gates).
 - `scripts/install.sh` builds from a checkout with `cargo install` (no Python required), `scripts/uninstall.sh` forwards to `cairn uninstall`, and the SCIP test fixture regenerates with `cargo xtask scip-fixture`.
+- `cairn upgrade` queries PyPI through `curl` instead of a Python interpreter.
+
+### Removed
+- The optional `cairn-intel-ingest` PDF converter package and the `CAIRN_SIDECAR_PYTHON` override: `knowledge ingest` always converts PDFs natively (paragraph text). The repo now carries no Python code outside test corpora.
+- `cairn uninstall` no longer probes a Python interpreter for source-tree build debris of the retired Python package.
+- The Python-only dev gates: the pytest and pip-audit/bandit CI jobs, the ruff and debug-statements pre-commit hooks, `scripts/install-dev-hooks.sh`, and `cargo xtask verify-no-code-change`.
 
 ## [0.24.1] - 2026-10-26
 ### Fixed

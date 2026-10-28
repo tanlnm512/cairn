@@ -17,38 +17,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # --- Security: supply-chain + code scanning -----------------------------
-  # pip-audit is a HARD gate: a known-vulnerable dependency blocks the PR.
-  # bandit is ADVISORY (continue-on-error) over the optional converter
-  # package: it surfaces NEW security regressions
-  # (eval/exec/pickle/shell/weak-crypto) without churning on known-benign
-  # findings. The engine binary is audited on the Rust side (cargo-deny in
-  # rust.yml).
-  security:
-    name: Security (pip-audit + bandit)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v10.1.0
-      # Every job installs from the committed uv.lock (exact pinned set) via
-      # `uv sync` -- the lockfile is the dependency set CI tests, not a fresh
-      # pip resolution. `uv run --no-sync` then executes from that venv.
-      # The optional converter package rides the audit: it is a user-facing
-      # install (pip install cairn-intel-ingest) -- a CVE there must fail it.
-      - name: Install (with dev extras + converter package)
-        run: |
-          uv sync --extra dev
-          uv pip install packaging/cairn-intel-ingest
-      - name: pip-audit (hard gate -- known-vulnerable deps fail here)
-        run: uv run --no-sync pip-audit
-      - name: bandit (advisory, converter package)
-        continue-on-error: true
-        run: uv run --no-sync bandit -r packaging -ii -ll
-
   # --- Conventional Commit PR-title gate (hard) ---------------------------
   # Mirrors the commitizen convention that `cz bump` derives the SemVer bump
   # from. Fails the PR if the title isn't `type(optional-scope): subject`.
@@ -81,10 +49,9 @@ jobs:
   # --- pre-commit: server-side enforcement of all Layer-0 gates ------------
   # Closes the gap where a dev who skipped `pre-commit install` could bypass
   # local gates. This is the single server-side home for ALL Layer-0 checks --
-  # ruff (F-only), gitleaks (secrets), and the yaml/toml/large-file/debug
-  # checks all live in .pre-commit-config.yaml and are binding only because
-  # this job runs them. (The old standalone `lint` job was removed as
-  # redundant: it ran the same `ruff check` this job runs.)
+  # gitleaks (secrets), the yaml/toml/large-file checks, and the cargo hooks
+  # all live in .pre-commit-config.yaml and are binding only because this job
+  # runs them.
   pre-commit:
     name: pre-commit (all local gates)
     runs-on: ubuntu-latest
@@ -157,8 +124,8 @@ jobs:
       - name: Validate skill eval specs
         run: cargo xtask skill-evals
 
-  # --- Dependency review for PRs (supply-chain, complements pip-audit) -----
-  # pip-audit scans the fully-resolved environment; this checks the *delta* a
+  # --- Dependency review for PRs (supply-chain, complements cargo-deny) ----
+  # cargo-deny (rust.yml) audits the full lockfile; this checks the *delta* a
   # PR introduces (new/changed deps) against the GitHub Advisory DB + licenses.
   dependency-review:
     name: Dependency review (PR)
@@ -180,78 +147,18 @@ jobs:
             GHSA-jqc4-5cvw-7w85,
             GHSA-v4x8-3wr5-3wq8
 
-  test:
-    name: Test (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    needs: pre-commit
-    strategy:
-      fail-fast: false
-      matrix:
-        # Only the optional converter package runs here; it declares
-        # >=3.10, so main covers its floor and ceiling.
-        python-version: ${{ github.event_name != 'pull_request' && fromJSON('["3.10", "3.14"]') || fromJSON('["3.14"]') }}
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - uses: astral-sh/setup-uv@v10.1.0
-
-      - name: Install (with dev extras + converter package)
-        run: |
-          uv sync --extra dev --python ${{ matrix.python-version }}
-          uv pip install --python ${{ matrix.python-version }} packaging/cairn-intel-ingest
-
-      - name: Run the converter package's tests
-        run: uv run --no-sync pytest -q --durations=25 --junitxml=test-results.xml
-
-      - name: Publish test summary
-        if: always()
-        run: |
-          # stdlib-only summary; system python3, no project venv needed.
-          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
-          import xml.etree.ElementTree as ET
-          import os
-          path = "test-results.xml"
-          if not os.path.exists(path):
-              print("_(no test results — suite did not run)_")
-          else:
-              # junit XML: <testsuites><testsuite tests=... failures=... .../>
-              # stats live on the <testsuite> child, not the <testsuites> root.
-              root = ET.parse(path).getroot()
-              suite = root if root.tag == "testsuite" else root.find("testsuite")
-              if suite is None:
-                  print("_(malformed test results)_")
-              else:
-                  n, fail, err, skip = (
-                      suite.get(k, "0") for k in ("tests", "failures", "errors", "skipped")
-                  )
-                  ok = int(fail) == 0 and int(err) == 0
-                  print(f"## Test results (Python ${{ matrix.python-version }})")
-                  print()
-                  print(f"{'✅' if ok else '❌'} **{n}** tests | "
-                        f"✗ {fail} failures | "
-                        f"⚠ {err} errors | "
-                        f"⊘ {skip} skipped")
-          EOF
-
-
   # Packaging canary, MAIN PUSHES ONLY: verifies `maturin build` + `maturin sdist`
   # (bin wheel + sdist) stays green on every merge so packaging
   # breakage surfaces between releases, never at tag time (release.yml builds
   # the real multi-platform wheels there). PRs skip it deliberately -- the
-  # engine compile buys no signal the test legs don't already give, and the
+  # engine compile buys no signal rust.yml's legs don't already give, and the
   # canary still runs on the merge commit itself.
   build:
     name: Build wheel + sdist
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    needs: test
+    needs: pre-commit
     steps:
       - uses: actions/checkout@v5
 

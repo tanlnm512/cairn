@@ -29,19 +29,9 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-test = [
-    "pytest>=7.0",
-]
 dev = [
-    "pytest>=7.0",
+    # PEP 517 front end the wheel smoke drives, as a pip user's build would.
     "build",
-    "ruff>=0.6",
-    # Review/audit pipeline (Layer 1 CI gates) over the optional converter
-    # package. Run locally before pushing:
-    #   bandit -r packaging -ii -ll -s B608
-    #   pip-audit
-    "bandit>=1.7",
-    "pip-audit>=2.7",
     # Local review/audit gate (Layer 0 of the review pipeline): defines the
     # pre-commit hooks (.pre-commit-config.yaml) that run before every commit.
     "pre-commit>=4.0",
@@ -71,25 +61,6 @@ include = [
 # dev environment.
 [tool.uv]
 package = false
-
-[tool.pytest.ini_options]
-testpaths = ["packaging/cairn-intel-ingest/tests"]
-
-[tool.ruff]
-# Conservative gate: pyflakes (F) only. Catches real defects (undefined names,
-# unused imports, redefinitions) with a low false-positive rate. Style rules
-# (E, UP, BLE, S, etc.) are intentionally excluded -- the codebase predates
-# ruff and adopting them would be a dedicated cleanup PR, not a CI gate.
-src = ["packaging"]
-# Golden fixtures are test *input* data (deliberately-shaped source the parser
-# exercises), not test code -- linting them would rewrite the fixtures and
-# invalidate the very golden tests that consume them.
-extend-exclude = [
-  "tests/fixtures",
-]
-
-[tool.ruff.lint]
-select = ["F"]
 
 [tool.commitizen]
 # Release automation (see docs/release-checklist.md).

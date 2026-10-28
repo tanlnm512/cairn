@@ -11,9 +11,8 @@ Stack, build and test runners, and gates. Cited from `Cargo.toml`,
   patch), tree-sitter with 15 grammar crates, rayon, clap, notify, prost,
   minijinja.
 - Release profile strips symbols (`[profile.release] strip = true`).
-- Python ≥ 3.10 only for dev tooling (the replay oracles, the repo gates,
-  pytest); the optional PDF converter is the separate `cairn-intel-ingest`
-  package. The wheel has no runtime dependencies and no Python code.
+- Python ≥ 3.10 only for dev tooling (pre-commit, commitizen, the wheel
+  build). The wheel has no runtime dependencies and no Python code.
 - Wheel build: maturin (`[tool.maturin] bindings = "bin"` over
   `rust/crates/cairn-cli/Cargo.toml`) packages the engine binary as the
   `cairn` executable, tagged `py3-none-<platform>` with no Python module
@@ -25,22 +24,21 @@ Stack, build and test runners, and gates. Cited from `Cargo.toml`,
   `--manifest-path Cargo.toml`).
 - `cargo test --workspace --no-fail-fast`; `cargo clippy --workspace
   --all-targets -- -D warnings`; `cargo fmt --all -- --check`.
-- Python: `uv sync --extra dev`, then `uv run pytest`.
-- Oracles: `scripts/rust_migration/parity.py --store {self,yarl,attrs}`,
-  `cli_golden.py`, `g2_check.sh` (`G2_LEGS=base,rebuild,staging`),
+- Oracles: `cargo xtask parity --store {self,yarl,attrs}`,
+  `cargo xtask cli-golden`, `g2_check.sh` (`G2_LEGS=base,rebuild,staging`),
   `wheel_smoke.sh`. They reuse whatever release binary the target dir holds;
   rebuild it first.
 
 ## Gates
-- Pre-commit (`.pre-commit-config.yaml`): ruff, gitleaks, YAML/TOML/merge
-  checks, large files, debug statements, the comment/docstring length
+- Pre-commit (`.pre-commit-config.yaml`): gitleaks, YAML/TOML/merge
+  checks, large files, the comment/docstring length
   ratchet (`check-comment-lengths`, shrink-only baseline), cargo fmt, cargo
   clippy.
 - CI workflows:
 
 | Workflow | Trigger | Jobs |
 |---|---|---|
-| `ci.yml` | push, PR, merge queue | security (pip-audit, bandit over dev scripts), PR title, pre-commit, quality ratchet, dependency review, test, build, container |
+| `ci.yml` | push, PR, merge queue | PR title, pre-commit, quality ratchet, dependency review, build, container |
 | `rust.yml` | push, PR, merge queue | fmt, clippy, test, deny, release build matrix (macOS and Linux gnu/musl targets) |
 | `rust-parity.yml` | PR (cheap subset), nightly, dispatch | parity, parity-stores, g2-legs, wheel-smoke |
 | `release.yml` | tag | wheels + sdist, PyPI publish, GitHub release |

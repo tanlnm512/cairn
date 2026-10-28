@@ -20,7 +20,6 @@ mod parity;
 mod release_contract;
 mod scip_fixture;
 mod skill_evals;
-mod verify_no_code_change;
 mod verify_protection;
 
 const COMMANDS: &[&str] = &[
@@ -34,7 +33,6 @@ const COMMANDS: &[&str] = &[
     "baseline",
     "closure-bench",
     "comment-style",
-    "verify-no-code-change",
     "check-doc-links",
     "conformance-table",
     "audit-status",
@@ -64,7 +62,6 @@ fn main() -> ExitCode {
         "baseline" => baseline::run(rest),
         "closure-bench" => closure_bench::run(rest),
         "comment-style" => comment_style::run(rest),
-        "verify-no-code-change" => verify_no_code_change::run(rest),
         "check-doc-links" => check_doc_links::run(rest),
         "conformance-table" => conformance_table::run(rest),
         "audit-status" => audit_status::run(rest),

@@ -12,14 +12,11 @@ use serde_json::{Value, json};
 
 use crate::audit_status::py_json_pretty;
 
-const MANDATORY_CHECKS: [&str; 10] = [
-    "Security (pip-audit + bandit)",
-    "Type check (mypy)",
+const MANDATORY_CHECKS: [&str; 7] = [
     "PR title (conventional commits)",
     "pre-commit (all local gates)",
     "Quality ratchet (audit debt + comment style)",
     "Dependency review (PR)",
-    "Test (Python 3.14)",
     "Closure budget gate (1000-file scaling point)",
     "Verify DS-v2 seal",
     "Container build (Dockerfile smoke)",
@@ -742,13 +739,10 @@ mod tests {
         assert_eq!(
             BTreeSet::from(MANDATORY_CHECKS),
             BTreeSet::from([
-                "Security (pip-audit + bandit)",
-                "Type check (mypy)",
                 "PR title (conventional commits)",
                 "pre-commit (all local gates)",
                 "Quality ratchet (audit debt + comment style)",
                 "Dependency review (PR)",
-                "Test (Python 3.14)",
                 "Closure budget gate (1000-file scaling point)",
                 "Verify DS-v2 seal",
                 "Container build (Dockerfile smoke)",

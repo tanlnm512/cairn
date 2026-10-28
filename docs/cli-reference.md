@@ -10,9 +10,7 @@ not per call.
 One engine serves every install channel: the `cairn` binary (Homebrew tap,
 `cargo binstall`, release tarball) is the whole surface below, and the PyPI
 package installs that same binary as the `cairn` executable (a maturin bin
-wheel — no launcher, no interpreter at runtime). The optional
-`cairn-intel-ingest` package adds higher-fidelity PDF conversion when
-installed. `cairn --help` and `cairn <command> --help` are authoritative.
+wheel — no launcher, no interpreter at runtime). `cairn --help` and `cairn <command> --help` are authoritative.
 
 Machine contracts (`config --json`/`--db`/`--mcp-config` shapes, stdout-pure
 JSON modes, exit codes) are pinned by the frozen CLI goldens under
@@ -161,7 +159,7 @@ Group: `cairn knowledge …`
 
 | Subcommand | Purpose |
 |---|---|
-| `ingest` | staged doc ingestion; `--file`/`--dir`/`--repo` sources, `--ingest` to execute, `--include-drafts`, `--outbox`. Markdown, DOCX and PDF convert natively; a PDF prefers the optional `cairn-intel-ingest` package when importable (`python -m cairn_intel_ingest`, resolved via `CAIRN_SIDECAR_PYTHON`, then an interpreter beside the binary, then `PATH`), else the engine extracts the text itself |
+| `ingest` | staged doc ingestion; `--file`/`--dir`/`--repo` sources, `--ingest` to execute, `--include-drafts`, `--outbox`. Markdown, DOCX and PDF convert natively (PDF yields paragraph text) |
 | `rebuild` | recompute the derived `knowledge_edges` / `knowledge_doc_refs` index tables from the bundle (runs automatically after `ingest --ingest`; idempotent); island detection then queues `doc-link` tasks for detached pair-units (deduped per member set) |
 | `islands` | list doc-graph islands (detached pair-units) and their `doc-link` task state |
 | `related <doc_id>` | stored relationship neighbors of one doc, one line per edge with relation (`relates-to`/`supersedes`/`superseded-by`/`references`), kind (`extracted`/`inferred`/`derived`), and direction; `--json` emits the full rows. Unknown ids exit non-zero with a named error |

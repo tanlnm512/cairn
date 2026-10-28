@@ -1429,8 +1429,18 @@ fn comment_quality_gate(root: &Path) -> Value {
     }
 }
 
-fn sidecar_python() -> Option<PathBuf> {
-    cairn_query::sidecar::python()
+/// The interpreter owning a pip/venv install: one beside this binary, else the PATH python3.
+fn pip_python() -> String {
+    let beside_exe = std::env::current_exe().ok().and_then(|exe| {
+        let dir = exe.parent()?.to_path_buf();
+        ["python3", "python"]
+            .into_iter()
+            .map(|name| dir.join(name))
+            .find(|candidate| candidate.is_file())
+    });
+    beside_exe
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "python3".into())
 }
 
 fn report_config() -> Map<String, Value> {
@@ -1771,20 +1781,25 @@ pub fn run_upgrade(args: UpgradeArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Latest published version via the python stdlib HTTPS client; the binary
-/// ships no TLS stack, so the probe rides the interpreter every install has.
+/// Latest published version from PyPI; the binary ships no TLS stack, so the probe rides curl.
 fn pypi_latest() -> Option<String> {
-    let python = sidecar_python()?;
-    let script = "import json, urllib.request; \
-                  req = urllib.request.Request('https://pypi.org/pypi/cairn-intel/json', \
-                  headers={'Accept': 'application/json'}); \
-                  print(json.load(urllib.request.urlopen(req, timeout=5))['info']['version'])";
-    let output = Command::new(&python).arg("-c").arg(script).output().ok()?;
+    let output = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--max-time",
+            "5",
+            "-H",
+            "Accept: application/json",
+            "https://pypi.org/pypi/cairn-intel/json",
+        ])
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
-    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!version.is_empty()).then_some(version)
+    let body: Value = serde_json::from_slice(&output.stdout).ok()?;
+    let version = body["info"]["version"].as_str()?.trim();
+    (!version.is_empty()).then(|| version.to_string())
 }
 
 fn is_up_to_date(current: &str, latest: &str) -> bool {
@@ -1819,48 +1834,6 @@ fn exe_venv_root() -> Option<PathBuf> {
     exe.ancestors()
         .find(|path| path.file_name().is_some_and(|n| n == ".venv"))
         .map(Path::to_path_buf)
-}
-
-/// Source-tree build debris of the python package (build/, dist/, *.egg-info
-/// under the cairn package root), via the sidecar interpreter.
-fn stale_artifacts() -> Vec<PathBuf> {
-    let Some(python) = sidecar_python() else {
-        return Vec::new();
-    };
-    let script = "from importlib.util import find_spec; \\
-                  spec = find_spec('cairn'); \\
-                  print(spec.origin if spec and spec.origin else '')";
-    let Ok(output) = Command::new(&python).arg("-c").arg(script).output() else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    let origin = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if origin.is_empty() {
-        return Vec::new();
-    }
-    // python's _pkg_root: three levels above the cairn package.
-    let Some(pkg_root) = Path::new(&origin).ancestors().nth(3) else {
-        return Vec::new();
-    };
-    let mut found = Vec::new();
-    for name in ["build", "dist"] {
-        let path = pkg_root.join(name);
-        if path.exists() {
-            found.push(path);
-        }
-    }
-    if let Ok(entries) = std::fs::read_dir(pkg_root) {
-        let mut egg_info: Vec<PathBuf> = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|e| e == "egg-info"))
-            .collect();
-        egg_info.sort();
-        found.extend(egg_info);
-    }
-    found
 }
 
 fn detect_install_method() -> String {
@@ -1900,11 +1873,8 @@ fn reinstall(method: &str, version: &str) -> bool {
         ],
         "pipx" => vec!["pipx".into(), "install".into(), "--force".into(), spec],
         "pip" | "venv" => {
-            let python = sidecar_python()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "python3".into());
             vec![
-                python,
+                pip_python(),
                 "-m".into(),
                 "pip".into(),
                 "install".into(),
@@ -2314,22 +2284,12 @@ fn prune_registry(reg_path: &Path, workspace: &Path) {
 fn remove_binary(dry_run: bool) {
     println!("➜ cairn binary");
     let installed_via = detect_install_method();
-    let stale = stale_artifacts();
     if installed_via == "unknown" {
-        if stale.is_empty() {
-            println!("  (cairn not found via uv/pipx/pip/venv — nothing to remove)");
-            return;
-        }
-        println!("  installed via: unknown (stale build artifacts only)");
-    } else {
-        println!("  installed via: {installed_via}");
+        println!("  (cairn not found via uv/pipx/pip/venv — nothing to remove)");
+        return;
     }
-    for path in &stale {
-        println!("  stale: {path}", path = path.display());
-    }
-    let python = sidecar_python()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "python3".into());
+    println!("  installed via: {installed_via}");
+    let python = pip_python();
     let venv_root = exe_venv_root();
     if dry_run {
         let cmd: Vec<String> = match installed_via.as_str() {
@@ -2356,9 +2316,6 @@ fn remove_binary(dry_run: bool) {
             )],
         };
         println!("  would: {}", cmd.join(" "));
-        for path in &stale {
-            println!("  would: rm -rf {path}", path = path.display());
-        }
         return;
     }
     match installed_via.as_str() {
@@ -2383,9 +2340,6 @@ fn remove_binary(dry_run: bool) {
             }
         }
         _ => {}
-    }
-    for path in &stale {
-        let _ = std::fs::remove_dir_all(path);
     }
     println!("  ✓ done");
 }

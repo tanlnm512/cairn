@@ -64,9 +64,7 @@ binstall metadata.
 The PyPI package is the engine binary itself: maturin builds the wheel from
 the cargo workspace, its only payload is the platform `cairn` executable, and
 it declares no runtime dependencies and ships no Python. `docx` and PDF
-conversion run natively in the engine; the optional
-[`cairn-intel-ingest`](packaging/cairn-intel-ingest) package (`pip install
-cairn-intel-ingest`) adds higher-fidelity PDF conversion when present.
+conversion run natively in the engine.
 `cairn upgrade` updates PyPI installs in place (detects `uv tool` / `pipx` /
 `pip`; `--check` previews without changing anything); Homebrew and cargo
 installs upgrade through their own channel.
@@ -347,12 +345,9 @@ the default is `false`. `"exclude"` globs drop paths from indexing (this
 repository's own `cairn.json` excludes `rust/`).
 
 The engine is dependency-light and network-free: every command runs from the
-binary alone on every install channel. The one optional add-on is the
-[`cairn-intel-ingest`](packaging/cairn-intel-ingest) package — a separately
-installed high-fidelity PDF converter the engine uses automatically when
-importable (`cairn knowledge ingest --file`; `cairn.json`'s `ingest` key
-holds the classification rules). Without it the engine extracts PDF text
-natively.
+binary alone on every install channel. `cairn knowledge ingest --file`
+converts `docx` and PDF natively (PDF yields paragraph text; `cairn.json`'s
+`ingest` key holds the classification rules).
 
 Key environment knobs (`cairn doctor`'s `config` check prints every
 effective value and where it came from):
@@ -367,7 +362,6 @@ effective value and where it came from):
 | `CAIRN_READ_ONLY=1` | open the store read-only, skipping the pre-query freshness refresh (what `cairn serve --read-only` sets for the daemon) |
 | `CAIRN_TELEMETRY=off` | master kill switch for the local telemetry tables |
 | `CAIRN_RUST_BIN` | daemon start: exec this engine binary instead of the running one |
-| `CAIRN_SIDECAR_PYTHON` | the optional converter package: run it with this interpreter |
 
 ## Supported Platforms & Agents
 
@@ -413,14 +407,11 @@ cargo clippy --manifest-path Cargo.toml --workspace -- -D warnings
 cargo test --manifest-path Cargo.toml --workspace
 ```
 
-Repo dev gates and the frozen-oracle replays are the `xtask` crate; Python
-remains only in the optional converter package
-(`packaging/cairn-intel-ingest`):
+Repo dev gates and the frozen-oracle replays are the `xtask` crate:
 
 ```bash
 cargo xtask                       # list the dev gates and oracle replays
 cargo xtask parity --store self   # oracle replay against the release binary
-uv sync --extra dev && uv run pytest -q   # the converter package's tests
 make ci-local                     # clean-room CI replication in a Linux container
 ```
 
@@ -434,9 +425,7 @@ Contributions follow [docs/review-checklist.md](docs/review-checklist.md).
 MIT-licensed. The binary links only permissive crates (MIT, Apache-2.0,
 BSD, ISC, Zlib, Unicode-3.0, CC0-1.0); `Cargo.lock` is the
 authoritative inventory and cargo-deny gates it against that allow-list on
-every change — see [NOTICE](NOTICE). The optional `cairn-intel-ingest`
-package carries the one copyleft dependency in the ecosystem (PyMuPDF,
-AGPL-3.0) and never links into the engine. An embeddings server configured
+every change — see [NOTICE](NOTICE). An embeddings server configured
 through `CAIRN_EMBED_BACKEND` stays outside cairn's dependency tree entirely.
 
 ## Status

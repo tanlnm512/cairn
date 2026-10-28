@@ -71,8 +71,7 @@ they actually ran — not just that they were claimed:
 - [ ] Tests added or updated to cover the change — a Rust owner test under
       `rust/` for engine behavior (`cargo test --manifest-path Cargo.toml
       -p <crate>` for the fast loop, then `--workspace`), the `xtask` crate
-      for release-wiring and dev-gate contracts, pytest for the converter
-      package.
+      for release-wiring and dev-gate contracts.
 - [ ] **Comment, doc & log brevity** — 1-line docstrings default, no commentary blocks,
       no decision logs in code, non-verbose logging (AGENTS.md §"Comment, doc, and log style").
 
@@ -85,21 +84,18 @@ they actually ran — not just that they were claimed:
   note the root cause, and a `record_memory` mistake entry if it's a trap others
   could hit.
 - **Refactor** — behavior unchanged: the full test suite is green and
-  `impact_analysis` shows no *new* unresolved callers. (`make
-  verify-no-code-change` is for comment-only edits, not refactors — code is
-  *expected* to change here.)
+  `impact_analysis` shows no *new* unresolved callers.
 
 ## 6. Pre-review gates (already automated — should be green)
 
 Enforced by Layers 0-1; if any is red, fix before requesting review:
 
-- pre-commit: `ruff`, `gitleaks`, yaml/toml/merge-conflict/large-file checks,
+- pre-commit: `gitleaks`, yaml/toml/merge-conflict/large-file checks,
   the comment-length baseline, `cargo fmt --check` and `cargo clippy -D
   warnings` (`.pre-commit-config.yaml`)
 - `rust.yml`: fmt, clippy, `cargo test --workspace`, cargo-deny (advisories +
   licenses), release builds per target
-- pip-audit (hard gate) + conventional PR title (hard gate)
-- bandit / mypy (advisory — review any *new* findings they surface)
+- conventional PR title (hard gate)
 - `rust-parity.yml`: the frozen oracles (`cargo xtask parity`,
   `cargo xtask cli-golden`, `g2_check.sh`, `wheel_smoke.sh`) replay against the release binary on
   `rust/**` PRs and nightly

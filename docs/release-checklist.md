@@ -16,7 +16,7 @@ don't skip on "I'm sure it's fine."
 | [`## Concurrency / DB locks`](#concurrency--db-locks) | Parallel serve/build and read-only-daemon checks. |
 | [`## Portability (the .kg is shared across machines)`](#portability-the-kg-is-shared-across-machines) | Repo-relative path checks for the cross-machine store. |
 | [`## Breaking changes`](#breaking-changes) | Schema additivity, CLI/MCP signature shape, and CHANGELOG state. |
-| [`## Agent / bulk-edit safety`](#agent--bulk-edit-safety) | Programmatic no-code-change verification for sub-agent or bulk edits. |
+| [`## Agent / bulk-edit safety`](#agent--bulk-edit-safety) | Verification gates for sub-agent or bulk edits. |
 | [`## Cutting a release`](#cutting-a-release) | Conventional commits, the changelog-first rule, the `cz` bump, and the tag-push paths. |
 
 ## Tests
@@ -26,7 +26,6 @@ don't skip on "I'm sure it's fine."
 - [ ] `cargo xtask parity --store self` and `cargo xtask cli-golden` — when
       cutting a release or touching the frozen oracles (`rust/golden/`) or
       the binary, replay the oracles against the release binary.
-- [ ] `uv run pytest -q` — the optional converter package's tests.
 - [ ] No new `#[ignore]`, `xfail` or `skip` slipped in to make a failure
       "pass"; skip-quarantining is forbidden.
 
@@ -39,11 +38,9 @@ don't skip on "I'm sure it's fine."
 
 ## "No behavior changed" claims
 If a change is supposed to be refactor/doc-only/comments-only:
-- [ ] AST-verify the Python side (`packaging/`, `tests/fixtures/`):
-      `uv run python -m compileall -q packaging/ tests/fixtures/` passes, AND
-      `make verify-no-code-change` (see [below](#agent--bulk-edit-safety)) —
-      self-reports of "no code changed" are unreliable; sub-agents and
-      late-night edits silently drift into executable code.
+- [ ] `cargo test --workspace` and the golden oracles stay green — self-reports
+      of "no code changed" are unreliable; sub-agents and late-night edits
+      silently drift into executable code.
 - [ ] `git diff` the actual lines — read what changed, don't trust the commit
       message.
 
@@ -69,10 +66,8 @@ If a change is supposed to be refactor/doc-only/comments-only:
 
 ## Agent / bulk-edit safety
 If changes were made by sub-agents or bulk find-replace:
-- [ ] `make verify-no-code-change` passed (or `make verify-no-code-change REF=HEAD~1`
-      for a just-made commit) — comments-only changes verified programmatically
-      via AST comparison (`cargo xtask verify-no-code-change`), not by reading diffs.
-- [ ] `ruff check` clean.
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` clean and the
+      test suite green.
 - [ ] No string literals (help text, print output, error messages) were
       silently rewritten — these are executable, not comments.
 

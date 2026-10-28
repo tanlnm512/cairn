@@ -8,8 +8,8 @@ parsers — are genuinely welcome and have a real impact.
 
 ## Development setup
 
-cairn's engine is a **Rust binary** (the Python runtime is retired); Python
-3.10+ is used only for the dev tooling. MIT-licensed.
+cairn is a **Rust binary**; Python 3.10+ is used only for the dev tooling
+(pre-commit, commitizen, wheel builds). MIT-licensed.
 
 ```bash
 git clone https://github.com/tanlnm512/cairn.git
@@ -24,20 +24,14 @@ cargo build --release --manifest-path Cargo.toml -p cairn-cli
 
 Development installs use the cargo build above, or `scripts/install.sh`
 (`cargo install --locked` from this checkout); a Rust toolchain is
-required either way. The optional
-high-fidelity PDF converter package lives under
-`packaging/cairn-intel-ingest/`.
+required either way.
 
-Install the dev pre-commit hook (runs `ruff` on staged `.py` files; aborts
-on any unused-import / undefined-name / redefinition error so it's caught
-locally instead of in CI):
+Install the pre-commit hooks (the same gates CI's pre-commit job runs):
 
 ```bash
-./scripts/install-dev-hooks.sh   # one-time; sets core.hooksPath -> scripts/hooks/
+git config --unset core.hooksPath   # only if an older checkout set it
+uv run pre-commit install
 ```
-
-Bypass once with `git commit --no-verify`; uninstall with
-`git config --unset core.hooksPath`.
 
 ## Running tests
 
@@ -50,8 +44,7 @@ cargo xtask parity --store self && cargo xtask cli-golden   # frozen-oracle repl
 
 The oracle replays run against the release binary on `rust/**` PRs and
 nightly; run them locally when touching the frozen oracles under
-`rust/golden/`. Run both loops before opening a PR. The optional converter
-package keeps its own pytest suite (`uv run pytest -q`).
+`rust/golden/`. Run both loops before opening a PR.
 
 ### Performance changes
 
@@ -67,8 +60,7 @@ The engine is the cargo workspace under `rust/` (one crate per concern:
 store, parse, build, query, daemon, cli — see
 [docs/architecture.md](docs/architecture.md)). Repo dev gates and the
 frozen-oracle replays are the `xtask` crate (`cargo xtask <command>`; run it
-bare for the command list). Python remains only in the optional converter
-package under `packaging/cairn-intel-ingest/`.
+bare for the command list).
 
 ## Codebase intelligence convention (read before editing)
 
@@ -99,8 +91,7 @@ See **AGENTS.md** for the full tool list, resolution-aware querying (precise vs
 
 1. Open a PR against `main`.
 2. Describe the change and link any related issue.
-3. Ensure `cargo test --workspace` passes at minimum (plus `uv run pytest`
-   when touching the converter package).
+3. Ensure `cargo test --workspace` passes at minimum.
 4. Keep PRs scoped — one logical change each.
 5. Enable auto-merge on your PR (`gh pr merge --auto --merge`) so it merges
    the moment review and required checks land.

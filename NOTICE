@@ -20,18 +20,11 @@ Zlib). The lockfile is the authoritative inventory; `cargo deny list` in
 rust/ renders it.
 
 ================================================================================
-PyPI package and optional converter
+PyPI package
 ================================================================================
 
 The `cairn-intel` wheel is the engine binary (a maturin bin wheel): it
-contains no Python code and declares no runtime dependencies. The optional
-`cairn-intel-ingest` package — a separately installed high-fidelity PDF
-converter the engine invokes when present — resolves its dependencies from
-PyPI at install time; cairn does not bundle or redistribute them. Declared
-licenses:
-
-  cairn-intel-ingest  pymupdf4llm / PyMuPDF (AGPL-3.0, commercial license
-                      available from Artifex)
+contains no Python code and declares no runtime dependencies.
 
 ================================================================================
 Vendored content (dashboard static assets)
