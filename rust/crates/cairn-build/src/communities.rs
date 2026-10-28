@@ -1,4 +1,4 @@
-//! Seeded Louvain communities over the store's structural edges (D-R01).
+//! Seeded Louvain communities over the store's structural edges.
 
 use std::collections::HashMap;
 
@@ -559,8 +559,7 @@ mod tests {
         &'static [(&'static str, Option<&'static str>, &'static str)],
     );
 
-    // networkx 3.6.1 louvain_communities(seed=0) modularity references over the
-    // sidecar's projection (D-R01 property acceptance; tolerance absorbs float noise).
+    // Reference modularity floors for the fixture; tolerance absorbs float noise.
     const MODULARITY_TOLERANCE: f64 = 1e-6;
 
     const ISLANDS: Fixture = (

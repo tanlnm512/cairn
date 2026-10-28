@@ -5,7 +5,7 @@
 version = 2
 yanked = "deny"
 ignore = [
-    # ttf-parser via pdf-extract->lopdf is unmaintained; no fixed release exists (D-R03).
+    # ttf-parser via pdf-extract->lopdf is unmaintained; no fixed release exists.
     { id = "RUSTSEC-2026-0192", reason = "transitive of pdf-extract 0.12.1; text extraction does not parse untrusted fonts" },
 ]
 

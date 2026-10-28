@@ -231,9 +231,6 @@ pub(crate) fn collect_audit_status(root: &Path) -> Result<Value, String> {
     let dir = root.join("docs").join("audits");
     let documents = stems_with_suffix(&dir, ".md");
     let sidecars = stems_with_suffix(&dir, ".status.json");
-    if documents.is_empty() && sidecars.is_empty() {
-        return Err("no audit documents under docs/audits".into());
-    }
     let mut totals: BTreeMap<&str, [usize; 2]> = PRIORITIES.iter().map(|p| (*p, [0, 0])).collect();
     let mut audits = Vec::new();
     let stems: BTreeSet<&String> = documents.keys().chain(sidecars.keys()).collect();
@@ -417,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_sidecar_and_empty_dir_fail() {
+    fn missing_sidecar_fails_and_no_audits_count_zero() {
         let root = make_repo("missing", "{}");
         fs::remove_file(root.join("docs/audits/2026-10-02.status.json")).unwrap();
         let err = collect_audit_status(&root).unwrap_err();
@@ -426,10 +423,7 @@ mod tests {
             "missing status sidecar: docs/audits/2026-10-02.status.json"
         );
         fs::remove_file(root.join("docs/audits/2026-10-02.md")).unwrap();
-        assert!(
-            collect_audit_status(&root)
-                .unwrap_err()
-                .contains("docs/audits")
-        );
+        let status = collect_audit_status(&root).expect("no audits is a clean slate");
+        assert_eq!(status["remaining"], 0, "{status}");
     }
 }

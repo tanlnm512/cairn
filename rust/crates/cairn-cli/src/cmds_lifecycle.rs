@@ -1215,8 +1215,11 @@ fn collect_audit_status(root: &Path) -> Result<AuditStatus, String> {
     let audits_dir = root.join("docs").join("audits");
     let mut documents: BTreeMap<String, PathBuf> = BTreeMap::new();
     let mut sidecars: BTreeMap<String, PathBuf> = BTreeMap::new();
-    let entries = std::fs::read_dir(&audits_dir).map_err(|_| "no audit documents".to_string())?;
-    for entry in entries.flatten() {
+    for entry in std::fs::read_dir(&audits_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
@@ -1226,9 +1229,6 @@ fn collect_audit_status(root: &Path) -> Result<AuditStatus, String> {
         } else if let Some(stem) = name.strip_suffix(".status.json") {
             sidecars.insert(stem.to_string(), path);
         }
-    }
-    if documents.is_empty() && sidecars.is_empty() {
-        return Err("no audit documents under docs/audits".into());
     }
     let priorities = ["P0", "P1", "P2", "P3"];
     let mut total_by_priority: BTreeMap<&'static str, i64> =
@@ -2428,10 +2428,11 @@ mod tests {
     }
 
     #[test]
-    fn collect_audit_status_errors_without_audits() {
+    fn collect_audit_status_counts_zero_without_audits() {
         let dir = temp_dir("audit-empty");
         std::fs::create_dir_all(&dir).unwrap();
-        assert!(collect_audit_status(&dir).is_err());
+        let status = collect_audit_status(&dir).expect("no audits is a clean slate");
+        assert_eq!((status.total, status.remaining_total), (0, 0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
