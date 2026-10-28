@@ -454,9 +454,18 @@ pub fn claude_hook_command(entrypoint: &str) -> String {
 /// Substrings identifying a cairn-written hook command for `entrypoint`:
 /// the binary form plus the retired python-module forms.
 fn hook_command_markers(entrypoint: &str) -> [String; 4] {
+    let [module, source] = retired_hook_markers(entrypoint);
     [
         format!("cairn' hooks run {entrypoint}"),
         format!("cairn hooks run {entrypoint}"),
+        module,
+        source,
+    ]
+}
+
+/// The retired python-module runner forms of an `entrypoint` hook command.
+fn retired_hook_markers(entrypoint: &str) -> [String; 2] {
+    [
         format!("cairn.hooks.claude_hooks {entrypoint}"),
         format!("src.hooks.claude_hooks {entrypoint}"),
     ]
@@ -540,6 +549,47 @@ pub(crate) fn retired_hook_commands(path: &Path) -> Vec<String> {
         .flat_map(entry_commands)
         .filter(|cmd| cmd.contains(".hooks.claude_hooks "))
         .collect()
+}
+
+/// Rewrite retired python-runner hook commands to `cairn hooks run`; returns how many changed.
+pub(crate) fn migrate_retired_hook_commands(data: &mut Value) -> usize {
+    let Some(events) = data.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return 0;
+    };
+    let mut migrated = 0;
+    let entries = events
+        .values_mut()
+        .filter_map(Value::as_array_mut)
+        .flatten()
+        .filter_map(Value::as_object_mut);
+    for entry in entries {
+        if let Some(inner) = entry.get_mut("hooks").and_then(Value::as_array_mut) {
+            for slot in inner.iter_mut().filter_map(Value::as_object_mut) {
+                migrated += usize::from(migrate_hook_slot(slot));
+            }
+        }
+        migrated += usize::from(migrate_hook_slot(entry));
+    }
+    migrated
+}
+
+fn migrate_hook_slot(slot: &mut Map<String, Value>) -> bool {
+    let Some(cmd) = slot.get("command").and_then(Value::as_str) else {
+        return false;
+    };
+    let retired = HOOK_ENTRYPOINTS.into_iter().find(|ep| {
+        retired_hook_markers(ep)
+            .iter()
+            .any(|marker| cmd.trim_end().ends_with(marker.as_str()))
+    });
+    let Some(entrypoint) = retired else {
+        return false;
+    };
+    slot.insert(
+        "command".to_string(),
+        Value::String(claude_hook_command(entrypoint)),
+    );
+    true
 }
 
 fn entry_entrypoints(entry: &Map<String, Value>) -> Vec<&'static str> {

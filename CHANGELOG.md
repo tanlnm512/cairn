@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The commit gates run under prek (`prek install`) instead of pre-commit, with native yaml/toml/merge-conflict/large-file hooks.
 - `cargo xtask comment-style` gates long comment and doc blocks in the Rust crates (shrink-only baseline), and `cargo xtask verify-protection` requires the Rust CI gates and fails on required checks no workflow emits.
 
+### Fixed
+- `cairn doctor --fix` migrates agent hook commands that still run the retired `python -m cairn.hooks.claude_hooks` module (which fail with `ModuleNotFoundError` once the wheel is the engine binary) to `cairn hooks run`, keeping a `.bak`; the `agent_hooks` check now points at `--fix`.
+
 ### Removed
 - The optional `cairn-intel-ingest` PDF converter package and the `CAIRN_SIDECAR_PYTHON` override: `knowledge ingest` always converts PDFs natively (paragraph text). The repo now carries no Python code outside test corpora.
 - `cairn uninstall` no longer probes a Python interpreter for source-tree build debris of the retired Python package.
