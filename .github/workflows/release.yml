@@ -7,7 +7,7 @@ name: Release
 #
 # Release flow (see docs/release-checklist.md "Cutting a release" for details):
 #   1. finalize CHANGELOG.md: move [Unreleased] -> [X.Y.Z] - YYYY-MM-DD
-#   2. `cz bump --yes`  -- bumps pyproject.toml, commits, tags vX.Y.Z
+#   2. `cargo xtask bump`  -- moves every version file, commits, tags vX.Y.Z
 #   3. `git push origin main && git push origin vX.Y.Z`  -- triggers this workflow
 
 on:

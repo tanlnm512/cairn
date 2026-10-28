@@ -122,11 +122,6 @@ fn no_python_package_or_setuptools_glue_remains() {
         tracked.stdout.is_empty(),
         "nothing may be tracked under src/"
     );
-    let version_files = Regex::new(r"(?ms)^version_files = \[(.*?)\]")
-        .unwrap()
-        .captures(&text)
-        .expect("commitizen version_files missing");
-    assert!(!version_files[1].contains("src/cairn"));
 }
 
 #[test]

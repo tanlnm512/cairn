@@ -17,7 +17,7 @@ don't skip on "I'm sure it's fine."
 | [`## Portability (the .kg is shared across machines)`](#portability-the-kg-is-shared-across-machines) | Repo-relative path checks for the cross-machine store. |
 | [`## Breaking changes`](#breaking-changes) | Schema additivity, CLI/MCP signature shape, and CHANGELOG state. |
 | [`## Agent / bulk-edit safety`](#agent--bulk-edit-safety) | Verification gates for sub-agent or bulk edits. |
-| [`## Cutting a release`](#cutting-a-release) | Conventional commits, the changelog-first rule, the `cz` bump, and the tag-push paths. |
+| [`## Cutting a release`](#cutting-a-release) | Conventional commits, the changelog-first rule, `cargo xtask bump`, and the tag-push paths. |
 
 ## Tests
 - [ ] `cargo test --manifest-path Cargo.toml --workspace` — the engine
@@ -73,11 +73,9 @@ If changes were made by sub-agents or bulk find-replace:
 
 ## Cutting a release
 
-The version bump, version-file updates, and tagging are automated with
-[commitizen](https://commitizen-tools.github.io/commitizen/) (`cz`), configured
-in `pyproject.toml` under `[tool.commitizen]`. The CHANGELOG stays hand-curated
-— `cz` drafts it, a human finalizes it. Install it once with
-`uv sync --extra dev`.
+The version bump, version-file updates, and tagging are automated by
+`cargo xtask bump`. The CHANGELOG stays hand-curated — `bump --dry-run`
+drafts it, a human finalizes it.
 
 ### Main branch protection
 `make verify-protection` is maintainer-run: `gh` must be authenticated with
@@ -92,43 +90,40 @@ machine-readable output. It exits zero only when `main` has:
   `rust/crates/xtask/src/verify_protection.rs`.
 
 ### Conventional commits (the prerequisite)
-`cz` reads the conventional-commit history since the last tag to compute the
-bump and draft the changelog. This project already follows the convention:
+`cargo xtask bump` reads the conventional-commit history since the last tag
+to compute the bump and draft the changelog. This project already follows the convention:
 `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `ci:`, `chore:`, with an
-optional `(scope)`. Keep doing that. `feat` → MINOR, `fix` → PATCH, and a
-`BREAKING CHANGE:` footer (or `feat!:`/`fix!:`) → MAJOR.
+optional `(scope)`. Keep doing that. `feat` → MINOR, `fix`/`refactor`/`perf`
+→ PATCH, and a `BREAKING CHANGE:` footer (or `feat!:`/`fix!:`) → MAJOR.
 
 ### Release steps (run locally, on `main` after merging the PR cycle)
 1. **Preview** the bump and the auto-drafted changelog section:
    ```sh
-   cz bump --dry-run --changelog-to-stdout
+   cargo xtask bump --dry-run
    ```
-   This prints the proposed `X.Y.Z`, which `version_files` it will touch, and
-   a commit-derived changelog section. Nothing is written.
+   This prints the proposed `X.Y.Z`, the files it will touch, and a
+   commit-derived changelog section. Nothing is written.
 
 2. **Finalize `CHANGELOG.md` first.** Move the accumulated `[Unreleased]`
    entries under a dated header (`## [X.Y.Z] - YYYY-MM-DD`), expanding the
    terse auto-draft into the project's prose style if the release warrants it.
-   Why manually: commitizen's generator emits one-line entries from commit
-   subjects, which would discard the rich multi-paragraph entries this project
-   keeps (e.g. the 0.6.1 notes). `update_changelog_on_bump = false` in
-   `pyproject.toml` enforces this — `cz bump` will never rewrite CHANGELOG.md.
+   The draft is one line per commit subject; the project keeps richer
+   entries, so `bump` never writes CHANGELOG.md.
    Commit this change on its own (`docs: prepare X.Y.Z changelog`) before the
    bump so the bump commit only touches version files.
 
 3. **Bump** the version, commit, and tag in one step:
    ```sh
-   cz bump --yes
+   cargo xtask bump
    ```
-   This updates `version` in `pyproject.toml`, commits as
-   `bump: version A -> B`, and tags `v$version`. (If the pre-release
-   checklist above isn't done yet, run
-   `cz bump --version-files-only` to update files without committing/tagging.)
-   The Cargo workspace version (`Cargo.toml` `[workspace.package]`) is
-   not a `cz` version file: bump it to the same `X.Y.Z` in the changelog
-   commit — `release-rust.yml` refuses a tag that does not equal the
-   workspace version, and the crates.io publish would otherwise 404 every
-   binstall `pkg-url` at that version.
+   This moves the Cargo workspace version (`Cargo.toml`
+   `[workspace.package]`), the workspace entries in `Cargo.lock`, and
+   `[project]` `version` in `pyproject.toml` together, commits as
+   `bump: version A → B`, and tags `vB`; it refuses a dirty tree.
+   `release-rust.yml` refuses a tag that does not equal the workspace
+   version. (If the pre-release checklist above isn't done yet, run
+   `cargo xtask bump --files-only` to update files without committing or
+   tagging.)
 
 4. **Land the release commits on `main`, then push the tag.** `main` is
    branch-protected (changes must go through a PR with required status checks),

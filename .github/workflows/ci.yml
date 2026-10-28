@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   # --- Conventional Commit PR-title gate (hard) ---------------------------
-  # Mirrors the commitizen convention that `cz bump` derives the SemVer bump
+  # Mirrors the convention `cargo xtask bump` derives the SemVer bump
   # from. Fails the PR if the title isn't `type(optional-scope): subject`.
   pr-title:
     name: PR title (conventional commits)
@@ -31,7 +31,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Types match commitizen's defaults + the ones in this repo's history.
+          # The conventional-commit types this repo's history uses.
           types: |
             feat
             fix

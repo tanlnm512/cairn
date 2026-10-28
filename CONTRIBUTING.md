@@ -9,7 +9,7 @@ parsers — are genuinely welcome and have a real impact.
 ## Development setup
 
 cairn is a **Rust binary**; Python 3.10+ is used only for the dev tooling
-(pre-commit, commitizen, wheel builds). MIT-licensed.
+(wheel builds). MIT-licensed.
 
 ```bash
 git clone https://github.com/tanlnm512/cairn.git

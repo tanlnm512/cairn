@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 mod audit_status;
 mod baseline;
+mod bump;
 mod check_doc_links;
 mod cli_golden;
 mod cli_smoke;
@@ -40,6 +41,7 @@ const COMMANDS: &[&str] = &[
     "skill-evals",
     "cli-smoke",
     "scip-fixture",
+    "bump",
 ];
 
 fn main() -> ExitCode {
@@ -69,6 +71,7 @@ fn main() -> ExitCode {
         "skill-evals" => skill_evals::run(rest),
         "cli-smoke" => cli_smoke::run(rest),
         "scip-fixture" => scip_fixture::run(rest),
+        "bump" => bump::run(rest),
         other => {
             eprintln!(
                 "unknown command `{other}`; commands: {}",

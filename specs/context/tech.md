@@ -11,8 +11,8 @@ Stack, build and test runners, and gates. Cited from `Cargo.toml`,
   patch), tree-sitter with 15 grammar crates, rayon, clap, notify, prost,
   minijinja.
 - Release profile strips symbols (`[profile.release] strip = true`).
-- Python ≥ 3.10 only for dev tooling (pre-commit, commitizen, the wheel
-  build). The wheel has no runtime dependencies and no Python code.
+- Python ≥ 3.10 only for the wheel build (`python -m build` in the wheel
+  smoke). The wheel has no runtime dependencies and no Python code.
 - Wheel build: maturin (`[tool.maturin] bindings = "bin"` over
   `rust/crates/cairn-cli/Cargo.toml`) packages the engine binary as the
   `cairn` executable, tagged `py3-none-<platform>` with no Python module

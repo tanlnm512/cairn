@@ -61,7 +61,7 @@ verify-protection:
 	  --repo $(PROTECTION_REPO) $(ARGS)
 
 # Release walkthrough -- prints the steps AND previews the next bump.
-# Does NOT modify anything; the dry-run just shows what cz would do.
+# Does NOT modify anything; the dry-run just shows what bump would do.
 # Full details: docs/release-checklist.md "Cutting a release".
 release:
 	@echo "┌─ Release checklist ───────────────────────────────────────────"
@@ -73,8 +73,8 @@ release:
 	@echo "│  1. Finalize CHANGELOG.md: move [Unreleased] -> [X.Y.Z] - YYYY-MM-DD"
 	@echo "│     (use the draft printed below as a starting point)."
 	@echo "│"
-	@echo "│  2. cz bump --yes"
-	@echo "│     Bumps version in pyproject.toml, commits,"
+	@echo "│  2. cargo xtask bump"
+	@echo "│     Moves Cargo.toml, Cargo.lock and pyproject.toml, commits,"
 	@echo "│     tags vX.Y.Z. CHANGELOG stays hand-maintained."
 	@echo "│"
 	@echo "│  3. Land the release commits on main, then push the tag."
@@ -90,8 +90,7 @@ release:
 	@echo ""
 	@echo "Preview of the next bump (dry-run, nothing is written):"
 	@echo ""
-	@uv run cz bump --dry-run --changelog-to-stdout || \
-		echo "(cz not available -- run 'uv sync --extra dev' first)"
+	@cargo xtask bump --dry-run
 
 help:
 	@echo "Targets: dist evals ci-local ci-local-rust ci-local-parity audit-status comment-style comment-style-shrink verify-protection release help"
