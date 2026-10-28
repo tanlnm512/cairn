@@ -177,11 +177,14 @@ ensure_cargo_deny() {
 }
 
 ensure_prek() {
+  export PATH="$CACHE/prek-bin:$PATH"
   command -v prek >/dev/null 2>&1 && return 0
   log "installing prek (CI: prek-installer.sh)"
   curl --proto '=https' --tlsv1.2 -LsSf \
     "https://github.com/j178/prek/releases/download/v${PREK_VERSION}/prek-installer.sh" \
-    | sh >/dev/null 2>&1 || die "prek install failed"
+    | PREK_INSTALL_DIR="$CACHE/prek-bin" PREK_NO_MODIFY_PATH=1 sh >/dev/null 2>&1 \
+    || die "prek install failed"
+  command -v prek >/dev/null 2>&1 || die "prek not on PATH after install"
 }
 
 cd "$MOUNT_POINT"
