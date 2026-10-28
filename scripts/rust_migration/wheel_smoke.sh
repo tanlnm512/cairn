@@ -28,8 +28,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/cairn-wheel-smoke.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
-# Driver interpreter: the repo venv when present, else the runner's python.
-if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+# Driver interpreter: the active venv, else the repo venv, else the runner's python.
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+  PY="$VIRTUAL_ENV/bin/python"
+elif [ -x "$REPO_ROOT/.venv/bin/python" ]; then
   PY="$REPO_ROOT/.venv/bin/python"
 else
   PY="$(command -v python3 || command -v python)" || fail "no python interpreter on PATH"
