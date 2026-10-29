@@ -10,6 +10,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS build
 COPY --from=planner /src/recipe.json recipe.json
+# cargo-chef stubs workspace members only; the [patch.crates-io] sqlite-vec
+# path dep must exist on disk before cook can resolve the workspace.
+COPY rust/vendor/sqlite-vec/ ./rust/vendor/sqlite-vec/
 RUN cargo chef cook --release -p cairn-cli --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY rust/ ./rust/
