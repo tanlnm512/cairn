@@ -20,11 +20,14 @@ jobs:
     env:
       CAIRN_TELEMETRY: "off"
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: ". -> rust/target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: release-cli
       - name: Build cairn
         run: |
           cargo build --release --manifest-path Cargo.toml -p cairn-cli

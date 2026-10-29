@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: rust-ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,10 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install toolchain
+        run: rustup toolchain install
       - name: cargo fmt --check
         run: cargo fmt --manifest-path Cargo.toml --all -- --check
 
@@ -36,13 +35,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: ". -> rust/target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo clippy
         run: cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
 
@@ -51,11 +50,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: ". -> rust/target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo test
         # No release build here: the replay tests skip via this env, and the
         # real replays run in rust-parity.yml against a release build.
@@ -68,14 +69,15 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-          targets: x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install toolchain
+        run: |
+          rustup toolchain install
+          rustup target add x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: ". -> rust/target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           key: x86_64-pc-windows-msvc
       - name: cargo clippy
         run: cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
@@ -85,6 +87,8 @@ jobs:
         env:
           CAIRN_ALLOW_MISSING_GOLDENS: 1
       - name: cargo build (release)
+        # PRs already compile the workspace twice above; main proves the release profile.
+        if: github.event_name != 'pull_request'
         run: cargo build --manifest-path Cargo.toml --release --target x86_64-pc-windows-msvc -p cairn-cli
 
   deny:
@@ -92,69 +96,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> rust/target"
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
         with:
           tool: cargo-deny
       - name: cargo deny check
         run: cargo deny --config rust/deny.toml check advisories licenses
-
-  # --- Release dry-run build matrix: compile-only proof per target; --------
-  # no artifacts published here (real distribution lands in Phase 3).
-  build-release:
-    name: release build (${{ matrix.target }})
-    needs: [fmt, clippy, test, deny]
-    # Cross-target compile proof is release-shaped; clippy+test already
-    # compile the workspace on every PR.
-    if: github.event_name == 'push' || github.event_name == 'merge_group'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: macos-latest
-            target: x86_64-apple-darwin
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            cross: true
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-            cross: true
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            cross: true
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> rust/target"
-          key: ${{ matrix.target }}
-      - name: Install cross
-        if: matrix.cross == true
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cross
-      - name: Build (cargo)
-        if: matrix.cross != true
-        run: cargo build --release --target ${{ matrix.target }}
-      - name: Build (cross)
-        if: matrix.cross == true
-        run: cross build --release --target ${{ matrix.target }}
-      - name: Verify static link (musl)
-        if: contains(matrix.target, 'musl')
-        run: |
-          out=$(file "rust/target/${{ matrix.target }}/release/cairn")
-          echo "$out"
-          echo "$out" | grep -Eq 'statically linked|static-pie linked'

@@ -1,0 +1,5 @@
+.git
+rust/target
+target
+dist
+extensions/*/node_modules

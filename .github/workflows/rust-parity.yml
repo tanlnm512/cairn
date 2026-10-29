@@ -8,7 +8,7 @@ on:
     branches: [main]
     paths:
       - "rust/**"
-      - "scripts/rust_migration/**"
+      - "scripts/g2_check.sh"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/rust-parity.yml"
@@ -31,11 +31,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: ". -> rust/target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: release-cli
       - name: Build rust cairn (release)
         run: cargo build --release --manifest-path Cargo.toml -p cairn-cli
       - name: Build serve_search example
@@ -45,7 +48,7 @@ jobs:
       - name: cli golden
         run: cargo xtask cli-golden
       - name: G2 (base leg)
-        run: bash scripts/rust_migration/g2_check.sh
+        run: bash scripts/g2_check.sh
 
   # --- Nightly and dispatch only -------------------------------------------
   parity-stores:
@@ -54,11 +57,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: ". -> rust/target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: release-cli
       - name: Build rust cairn (release)
         run: cargo build --release --manifest-path Cargo.toml -p cairn-cli
       - name: parity replay (yarl)
@@ -72,17 +78,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: ". -> rust/target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: release-cli
       - name: Build rust cairn (release)
         run: cargo build --release --manifest-path Cargo.toml -p cairn-cli
-      # Expected red until staged builds swap into the store and rebuilds replace it.
       - name: G2 (rebuild + staging legs)
-        continue-on-error: true
         env:
           G2_LEGS: rebuild,staging
-        run: bash scripts/rust_migration/g2_check.sh
+        run: bash scripts/g2_check.sh
 

@@ -1,7 +1,16 @@
-# Build the engine binary from the rust workspace, then ship it alone: the
-# daemon needs no Python.
-FROM rust:1-slim-bookworm AS build
+# Build the engine binary from the rust workspace, then ship it alone.
+FROM rust:1.99.1-slim-bookworm AS chef
+RUN cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /src
+
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY rust/ ./rust/
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS build
+COPY --from=planner /src/recipe.json recipe.json
+RUN cargo chef cook --release -p cairn-cli --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY rust/ ./rust/
 RUN cargo build --release -p cairn-cli
