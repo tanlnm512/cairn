@@ -1,4 +1,4 @@
-//! Terminal rendering: rail, summary panel, and tables (cli/display.py port).
+//! Terminal rendering: rail, summary panel, and tables.
 
 use crate::display::{DIM, INFO, LABEL, SUCCESS, WARNING, paint};
 
@@ -280,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn rail_shape_matches_the_python_capture() {
+    fn rail_shape_matches_the_capture() {
         let mut rail = plain_rail();
         rail.step("Initialized in", Some("/tmp/ws"));
         rail.detail(".kg", "/tmp/x/.kg");
@@ -314,13 +314,13 @@ mod tests {
     }
 
     #[test]
-    fn kv_line_matches_the_python_padding() {
+    fn kv_line_matches_the_padding() {
         assert_eq!(kv_line("repos", "3"), "repos          3");
     }
 
     #[test]
-    fn summary_panel_matches_the_python_grid() {
-        // python: display.summary_panel("Built graph in 3.2s", [("files", "1,234")],
+    fn summary_panel_matches_the_grid() {
+        // display.summary_panel("Built graph in 3.2s", [("files", "1,234")],
         //     "edges resolved: 1,000 exact (10%)  ·  5 ambiguous  ·  0 unresolved")
         let lines = panel_lines(
             "Built graph in 3.2s",
@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn table_matches_the_python_grid() {
+    fn table_matches_the_grid() {
         let table = table_lines(
             "By repo",
             ["repo", "count"],

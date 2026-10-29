@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Instant;
 
+use cairn_query::textfmt::title_bool;
 use regex::Regex;
 use rusqlite::Connection;
 use serde_json::{Map, Value, json};
@@ -15,7 +16,7 @@ use crate::agent_install;
 use crate::cli_rows;
 use crate::cmds_doctor;
 use crate::display;
-use crate::py_json;
+use crate::json_compat;
 use crate::store_paths;
 
 // --- version -----------------------------------------------------------------
@@ -67,7 +68,7 @@ pub fn run_status(args: StatusArgs) -> ExitCode {
                 .sum::<f64>()
                 / mems.len() as f64
         };
-        // Python rounds the tier average to 3 decimals before the .2 display.
+        // The tier average is rounded to 3 decimals before the .2 display.
         let avg = format!("{avg:.3}").parse::<f64>().unwrap_or(avg);
         display::kv(
             &format!("  {tier}"),
@@ -361,13 +362,13 @@ pub fn run_metrics(args: MetricsArgs) -> ExitCode {
     }
     if args.as_json {
         if sections.len() == 1 {
-            println!("{}", py_json::dumps(&sections[0].1));
+            println!("{}", json_compat::dumps(&sections[0].1));
         } else {
             let mut obj = Map::new();
             for (key, value) in &sections {
                 obj.insert((*key).into(), value.clone());
             }
-            println!("{}", py_json::dumps(&Value::Object(obj)));
+            println!("{}", json_compat::dumps(&Value::Object(obj)));
         }
         return ExitCode::SUCCESS;
     }
@@ -432,7 +433,7 @@ fn metrics_default(args: &MetricsArgs) -> ExitCode {
                 })
             })
             .collect();
-        println!("{}", py_json::dumps(&Value::Array(items)));
+        println!("{}", json_compat::dumps(&Value::Array(items)));
         return ExitCode::SUCCESS;
     }
     let table_rows: Vec<Vec<String>> = rows
@@ -543,7 +544,7 @@ fn attr_value(raw: &str, key: &str) -> Option<String> {
     match value {
         Value::String(s) => Some(s.clone()),
         Value::Number(n) => Some(n.to_string()),
-        Value::Bool(b) => Some(if *b { "True".into() } else { "False".into() }),
+        Value::Bool(b) => Some(title_bool(*b).into()),
         _ => None,
     }
 }
@@ -929,7 +930,7 @@ pub fn run_report(args: ReportArgs) -> ExitCode {
     let db = db_arg(&args.db);
     let bundle = build_report(&db);
     let text = if args.as_json {
-        py_json::dumps(&bundle)
+        json_compat::dumps(&bundle)
     } else {
         render_report(&bundle)
     };
@@ -1585,7 +1586,7 @@ fn match_path(chars: &[char], start: usize, is_path_char: impl Fn(char) -> bool)
 }
 
 fn redact_match(matched: &str) -> String {
-    // Python takes the last split segment verbatim: a trailing slash leaves
+    // The last split segment is taken verbatim: a trailing slash leaves
     // an empty leaf, collapsing the whole match to bare "[PATH]".
     let leaf = matched.split(['\\', '/']).next_back().unwrap_or("");
     if leaf.is_empty() {

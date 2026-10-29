@@ -123,11 +123,11 @@ fn assert_golden(lang: &str, sample: &str, parser: WebParser) {
 }
 
 #[test]
-fn typescript_sample_matches_python_golden() {
+fn typescript_sample_matches_golden() {
     assert_golden("typescript", "sample.ts", WebParser::typescript());
 }
 
 #[test]
-fn javascript_sample_matches_python_golden() {
+fn javascript_sample_matches_golden() {
     assert_golden("javascript", "sample.js", WebParser::javascript());
 }

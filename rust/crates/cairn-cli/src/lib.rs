@@ -20,7 +20,7 @@ pub mod cmds_system;
 pub mod dashboard;
 pub mod display;
 pub mod pack;
-pub mod py_json;
+pub use cairn_query::json_compat;
 pub mod rail;
 pub mod store_paths;
 pub mod targz;

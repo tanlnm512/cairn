@@ -13,6 +13,7 @@ use rusqlite::Connection;
 use yaml_rust2::Yaml;
 use yaml_rust2::yaml::Hash;
 
+use crate::textfmt::title_bool;
 use crate::tools_search::{cosine_scan, embed_query, rrf_fuse, semantic_env, semantic_provenance};
 
 // --- errors -----------------------------------------------------------------
@@ -41,7 +42,7 @@ pub fn ys(s: impl Into<String>) -> Yaml {
 
 // --- time helpers (no chrono dep) -------------------------------------------
 
-/// Current UTC time as `YYYY-MM-DDTHH:MM:SSZ` (Python's `%Y-%m-%dT%H:%M:%SZ`).
+/// Current UTC time as `YYYY-MM-DDTHH:MM:SSZ` (strftime `%Y-%m-%dT%H:%M:%SZ`).
 pub fn iso_utc_now() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -49,7 +50,7 @@ pub fn iso_utc_now() -> String {
     format_iso_utc(now.as_secs() as i64)
 }
 
-/// Python `datetime.now(timezone.utc).isoformat()` (microseconds + offset).
+/// UTC `isoformat()`-style timestamp (microseconds + offset).
 pub fn iso_utc_micros() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -66,7 +67,7 @@ pub fn iso_utc_micros() -> String {
     )
 }
 
-/// UTC date as `YYYY-MM-DD` (Python's `%Y-%m-%d`).
+/// UTC date as `YYYY-MM-DD` (strftime `%Y-%m-%d`).
 pub fn iso_utc_date_now() -> String {
     iso_utc_now()[..10].to_string()
 }
@@ -109,9 +110,9 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// Parse an ISO-8601 date/datetime to epoch seconds. `naive_as_utc` mirrors
-/// Python's split: `parse_memory_timestamp` rejects naive values while
-/// `_parse_instant` accepts them as UTC.
+/// Parse an ISO-8601 date/datetime to epoch seconds. `naive_as_utc` selects
+/// whether naive values are rejected (`parse_memory_timestamp`) or
+/// accepted as UTC (`_parse_instant`).
 pub fn parse_iso_ts(value: &str, naive_as_utc: bool) -> Option<i64> {
     let v = value.trim();
     let re = ts_re();
@@ -172,7 +173,7 @@ fn instant_key(secs: i64) -> String {
     s
 }
 
-// --- unique suffixes (Python uuid4().hex[:6] role) --------------------------
+// --- unique suffixes (first 6 hex chars of a uuid4) --------------------------
 
 fn unique_suffix() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -199,7 +200,7 @@ fn unique_ref_id() -> String {
     format!("{nanos:032x}{:04x}", unique_suffix().len())
 }
 
-// --- tokenization (graph/tokenize.py port) ----------------------------------
+// --- tokenization ----------------------------------
 
 pub const BASE_STOP_WORDS: &[&str] = &[
     "the", "how", "does", "what", "is", "where", "when", "why", "this", "that", "are", "can",
@@ -227,7 +228,7 @@ pub fn simple_tokenize(text: &str, extra_stop: Option<&HashSet<String>>) -> Vec<
     tokens
 }
 
-// --- reference extraction + graph existence (refs.py port) ------------------
+// --- reference extraction + graph existence ------------------
 
 pub const FILE_EXTENSIONS: &[&str] = &[
     ".kt", ".java", ".swift", ".py", ".ts", ".tsx", ".js", ".jsx", ".dart", ".m", ".mm",
@@ -255,7 +256,7 @@ pub fn extract_file_refs(body: &str) -> Vec<String> {
     refs
 }
 
-/// Backtick-quoted symbol/qualified-name refs (not deduped, like Python).
+/// Backtick-quoted symbol/qualified-name refs (not deduped).
 pub fn extract_symbol_refs(body: &str) -> Vec<String> {
     static SYMBOL_RE: OnceLock<Regex> = OnceLock::new();
     let re = SYMBOL_RE.get_or_init(|| {
@@ -352,7 +353,7 @@ pub fn symbol_exists(conn: &Connection, name: &str) -> Result<bool, rusqlite::Er
     Ok(false)
 }
 
-// --- privacy filter (memory/privacy.py port) ---------------------------------
+// --- privacy filter ---------------------------------
 
 /// Strip `<private>` tags, URI credentials, and secret-looking tokens.
 pub fn strip_private_data(text: &str) -> String {
@@ -405,7 +406,7 @@ impl Privacy {
     }
 }
 
-// --- failure signature (memory/recurrence.py port) ----------------------------
+// --- failure signature ----------------------------
 
 /// Stable 16-hex key for the normalized shape of one tool failure.
 pub fn failure_signature(tool_name: &str, error: &str) -> String {
@@ -441,7 +442,7 @@ pub fn failure_signature(tool_name: &str, error: &str) -> String {
         .to_string()
 }
 
-// --- slugify (okf/utils.py port) ---------------------------------------------
+// --- slugify ---------------------------------------------
 
 /// URL-safe slug: lowercase, non-alnum runs to hyphens, trimmed, max 60 chars.
 pub fn slugify(text: &str) -> String {
@@ -460,8 +461,8 @@ pub fn slugify(text: &str) -> String {
     trimmed.chars().take(60).collect()
 }
 
-/// Python str.title(): uppercase each alphabetic run's first char, lowercase the rest.
-pub fn py_title(s: &str) -> String {
+/// `str.title()`: uppercase each alphabetic run's first char, lowercase the rest.
+pub fn title_case(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut prev_alpha = false;
     for c in s.chars() {
@@ -479,7 +480,7 @@ pub fn py_title(s: &str) -> String {
     out
 }
 
-// --- YAML frontmatter (okf/concept.py port) ----------------------------------
+// --- YAML frontmatter ----------------------------------
 
 /// An OKF concept: frontmatter fields + producer extensions + markdown body.
 #[derive(Debug, Clone, Default)]
@@ -564,7 +565,7 @@ impl Concept {
             .map(|(_, v)| v)
     }
 
-    /// Extension value as a string exactly as stored (Python `.get(key)`).
+    /// Extension value as a string exactly as stored.
     pub fn ext_str(&self, key: &str) -> Option<&str> {
         match self.ext(key) {
             Some(Yaml::String(s)) | Some(Yaml::Real(s)) => Some(s.as_str()),
@@ -667,11 +668,10 @@ fn str_list_yaml(items: &[String]) -> Yaml {
     Yaml::Array(items.iter().map(ys).collect())
 }
 
-/// Python-str() rendering of a non-string YAML scalar.
+/// `str()`-style rendering of a non-string YAML scalar.
 fn scalar_repr(v: &Yaml) -> String {
     match v {
-        Yaml::Boolean(true) => "True".into(),
-        Yaml::Boolean(false) => "False".into(),
+        Yaml::Boolean(b) => title_bool(*b).into(),
         Yaml::Integer(i) => i.to_string(),
         Yaml::Real(s) => s.clone(),
         Yaml::Null => "None".into(),
@@ -870,14 +870,14 @@ fn plain_safe(s: &str) -> bool {
     ])
 }
 
-// --- bundle (okf/bundle.py port) ----------------------------------------------
+// --- bundle ----------------------------------------------
 
 /// Manages the `.knowledge/` directory tree of OKF concepts.
 pub struct Bundle {
     pub root: PathBuf,
 }
 
-/// Resolve a path as Python's non-strict `Path.resolve()`: canonicalize the
+/// Resolve a path leniently (non-strict `Path.resolve()` semantics): canonicalize the
 /// deepest existing ancestor and re-apply the remaining components.
 pub(crate) fn resolve_lenient(p: &Path) -> PathBuf {
     if let Ok(c) = p.canonicalize() {
@@ -1044,14 +1044,14 @@ impl Bundle {
         }
     }
 
-    /// Advisory cross-process lock over bundle mutations (okf/bundle.py port).
+    /// Advisory cross-process lock over bundle mutations.
     pub fn lock(&self) -> Result<BundleLockGuard<'_>, ToolError> {
         BundleLockGuard::acquire(self)
     }
 }
 
 const BUNDLE_LOCK_TIMEOUT_S: f64 = 5.0;
-// Python renders the default timeout as str(5.0)
+// The default timeout renders as str(5.0)
 const BUNDLE_LOCK_TIMEOUT_TEXT: &str = "5.0";
 
 thread_local! {
@@ -1149,7 +1149,7 @@ fn count_sub(haystack: &str, needle: &str) -> usize {
     haystack.matches(needle).count()
 }
 
-// --- memory store (memory/store.py port) --------------------------------------
+// --- memory store --------------------------------------
 
 pub const TIERS: &[&str] = &["raw", "drafts", "tribal", "archived"];
 pub const STANCES: &[&str] = &["preferred", "tentative", "contested"];
@@ -1183,8 +1183,8 @@ pub fn tier_for_score(score: f64) -> &'static str {
     }
 }
 
-/// Python round(x, 3).
-pub fn py_round3(x: f64) -> f64 {
+/// `round(x, 3)` via scale-and-round.
+pub fn round3(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
 }
 
@@ -1302,9 +1302,9 @@ pub fn create_memory(
     })
 }
 
-/// Python-str-style float text ("0.578", "1.0").
+/// `str()`-style float text ("0.578", "1.0").
 pub fn fmt_score(x: f64) -> String {
-    let r = py_round3(x);
+    let r = round3(x);
     let s = format!("{r}");
     if s.contains('.') { s } else { format!("{s}.0") }
 }
@@ -1699,7 +1699,7 @@ pub fn decay(
     Ok((expired, archived))
 }
 
-// --- stance reflect (memory/stance.py port) -------------------------------------
+// --- stance reflect -------------------------------------
 
 /// Reflect outcome counts (`reflect_store` summary).
 pub struct ReflectSummary {
@@ -1778,8 +1778,7 @@ fn reflect_one(
         .ext_str("memory_superseded_by")
         .and_then(|edge| read_peer(bundle, edge));
     let has_refs = has_refs(concept);
-    let fraction =
-        py_round3(graph_verification(concept, conn).map_err(|e| ToolError(e.to_string()))?);
+    let fraction = round3(graph_verification(concept, conn).map_err(|e| ToolError(e.to_string()))?);
     let recorded = concept.ext_f64("memory_refs_baseline");
     let verdict = if let Some(peer) = &peer
         && shares_verified_symbol_ref(conn, concept, peer, memo)?
@@ -1848,7 +1847,7 @@ fn reflect_one(
     Ok((changed, final_stance))
 }
 
-// --- evolve + batch critic (memory/promotion.py port) ---------------------------
+// --- evolve + batch critic ---------------------------
 
 /// Evolve outcome: stored path, tier, score, and the superseded id.
 pub struct EvolveResult {
@@ -1950,8 +1949,8 @@ pub fn batch_critic(conn: &Connection, bundle: &Bundle) -> Result<BatchCriticRes
     };
     for mut concept in drafts {
         let mut signals = score_memory(&concept, conn)?;
-        signals.insert("critic_score".to_string(), py_round3(DEFAULT_CRITIC_SCORE));
-        let score = py_round3(compute_score(&signals));
+        signals.insert("critic_score".to_string(), round3(DEFAULT_CRITIC_SCORE));
+        let score = round3(compute_score(&signals));
         signals.insert("score".to_string(), score);
         apply_score(&mut concept, &signals);
         let new_tier = tier_for_score(score);
@@ -1987,7 +1986,7 @@ pub fn batch_critic(conn: &Connection, bundle: &Bundle) -> Result<BatchCriticRes
     Ok(out)
 }
 
-// --- consolidate (memory/store.py port) -----------------------------------------
+// --- consolidate -----------------------------------------
 
 /// Merge same-title raw memories into unified tribal knowledge, archiving
 /// their sources; returns the archived source count.
@@ -2034,7 +2033,7 @@ pub fn consolidate_memories(
             .title
             .clone()
             .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| py_title(&title_key));
+            .unwrap_or_else(|| title_case(&title_key));
         let mut tags: Vec<String> = Vec::new();
         for c in &group {
             for t in &c.tags {
@@ -2120,7 +2119,7 @@ pub fn consolidate_memories(
     Ok(consolidated)
 }
 
-// --- scoring (memory/scoring.py port) ------------------------------------------
+// --- scoring ------------------------------------------
 
 /// Fraction of backtick-quoted file/symbol refs that exist in the graph.
 pub fn graph_verification(concept: &Concept, conn: &Connection) -> Result<f64, rusqlite::Error> {
@@ -2260,18 +2259,15 @@ pub fn score_memory(
     let fresh = freshness(concept);
     let reinforce = reinforcement(concept, conn).map_err(|e| ToolError(e.to_string()))?;
     let mut signals = HashMap::new();
-    signals.insert("graph_verification".to_string(), py_round3(graph_v));
+    signals.insert("graph_verification".to_string(), round3(graph_v));
     signals.insert("cross_session_refs".to_string(), refs as f64);
-    signals.insert(
-        "cross_session_refs_signal".to_string(),
-        py_round3(refs_signal),
-    );
-    signals.insert("agent_confidence".to_string(), py_round3(agent_confidence));
-    signals.insert("critic_score".to_string(), py_round3(critic));
-    signals.insert("freshness".to_string(), py_round3(fresh));
-    signals.insert("reinforcement".to_string(), py_round3(reinforce));
-    signals.insert("authority".to_string(), py_round3(authority(concept)));
-    signals.insert("score".to_string(), py_round3(compute_score(&signals)));
+    signals.insert("cross_session_refs_signal".to_string(), round3(refs_signal));
+    signals.insert("agent_confidence".to_string(), round3(agent_confidence));
+    signals.insert("critic_score".to_string(), round3(critic));
+    signals.insert("freshness".to_string(), round3(fresh));
+    signals.insert("reinforcement".to_string(), round3(reinforce));
+    signals.insert("authority".to_string(), round3(authority(concept)));
+    signals.insert("score".to_string(), round3(compute_score(&signals)));
     Ok(signals)
 }
 
@@ -2324,7 +2320,7 @@ fn seed_refs_baseline(concept: &mut Concept, signals: &HashMap<String, f64>) {
     }
 }
 
-// --- search_memory (memory/promotion.py port) ----------------------------------
+// --- search_memory ----------------------------------
 
 fn parse_instant(value: &str) -> Option<i64> {
     parse_iso_ts(value, true)
@@ -2597,8 +2593,6 @@ fn embed_memory_count(conn: &Connection) -> Result<i64, rusqlite::Error> {
 fn current_model(corpus: &str) -> String {
     match std::env::var("CAIRN_EMBED_BACKEND").as_deref() {
         Ok("hash") => "hash-256-v1".to_string(),
-        Ok("openai") => std::env::var("CAIRN_EMBED_OPENAI_MODEL")
-            .unwrap_or_else(|_| "text-embedding-3-small".to_string()),
         _ => {
             let _ = corpus;
             "BAAI/bge-m3".to_string()
@@ -2621,7 +2615,7 @@ pub fn unembedded_memory_hint(conn: &Connection, bundle: &Bundle) -> Result<Stri
     Ok(String::new())
 }
 
-// --- capture (memory/promotion.py port) -----------------------------------------
+// --- capture -----------------------------------------
 
 fn is_session_bookkeeping(title: &str, body: &str) -> bool {
     struct Bookkeeping {
@@ -2652,7 +2646,7 @@ fn is_session_bookkeeping(title: &str, body: &str) -> bool {
     if b.task_id.is_match(&combined) || b.branch.is_match(&combined) {
         return true;
     }
-    // Python expressed "dated count" with same-line lookaheads: a line carrying
+    // "Dated count" uses same-line lookaheads: a line carrying
     // both a date and a unit count.
     if combined
         .lines()
@@ -2797,7 +2791,7 @@ pub struct CaptureResult {
     pub superseded: Option<String>,
 }
 
-// --- knowledge store (knowledge/store.py port) ----------------------------------
+// --- knowledge store ----------------------------------
 
 /// The path-safe doc_type for knowledge ids: slugified, "general" fallback.
 pub fn doc_type_slug(doc_type: &str) -> String {
@@ -3139,7 +3133,7 @@ pub fn delete_document(
     Ok(true)
 }
 
-// --- knowledge search (knowledge/search.py port) ---------------------------------
+// --- knowledge search ---------------------------------
 
 const WEIGHT_TITLE: usize = 10;
 const WEIGHT_DESCRIPTION: usize = 5;
@@ -3579,7 +3573,7 @@ fn load_namespaces() -> Vec<(String, String)> {
     .collect()
 }
 
-// --- workflow (knowledge/workflow.py port) ---------------------------------------
+// --- workflow ---------------------------------------
 
 pub fn resolve_workflow(bundle: &Bundle, ref_: &str) -> Result<Option<Concept>, ToolError> {
     if ref_.starts_with("knowledge/workflow/") {
@@ -3681,7 +3675,7 @@ pub fn add_workflow(
     )
 }
 
-// --- workflow staleness + sync (knowledge/workflow.py port) ---------------------
+// --- workflow staleness + sync ---------------------
 
 /// One stale step anchor.
 pub struct StaleStep {
@@ -3860,7 +3854,7 @@ pub fn sync_workflow(
         .filter(|t| !t.is_empty())
         .unwrap_or(&resource);
     let new_body = strip_private_data(&render_steps_body(title, &redacted));
-    // Python's sync constructs a fresh concept: the generated stamp is renewed
+    // Sync builds a fresh concept: the generated stamp is renewed
     // and first-class status/stale_after are dropped.
     let mut updated = Concept {
         type_: concept.type_.clone(),
@@ -3923,7 +3917,7 @@ fn flow_steps_yaml(steps: &[WorkflowStep]) -> Yaml {
     )
 }
 
-// --- compass tools (tools_compass.py + compass/router.py port) --------------------
+// --- compass tools --------------------
 
 /// First compass concept matching `module` by resource or concept id.
 pub fn find_compass_concept(bundle: &Bundle, module: &str) -> Result<Option<Concept>, ToolError> {
@@ -3957,7 +3951,7 @@ fn search_knowledge_data(
     Ok(results)
 }
 
-// --- flow compass (compass/generator.py + compass/critic.py port) ------------
+// --- flow compass ------------
 
 /// Default step cap for flow-to-workflow conversion (the MCP tool default).
 pub const DEFAULT_FLOW_STEP_LIMIT: usize = 20;
@@ -4408,7 +4402,7 @@ pub fn generate_flow_tool(
     Ok(results.join("\n"))
 }
 
-// --- module compass + coverage gaps (compass/generator.py + compass/gaps.py port) ---
+// --- module compass + coverage gaps ---
 
 /// Module argument is ambiguous across repos or empty.
 #[derive(Debug, Clone)]
@@ -4700,7 +4694,7 @@ fn rank_key_files(
     while let Some(r) = rows.next()? {
         incoming.insert(r.get::<_, String>(0)?, r.get::<_, i64>(1)?);
     }
-    // Insertion order preserves python's dict order for tied scores.
+    // Insertion order is kept for tied scores.
     let mut order: Vec<String> = Vec::new();
     let mut scores: HashMap<String, KeyFile> = HashMap::new();
     for s in symbols {
@@ -5730,7 +5724,7 @@ fn router_callees(conn: &Connection, name: &str, limit: i64) -> Vec<EdgeRef> {
     )
 }
 
-fn py_opt(v: &Option<i64>) -> String {
+fn opt_or_none(v: &Option<i64>) -> String {
     match v {
         Some(n) => n.to_string(),
         None => "None".into(),
@@ -5757,7 +5751,7 @@ fn query_graph(conn: &Connection, query: &str, token: &str) -> Yaml {
                             h.insert(ys("name"), ys(&d.name));
                             h.insert(
                                 ys("file"),
-                                ys(format!("{}:{}", d.file_path, py_opt(&d.line_start))),
+                                ys(format!("{}:{}", d.file_path, opt_or_none(&d.line_start))),
                             );
                             h.insert(ys("kind"), ys(&d.kind));
                             h
@@ -5839,7 +5833,7 @@ fn query_graph_hybrid(conn: &Connection, tokens: &[String]) -> Yaml {
             seeds.push((
                 r.kind,
                 r.name,
-                format!("{}:{}", r.file_path, py_opt(&r.line_start)),
+                format!("{}:{}", r.file_path, opt_or_none(&r.line_start)),
                 r.repo,
             ));
         }
@@ -5858,7 +5852,7 @@ fn query_graph_hybrid(conn: &Connection, tokens: &[String]) -> Yaml {
                 c.name.clone(),
                 name.clone(),
                 c.file_path.clone(),
-                py_opt(&c.edge_line),
+                opt_or_none(&c.edge_line),
             );
             if seen_caller_keys.contains(&key) {
                 continue;
@@ -5868,7 +5862,7 @@ fn query_graph_hybrid(conn: &Connection, tokens: &[String]) -> Yaml {
                 "{} ({}:{})",
                 c.name,
                 c.file_path,
-                py_opt(&c.edge_line)
+                opt_or_none(&c.edge_line)
             ));
         }
         for c in router_callees(conn, name, 5) {
@@ -5876,7 +5870,7 @@ fn query_graph_hybrid(conn: &Connection, tokens: &[String]) -> Yaml {
                 name.clone(),
                 c.name.clone(),
                 c.file_path.clone(),
-                py_opt(&c.edge_line),
+                opt_or_none(&c.edge_line),
             );
             if seen_callee_keys.contains(&key) {
                 continue;
@@ -5886,7 +5880,7 @@ fn query_graph_hybrid(conn: &Connection, tokens: &[String]) -> Yaml {
                 "{} ({}:{})",
                 c.name,
                 c.file_path,
-                py_opt(&c.edge_line)
+                opt_or_none(&c.edge_line)
             ));
         }
     }
@@ -5987,7 +5981,7 @@ fn layer_nonempty(v: &Yaml) -> bool {
     }
 }
 
-// --- deterministic critic (compass/critic.py port) ---------------------------------
+// --- deterministic critic ---------------------------------
 
 /// `^#{1,2}([ \t]+.*)?[ \t\r]*$` — the same-or-higher heading that ends a section.
 fn same_or_higher_heading(line: &str) -> bool {
@@ -6862,9 +6856,9 @@ pub fn ask_compass(
         match data {
             Yaml::Hash(h) => {
                 for (k, v) in h {
-                    // Hash values render as Python str(value): string-list
+                    // Hash values render as str(value): string-list
                     // members come out single-quoted (the router contract).
-                    out.push(format!("  {}: {}", scalar_repr(k), python_repr(v)));
+                    out.push(format!("  {}: {}", scalar_repr(k), router_repr(v)));
                 }
             }
             Yaml::Array(items) => {
@@ -6878,17 +6872,17 @@ pub fn ask_compass(
     Ok(out.join("\n"))
 }
 
-/// Python `str(value)` for router payload values: string list members quoted.
-fn python_repr(v: &Yaml) -> String {
+/// Router payload repr: strings quoted (`"` when they hold only a single quote), nothing escaped.
+fn router_repr(v: &Yaml) -> String {
     match v {
         Yaml::Array(items) => {
-            let inner: Vec<String> = items.iter().map(python_repr).collect();
+            let inner: Vec<String> = items.iter().map(router_repr).collect();
             format!("[{}]", inner.join(", "))
         }
         Yaml::Hash(h) => {
             let inner: Vec<String> = h
                 .iter()
-                .map(|(k, v)| format!("{}: {}", python_repr(k), python_repr(v)))
+                .map(|(k, v)| format!("{}: {}", router_repr(k), router_repr(v)))
                 .collect();
             format!("{{{}}}", inner.join(", "))
         }
@@ -6903,11 +6897,11 @@ fn python_repr(v: &Yaml) -> String {
     }
 }
 
-/// Python `str(value)`: strings bare, other values as their repr.
-pub fn py_str(v: &Yaml) -> String {
+/// Router payload text: strings bare, other values via `router_repr`.
+pub fn router_display(v: &Yaml) -> String {
     match v {
         Yaml::String(s) => s.clone(),
-        other => python_repr(other),
+        other => router_repr(other),
     }
 }
 
@@ -6975,7 +6969,7 @@ fn ask_compass_file_context(
     Ok(out.join("\n"))
 }
 
-// --- knowledge index (knowledge/index.py + islands.py port) ----------------------
+// --- knowledge index ----------------------
 
 /// One normalized relationship neighbor (`related_docs` row).
 pub struct RelatedDoc {
@@ -7322,11 +7316,11 @@ pub fn check_bundle(root: &Path) -> Vec<String> {
             }
             Err(e) => errors.push(format!("{rel}: Parse error in {}: {e}", path.display())),
             Ok(text) => {
-                // Python list() on a scalar tags value raises inside from_file,
+                // A scalar tags value raises inside from_file,
                 // so the whole concept reports as a parse error.
                 let scalar_tags_error = split_frontmatter(&text).and_then(|(fm, _)| {
                     let tags = fm.iter().find(|(k, _)| k == "tags").map(|(_, v)| v)?;
-                    // Python's `tags or []` treats falsy scalars as no tags.
+                    // Falsy scalars count as no tags.
                     match tags {
                         Yaml::Integer(0) | Yaml::Boolean(false) => None,
                         Yaml::Integer(_) => Some("'int' object is not iterable"),
@@ -7499,7 +7493,7 @@ pub fn resolve_successor(conn: &Connection, body: &str) -> Option<String> {
     }
 }
 
-// --- memory sharing surface (memory/store.py: share/check/purge port) ------------
+// --- memory sharing surface ------------
 
 /// Validate that every symbol entry is a non-empty string.
 fn validate_symbols(symbols: &[String]) -> Result<(), ToolError> {
@@ -7657,7 +7651,7 @@ mod tests {
             "str-tags.md",
             "---\ntype: Knowledge-spec\ntitle: t\ntags: abc\n---\nbody\n",
         );
-        // falsy scalars fall back to [] in Python (`tags or []`) and report nothing
+        // falsy scalars fall back to [] and report nothing
         write(
             "zero-tags.md",
             "---\ntype: Knowledge-spec\ntitle: t\ntags: 0\n---\nbody\n",
@@ -7699,7 +7693,7 @@ mod tests {
     }
 
     #[test]
-    fn slugify_matches_python() {
+    fn slugify_matches_reference_vectors() {
         assert_eq!(
             slugify("golden mcp capture add probe"),
             "golden-mcp-capture-add-probe"
@@ -7837,8 +7831,8 @@ mod tests {
     }
 
     #[test]
-    fn failure_signature_matches_the_python_recurrence_key() {
-        // Keys pinned from the last Python memory/recurrence.py capture.
+    fn failure_signature_matches_the_recurrence_key() {
+        // Pinned recurrence keys.
         assert_eq!(
             failure_signature("Bash", "Traceback: /opt/venv/lib/site.py:1 boom pid 4242"),
             "086e3a1aee6ab843"

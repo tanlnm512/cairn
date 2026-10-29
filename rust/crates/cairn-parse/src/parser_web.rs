@@ -1033,7 +1033,7 @@ mod tests {
     }
 
     #[test]
-    fn routes_web_suffixes_like_the_python_scanner() {
+    fn routes_web_suffixes() {
         for (suffix, language) in [
             ("ts", "typescript"),
             ("tsx", "typescript"),

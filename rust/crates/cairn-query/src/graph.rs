@@ -2122,7 +2122,7 @@ mod viz {
 
     /// One self-contained HTML document (the dashboard's local vis-network
     /// viewer, the graph JSON, and the Mermaid source; no network assets).
-    /// `graph_json` is the compact python-separators serialization of `graph`.
+    /// `graph_json` is the compact-separators serialization of `graph`.
     pub fn to_html(graph: &Graph, viewer_js: &str, graph_json: &str) -> String {
         let meta = &graph["metadata"];
         let focus = ["symbol", "module", "repo"]
@@ -2301,7 +2301,7 @@ mod viz {
         })
     }
 
-    // The canonical classifier (graph/tests.py port); viz keeps no local copy.
+    // The canonical classifier; viz keeps no local copy.
     use crate::tools_nav::is_test_symbol as shared_is_test_symbol;
 
     /// One curated scope: kept nodes, deduped internal edges, honest metadata.

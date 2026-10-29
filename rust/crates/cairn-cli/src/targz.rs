@@ -39,7 +39,7 @@ enum MemberName {
     Long { name: String },
 }
 
-/// Python tarfile never loses a member name; neither may we.
+/// A member name is never lost.
 fn member_name(path: &str) -> MemberName {
     if path.len() <= NAME_MAX {
         return MemberName::Short(path.to_string());
@@ -368,7 +368,7 @@ mod tests {
     }
 
     /// (member name, data offset) pairs; resolves prefix fields and GNU
-    /// long-name entries the way tar and Python tarfile do — including
+    /// long-name entries the way tar does — including
     /// rejecting headers whose checksum does not match, like both real readers.
     fn member_names(tar: &[u8]) -> Vec<(String, usize)> {
         let mut out = Vec::new();

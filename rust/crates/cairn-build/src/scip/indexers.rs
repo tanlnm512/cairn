@@ -366,7 +366,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_covers_the_python_language_table() {
+    fn registry_covers_the_language_table() {
         assert_eq!(
             known_languages(),
             vec![
@@ -384,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn build_commands_match_the_python_templates() {
+    fn build_commands_match_the_templates() {
         let cases: &[(&str, &str, &str, Vec<&str>)] = &[
             (
                 "swift",

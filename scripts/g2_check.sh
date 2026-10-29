@@ -26,13 +26,13 @@ set -uo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORPUS="${1:-$REPO_ROOT}"
 WORKERS="${CAIRN_WORKERS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
 FROZEN_NORM="$REPO_ROOT/rust/golden/dump/self-corpus.norm.txt"
 PINNED_CORPUS="$REPO_ROOT/rust/golden/stores/self/corpus"
 xtask() { cargo run -q --manifest-path "$REPO_ROOT/Cargo.toml" -p xtask -- "$@"; }
-RS_CAIRN="${CAIRN_RUST_BIN:-$REPO_ROOT/rust/target/release/cairn}"
+RS_CAIRN="${CAIRN_BIN:-$REPO_ROOT/rust/target/release/cairn}"
 WORK="$(mktemp -d /tmp/cairn-g2.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 

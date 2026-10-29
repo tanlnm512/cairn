@@ -1,13 +1,13 @@
 //! Shrink-only comment-style gate over the repo's Rust crates.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fmt::Write as _;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::OnceLock;
 
+use cairn_query::json_compat::{dumps_sorted, dumps_with};
 use clap::Parser as _;
 use regex::Regex;
 use serde_json::{Map, Value, json};
@@ -275,7 +275,7 @@ fn baseline_document(violations: &[Violation]) -> Value {
 }
 
 fn write_baseline(path: &Path, violations: &[Violation]) -> Result<()> {
-    let text = py_json(&baseline_document(violations), Some(2)) + "\n";
+    let text = dumps_sorted(&baseline_document(violations)) + "\n";
     let io_error = |err: std::io::Error| CommentStyleError(format!("{}: {err}", path.display()));
     let parent = path
         .parent()
@@ -331,7 +331,7 @@ fn validate_baseline(path: &Path, document: &Value) -> Result<Vec<BaselineEntry>
         .as_object()
         .filter(|map| has_exact_keys(map, &["schema_version", "violations"]))
         .ok_or_else(invalid)?;
-    // Python compares with `==`, so `1.0` and `true` also equal the schema version.
+    // Equality is loose, so `1.0` and `true` also equal the schema version.
     let schema_ok = match &document["schema_version"] {
         Value::Bool(flag) => *flag,
         Value::Number(number) => number.as_f64() == Some(1.0),
@@ -485,83 +485,6 @@ fn check_comment_baseline(root: &Path, baseline_path: &Path) -> Result<CheckResu
     })
 }
 
-// --- Python-compatible JSON (`json.dumps(..., sort_keys=True)`) ---
-
-fn py_json(value: &Value, indent: Option<usize>) -> String {
-    let mut out = String::new();
-    write_py_json(&mut out, value, indent, 0);
-    out
-}
-
-fn write_py_json(out: &mut String, value: &Value, indent: Option<usize>, depth: usize) {
-    let newline = |out: &mut String, depth: usize| {
-        if let Some(width) = indent {
-            out.push('\n');
-            out.extend(std::iter::repeat_n(' ', width * depth));
-        }
-    };
-    let separator = if indent.is_some() { "," } else { ", " };
-    match value {
-        Value::Null => out.push_str("null"),
-        Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
-        Value::Number(number) => out.push_str(&number.to_string()),
-        Value::String(text) => write_py_string(out, text),
-        Value::Array(items) if items.is_empty() => out.push_str("[]"),
-        Value::Object(map) if map.is_empty() => out.push_str("{}"),
-        Value::Array(items) => {
-            out.push('[');
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    out.push_str(separator);
-                }
-                newline(out, depth + 1);
-                write_py_json(out, item, indent, depth + 1);
-            }
-            newline(out, depth);
-            out.push(']');
-        }
-        Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            out.push('{');
-            for (index, key) in keys.into_iter().enumerate() {
-                if index > 0 {
-                    out.push_str(separator);
-                }
-                newline(out, depth + 1);
-                write_py_string(out, key);
-                out.push_str(": ");
-                write_py_json(out, &map[key], indent, depth + 1);
-            }
-            newline(out, depth);
-            out.push('}');
-        }
-    }
-}
-
-fn write_py_string(out: &mut String, text: &str) {
-    out.push('"');
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\x08' => out.push_str("\\b"),
-            '\x0c' => out.push_str("\\f"),
-            ' '..='~' => out.push(c),
-            _ => {
-                let mut units = [0u16; 2];
-                for unit in c.encode_utf16(&mut units) {
-                    let _ = write!(out, "\\u{unit:04x}");
-                }
-            }
-        }
-    }
-    out.push('"');
-}
-
 // --- CLI ---
 
 #[derive(clap::Parser, Debug)]
@@ -610,9 +533,10 @@ fn display(path: &Path, root: &Path) -> String {
 }
 
 fn writer_payload(flag: &str, remaining: usize, baseline: &str) -> String {
-    py_json(
+    dumps_with(
         &json!({"ok": true, flag: true, "remaining": remaining, "baseline": baseline}),
         None,
+        true,
     )
 }
 
@@ -697,7 +621,7 @@ fn failure_lines(result: &CheckResult) -> Vec<String> {
 fn run_check(root: &Path, baseline: &Path, as_json: bool) -> Result<u8> {
     let result = check_comment_baseline(root, baseline)?;
     if as_json {
-        println!("{}", py_json(&result.to_json(), None));
+        println!("{}", dumps_with(&result.to_json(), None, true));
         return Ok(u8::from(!result.ok()));
     }
     if !result.ok() {
@@ -733,7 +657,10 @@ fn execute(args: &Args) -> u8 {
     };
     outcome.unwrap_or_else(|CommentStyleError(message)| {
         if args.as_json {
-            println!("{}", py_json(&json!({"ok": false, "error": message}), None));
+            println!(
+                "{}",
+                dumps_with(&json!({"ok": false, "error": message}), None, true)
+            );
         } else {
             eprintln!("comment-style: error: {message}");
         }
@@ -943,21 +870,5 @@ mod tests {
         assert!(error_of(run_update(&root, &baseline, false)).contains("growth"));
         assert_eq!(fs::read(&baseline).unwrap(), shrunk);
         fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn json_output_matches_python_dumps_formatting() {
-        let value = json!({
-            "b": ["é", "x\"\\\n\t\u{1}"],
-            "a": {},
-            "c": [],
-            "d": [{"z": 1, "y": true, "x": null}],
-        });
-        let indented = "{\n  \"a\": {},\n  \"b\": [\n    \"\\u00e9\",\n    \"x\\\"\\\\\\n\\t\\u0001\"\n  ],\n  \"c\": [],\n  \"d\": [\n    {\n      \"x\": null,\n      \"y\": true,\n      \"z\": 1\n    }\n  ]\n}";
-        assert_eq!(py_json(&value, Some(2)), indented);
-        assert_eq!(
-            py_json(&json!({"b": ["é😀"], "a": 1}), None),
-            r#"{"a": 1, "b": ["\u00e9\ud83d\ude00"]}"#
-        );
     }
 }

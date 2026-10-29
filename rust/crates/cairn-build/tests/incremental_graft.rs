@@ -1,7 +1,4 @@
-//! Graft contract: one edited file reindexed incrementally must leave the
-//! store content-equal to a full rebuild of the same tree (the 2d gate).
-//! Row ids diverge between graft and rebuild by design; comparison runs on
-//! the g2 gate's content-key normalization (scripts/rust_migration/g2_check.sh).
+//! An incrementally grafted store must be content-equal to a full rebuild under g2 normalization.
 
 use std::collections::BTreeMap;
 use std::fs;

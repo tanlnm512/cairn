@@ -1,4 +1,4 @@
-//! `cairn serve`: the serve group and daemon lifecycle (serve.py port).
+//! `cairn serve`: the serve group and daemon lifecycle.
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use cairn_daemon::lifecycle as lc;
 use cairn_daemon::server::{DaemonConfig, serve_config};
+use cairn_query::textfmt::title_bool;
 
 use crate::store_paths;
 
@@ -295,11 +296,11 @@ pub fn status_lines(inputs: StatusInputs<'_>) -> Vec<String> {
     };
     let mut lines = vec![
         format!("cairn daemon: {health}"),
-        format!("  LaunchAgent loaded : {}", python_bool(inputs.loaded)),
+        format!("  LaunchAgent loaded : {}", title_bool(inputs.loaded)),
         format!("  daemon pid         : {}", pid_display(inputs.pid)),
         format!(
             "  healthz responds   : {}  ({})",
-            python_bool(inputs.responds),
+            title_bool(inputs.responds),
             lc::mcp_url(inputs.port, inputs.host)
         ),
         format!(
@@ -333,11 +334,6 @@ pub fn status_lines(inputs: StatusInputs<'_>) -> Vec<String> {
         lines.push("  -> run `cairn serve stop` to kill strays".to_string());
     }
     lines
-}
-
-/// Python's `str(bool)`: `True`/`False` (the status report echoes through f-strings).
-fn python_bool(value: bool) -> &'static str {
-    if value { "True" } else { "False" }
 }
 
 /// Stop then start the daemon.
@@ -399,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn status_lines_match_the_python_report_shape() {
+    fn status_lines_match_the_report_shape() {
         let lines = status_lines(inputs(
             false,
             None,

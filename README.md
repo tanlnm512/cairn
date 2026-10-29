@@ -350,7 +350,7 @@ effective value and where it came from):
 | `CAIRN_WORKERS` | parse-pool size (default: CPU count) |
 | `CAIRN_READ_ONLY=1` | open the store read-only, skipping the pre-query freshness refresh (what `cairn serve --read-only` sets for the daemon) |
 | `CAIRN_TELEMETRY=off` | master kill switch for the local telemetry tables |
-| `CAIRN_RUST_BIN` | daemon start: exec this engine binary instead of the running one |
+| `CAIRN_BIN` | engine binary a daemon start execs (default: the running `cairn`, then `PATH`) |
 
 ## Supported Platforms & Agents
 

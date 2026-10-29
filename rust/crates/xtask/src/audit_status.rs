@@ -6,9 +6,13 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::sync::LazyLock;
 
+use cairn_query::json_compat::{dumps, dumps_compact};
+use cairn_query::textfmt::title_bool;
 use clap::Parser;
 use regex::Regex;
 use serde_json::{Map, Value, json};
+
+use crate::golden_record::repr_str;
 
 const PRIORITIES: [&str; 4] = ["P0", "P1", "P2", "P3"];
 
@@ -21,79 +25,14 @@ static SEPARATOR_CELL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^:?-+:?$"
 
 type Findings = BTreeMap<String, Vec<String>>;
 
-pub(crate) fn py_repr_str(s: &str) -> String {
-    let quote = if s.contains('\'') && !s.contains('"') {
-        '"'
-    } else {
-        '\''
-    };
-    let mut out = String::from(quote);
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c == quote => {
-                out.push('\\');
-                out.push(c);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push(quote);
-    out
-}
-
-fn py_repr(value: &Value) -> String {
+/// Sidecar `schema_version` as shown in errors: `repr` for scalars, compact JSON for containers.
+fn schema_version_text(value: &Value) -> String {
     match value {
         Value::Null => "None".into(),
-        Value::Bool(true) => "True".into(),
-        Value::Bool(false) => "False".into(),
-        Value::String(s) => py_repr_str(s),
+        Value::Bool(b) => title_bool(*b).into(),
+        Value::String(s) => repr_str(s),
         other => other.to_string(),
     }
-}
-
-fn sorted_value(value: &Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            Value::Object(
-                keys.into_iter()
-                    .map(|k| (k.clone(), sorted_value(&map[k])))
-                    .collect(),
-            )
-        }
-        Value::Array(items) => Value::Array(items.iter().map(sorted_value).collect()),
-        other => other.clone(),
-    }
-}
-
-fn ascii_escape(json: &str) -> String {
-    let mut out = String::with_capacity(json.len());
-    for c in json.chars() {
-        if c.is_ascii() {
-            out.push(c);
-        } else {
-            let mut units = [0u16; 2];
-            for unit in c.encode_utf16(&mut units) {
-                out.push_str(&format!("\\u{unit:04x}"));
-            }
-        }
-    }
-    out
-}
-
-/// Mirrors Python `json.dumps(value, indent=2[, sort_keys=True])` including ASCII escaping.
-pub(crate) fn py_json_pretty(value: &Value, sort_keys: bool) -> String {
-    let rendered = if sort_keys {
-        serde_json::to_string_pretty(&sorted_value(value))
-    } else {
-        serde_json::to_string_pretty(value)
-    };
-    ascii_escape(&rendered.unwrap_or_default())
 }
 
 fn read(path: &Path, rel: &str) -> Result<String, String> {
@@ -145,7 +84,7 @@ fn parse_index(text: &str, rel: &str) -> Result<Findings, String> {
             if !FINDING_ID.is_match(id) {
                 return Err(format!(
                     "{rel}: invalid finding ID {} in {priority} index",
-                    py_repr_str(id)
+                    repr_str(id)
                 ));
             }
             if !seen.insert(id.to_string()) {
@@ -188,7 +127,7 @@ fn load_sidecar(path: &Path, rel: &str, known: &BTreeSet<&String>) -> Result<Vec
         _ => false,
     };
     if !is_one {
-        let shown = version.map_or_else(|| "None".to_string(), py_repr);
+        let shown = version.map_or_else(|| "None".to_string(), schema_version_text);
         return Err(format!("{rel}: unsupported schema_version {shown}"));
     }
     let fixed: Option<Vec<String>> =
@@ -299,7 +238,7 @@ pub fn run(args: &[String]) -> ExitCode {
     match collect_audit_status(&root) {
         Err(message) => {
             if parsed.json {
-                let error = ascii_escape(&Value::String(message).to_string());
+                let error = dumps_compact(&Value::String(message));
                 println!("{{\"error\": {error}}}");
             } else {
                 eprintln!("audit-status: {message}");
@@ -308,7 +247,7 @@ pub fn run(args: &[String]) -> ExitCode {
         }
         Ok(status) => {
             if parsed.json {
-                println!("{}", py_json_pretty(&status, false));
+                println!("{}", dumps(&status));
             } else {
                 for priority in PRIORITIES {
                     let counts = &status["totals"][priority];

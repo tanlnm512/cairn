@@ -58,7 +58,7 @@ pub struct DumpOptions {
 pub enum DumpError {
     /// Underlying SQLite failure.
     Sqlite(rusqlite::Error),
-    /// A TEXT cell that is not valid UTF-8 (Python raises the same way).
+    /// A TEXT cell that is not valid UTF-8 (rendering fails the same way).
     InvalidText(String),
 }
 
@@ -181,7 +181,7 @@ fn escape(text: &str) -> String {
         .replace('\0', "\\0")
 }
 
-/// Render a double exactly like Python's `float.hex()`.
+/// Render a double as a `float.hex()`-format string.
 fn float_hex(x: f64) -> String {
     let bits = x.to_bits();
     let sign = if bits >> 63 == 1 { "-" } else { "" };
@@ -274,7 +274,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn float_hex_matches_python_float_hex() {
+    fn float_hex_matches_reference_vectors() {
         // Expected values generated with CPython 3.12 `float.hex()`.
         let cases: &[(u64, &str)] = &[
             (0x0000_0000_0000_0000, "0x0.0p+0"),
@@ -307,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn escape_and_quote_ident_mirror_python() {
+    fn escape_and_quote_ident_match_reference() {
         assert_eq!(escape("a\\b\nc\rd\te\0f"), "a\\\\b\\nc\\rd\\te\\0f");
         assert_eq!(escape("plain"), "plain");
         assert_eq!(quote_ident("simple"), "\"simple\"");
@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn classify_tables_matches_python_classes() {
+    fn classify_tables_matches_reference_classes() {
         let conn = fixture_db();
         let classes = classify_tables(&conn).expect("classify");
         assert_eq!(classes["vals"], TableClass::Content);
@@ -349,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn dump_lines_match_the_python_format() {
+    fn dump_lines_match_the_format() {
         let conn = fixture_db();
         let (classes, lines) = dump_connection(&conn, &DumpOptions::default()).expect("dump");
         assert_eq!(classes["vals"], TableClass::Content);

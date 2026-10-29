@@ -2362,6 +2362,7 @@ name = "xtask"
 version = "0.24.1"
 dependencies = [
  "cairn-build",
+ "cairn-query",
  "cairn-store",
  "clap",
  "prost",

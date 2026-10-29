@@ -680,7 +680,7 @@ fn merge_json_file(
     }
 
     let merged = deep_merge(existing, merger_obj, config_key);
-    let body = crate::py_json::dumps(&Value::Object(merged)) + "\n";
+    let body = crate::json_compat::dumps(&Value::Object(merged)) + "\n";
     if atomic_write_text(path, &body).is_ok() {
         res.add(path, false);
     }
@@ -1085,7 +1085,7 @@ fn rm_if_ours(path: &Path, expected: &str, res: &mut InstallResult) {
 }
 
 fn write_json(path: &Path, data: &Value) {
-    let body = crate::py_json::dumps(data) + "\n";
+    let body = crate::json_compat::dumps(data) + "\n";
     let _ = atomic_write_text(path, &body);
 }
 

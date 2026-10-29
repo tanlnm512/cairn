@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cairn_query::textfmt::title_bool;
 use clap::Parser;
 use regex::Regex;
 use serde_json::{Map, Value, json};
@@ -589,7 +590,7 @@ fn run_setup(client: &mut RustClient, setup: &Setup) -> Result<Result<String, St
             None => Err(format!(
                 "setup {} returned no concept id: {}",
                 setup.tool,
-                gr::py_str_repr(&text)
+                gr::repr_str(&text)
             )),
         },
     )
@@ -620,11 +621,7 @@ fn replay_entries(
                 "structuredContent": null,
             }),
         };
-        let is_error = if response["isError"].as_bool().unwrap_or(false) {
-            "True"
-        } else {
-            "False"
-        };
+        let is_error = title_bool(response["isError"].as_bool().unwrap_or(false));
         note(&format!("  {}: replayed isError={is_error}", entry.tool));
         captures.insert(entry.tool.clone(), Capture { args, response });
     }
@@ -757,8 +754,8 @@ pub(crate) fn shrink(diff: &str) -> String {
     )
 }
 
-fn py_list(items: &[&String]) -> String {
-    let quoted: Vec<String> = items.iter().map(|item| gr::py_str_repr(item)).collect();
+fn repr_list(items: &[&String]) -> String {
+    let quoted: Vec<String> = items.iter().map(|item| gr::repr_str(item)).collect();
     format!("[{}]", quoted.join(", "))
 }
 
@@ -809,7 +806,7 @@ fn replay(
                 .iter()
                 .collect::<std::collections::BTreeSet<_>>()
                 .len(),
-            py_list(&missing)
+            repr_list(&missing)
         ));
         replay_entries(&mut client, &entries)?
     };

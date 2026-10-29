@@ -8,12 +8,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use cairn_query::json_compat::dumps_sorted;
 use clap::Parser;
 use regex::Regex;
 use rusqlite::Connection;
 use serde_json::{Value, json};
 
-use crate::audit_status::py_json_pretty;
 use crate::parity::{
     DB_NAME, Halt, cargo_bin, exit_code, make_scratch, pinned_stores, refuse_live_store,
     rust_workspace, target_dir,
@@ -450,7 +450,7 @@ fn execute(args: &Args) -> Result<u8, Halt> {
             fs::create_dir_all(parent)
                 .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
         }
-        let body = py_json_pretty(&block.to_value(), true) + "\n";
+        let body = dumps_sorted(&block.to_value()) + "\n";
         fs::write(path, body).map_err(|err| format!("write {}: {err}", path.display()))?;
         note(&format!("wrote {}", path.display()));
     }

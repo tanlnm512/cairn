@@ -9,8 +9,8 @@ use std::sync::LazyLock;
 use regex::Regex;
 use yaml_rust2::{Yaml, YamlLoader};
 
-use crate::audit_status::py_repr_str;
 use crate::check_doc_links::repo_root;
+use crate::golden_record::repr_str;
 
 const TOP_LEVEL_ENUMS: [&str; 3] = ["CoreCommand", "KnowledgeCommand", "SystemCommand"];
 const REQUIRED_KEYS: [&str; 6] = [
@@ -229,8 +229,8 @@ fn resolve_tool(
             false,
             format!(
                 "unregistered MCP tool: {} (tail {} matches no catalog tool; expected_calls must name real tools)",
-                py_repr_str(t),
-                py_repr_str(tail)
+                repr_str(t),
+                repr_str(tail)
             ),
         );
     }
@@ -271,7 +271,7 @@ fn resolve_tool(
     }
     (
         false,
-        format!("unknown tool/command/script: {}", py_repr_str(t)),
+        format!("unknown tool/command/script: {}", repr_str(t)),
     )
 }
 
@@ -418,8 +418,8 @@ fn validate_spec(path: &Path, s: &Surfaces) -> Vec<String> {
     {
         problems.push(format!(
             "'id' ({}) does not match filename stem ({})",
-            py_repr_str(id),
-            py_repr_str(&stem)
+            repr_str(id),
+            repr_str(&stem)
         ));
     }
     problems

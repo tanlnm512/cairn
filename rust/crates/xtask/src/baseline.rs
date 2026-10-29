@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
+use cairn_query::json_compat::dumps_sorted;
 use clap::Parser;
 use regex::Regex;
 use serde_json::{Map, Value, json};
 
-use crate::audit_status::py_json_pretty;
 use crate::parity::{
     DB_NAME, Halt, RustClient, RustDaemon, daemon_env, default_out_dir, ensure_serve_binary,
     entries_from_fixtures, exit_code, load_pinned_store, make_scratch, random_hex,
@@ -354,7 +354,7 @@ fn execute(args: &Args) -> Result<u8, Halt> {
             fs::create_dir_all(parent)
                 .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
         }
-        let body = py_json_pretty(&block.to_value(), true) + "\n";
+        let body = dumps_sorted(&block.to_value()) + "\n";
         fs::write(path, body).map_err(|err| format!("write {}: {err}", path.display()))?;
         note(&format!("wrote {}", path.display()));
     }

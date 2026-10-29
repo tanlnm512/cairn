@@ -33,7 +33,7 @@ Vendored: `rust/vendor/tree-sitter-dart` (workspace member) and
 ## Development tooling
 - `rust/crates/xtask/`: repo gates, replay oracles, canonical-dump tooling
   and the measured gates (`cargo xtask` lists them).
-- `scripts/`: installers and `rust_migration/` (`g2_check.sh`).
+- `scripts/`: installers and `g2_check.sh`.
 - `tests/fixtures/`: SCIP-indexing fixture repos.
 - `packaging/`: the Homebrew formula template.
 

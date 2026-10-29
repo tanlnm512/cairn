@@ -12,13 +12,14 @@ use yaml_rust2::Yaml;
 use cairn_query::ingest;
 use cairn_query::skillgen;
 use cairn_query::tasks::{self, DanglingPointer};
+use cairn_query::textfmt::{os_error_text, title_bool};
 use cairn_query::tools_km::{self, Bundle, Concept, KnowledgeHit, RelatedDoc, WorkflowStep};
 use cairn_query::tools_search::{self, EffectiveBackend};
 use cairn_query::tools_wiki::{self, PipelineError};
 use cairn_store::{conn as store_conn, schema as store_schema};
 
 use crate::display;
-use crate::py_json;
+use crate::json_compat;
 use crate::store_paths::resolve_store;
 
 const IMPORT_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
@@ -1252,7 +1253,7 @@ fn run_task(group: TaskGroup) -> ExitCode {
     }
 }
 
-// --- task queue (cli/task.py port) ------------------------------------------------
+// --- task queue ------------------------------------------------
 
 /// The --knowledge default for the task group: the resolved store's bundle.
 fn task_bundle(knowledge: Option<&str>) -> Bundle {
@@ -1303,7 +1304,11 @@ fn task_show(task_id: &str, knowledge: Option<&str>) -> ExitCode {
     if !t.facts.is_empty() {
         println!("## Facts");
         for (key, val) in &t.facts {
-            println!("  {}: {}", tasks::py_display(key), tasks::py_display(val));
+            println!(
+                "  {}: {}",
+                tasks::yaml_display(key),
+                tasks::yaml_display(val)
+            );
         }
     }
     println!();
@@ -1351,7 +1356,7 @@ fn task_complete(
         match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(e) => {
-                eprintln!("Cannot read result file: {}", py_oserror_text(&e, path));
+                eprintln!("Cannot read result file: {}", os_error_text(&e, path));
                 return ExitCode::FAILURE;
             }
         }
@@ -1425,21 +1430,6 @@ fn task_complete(
     ExitCode::SUCCESS
 }
 
-/// Python OSError str(): "[Errno <n>] <message>: '<path>'".
-fn py_oserror_text(e: &std::io::Error, path: &str) -> String {
-    let message = e
-        .to_string()
-        .trim_end_matches(&format!(
-            " (os error {})",
-            e.raw_os_error().unwrap_or_default()
-        ))
-        .to_string();
-    match e.raw_os_error() {
-        Some(code) => format!("[Errno {code}] {message}: '{path}'"),
-        None => format!("{message}: '{path}'"),
-    }
-}
-
 fn task_drop(task_id: &str, knowledge: Option<&str>) -> ExitCode {
     let bundle = task_bundle(knowledge);
     let outcome = match tasks::drop_task(&bundle, task_id) {
@@ -1476,8 +1466,8 @@ fn usage_error(usage: &str, msg: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
-/// Python str() of a float ("0.62", "1.0").
-fn py_float_text(f: f64) -> String {
+/// Float text with a guaranteed fractional part ("0.62", "1.0").
+fn float_text(f: f64) -> String {
     let s = format!("{f}");
     if s.contains('.') || s.contains('e') || s.contains("inf") || s.contains("NaN") {
         s
@@ -1486,13 +1476,12 @@ fn py_float_text(f: f64) -> String {
     }
 }
 
-/// YAML scalar as Python str() would render it; None for null/composite.
+/// YAML scalar as `str()` renders it; None for null/composite.
 fn yaml_scalar_text(v: &Yaml) -> Option<String> {
     match v {
         Yaml::String(s) | Yaml::Real(s) => Some(s.clone()),
         Yaml::Integer(i) => Some(i.to_string()),
-        Yaml::Boolean(true) => Some("True".to_string()),
-        Yaml::Boolean(false) => Some("False".to_string()),
+        Yaml::Boolean(b) => Some(title_bool(*b).to_string()),
         _ => None,
     }
 }
@@ -1547,10 +1536,10 @@ fn open_db_read_only(path: &Path) -> Result<Connection, rusqlite::Error> {
 }
 
 /// One memory-listing line: '[<tier> ]<score>, refs-verified=<refs>[, stance=...] title [id]'.
-/// Python str(round(x, 3)): correct decimal rounding, half to even.
-fn py_round3_text(x: f64) -> String {
+/// `str(round(x, 3))`: correct decimal rounding, half to even.
+fn round3_text(x: f64) -> String {
     let fixed = format!("{x:.3}");
-    py_float_text(fixed.parse().unwrap_or(x))
+    float_text(fixed.parse().unwrap_or(x))
 }
 
 fn memory_line(
@@ -1562,7 +1551,7 @@ fn memory_line(
     let refs = match conn {
         None => "?".to_string(),
         Some(conn) => tools_km::graph_verification(c, conn)
-            .map(py_round3_text)
+            .map(round3_text)
             .unwrap_or_else(|_| "?".to_string()),
     };
     let tier = if with_tier {
@@ -1592,7 +1581,7 @@ fn memory_line(
     format!("  [{tier}{score}, refs-verified={refs}{stance_seg}] {title}{cid}")
 }
 
-/// Python \b<symbol>\b containment on a lowercased haystack.
+/// `\b<symbol>\b` containment on a lowercased haystack.
 fn has_word(hay_lower: &str, symbol_lower: &str) -> bool {
     if symbol_lower.is_empty() {
         return false;
@@ -1612,7 +1601,7 @@ fn has_word(hay_lower: &str, symbol_lower: &str) -> bool {
     false
 }
 
-/// Python str.title(): alpha chars after any non-alpha boundary capitalize.
+/// `str.title()`: alpha chars after any non-alpha boundary capitalize.
 /// Import-collision slug: "(repo)" style suffix, numbered past the first.
 fn unique_slug(base: &str, repo: &str, seen: &mut std::collections::HashSet<String>) -> String {
     const SLUG_MAX: usize = 60;
@@ -1744,7 +1733,7 @@ fn knowledge_import(dir_path: &str, doc_type: &str, tags: &str, affects: &str) -
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
-        let title = tools_km::py_title(&stem.replace(['-', '_'], " "));
+        let title = tools_km::title_case(&stem.replace(['-', '_'], " "));
         let slug = unique_slug(
             &tools_km::slugify(&title),
             dir_name(&md_file).as_str(),
@@ -1827,11 +1816,11 @@ fn knowledge_list(
                     "concept_id": concept_id,
                     "title": c.title,
                     "doc_type": if parts.len() > 2 { parts[1].to_string() } else { String::new() },
-                    "doc_status": c.ext("doc_status").map(py_json::yaml_to_value).unwrap_or(Value::Null),
+                    "doc_status": c.ext("doc_status").map(json_compat::yaml_to_value).unwrap_or(Value::Null),
                 })
             })
             .collect();
-        println!("{}", py_json::dumps(&Value::Array(rows)));
+        println!("{}", json_compat::dumps(&Value::Array(rows)));
         return ExitCode::SUCCESS;
     }
     if docs.is_empty() {
@@ -1866,7 +1855,7 @@ fn hit_json(r: &KnowledgeHit) -> Value {
         let deps: serde_json::Map<String, Value> = r
             .graph_deps
             .iter()
-            .map(|(repo, y)| (repo.clone(), py_json::yaml_to_value(y)))
+            .map(|(repo, y)| (repo.clone(), json_compat::yaml_to_value(y)))
             .collect();
         row.insert("graph_deps".into(), Value::Object(deps));
     }
@@ -1890,7 +1879,7 @@ fn knowledge_search(query: &str, limit: i64, as_json: bool, db: Option<&str>) ->
     };
     if as_json {
         let rows: Vec<Value> = results.iter().map(hit_json).collect();
-        println!("{}", py_json::dumps(&Value::Array(rows)));
+        println!("{}", json_compat::dumps(&Value::Array(rows)));
         return ExitCode::SUCCESS;
     }
     if results.is_empty() {
@@ -2004,7 +1993,7 @@ fn knowledge_islands(as_json: bool, db: Option<&str>) -> ExitCode {
                 })
             })
             .collect();
-        println!("{}", py_json::dumps(&Value::Array(rows)));
+        println!("{}", json_compat::dumps(&Value::Array(rows)));
         return ExitCode::SUCCESS;
     }
     if islands.is_empty() {
@@ -2070,7 +2059,7 @@ fn knowledge_related(doc_id: &str, as_json: bool, db: Option<&str>) -> ExitCode 
                 })
             })
             .collect();
-        println!("{}", py_json::dumps(&Value::Array(rows)));
+        println!("{}", json_compat::dumps(&Value::Array(rows)));
         return ExitCode::SUCCESS;
     }
     if neighbors.is_empty() {
@@ -2124,7 +2113,7 @@ fn knowledge_chain(doc_id: &str, as_json: bool, db: Option<&str>) -> ExitCode {
                 })
             })
             .collect();
-        println!("{}", py_json::dumps(&Value::Array(rows)));
+        println!("{}", json_compat::dumps(&Value::Array(rows)));
         return ExitCode::SUCCESS;
     }
     println!(
@@ -2229,7 +2218,7 @@ fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-// --- validate / validate-paths / verify (cli/validate.py port) -----------------
+// --- validate / validate-paths / verify -----------------
 
 /// The --knowledge default: CAIRN_KNOWLEDGE-aware resolved store bundle.
 fn knowledge_path_arg(knowledge: Option<&str>) -> PathBuf {
@@ -2281,7 +2270,7 @@ fn validate_paths_cmd(db: Option<&str>, knowledge: Option<&str>, mark: bool) -> 
         println!(
             "  [STALE] {}  (verified: {})",
             entry.concept_id,
-            py_round3_text(entry.verified)
+            round3_text(entry.verified)
         );
         if !mark {
             continue;
@@ -2352,7 +2341,7 @@ fn verify_cmd(doc_path: &str, db: Option<&str>, knowledge: Option<&str>) -> Exit
             Err(e) => {
                 eprintln!(
                     "Could not read concept '{doc_path}': {}",
-                    py_oserror_text(&e, path.to_string_lossy().as_ref())
+                    os_error_text(&e, path.to_string_lossy().as_ref())
                 );
                 return ExitCode::from(2);
             }
@@ -2383,9 +2372,9 @@ fn verify_cmd(doc_path: &str, db: Option<&str>, knowledge: Option<&str>) -> Exit
     ExitCode::SUCCESS
 }
 
-// --- knowledge rebuild / embed (cli/knowledge.py port) --------------------------
+// --- knowledge rebuild / embed --------------------------
 
-/// Python's dangling-pointer warning rendering (index/executor shared).
+/// Dangling-pointer warning rendering shared by index and executor.
 fn echo_dangling_warnings(items: &[DanglingPointer]) {
     for item in items {
         match &item.candidates {
@@ -2533,7 +2522,7 @@ fn knowledge_embed(db: Option<&str>, batch_size: i64) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-// --- knowledge ingest (cli/knowledge.py port) -----------------------------------
+// --- knowledge ingest -----------------------------------
 
 /// A relationship entry's field as text.
 fn rel_field(entry: &Yaml, key: &str) -> String {
@@ -2627,17 +2616,17 @@ fn knowledge_ingest(
             ("expected_count", report.expected_count.to_string(), false),
             (
                 "count_ok",
-                py_bool(report.count_ok).to_string(),
+                title_bool(report.count_ok).to_string(),
                 !report.count_ok,
             ),
             (
                 "smoke_search_hit",
-                py_bool(report.smoke_search_hit).to_string(),
+                title_bool(report.smoke_search_hit).to_string(),
                 !report.smoke_search_hit,
             ),
             (
                 "validate_ok",
-                py_bool(report.validate_ok).to_string(),
+                title_bool(report.validate_ok).to_string(),
                 !report.validate_ok,
             ),
             ("validate_errors", report.validate_errors.to_string(), false),
@@ -2695,7 +2684,7 @@ fn knowledge_ingest(
     ExitCode::SUCCESS
 }
 
-// --- skill generate (cli/skill.py port) -----------------------------------------
+// --- skill generate -----------------------------------------
 
 fn skill_generate(
     selectors: &[String],
@@ -3023,14 +3012,14 @@ fn workflow_trace(reference: &str, as_json: bool) -> ExitCode {
             "title": concept.title,
             "doc_status": concept
                 .ext("doc_status")
-                .map(py_json::yaml_to_value)
+                .map(json_compat::yaml_to_value)
                 .unwrap_or(json!("active")),
             "steps": concept
                 .ext("steps")
-                .map(py_json::yaml_to_value)
+                .map(json_compat::yaml_to_value)
                 .unwrap_or(json!([])),
         });
-        println!("{}", py_json::dumps(&obj));
+        println!("{}", json_compat::dumps(&obj));
         return ExitCode::SUCCESS;
     }
     let doc_status = concept.ext_str("doc_status").unwrap_or("active");
@@ -3284,7 +3273,7 @@ fn memory_record(
     println!(
         "Recorded {mtype} '{title}' -> {} (score={}, tier={})",
         result.path,
-        py_float_text(result.score),
+        float_text(result.score),
         result.tier
     );
     ExitCode::SUCCESS
@@ -3502,8 +3491,8 @@ fn memory_list(
     ExitCode::SUCCESS
 }
 
-/// CPython 3.12+ built-in sum(): Neumaier compensated summation over floats.
-fn python_sum(values: &[f64]) -> f64 {
+/// Neumaier compensated summation over floats.
+fn compensated_sum(values: &[f64]) -> f64 {
     let mut sum = 0.0f64;
     let mut comp = 0.0f64;
     for &x in values {
@@ -3529,8 +3518,8 @@ fn memory_stats(knowledge: Option<&str>) -> ExitCode {
         let avg = if scores.is_empty() {
             "0".to_string()
         } else {
-            let mean = python_sum(&scores) / scores.len() as f64;
-            py_round3_text(mean)
+            let mean = compensated_sum(&scores) / scores.len() as f64;
+            round3_text(mean)
         };
         println!("  {tier:10} {:>4} memories (avg score {avg})", mems.len());
     }
@@ -3874,7 +3863,7 @@ fn memory_evolve(
     println!(
         "Evolved '{memory_path}' -> {} (score={}, tier={}, superseded {})",
         result.path,
-        py_float_text(result.score),
+        float_text(result.score),
         result.tier,
         result.superseded
     );
@@ -4179,7 +4168,7 @@ fn compass_validate(db: Option<&str>, knowledge: Option<&str>) -> ExitCode {
 fn critic_verdict_lines(result: &tools_km::CriticResult) {
     println!(
         "  passed: {}  quality: {:.2}  errors: {}  warnings: {}",
-        py_bool(result.passed),
+        title_bool(result.passed),
         result.quality_score,
         result.errors.len(),
         result.warnings.len()
@@ -4278,7 +4267,7 @@ fn agent_backend_run(
         "[cairn task: {prompt_id}]\n\nUse the cairn skill to process this. \
          Facts (graph-grounded):\n{}\n\n## Output spec\n{}\n\nOutput ONLY the \
          result content, nothing else.",
-        py_json::dumps(&py_json::yaml_to_value(&Yaml::Hash(facts.clone()))),
+        json_compat::dumps(&json_compat::yaml_to_value(&Yaml::Hash(facts.clone()))),
         tasks::output_spec(prompt_id, &yaml_rust2::yaml::Hash::new()),
     );
     let argv: Vec<String> = match cli {
@@ -4432,7 +4421,7 @@ fn compass_generate(
             println!("  revise cycles: {}", outcome.cycles);
             println!(
                 "  critic verdict: passed={} quality={:.2} errors={} warnings={}",
-                py_bool(result.passed),
+                title_bool(result.passed),
                 result.quality_score,
                 result.errors.len(),
                 result.warnings.len()
@@ -5024,11 +5013,6 @@ fn wiki_search(query: &str, knowledge: Option<&str>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Python str() of a bool.
-fn py_bool(b: bool) -> &'static str {
-    if b { "True" } else { "False" }
-}
-
 fn manifest_error_exit(msg: &str) -> ExitCode {
     eprintln!("Wiki manifest error: {msg}");
     ExitCode::FAILURE
@@ -5213,7 +5197,7 @@ fn wiki_generate(
                 println!("--- {} (dry-run; not written) ---", concept.concept_id);
                 println!(
                     "  passed: {}  quality: {:.2}  errors: {}  warnings: {}",
-                    py_bool(result.passed),
+                    title_bool(result.passed),
                     result.quality_score,
                     result.errors.len(),
                     result.warnings.len()
@@ -5376,7 +5360,7 @@ fn wiki_retry(repo: Option<&str>, knowledge: Option<&str>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Python non-strict `Path.resolve()`.
+/// Non-strict `Path.resolve()`.
 fn resolve_lenient(path: &Path) -> PathBuf {
     if let Ok(c) = path.canonicalize() {
         return c;
@@ -5609,13 +5593,13 @@ mod tests {
     }
 
     #[test]
-    fn py_title_and_word_match_track_python() {
+    fn title_case_and_has_word_boundaries() {
         assert_eq!(
-            tools_km::py_title("golden-capture_rule"),
+            tools_km::title_case("golden-capture_rule"),
             "Golden-Capture_Rule"
         );
-        assert_eq!(tools_km::py_title("release notes v2"), "Release Notes V2");
-        assert_eq!(tools_km::py_title("it's a title"), "It'S A Title");
+        assert_eq!(tools_km::title_case("release notes v2"), "Release Notes V2");
+        assert_eq!(tools_km::title_case("it's a title"), "It'S A Title");
         assert!(has_word("call main() to start", "main"));
         assert!(!has_word("domain", "main"));
         assert!(!has_word("mainframe", "main"));

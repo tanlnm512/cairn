@@ -197,11 +197,8 @@ fn serve_cmdline_classifier_matrix() {
     ));
     assert!(is_cairn_serve_cmdline("cairn serve run"));
     assert!(is_cairn_serve_cmdline("cairn serve run --read-only"));
-    assert!(is_cairn_serve_cmdline(
+    assert!(!is_cairn_serve_cmdline(
         "/usr/bin/python3 /opt/bin/cairn serve run"
-    ));
-    assert!(is_cairn_serve_cmdline(
-        "python /home/u/.local/bin/cairn serve run"
     ));
     // Lifecycle subcommands are transient CLI invocations, never servers.
     for sub in ["start", "stop", "status", "restart"] {
@@ -486,44 +483,5 @@ fn plist_program_arguments_round_trips_the_written_plist() {
         lifecycle::plist_program_arguments(&dir.join("absent.plist")),
         None
     );
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-// --- daemon binary selection (serialized: process env) ----------------------------
-
-#[test]
-fn daemon_bin_selection() {
-    let dir = tempfile_dir("impl");
-    let bin = dir.join("rust-cairn");
-    std::fs::write(&bin, b"#!/bin/sh\n").expect("bin stub");
-    unsafe {
-        std::env::set_var(lifecycle::RUST_BIN_ENV, &bin);
-        assert_eq!(
-            lifecycle::rust_bin().as_deref(),
-            Some(bin.to_string_lossy().as_ref())
-        );
-        assert_eq!(
-            lifecycle::daemon_bin(),
-            Ok(bin.to_string_lossy().into_owned())
-        );
-
-        std::env::set_var(lifecycle::RUST_BIN_ENV, "/nonexistent/rust-cairn");
-        let current = std::env::current_exe().expect("current exe");
-        let expected = if current
-            .file_name()
-            .is_some_and(lifecycle::is_cairn_binary_name)
-        {
-            Some(current.to_string_lossy().into_owned())
-        } else {
-            None
-        };
-        assert_eq!(lifecycle::rust_bin(), expected);
-        assert_eq!(
-            lifecycle::daemon_bin(),
-            Ok(expected.unwrap_or_else(lifecycle::cg_bin))
-        );
-
-        std::env::remove_var(lifecycle::RUST_BIN_ENV);
-    }
     std::fs::remove_dir_all(&dir).ok();
 }

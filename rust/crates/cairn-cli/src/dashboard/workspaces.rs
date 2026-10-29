@@ -1,4 +1,4 @@
-//! Store enumeration + probes for the workspaces overview (workspaces.py port).
+//! Store enumeration + probes for the workspaces overview.
 
 use std::path::Path;
 

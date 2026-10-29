@@ -1,4 +1,4 @@
-//! `cairn pack`: the deterministic token-budgeted context pack (pack.py port).
+//! `cairn pack`: the deterministic token-budgeted context pack.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use serde_json::{Map, Value};
 
 use crate::cli_rows;
-use crate::py_json;
+use crate::json_compat;
 use crate::store_paths;
 
 const CHARS_PER_TOKEN: usize = 4;
@@ -732,7 +732,7 @@ pub fn run(args: PackArgs) -> ExitCode {
             dropped_map.insert(cls.clone(), Value::from(*count as i64));
         }
         object.insert("dropped".into(), Value::Object(dropped_map));
-        println!("{}", py_json::dumps(&Value::Object(object)));
+        println!("{}", json_compat::dumps(&Value::Object(object)));
         return ExitCode::SUCCESS;
     }
     print!("{}", render_pack(&result));

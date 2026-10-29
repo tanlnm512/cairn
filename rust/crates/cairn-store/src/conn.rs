@@ -78,7 +78,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_open_carries_python_pragma_parity() {
+    fn read_only_open_carries_expected_pragmas() {
         let path = temp_db("pragmas");
         {
             let writer = Connection::open(&path).expect("writable create");

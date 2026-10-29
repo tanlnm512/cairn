@@ -542,7 +542,7 @@ fn record_recall_roundtrip_and_supersession() {
         .expect("path in message")
         .to_string();
     let old_base = old_path.rsplit('/').next().expect("basename");
-    // Python echoes the candidate's read-back concept_id, which from_file makes
+    // The candidate's read-back concept_id is echoed, which from_file makes
     // absolute; the memory identity is the basename either way.
     assert!(
         second.contains(&format!("[superseded {old_path}]")) || second.contains(old_base),
@@ -693,7 +693,7 @@ fn memory_demote_delete_decay_promote_lifecycle() {
 // --- ask_compass contract tests (cross-layer routing) ----------------------------
 
 #[test]
-fn classify_intent_matches_python_table() {
+fn classify_intent_matches_table() {
     let cases: &[(&str, &str, &str)] = &[
         ("what is the refund policy", "knowledge_lookup", "L5"),
         ("epic requirement scope", "knowledge_lookup", "L5"),

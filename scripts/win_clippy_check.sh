@@ -8,7 +8,7 @@
 # empty objects for the build scripts to succeed.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET=x86_64-pc-windows-msvc
 STUBS="$REPO_ROOT/.cache/win-cross-stubs"
 mkdir -p "$STUBS"

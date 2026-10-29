@@ -25,7 +25,7 @@ pub const POLISH_INSTRUCTIONS: &str = concat!(
     "existing backtick-quoted references. Return the full polished document text."
 );
 
-// --- selector (skillgen/selector.py port) ----------------------------------------
+// --- selector ----------------------------------------
 
 /// Resolved selector: qualified symbol names plus tokens that matched nothing.
 #[derive(Debug, Clone, Default)]
@@ -142,7 +142,7 @@ fn symbols_under_path(conn: &Connection, token: &str) -> Vec<String> {
     names
 }
 
-// --- ranking (skillgen/ranking.py port) ------------------------------------------
+// --- ranking ------------------------------------------
 
 /// Candidates ranked by structural centrality, plus the tier that scored them.
 #[derive(Debug, Clone)]
@@ -247,7 +247,7 @@ fn ordered(scored: Vec<(String, i64)>) -> Vec<String> {
     scored.into_iter().map(|(name, _)| name).collect()
 }
 
-// --- assembly (skillgen/assembly.py port) ----------------------------------------
+// --- assembly ----------------------------------------
 
 /// Assembled skill draft: module, compass, ranked symbols, and memories.
 #[derive(Debug, Clone, Default)]
@@ -404,7 +404,7 @@ fn memories(
         .collect())
 }
 
-// --- emitter (skillgen/emitter.py port) ------------------------------------------
+// --- emitter ------------------------------------------
 
 /// Normalize text to a filesystem slug.
 pub fn slugify(text: &str) -> String {
@@ -513,7 +513,7 @@ pub fn split_references(
     (inline, refs)
 }
 
-// --- gate (skillgen/gate.py port) -------------------------------------------------
+// --- gate -------------------------------------------------
 
 /// Gate outcome: ok, or rejected with failing refs.
 #[derive(Debug, Clone)]
@@ -564,7 +564,7 @@ fn failing_refs(conn: &Connection, rendered: &str) -> Vec<String> {
     out
 }
 
-// --- polish stage (skillgen/polish.py port) ---------------------------------------
+// --- polish stage ---------------------------------------
 
 /// Outcome of a skill polishing step.
 #[derive(Debug, Clone, Default)]

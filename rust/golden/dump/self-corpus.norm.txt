@@ -15983,7 +15983,6 @@ embeddings.content_hash	applied
 files.mtime	applied
 files.size	applied
 imports.local_alias	applied
-memory_validity.backfill	applied
 symbols.arity	applied
 symbols.body	applied
 symbols.imports_summary	applied

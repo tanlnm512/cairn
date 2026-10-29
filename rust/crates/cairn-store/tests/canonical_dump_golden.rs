@@ -21,14 +21,14 @@ fn dumped_text(opts: &DumpOptions) -> String {
 }
 
 #[test]
-fn rust_dump_is_byte_equal_to_the_python_golden() {
+fn dump_is_byte_equal_to_the_golden() {
     let expected = fs::read_to_string(golden_dir().join("corner-store.canonical.txt"))
         .expect("read canonical golden");
     assert_eq!(dumped_text(&DumpOptions::default()), expected);
 }
 
 #[test]
-fn rust_dump_with_map_path_is_byte_equal_to_the_python_golden() {
+fn dump_with_map_path_is_byte_equal_to_the_golden() {
     let expected = fs::read_to_string(golden_dir().join("corner-store.mapped.canonical.txt"))
         .expect("read mapped golden");
     let opts = DumpOptions {

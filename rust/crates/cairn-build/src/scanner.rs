@@ -662,7 +662,7 @@ pub fn repository_id_for_path(workspace: &str, repo_path: &Path) -> String {
 }
 
 /// Symlink-resolving path normalization that tolerates nonexistent leaves
-/// (Python `Path.resolve()` strict=False), so deletion events keep resolving.
+/// (non-strict `Path.resolve()`), so deletion events keep resolving.
 pub fn resolve_lenient(path: &Path) -> PathBuf {
     let mut tail: Vec<std::ffi::OsString> = Vec::new();
     let mut cur = path.to_path_buf();
@@ -782,7 +782,7 @@ pub fn infer_repo_language(files: &[FileInfo]) -> Option<String> {
         }
         *counts.entry(f.language.clone()).or_insert(0) += 1;
     }
-    // Python max() keeps the first maximum in iteration (first-seen) order.
+    // First maximum in iteration (first-seen) order wins.
     let mut best: Option<(String, usize)> = None;
     for lang in order {
         let count = counts[&lang];

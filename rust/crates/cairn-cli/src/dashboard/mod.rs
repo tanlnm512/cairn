@@ -1,6 +1,4 @@
-//! The read-only dashboard: axum router over the embedded templates
-//! (app.py + routes/* port; same route surface, store seam, and htmx
-//! fragment splits as the Starlette app).
+//! The read-only dashboard: axum router over the embedded templates.
 
 pub mod assets;
 pub mod data;

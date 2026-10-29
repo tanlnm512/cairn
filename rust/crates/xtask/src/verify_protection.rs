@@ -6,11 +6,13 @@ use std::process::{Command, ExitCode, Stdio};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+use cairn_query::json_compat::dumps_sorted;
+use cairn_query::textfmt::title_bool;
 use clap::Parser;
 use regex::Regex;
 use serde_json::{Value, json};
 
-use crate::audit_status::py_json_pretty;
+use crate::golden_record::{repr_str, value_type_name};
 
 const MANDATORY_CHECKS: [&str; 10] = [
     "PR title (conventional commits)",
@@ -113,18 +115,6 @@ fn api_error(source: &str, endpoint: &str, message: String) -> ApiResult {
     ApiResult::Error(json!({"source": source, "endpoint": endpoint, "message": message}))
 }
 
-fn json_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "NoneType",
-        Value::Bool(_) => "bool",
-        Value::Number(n) if n.is_f64() => "float",
-        Value::Number(_) => "int",
-        Value::String(_) => "str",
-        Value::Array(_) => "list",
-        Value::Object(_) => "dict",
-    }
-}
-
 fn gh_json(run: Runner, endpoint: &str, source: &str, expected: Kind) -> ApiResult {
     let (code, stdout, stderr) = match run(endpoint) {
         GhRun::TimedOut => {
@@ -175,7 +165,7 @@ fn gh_json(run: Runner, endpoint: &str, source: &str, expected: Kind) -> ApiResu
         return api_error(
             source,
             endpoint,
-            format!("gh returned {}, expected {want}", json_type_name(&payload)),
+            format!("gh returned {}, expected {want}", value_type_name(&payload)),
         );
     }
     ApiResult::Payload(payload)
@@ -377,15 +367,16 @@ fn ruleset_status_checks(ruleset: &Value) -> Option<Vec<String>> {
 fn ruleset_source(ruleset: &Value) -> String {
     format!(
         "ruleset:{}",
-        ruleset.get("id").map_or_else(|| "None".to_string(), py_str)
+        ruleset
+            .get("id")
+            .map_or_else(|| "None".to_string(), display_text)
     )
 }
 
-fn py_str(value: &Value) -> String {
+fn display_text(value: &Value) -> String {
     match value {
         Value::Null => "None".into(),
-        Value::Bool(true) => "True".into(),
-        Value::Bool(false) => "False".into(),
+        Value::Bool(b) => title_bool(*b).into(),
         Value::String(s) => s.clone(),
         other => other.to_string(),
     }
@@ -393,10 +384,7 @@ fn py_str(value: &Value) -> String {
 
 fn verify(run: Runner, repo: &str, mandatory: &[&str]) -> Result<Value, String> {
     if !REPO_SLUG.is_match(repo) {
-        return Err(format!(
-            "invalid repository slug: {}",
-            crate::audit_status::py_repr_str(repo)
-        ));
+        return Err(format!("invalid repository slug: {}", repr_str(repo)));
     }
     let mut source_errors = Vec::new();
     let legacy = match gh_json(
@@ -505,7 +493,7 @@ fn source_names(check: &Value) -> String {
         .as_array()
         .into_iter()
         .flatten()
-        .map(|p| py_str(&p["source"]))
+        .map(|p| display_text(&p["source"]))
         .collect();
     if names.is_empty() {
         "no source".into()
@@ -521,13 +509,13 @@ fn human_report(report: &Value) -> (Vec<String>, Vec<String>) {
     for e in report["source_errors"].as_array().into_iter().flatten() {
         err.push(format!(
             "ERROR {} {}: {}",
-            py_str(&e["source"]),
-            py_str(&e["endpoint"]),
-            py_str(&e["message"])
+            display_text(&e["source"]),
+            display_text(&e["endpoint"]),
+            display_text(&e["message"])
         ));
     }
     for check in report["checks"].as_array().into_iter().flatten() {
-        let name = py_str(&check["name"]);
+        let name = display_text(&check["name"]);
         if check["status"] == "pass" {
             out.push(format!("PASS {name} ({})", source_names(check)));
             continue;
@@ -538,7 +526,7 @@ fn human_report(report: &Value) -> (Vec<String>, Vec<String>) {
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .map(py_str)
+                    .map(display_text)
                     .collect();
                 list.join(", ")
             };
@@ -548,7 +536,7 @@ fn human_report(report: &Value) -> (Vec<String>, Vec<String>) {
                 names("unexpected")
             )
         } else {
-            format!("observed: {}", py_str(&check["observed"]))
+            format!("observed: {}", display_text(&check["observed"]))
         };
         err.push(format!("FAIL {name} ({details}; {})", source_names(check)));
     }
@@ -600,7 +588,7 @@ pub fn run(args: &[String]) -> ExitCode {
         }
     };
     if parsed.json {
-        println!("{}", py_json_pretty(&report, true));
+        println!("{}", dumps_sorted(&report));
     } else {
         print_human(&report);
     }

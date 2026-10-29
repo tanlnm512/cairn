@@ -791,7 +791,7 @@ pub fn embed_knowledge(
     })
 }
 
-// --- memory corpus (graph/embeddings.py memory family port) ---------------------
+// --- memory corpus ---------------------
 
 /// Cap on how many chunks one memory body contributes.
 const MAX_MEMORY_CHUNKS: usize = 5;
@@ -1215,7 +1215,7 @@ mod tests {
                 "B_IDENTITIES drops {dropped}"
             );
         }
-        // The signature line and docstring stay (Python gates only the meta rows).
+        // The signature line and docstring stay (only the meta rows are gated).
         assert!(identities.contains("Signature: def greet(self, name):"));
         assert!(identities.contains("Docstring: Returns a greeting."));
     }
@@ -1270,7 +1270,7 @@ mod tests {
     }
 
     #[test]
-    fn unicode61_tokens_mirror_the_python_approximation() {
+    fn unicode61_tokens_mirror_the_approximation() {
         assert_eq!(
             unicode61_tokens("Foo_bar bazQux 42 é-name"),
             vec!["foo", "bar", "bazqux", "42", "é", "name"]

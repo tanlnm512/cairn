@@ -7,6 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
+use cairn_query::json_compat::dumps_with;
+use cairn_query::textfmt::{split_lines_universal, title_bool};
 use regex::{Captures, Regex};
 use serde_json::{Map, Value, json};
 
@@ -284,7 +286,7 @@ impl GoldenClient {
     pub(crate) fn call(&mut self, tool: &str, args: &Value) -> Result<(bool, String), String> {
         let msg = self.tools_call(tool, args)?;
         if let Some(error) = msg.get("error") {
-            return Ok((true, truncate_chars(&py_repr(error), SNIPPET_CHARS)));
+            return Ok((true, truncate_chars(&repr_value(error), SNIPPET_CHARS)));
         }
         let result = truthy_or(msg.get("result"), json!({}));
         let text = result
@@ -306,7 +308,7 @@ impl GoldenClient {
         if let Some(error) = msg.get("error") {
             return Ok(json!({
                 "isError": true,
-                "content": [{"type": "text", "text": py_json_sorted(error)}],
+                "content": [{"type": "text", "text": dumps_with(error, None, true)}],
                 "structuredContent": null,
             }));
         }
@@ -329,7 +331,7 @@ fn parse_messages(body: &[u8]) -> Result<Vec<Value>, String> {
     if raw.starts_with('{') {
         return Ok(vec![parse(raw)?]);
     }
-    py_splitlines(raw)
+    split_lines_universal(raw)
         .into_iter()
         .filter_map(|line| line.strip_prefix("data:").map(str::trim))
         .filter(|payload| !payload.is_empty())
@@ -442,7 +444,7 @@ pub(crate) fn normalize_text(
     if mask_list_lines {
         let list_line =
             Regex::new(r"^(\s*[\w ]+:) \[(.*)\]\s*$").unwrap_or_else(|err| panic!("{err}"));
-        text = py_splitlines(&text)
+        text = split_lines_universal(&text)
             .into_iter()
             .map(|line| {
                 list_line
@@ -461,7 +463,7 @@ pub(crate) fn normalize_text(
             .join("\n");
     }
     if sort_lines {
-        let mut lines = py_splitlines(&text);
+        let mut lines = split_lines_universal(&text);
         lines.sort_unstable();
         text = lines.join("\n");
     }
@@ -550,7 +552,7 @@ pub(crate) fn compare_scope(fixture: &Value) -> Value {
 
 /// First structural difference between two JSON values as a `$.path: reason` line.
 pub(crate) fn diff_path(expected: &Value, actual: &Value, path: &str) -> Option<String> {
-    let (want, got) = (py_type(expected), py_type(actual));
+    let (want, got) = (value_type_name(expected), value_type_name(actual));
     if want != got {
         return Some(format!("{path}: type {want} != {got}"));
     }
@@ -578,13 +580,13 @@ pub(crate) fn diff_path(expected: &Value, actual: &Value, path: &str) -> Option<
         _ if expected == actual => None,
         _ => Some(format!(
             "{path}: {} != {}",
-            py_repr(expected),
-            py_repr(actual)
+            repr_value(expected),
+            repr_value(actual)
         )),
     }
 }
 
-// --- python-compatible helpers ------------------------------------------------
+// --- json-compat helpers ------------------------------------------------
 
 /// `os.path.realpath`: absolute, symlinks resolved as far as the path exists.
 pub(crate) fn realpath(path: &Path) -> PathBuf {
@@ -605,40 +607,6 @@ pub(crate) fn realpath(path: &Path) -> PathBuf {
         .components()
         .filter(|c| !matches!(c, Component::CurDir))
         .collect()
-}
-
-/// `str.splitlines()`: every Python line boundary, no trailing empty line.
-pub(crate) fn py_splitlines(text: &str) -> Vec<&str> {
-    let mut lines = Vec::new();
-    let mut start = 0;
-    let mut chars = text.char_indices().peekable();
-    while let Some((i, ch)) = chars.next() {
-        let boundary = matches!(
-            ch,
-            '\n' | '\r'
-                | '\x0b'
-                | '\x0c'
-                | '\x1c'
-                | '\x1d'
-                | '\x1e'
-                | '\u{85}'
-                | '\u{2028}'
-                | '\u{2029}'
-        );
-        if !boundary {
-            continue;
-        }
-        lines.push(&text[start..i]);
-        start = i + ch.len_utf8();
-        if ch == '\r' && chars.peek().is_some_and(|&(_, next)| next == '\n') {
-            chars.next();
-            start += 1;
-        }
-    }
-    if start < text.len() {
-        lines.push(&text[start..]);
-    }
-    lines
 }
 
 fn truncate_chars(text: &str, max: usize) -> String {
@@ -664,7 +632,8 @@ fn truthy_or(value: Option<&Value>, fallback: Value) -> Value {
     }
 }
 
-fn py_type(value: &Value) -> &'static str {
+/// Type name of a JSON value.
+pub(crate) fn value_type_name(value: &Value) -> &'static str {
     match value {
         Value::Null => "NoneType",
         Value::Bool(_) => "bool",
@@ -676,8 +645,8 @@ fn py_type(value: &Value) -> &'static str {
     }
 }
 
-/// Python `repr()` of a string.
-pub(crate) fn py_str_repr(text: &str) -> String {
+/// `repr()` of a string: double-quoted when it holds `'` but no `"`, `\xNN` for controls.
+pub(crate) fn repr_str(text: &str) -> String {
     let quote = if text.contains('\'') && !text.contains('"') {
         '"'
     } else {
@@ -704,81 +673,27 @@ pub(crate) fn py_str_repr(text: &str) -> String {
     out
 }
 
-/// Python `repr()` of a JSON-decoded value.
-fn py_repr(value: &Value) -> String {
+/// `repr()` of a JSON-decoded value.
+fn repr_value(value: &Value) -> String {
     match value {
         Value::Null => "None".to_string(),
-        Value::Bool(true) => "True".to_string(),
-        Value::Bool(false) => "False".to_string(),
+        Value::Bool(b) => title_bool(*b).to_string(),
         Value::Number(n) => match n.as_f64() {
             Some(v) if n.is_f64() => format!("{v:?}"),
             _ => n.to_string(),
         },
-        Value::String(s) => py_str_repr(s),
+        Value::String(s) => repr_str(s),
         Value::Array(items) => format!(
             "[{}]",
-            items.iter().map(py_repr).collect::<Vec<_>>().join(", ")
+            items.iter().map(repr_value).collect::<Vec<_>>().join(", ")
         ),
         Value::Object(map) => format!(
             "{{{}}}",
             map.iter()
-                .map(|(key, value)| format!("{}: {}", py_str_repr(key), py_repr(value)))
+                .map(|(key, value)| format!("{}: {}", repr_str(key), repr_value(value)))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-    }
-}
-
-/// `json.dumps(value, sort_keys=True)`: ASCII-escaped, `", "` / `": "` separators.
-fn py_json_sorted(value: &Value) -> String {
-    match value {
-        Value::String(s) => {
-            let mut out = String::from('"');
-            for ch in s.chars() {
-                match ch {
-                    '"' => out.push_str("\\\""),
-                    '\\' => out.push_str("\\\\"),
-                    '\n' => out.push_str("\\n"),
-                    '\r' => out.push_str("\\r"),
-                    '\t' => out.push_str("\\t"),
-                    '\x08' => out.push_str("\\b"),
-                    '\x0c' => out.push_str("\\f"),
-                    c if c.is_ascii() && !c.is_ascii_control() => out.push(c),
-                    c => {
-                        let mut units = [0u16; 2];
-                        for unit in c.encode_utf16(&mut units) {
-                            let _ = write!(out, "\\u{unit:04x}");
-                        }
-                    }
-                }
-            }
-            out.push('"');
-            out
-        }
-        Value::Array(items) => format!(
-            "[{}]",
-            items
-                .iter()
-                .map(py_json_sorted)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort_unstable();
-            let fields: Vec<String> = keys
-                .into_iter()
-                .map(|key| {
-                    format!(
-                        "{}: {}",
-                        py_json_sorted(&Value::String(key.clone())),
-                        py_json_sorted(&map[key])
-                    )
-                })
-                .collect();
-            format!("{{{}}}", fields.join(", "))
-        }
-        other => other.to_string(),
     }
 }
 
@@ -787,7 +702,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_text_matches_the_python_normalizer() {
+    fn normalize_text_matches_the_normalizer() {
         let rules = scrub_rules(
             Path::new("/s"),
             Path::new("/s/home"),
@@ -825,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn diff_path_reports_the_first_python_style_difference() {
+    fn diff_path_reports_the_first_difference() {
         let golden = json!({"a": [1, {"b": "x"}], "n": 1});
         assert_eq!(diff_path(&golden, &golden.clone(), "$"), None);
         let cases = [

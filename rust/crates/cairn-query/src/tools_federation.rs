@@ -1,4 +1,4 @@
-//! Federated search across every registered workspace store (federation.py port).
+//! Federated search across every registered workspace store.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ struct FederatedResult {
     states: Vec<(String, String)>,
 }
 
-/// `(workspace_path, store_key)` pairs, workspace-sorted (registry.py port).
+/// `(workspace_path, store_key)` pairs, workspace-sorted.
 fn iter_stores() -> Vec<(String, String)> {
     let Some(home) = cairn_home() else {
         return vec![];

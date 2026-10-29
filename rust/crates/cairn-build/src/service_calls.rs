@@ -10,7 +10,7 @@ pub struct ServiceCallExtraction {
 }
 
 /// Quote-paired string literals can't use backreferences in the `regex` crate,
-/// so each python pattern expands to one alternation branch per quote kind and
+/// so each pattern expands to one alternation branch per quote kind and
 /// the URL is the first captured group of the matching branch.
 fn js_http_patterns() -> Vec<Regex> {
     vec![

@@ -10,20 +10,6 @@
     },
     {
       "count": 1,
-      "fingerprint": "doc:3e65912c48918524462b99bccb8fae0f5e2d1faf85f01a14718bc4ba6d081323",
-      "paths": [
-        "rust/crates/cairn-build/tests/incremental_graft.rs"
-      ]
-    },
-    {
-      "count": 1,
-      "fingerprint": "doc:4b98b649f8549befb2ad82de1bedab9c94737e190d9a56859b3dd2fddb800b0e",
-      "paths": [
-        "rust/crates/cairn-query/tests/nav_golden.rs"
-      ]
-    },
-    {
-      "count": 1,
       "fingerprint": "doc:6087e80081b1fcf51280cdc4cc898f138e59e10c6a1a0c4a11ecd7a0972c5fb1",
       "paths": [
         "rust/crates/cairn-build/src/builder.rs"

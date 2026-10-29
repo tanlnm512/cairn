@@ -552,7 +552,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terminal_name_matches_python_label_table() {
+    fn terminal_name_matches_label_table() {
         // Expected values produced by cairn.parsers.scip_importer._terminal_name.
         let cases: &[(&str, &str)] = &[
             ("scip-python pypi util 1.0.0/util.py/add( f).", "f"),

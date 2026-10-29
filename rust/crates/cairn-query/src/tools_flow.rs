@@ -312,7 +312,7 @@ pub fn explore_text(
             v
         };
         let repo_count = repos.len();
-        // Python builds a dict keyed by seed name: duplicate names collapse
+        // Seeds are keyed by name: duplicate names collapse
         // into one entry at the first insertion position.
         match blast.iter_mut().find(|(n, _, _, _)| *n == name) {
             Some(slot) => *slot = (name, result.total as i64, top, repo_count),

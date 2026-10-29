@@ -68,7 +68,7 @@ fn non_ascii_and_empty_patterns_select_like() {
 // --- hash embedder -----------------------------------------------------------
 
 #[test]
-fn hash_vector_matches_the_python_reference() {
+fn hash_vector_matches_the_reference() {
     // Reference values from src/cairn/graph/embeddings.py `_hash_vec`.
     let vec = hash_vec("hello world");
     assert_eq!(vec.len(), 256);
@@ -146,7 +146,7 @@ fn cosine_scan_threshold_and_stable_ties() {
 // --- RRF fusion --------------------------------------------------------------
 
 #[test]
-fn rrf_matches_the_python_reference_values() {
+fn rrf_matches_the_reference_values() {
     let fused = rrf_fuse(
         &[
             vec!["a".into(), "b".into(), "c".into()],
@@ -175,7 +175,7 @@ fn rrf_tie_breaks_by_doc_id() {
 }
 
 #[test]
-fn round4_truncates_to_python_round_semantics() {
+fn round4_truncates_like_round_half_even() {
     assert!(f64_close(round4(0.01639344262295082), 0.0164));
     assert!(f64_close(round4(0.03252247488101534), 0.0325));
 }

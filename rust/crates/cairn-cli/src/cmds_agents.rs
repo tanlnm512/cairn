@@ -1,4 +1,4 @@
-//! `install-agents` / `uninstall-agents` CLI flow (agents.py port).
+//! `install-agents` / `uninstall-agents` CLI flow.
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, IsTerminal, Write as _};

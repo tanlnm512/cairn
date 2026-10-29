@@ -496,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn cosine_matches_the_python_formula() {
+    fn cosine_matches_the_formula() {
         assert!((cosine(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 1e-6);
         assert_eq!(cosine(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
     }

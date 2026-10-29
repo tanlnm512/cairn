@@ -109,7 +109,7 @@ fn assert_rows_match_golden(golden_rows: &[Value], actual: &[Vec<String>], label
 }
 
 #[test]
-fn rust_embed_reproduces_the_python_embed_golden() {
+fn embed_reproduces_the_embed_golden() {
     let golden = load_golden();
     let model = golden["model"].as_str().expect("model").to_string();
     let (dir, db, corpus) = stage("full");

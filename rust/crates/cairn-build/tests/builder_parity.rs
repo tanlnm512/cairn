@@ -1,4 +1,4 @@
-//! Builder contract: parse-order-independent output and python-shaped counts.
+//! Builder contract: parse-order-independent output and stable counts.
 
 use std::fs;
 use std::path::{Path, PathBuf};
