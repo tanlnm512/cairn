@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use cairn_build::embeddings::{embed_all, embed_symbols};
-use cairn_query::tools_search::{floats_to_blob, hash_vec};
+use cairn_build::embeddings::{current_model, embed_all, embed_symbols};
+use cairn_query::tools_search::{self, floats_to_blob, hash_vec};
 use cairn_store::schema::open_initialized;
 use cairn_store::vec0::{self, VecSource};
 use serde_json::Value;
@@ -356,4 +356,83 @@ fn embed_symbols_resyncs_the_vec0_row_in_place() {
     assert!((hits[0].1 - 1.0).abs() < 1e-6, "self similarity {hits:?}");
     drop(conn);
     let _ = fs::remove_dir_all(&dir);
+}
+
+// --- native stamp parity -------------------------------------------------------
+
+/// One configuration yields one stamp on both legs: the native stamp on a
+/// warm cache, the hash stamp on a cold one (feature builds); feature-off
+/// builds reject the name on both legs.
+#[test]
+fn native_config_stamps_both_legs_identically() {
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let keys = ["CAIRN_EMBED_BACKEND", "FASTEMBED_CACHE_DIR", "HF_HOME"];
+    let saved: Vec<(&str, Option<String>)> = keys
+        .iter()
+        .map(|key| (*key, std::env::var(key).ok()))
+        .collect();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "cairn-native-parity-{}-{nanos}",
+        std::process::id()
+    ));
+    unsafe {
+        std::env::set_var("CAIRN_EMBED_BACKEND", "native");
+        std::env::set_var("FASTEMBED_CACHE_DIR", &root);
+        std::env::remove_var("HF_HOME");
+    }
+
+    #[cfg(feature = "local-embed")]
+    {
+        // Cold cache: both legs resolve the hash fallback under one stamp.
+        let query_env = tools_search::semantic_env(None);
+        let corpus_model = current_model().expect("corpus env");
+        assert_eq!(query_env.model, corpus_model);
+        assert_eq!(query_env.model, tools_search::HASH_MODEL);
+        assert!(query_env.native_cold);
+
+        // Warm cache (fake snapshot — resolution only, no model construction):
+        // both legs carry the native stamp.
+        let commit = "0123456789abcdef";
+        let repo = root.join("models--BAAI--bge-m3");
+        fs::create_dir_all(repo.join("refs")).expect("refs dir");
+        fs::write(repo.join("refs").join("main"), commit).expect("ref");
+        let onnx = repo.join("snapshots").join(commit).join("onnx");
+        fs::create_dir_all(&onnx).expect("snapshot dir");
+        fs::write(onnx.join("model.onnx"), b"x").expect("model");
+        fs::write(onnx.join("model.onnx_data"), b"x").expect("weights");
+        let query_env = tools_search::semantic_env(None);
+        let corpus_model = current_model().expect("corpus env");
+        assert_eq!(query_env.model, corpus_model);
+        assert_eq!(query_env.model, tools_search::NATIVE_MODEL);
+        assert!(!query_env.native_cold);
+    }
+
+    #[cfg(not(feature = "local-embed"))]
+    {
+        // Both legs reject the name, naming the cargo feature.
+        let query_env = tools_search::semantic_env(None);
+        assert_eq!(
+            query_env.backend,
+            tools_search::EffectiveBackend::Unavailable
+        );
+        let err = current_model().expect_err("feature-off native must not embed");
+        assert!(err.contains("local-embed"), "{err}");
+    }
+
+    unsafe {
+        for (key, value) in saved {
+            match value {
+                Some(previous) => std::env::set_var(key, previous),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(root);
 }

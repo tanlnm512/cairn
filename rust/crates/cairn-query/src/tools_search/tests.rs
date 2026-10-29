@@ -5,9 +5,11 @@ use std::net::TcpListener;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "local-embed")]
+use super::semantic_env;
 use super::{
-    EffectiveBackend, HASH_MODEL, SemanticEnv, SemanticMatch, ann_backend_enabled, cosine_scan,
-    embed_query, exact_name_hit, floats_to_blob, fused_margin, hash_vec, install_hint,
+    EffectiveBackend, HASH_MODEL, NATIVE_MODEL, SemanticEnv, SemanticMatch, ann_backend_enabled,
+    cosine_scan, embed_query, exact_name_hit, floats_to_blob, fused_margin, hash_vec, install_hint,
     is_fts_prefix_pattern, netloc_of, parse_http_response, pattern_to_fts, render_search_symbols,
     render_semantic_search, resolve_backend, round4, rrf_fuse, vec_table_name,
 };
@@ -17,6 +19,7 @@ fn env_hash() -> SemanticEnv {
         fusion_enabled: true,
         backend: EffectiveBackend::Hash,
         hash_fallback: false,
+        native_cold: false,
         model: HASH_MODEL.to_string(),
         rerank_on: false,
         rerank_override: None,
@@ -289,6 +292,7 @@ fn vec_table_sanitizes_model_stamps() {
         vec_table_name("server/127.0.0.1:8000/bge-m3"),
         "vec_server_127_0_0_1_8000_bge_m3"
     );
+    assert_eq!(vec_table_name(NATIVE_MODEL), "vec_native_BAAI_bge_m3");
 }
 
 #[test]
@@ -305,6 +309,94 @@ fn unknown_backend_names_resolve_to_local_semantics() {
     let (backend, base) = resolve_backend("not-a-backend");
     assert_eq!(backend, EffectiveBackend::Hash);
     assert!(base.is_none());
+    // Feature-off builds reject the name instead of silently hashing.
+    #[cfg(not(feature = "local-embed"))]
+    {
+        let (backend, base) = resolve_backend("native");
+        assert_eq!(backend, EffectiveBackend::Unavailable);
+        assert!(base.is_none());
+    }
+}
+
+// --- native backend resolution --------------------------------------------------
+
+/// Env-mutating native tests serialize here; values restore after the body.
+#[cfg(feature = "local-embed")]
+fn with_embed_env(backend: &str, cache_root: &std::path::Path, body: impl FnOnce()) {
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let keys = ["CAIRN_EMBED_BACKEND", "FASTEMBED_CACHE_DIR", "HF_HOME"];
+    let saved: Vec<(&str, Option<String>)> = keys
+        .iter()
+        .map(|key| (*key, std::env::var(key).ok()))
+        .collect();
+    unsafe {
+        std::env::set_var("CAIRN_EMBED_BACKEND", backend);
+        std::env::set_var("FASTEMBED_CACHE_DIR", cache_root);
+        std::env::remove_var("HF_HOME");
+    }
+    body();
+    unsafe {
+        for (key, value) in saved {
+            match value {
+                Some(previous) => std::env::set_var(key, previous),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "local-embed")]
+fn unique_temp_dir(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "cairn-native-{tag}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ))
+}
+
+#[cfg(feature = "local-embed")]
+#[test]
+fn native_cold_cache_falls_back_to_hash_with_marker() {
+    let dir = unique_temp_dir("cold");
+    with_embed_env("native", &dir, || {
+        let env = semantic_env(None);
+        assert_eq!(env.backend, EffectiveBackend::Hash);
+        assert!(env.hash_fallback);
+        assert!(env.native_cold);
+        assert_eq!(env.model, HASH_MODEL);
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[cfg(feature = "local-embed")]
+#[test]
+fn native_warm_cache_resolves_native_stamp() {
+    let dir = unique_temp_dir("warm");
+    let commit = "0123456789abcdef";
+    let repo = dir.join("models--BAAI--bge-m3");
+    std::fs::create_dir_all(repo.join("refs")).expect("refs dir");
+    std::fs::write(repo.join("refs").join("main"), commit).expect("ref");
+    let onnx = repo.join("snapshots").join(commit).join("onnx");
+    std::fs::create_dir_all(&onnx).expect("snapshot dir");
+    std::fs::write(onnx.join("model.onnx"), b"x").expect("model");
+    std::fs::write(onnx.join("model.onnx_data"), b"x").expect("weights");
+    with_embed_env("native", &dir, || {
+        let (backend, base) = resolve_backend("native");
+        assert_eq!(backend, EffectiveBackend::Native);
+        assert!(base.is_none());
+        let env = semantic_env(None);
+        assert_eq!(env.backend, EffectiveBackend::Native);
+        assert!(!env.hash_fallback);
+        assert!(!env.native_cold);
+        assert_eq!(env.model, NATIVE_MODEL);
+    });
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -321,6 +413,7 @@ fn install_hint_names_only_shipped_backends() {
     assert!(hint.contains("CAIRN_EMBED_BACKEND=omlx"), "{hint}");
     assert!(hint.contains("CAIRN_EMBED_BASE_URL"), "{hint}");
     assert!(hint.contains("CAIRN_EMBED_BACKEND=hash"), "{hint}");
+    assert!(hint.contains("local-embed"), "{hint}");
 }
 
 #[test]

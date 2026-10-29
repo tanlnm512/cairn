@@ -2,6 +2,8 @@
 
 pub mod blast;
 pub mod convert;
+#[cfg(feature = "local-embed")]
+pub mod embed_native;
 pub mod graph;
 pub mod grep;
 pub mod ingest;

@@ -20,5 +20,8 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 [dev-dependencies]
 regex = "1"
 
+[features]
+local-embed = ["cairn-query/local-embed"]
+
 [lints]
 workspace = true

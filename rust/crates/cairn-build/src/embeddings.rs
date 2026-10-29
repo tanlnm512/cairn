@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::scanner;
 use crate::timefmt::now_iso;
 use cairn_query::tools_search::{
-    self, DEFAULT_DIM, EffectiveBackend, floats_to_blob, hash_vec, install_hint, semantic_env,
-    server_base_url, server_embed, server_model,
+    self, DEFAULT_DIM, EffectiveBackend, NATIVE_MODEL, floats_to_blob, hash_vec, install_hint,
+    native_embed_texts, semantic_env, server_base_url, server_embed, server_model,
 };
 use cairn_store::vec0;
 
@@ -27,6 +27,7 @@ enum Transport {
         model: String,
         api_key: Option<String>,
     },
+    Native,
 }
 
 struct EmbedEnv {
@@ -54,9 +55,18 @@ fn resolve_embed_env() -> Result<EmbedEnv, String> {
             },
             model: env.model,
         }),
+        EffectiveBackend::Native => Ok(EmbedEnv {
+            transport: Transport::Native,
+            model: NATIVE_MODEL.to_string(),
+        }),
         EffectiveBackend::Unavailable => {
             let name = tools_search::backend_name();
-            if name == "server" {
+            if name == "native" {
+                Err(format!(
+                    "embedding backend 'native' unavailable; {}",
+                    tools_search::native_feature_hint()
+                ))
+            } else if name == "server" {
                 let base = server_base_url(&name).unwrap_or_default();
                 Err(format!(
                     "embedding server unavailable: GET {base}/models must return 200 and \
@@ -92,6 +102,7 @@ fn embed_texts(env: &EmbedEnv, texts: &[String]) -> Result<(Vec<Vec<u8>>, usize)
             model,
             api_key,
         } => server_embed(texts, base, model, api_key.as_deref()),
+        Transport::Native => native_embed_texts(texts, texts.len()),
     }
 }
 

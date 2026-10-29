@@ -224,6 +224,13 @@ pub const HASH_MODEL: &str = "hash-256-v1";
 /// Dimensionality of the hash fallback embedder.
 pub const DEFAULT_DIM: usize = 256;
 
+/// Row stamp of the in-process bge-m3 backend; ungated so feature-off
+/// builds still count and reap native rows embedded elsewhere.
+pub const NATIVE_MODEL: &str = "native/BAAI/bge-m3";
+
+/// HuggingFace model id behind [`NATIVE_MODEL`].
+pub const NATIVE_HF_MODEL_ID: &str = "BAAI/bge-m3";
+
 /// Knob value resolved env > config file > None (the `get_config_value` chain).
 pub fn config_value(name: &str) -> Option<String> {
     if let Ok(raw) = env::var(name) {
@@ -310,6 +317,7 @@ fn netloc_of(url: &str) -> String {
 pub enum EffectiveBackend {
     Hash,
     Server,
+    Native,
     Unavailable,
 }
 
@@ -317,8 +325,10 @@ pub enum EffectiveBackend {
 pub struct SemanticEnv {
     pub fusion_enabled: bool,
     pub backend: EffectiveBackend,
-    /// `effective == hash && name == local` — provenance labeling only.
+    /// `effective == hash && name in {local, native}` — provenance labeling.
     pub hash_fallback: bool,
+    /// `name == native && effective == hash` — the model cache is cold.
+    pub native_cold: bool,
     pub model: String,
     pub rerank_on: bool,
     pub rerank_override: Option<bool>,
@@ -383,9 +393,12 @@ fn fusion_enabled() -> bool {
 }
 
 /// Resolve `CAIRN_EMBED_BACKEND` to the effective backend, probing the server family.
+/// Resolve a configured backend name to its effective form; the second
+/// component is the server base URL when one resolved.
 pub fn resolve_backend(name: &str) -> (EffectiveBackend, Option<String>) {
     match name {
         "hash" | "local" => (EffectiveBackend::Hash, None),
+        "native" => native_resolution(),
         "server" | "omlx" | "ollama" => {
             let Ok(base) = server_base_url(name) else {
                 return (EffectiveBackend::Unavailable, None);
@@ -402,16 +415,36 @@ pub fn resolve_backend(name: &str) -> (EffectiveBackend, Option<String>) {
     }
 }
 
+/// The native arm: feature-off builds reject the name; feature-on builds
+/// probe the model cache — a cold cache resolves the hash fallback so both
+/// legs degrade identically.
+fn native_resolution() -> (EffectiveBackend, Option<String>) {
+    #[cfg(feature = "local-embed")]
+    {
+        if crate::embed_native::model_cached() {
+            (EffectiveBackend::Native, None)
+        } else {
+            (EffectiveBackend::Hash, None)
+        }
+    }
+    #[cfg(not(feature = "local-embed"))]
+    {
+        (EffectiveBackend::Unavailable, None)
+    }
+}
+
 /// Resolve every knob one semantic-search call needs; `rerank` is the tool arg.
 pub fn semantic_env(rerank: Option<bool>) -> SemanticEnv {
     let name = backend_name();
     let (backend, server_base_url) = resolve_backend(&name);
     let model = match backend {
         EffectiveBackend::Server => server_model_stamp(&name).unwrap_or_default(),
+        EffectiveBackend::Native => NATIVE_MODEL.to_string(),
         EffectiveBackend::Hash => HASH_MODEL.to_string(),
         EffectiveBackend::Unavailable => String::new(),
     };
-    let hash_fallback = backend == EffectiveBackend::Hash && name == "local";
+    let native_cold = name == "native" && backend == EffectiveBackend::Hash;
+    let hash_fallback = native_cold || (backend == EffectiveBackend::Hash && name == "local");
     let reranker_available = reranker_available();
     let rerank_on = match rerank {
         Some(false) => false,
@@ -422,6 +455,7 @@ pub fn semantic_env(rerank: Option<bool>) -> SemanticEnv {
         fusion_enabled: fusion_enabled(),
         backend,
         hash_fallback,
+        native_cold,
         model,
         rerank_on,
         rerank_override: rerank,
@@ -799,7 +833,80 @@ pub fn embed_query(env: &SemanticEnv, text: &str) -> Result<(Vec<u8>, usize), St
             )
             .map(|(mut blobs, dim)| (blobs.remove(0), dim))
         }
+        EffectiveBackend::Native => {
+            let (blobs, dim) = native_embed_texts(&[text.to_string()], 1)?;
+            Ok((blobs[0].clone(), dim))
+        }
         EffectiveBackend::Unavailable => Err("embedding backend unavailable".to_string()),
+    }
+}
+
+/// Whether this binary carries the in-process bge-m3 backend.
+pub fn native_feature_enabled() -> bool {
+    cfg!(feature = "local-embed")
+}
+
+/// Error naming the missing cargo feature for native-backend requests.
+pub fn native_feature_hint() -> String {
+    "CAIRN_EMBED_BACKEND=native embeds in-process but requires a build \
+     with the local-embed cargo feature: \
+     cargo install --git https://github.com/tanlnm512/cairn --features local-embed cairn-cli"
+        .to_string()
+}
+
+/// Whether the native model cache is warm; false when the feature is off.
+pub fn native_model_cached() -> bool {
+    #[cfg(feature = "local-embed")]
+    {
+        crate::embed_native::model_cached()
+    }
+    #[cfg(not(feature = "local-embed"))]
+    {
+        false
+    }
+}
+
+/// Corpus/query-leg transport into the gated embedder; returns `(blobs, dim)`
+/// under the one native stamp.
+pub fn native_embed_texts(
+    texts: &[String],
+    batch_size: usize,
+) -> Result<(Vec<Vec<u8>>, usize), String> {
+    #[cfg(feature = "local-embed")]
+    {
+        let vectors = crate::embed_native::embed(texts, batch_size)?;
+        let dim = vectors.first().map(Vec::len).unwrap_or(0);
+        if dim == 0 {
+            return Err("native backend returned empty embeddings".to_string());
+        }
+        let mut blobs = Vec::with_capacity(vectors.len());
+        for vec in &vectors {
+            if vec.len() != dim {
+                return Err(format!(
+                    "mixed-dimension batch: expected {dim}-dim vectors, got {}",
+                    vec.len()
+                ));
+            }
+            blobs.push(floats_to_blob(vec));
+        }
+        Ok((blobs, dim))
+    }
+    #[cfg(not(feature = "local-embed"))]
+    {
+        let _ = (texts, batch_size);
+        Err(native_feature_hint())
+    }
+}
+
+/// Download the native model weights without embedding (pre-warm).
+pub fn native_warm_model() -> Result<(), String> {
+    #[cfg(feature = "local-embed")]
+    {
+        crate::embed_native::warm_model()
+    }
+    #[cfg(not(feature = "local-embed"))]
+    {
+        Err(native_feature_hint())
     }
 }
 
@@ -809,7 +916,9 @@ pub fn install_hint() -> String {
      Set CAIRN_EMBED_BACKEND=omlx or ollama (or server + \
      CAIRN_EMBED_BASE_URL) to use a local OpenAI-compatible embeddings \
      server -- no model install needed. \
-     Or set CAIRN_EMBED_BACKEND=hash for a dep-free smoke test."
+     Or set CAIRN_EMBED_BACKEND=hash for a dep-free smoke test. \
+     For in-process embedding set CAIRN_EMBED_BACKEND=native with a \
+     local-embed feature build (cargo install --features local-embed)."
         .to_string()
 }
 

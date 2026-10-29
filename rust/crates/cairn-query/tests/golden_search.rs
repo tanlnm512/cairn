@@ -206,6 +206,7 @@ fn semantic_search_serves_the_golden_fixture() {
         fusion_enabled: true,
         backend: ts::EffectiveBackend::Hash,
         hash_fallback: false,
+        native_cold: false,
         model: ts::HASH_MODEL.to_string(),
         rerank_on: false,
         rerank_override: None,

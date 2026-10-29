@@ -18,5 +18,17 @@ sha2 = "=0.10.9"
 yaml-rust2 = { version = "=0.13.0", default-features = false }
 zip = { version = "=9.1.2", default-features = false, features = ["deflate-flate2"] }
 
+[features]
+# In-process bge-m3 embedding (spec native-embed, D-001): exactly-pinned
+# fastembed, trimmed to ONNX CPU + rustls hub downloads + prebuilt ort
+# binaries; default builds resolve no part of this tree.
+local-embed = ["dep:fastembed"]
+
+[dependencies.fastembed]
+version = "=7.5.0"
+optional = true
+default-features = false
+features = ["onnx", "hf-hub-rustls-tls", "ort-download-binaries-rustls-tls"]
+
 [lints]
 workspace = true

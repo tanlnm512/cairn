@@ -7,6 +7,7 @@ bench-comment.md
 # ---- cairn runtime artifacts (from running `cairn build` here) ----
 .kg
 .knowledge/
+.fastembed_cache/
 *.db
 *.db-journal
 *.db-wal
