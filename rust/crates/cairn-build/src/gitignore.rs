@@ -242,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn matches_the_python_probe_battery() {
+    fn matches_the_probe_battery() {
         // Every expectation below was produced by running the repo venv's
         // pathspec 1.1.1 GitIgnoreSpec.match_file on the same inputs.
         assert!(ignored(&["build/"], "build/x.py"));

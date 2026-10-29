@@ -1,4 +1,4 @@
-//! Python-shaped clock values: UTC ISO-8601 timestamps and `st_mtime` doubles.
+//! Clock values: UTC ISO-8601 timestamps and `st_mtime` doubles.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -21,13 +21,13 @@ pub fn iso_from_epoch(secs: i64, micros: u32) -> String {
     )
 }
 
-/// `st_mtime` parity with CPython's `sec + nsec/1e9` double computation.
+/// `st_mtime` as the `sec + nsec/1e9` double.
 pub fn mtime_f64(metadata: &std::fs::Metadata) -> Option<f64> {
     let t = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
     Some(mtime_from_times(t.as_secs() as i64, t.subsec_nanos()))
 }
 
-/// The `sec + nsec/1e9` double CPython's `os.stat` computes.
+/// The `sec + nsec/1e9` double for the given timestamp parts.
 pub fn mtime_from_times(secs: i64, nanos: u32) -> f64 {
     secs as f64 + nanos as f64 / 1e9
 }
@@ -51,7 +51,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn iso_matches_python_datetime_isoformat() {
+    fn iso_matches_datetime_isoformat() {
         // Values generated with CPython 3.12:
         // datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().
         let cases: &[(i64, u32, &str)] = &[
@@ -66,7 +66,7 @@ mod tests {
     }
 
     #[test]
-    fn mtime_double_matches_python_st_mtime_bits() {
+    fn mtime_double_matches_st_mtime_bits() {
         // CPython 3.12: float.hex(1760000000 + 123456789 / 1e9) — the same
         // sec + nsec/1e9 double os.stat computes for that stamp.
         let got = mtime_from_times(1_760_000_000, 123_456_789);

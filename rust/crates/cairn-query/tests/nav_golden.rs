@@ -1,9 +1,4 @@
-//! Golden parity for the nav tools: served text must equal the recorded
-//! Python fixtures over the checked-in nav store.
-//!
-//! These four responses carry no volatile fields (the recorder's
-//! normalization rules were verified as no-ops on them at capture time), so
-//! the comparison is raw byte equality: any diff is a real divergence.
+//! Nav-tool golden parity: served text equals the recorded fixtures byte for byte.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -65,7 +60,7 @@ fn nav_store_from(src: &Path) -> (Connection, TempStore) {
     (conn, temp)
 }
 
-/// Python's `"\n".join(sorted(text.splitlines()))`.
+/// `"\n".join(sorted(text.splitlines()))`.
 fn sorted_lines(text: &str) -> String {
     let mut lines: Vec<&str> = text.lines().collect();
     lines.sort();

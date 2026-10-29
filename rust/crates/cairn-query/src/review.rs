@@ -344,7 +344,7 @@ fn render_sections(
                                 .into(),
                         );
                         if !match_.body.is_empty() {
-                            lines.push(py_indent(&match_.body, "      "));
+                            lines.push(indent_nonblank(&match_.body, "      "));
                         }
                     }
                 }
@@ -370,7 +370,7 @@ fn render_sections(
                                 .into(),
                         );
                         if !match_.body.is_empty() {
-                            lines.push(py_indent(&match_.body, "  "));
+                            lines.push(indent_nonblank(&match_.body, "  "));
                         }
                     }
                     lines.push(String::new());
@@ -394,7 +394,7 @@ fn render_sections(
                         continue;
                     }
                     lines.push(format!("  {}:", entry.module));
-                    lines.push(py_indent(&entry.guide, "    "));
+                    lines.push(indent_nonblank(&entry.guide, "    "));
                 }
             }
             PackFormat::Markdown => {
@@ -435,7 +435,7 @@ fn render_sections(
                         continue;
                     }
                     lines.push(format!("  {}:", entry.module));
-                    lines.push(py_indent(&entry.pages, "    "));
+                    lines.push(indent_nonblank(&entry.pages, "    "));
                 }
             }
             PackFormat::Markdown => {
@@ -464,7 +464,7 @@ fn render_sections(
 }
 
 /// `textwrap.indent`: prefix every non-blank line.
-fn py_indent(text: &str, prefix: &str) -> String {
+fn indent_nonblank(text: &str, prefix: &str) -> String {
     text.split('\n')
         .map(|line| {
             if line.trim().is_empty() {

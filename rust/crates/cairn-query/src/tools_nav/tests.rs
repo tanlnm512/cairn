@@ -334,7 +334,7 @@ fn cross_repo_dependents_match_namespace_dot_boundaries() {
 }
 
 #[test]
-fn renderers_keep_the_python_fstring_line_formats() {
+fn renderers_keep_the_line_formats() {
     let conn = store();
     let rows = find_definition(&conn, "UseCase", 50).unwrap();
     assert_eq!(
@@ -351,7 +351,7 @@ fn renderers_keep_the_python_fstring_line_formats() {
         render_callers(&callers),
         "1 callers of 'UseCase':\n  function caller_fn  src/app.py:11  (cairn)"
     );
-    // NULL lines render like a Python f-string's None.
+    // NULL lines render as None.
     let mut null_line = callers;
     null_line.rows[0].edge_line = None;
     assert!(render_callers(&null_line).contains("src/app.py:None"));

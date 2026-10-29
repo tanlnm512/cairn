@@ -1,4 +1,4 @@
-//! Central-store path resolution keyed by workspace (paths.py port).
+//! Central-store path resolution keyed by workspace.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

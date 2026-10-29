@@ -1,4 +1,4 @@
-//! `cairn dashboard`: loopback-only read-only web dashboard (dashboard.py port).
+//! `cairn dashboard`: loopback-only read-only web dashboard.
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};

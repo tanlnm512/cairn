@@ -192,7 +192,7 @@ pub fn render_search_symbols(pattern: &str, rows: &[SymbolRow]) -> String {
     }
     let mut out = format!("{total} symbols matching '{pattern}':");
     for s in rows.iter().take(SHOWN) {
-        // Python renders line_start via f-string: a NULL line shows as "None".
+        // A NULL line_start renders as "None".
         let line = s
             .line_start
             .map(|l| l.to_string())
@@ -397,7 +397,7 @@ pub fn resolve_backend(name: &str) -> (EffectiveBackend, Option<String>) {
                 (EffectiveBackend::Unavailable, None)
             }
         }
-        // Unknown names and unported transports (openai) resolve to local semantics.
+        // Unknown names resolve to local semantics.
         _ => (EffectiveBackend::Hash, None),
     }
 }
@@ -813,7 +813,7 @@ pub fn install_hint() -> String {
         .to_string()
 }
 
-/// Python wrapper text shown when the store carries no embeddings for the model.
+/// Wrapper text shown when the store carries no embeddings for the model.
 pub fn empty_index_hint() -> String {
     "Semantic index is empty. Run `cairn embed` once to index the \
      corpus (build-time, ~1-2 min for 50k symbols), then retry \

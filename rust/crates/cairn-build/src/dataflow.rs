@@ -21,7 +21,7 @@ pub struct DataflowRow {
 }
 
 /// Resolve the explicit, environment, or default symbol cap; non-positive or
-/// unparseable values warn and fall back (python `resolve_max_symbols`).
+/// unparseable values warn and fall back (`resolve_max_symbols`).
 pub fn resolve_max_symbols(explicit: Option<i64>) -> usize {
     if let Some(value) = explicit {
         if value <= 0 {

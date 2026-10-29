@@ -422,8 +422,6 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ),
 ];
 
-const MEMORY_VALIDITY_BACKFILL_KEY: &str = "memory_validity.backfill";
-
 fn migration_applied(conn: &Connection, key: &str) -> rusqlite::Result<bool> {
     conn.query_row("SELECT 1 FROM schema_meta WHERE key = ?", [key], |row| {
         row.get::<_, i64>(0)
@@ -470,25 +468,7 @@ pub fn apply_schema(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Record the memory-validity backfill marker when no sibling `.knowledge`
-/// bundle exists; a present bundle is Python-side backfill work (not mirrored).
-pub fn note_memory_validity_backfill(conn: &Connection, db_path: &Path) -> rusqlite::Result<()> {
-    if migration_applied(conn, MEMORY_VALIDITY_BACKFILL_KEY)? {
-        return Ok(());
-    }
-    let root = db_path.parent().map(|p| p.join(".knowledge"));
-    let has_bundle = root.is_some_and(|p| p.is_dir());
-    if !has_bundle {
-        conn.execute(
-            "INSERT INTO schema_meta (key, value) VALUES (?, 'applied')",
-            [MEMORY_VALIDITY_BACKFILL_KEY],
-        )?;
-    }
-    Ok(())
-}
-
-/// Open a store fully: writable pragmas, schema application, and the
-/// memory-validity backfill marker (the writable counterpart of
+/// Open a store fully: writable pragmas and schema application (the writable counterpart of
 /// `conn::open_read_only`; pragma-only opens use `conn::open_writable`).
 pub fn open_initialized(path: &Path) -> Result<Connection, rusqlite::Error> {
     crate::conn::register_vec0();
@@ -498,7 +478,6 @@ pub fn open_initialized(path: &Path) -> Result<Connection, rusqlite::Error> {
         "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA mmap_size = 268435456;",
     )?;
     apply_schema(&conn)?;
-    note_memory_validity_backfill(&conn, path)?;
     Ok(conn)
 }
 
@@ -524,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_store_column_order_matches_the_migrated_python_layout() {
+    fn fresh_store_column_order_matches_the_migrated_layout() {
         let path = temp_db("columns");
         let conn = open_initialized(&path).expect("open writable");
         let cols = |table: &str| -> Vec<String> {
@@ -629,23 +608,6 @@ mod tests {
                 "missing {expected}"
             );
         }
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(path.parent().expect("parent"));
-    }
-
-    #[test]
-    fn memory_validity_marker_lands_without_a_sibling_bundle() {
-        let path = temp_db("validity");
-        let conn = open_initialized(&path).expect("open writable");
-        let marked: String = conn
-            .query_row(
-                "SELECT value FROM schema_meta WHERE key = 'memory_validity.backfill'",
-                [],
-                |r| r.get(0),
-            )
-            .expect("marker");
-        assert_eq!(marked, "applied");
-        conn.close().expect("close");
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(path.parent().expect("parent"));
     }

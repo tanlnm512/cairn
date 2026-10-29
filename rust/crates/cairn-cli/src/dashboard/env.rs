@@ -438,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_match_the_python_formats() {
+    fn filters_match_the_formats() {
         assert_eq!(filter_filesize(Value::from(0)), "0 B");
         assert_eq!(filter_filesize(Value::from(2048)), "2.0 KiB");
         assert_eq!(filter_filesize(Value::from(3 * 1024 * 1024)), "3.0 MiB");

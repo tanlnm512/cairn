@@ -26,9 +26,9 @@ jobs:
       run:
         working-directory: extensions/vscode
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
           cache: npm
@@ -43,7 +43,7 @@ jobs:
       - name: Package vsix
         run: npm run package
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: vsix
           path: extensions/vscode/cairn-ext.vsix
@@ -57,7 +57,7 @@ jobs:
     needs: build
     timeout-minutes: 15
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           name: vsix
 
@@ -113,7 +113,7 @@ jobs:
 
       - name: Upload smoke logs
         if: failure() || cancelled()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: smoke-logs
           path: /home/runner/work/_temp/vscode-smoke-profile/logs/
@@ -124,7 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, verify]
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           name: vsix
           path: dist/
@@ -132,6 +132,6 @@ jobs:
       # No name/body: release.yml owns the Release title and notes on the same
       # tag; this job only attaches the vsix asset.
       - name: Attach vsix to the GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/cairn-ext.vsix

@@ -1,7 +1,7 @@
 //! Path helpers shared across crates.
 
 /// Canonicalize-style paths with the Windows verbatim (`\\?\`) prefix removed,
-/// matching the plain paths Python's `Path.resolve()` reports.
+/// matching plain `Path.resolve()`-style paths.
 pub fn strip_verbatim(path: std::path::PathBuf) -> std::path::PathBuf {
     #[cfg(windows)]
     if let Some(s) = path.as_os_str().to_str() {

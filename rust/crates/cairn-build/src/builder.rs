@@ -5,6 +5,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use cairn_parse::model::ParsedFile;
+use cairn_query::json_compat::dumps_compact;
 use cairn_store::swap;
 use rayon::prelude::*;
 use rusqlite::Connection;
@@ -853,7 +854,7 @@ pub(crate) fn insert_parsed_file(
         .or_default()
         .push((module_id.clone(), None));
 
-    // The module symbol lands after declared symbols (python insert order).
+    // The module symbol lands after declared symbols (insert order).
     {
         let mut stmt = conn
             .prepare(
@@ -878,7 +879,7 @@ pub(crate) fn insert_parsed_file(
                 json_modifiers(&sym.modifiers),
                 sym.metadata
                     .as_ref()
-                    .map(|m| python_json(&Value::Object(m.clone()))),
+                    .map(|m| dumps_compact(&Value::Object(m.clone()))),
                 sym.parameters,
                 sym.return_type,
                 sym.parent_scope,
@@ -1065,64 +1066,10 @@ pub(crate) fn insert_parsed_file(
     Ok((sym_ids.len() + 1, edge_rows, pf.imports.len()))
 }
 
-/// `json.dumps(list)` python shape: `["a", "b"]`.
+/// `json.dumps(list)` shape: `["a", "b"]`.
 fn json_modifiers(modifiers: &[String]) -> String {
-    let items: Vec<String> = modifiers
-        .iter()
-        .map(|m| python_json(&Value::String(m.clone())))
-        .collect();
-    format!("[{}]", items.join(", "))
-}
-
-/// `json.dumps` python shape (ensure_ascii, ", " separators, insertion order).
-fn python_json(value: &Value) -> String {
-    match value {
-        Value::Null => "null".to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => n.to_string(),
-        Value::String(s) => python_json_string(s),
-        Value::Array(items) => {
-            let rendered: Vec<String> = items.iter().map(python_json).collect();
-            format!("[{}]", rendered.join(", "))
-        }
-        Value::Object(entries) => {
-            let rendered: Vec<String> = entries
-                .iter()
-                .map(|(k, v)| format!("{}: {}", python_json_string(k), python_json(v)))
-                .collect();
-            format!("{{{}}}", rendered.join(", "))
-        }
-    }
-}
-
-fn python_json_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 || (c as u32) > 0x7e => {
-                let code = c as u32;
-                if code > 0xffff {
-                    let v = code - 0x1_0000;
-                    let high = 0xd800 + (v >> 10);
-                    let low = 0xdc00 + (v & 0x3ff);
-                    out.push_str(&format!("\\u{high:04x}\\u{low:04x}"));
-                } else {
-                    out.push_str(&format!("\\u{code:04x}"));
-                }
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
+    let items: Vec<Value> = modifiers.iter().cloned().map(Value::String).collect();
+    dumps_compact(&Value::Array(items))
 }
 
 /// Package-aware dotted module path (__init__ collapses to its package).

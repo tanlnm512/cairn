@@ -3,10 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+use cairn_query::json_compat::dumps;
 use clap::Parser;
 use serde_json::{Value, json};
-
-use crate::audit_status::py_json_pretty;
 
 #[derive(Parser)]
 #[command(
@@ -143,7 +142,7 @@ fn run_smoke(commands: &[String], fixture: &Path, db: &Path, as_json: bool) -> R
             rows.push(row);
             if as_json {
                 let report = json!({"ok": false, "failed": command, "commands": rows});
-                println!("{}", py_json_pretty(&report, false));
+                println!("{}", dumps(&report));
             } else {
                 println!("::endgroup::");
                 println!("::error::smoke command failed (exit {code}): {command}");
@@ -157,7 +156,7 @@ fn run_smoke(commands: &[String], fixture: &Path, db: &Path, as_json: bool) -> R
     }
     if as_json {
         let report = json!({"ok": true, "failed": Value::Null, "commands": rows});
-        println!("{}", py_json_pretty(&report, false));
+        println!("{}", dumps(&report));
     } else {
         println!("smoke: {0}/{0} commands passed", rows.len());
     }

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+
+## [0.24.2] - 2026-10-29
 ### Changed
 - The PyPI wheel channel is retired: `pyproject.toml`, `uv.lock`, the maturin builds, and every wheel/publish job are gone. A `v*` tag now cuts the GitHub Release (changelog notes) while `release-rust.yml` attaches the binary tarballs, updates the Homebrew tap, and publishes to crates.io; Homebrew, `cargo binstall`, and the tarballs are the install channels.
 - `cairn uninstall` reports the running binary and its channel-appropriate removal command instead of driving pip/pipx/uv; `cairn report` no longer prints a `python` line.
@@ -27,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust doc comments state contracts directly: provenance pointers to the retired Python implementation (parser registry, scanner filter tiers, pragma parity, MCP tool text contracts) and to deleted Python-era scripts (`tests/fixtures/golden/regenerate.py`, `scripts/regen_scip_proto.sh`) are gone; the golden-test normalization docs describe the committed `expected.json` schema instead.
 
 ### Removed
+- `CAIRN_RUST_BIN`: `CAIRN_BIN` is the single engine-binary override (daemon start, `cargo xtask kg-dump`, local CI scripts).
+- The stray-daemon sweep no longer recognizes python-launched `cairn serve` processes.
 - The `cairn upgrade` command (and its `--check` flag): it existed to pip/pipx/uv-upgrade the wheel installs; every remaining channel (Homebrew, cargo, tarball) upgrades through its own package manager. The `upgrade --check` cli-golden case is retired with it.
 - The ci.yml wheel/sdist packaging canary and the rust-parity nightly wheel-smoke job.
 - The PyPI wheel channel's packaging files (`pyproject.toml`, `uv.lock`) and `scripts/rust_migration/wheel_smoke.sh`.
@@ -35,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cairn uninstall` no longer probes a Python interpreter for source-tree build debris of the retired Python package.
 - The Python-only dev gates: the pytest and pip-audit/bandit CI jobs, the ruff and debug-statements pre-commit hooks, `scripts/install-dev-hooks.sh`, and `cargo xtask verify-no-code-change`.
 - Dead Python-era fixture tooling: the `tests/fixtures/__init__.py` package markers and `tests/fixtures/scip-indexing/generate_heavy.py` (unrunnable in this tree — it required the retired `src/cairn/parsers/_scip_pb2.py`). The committed parser-golden and SCIP fixtures remain; both regenerate from git history when needed.
+- The `openai` value of `CAIRN_EMBED_BACKEND` and `CAIRN_EMBED_OPENAI_MODEL`: an unrecognised backend name resolves to the local hash embedder.
+- The `memory_validity.backfill` `schema_meta` marker: stores no longer write it.
 
 ## [0.24.1] - 2026-10-26
 ### Fixed

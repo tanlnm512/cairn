@@ -1280,10 +1280,10 @@ impl ObjcWalk<'_> {
 mod tests {
     use super::*;
 
-    /// (name, kind, qualified_name, modifiers, arity) asserted against Python output.
+    /// (name, kind, qualified_name, modifiers, arity) asserted against recorded output.
     type SymbolRow = (String, String, String, Vec<String>, Option<usize>);
 
-    /// Mirrors a live Python SwiftParser run over the same source
+    /// Mirrors a recorded Swift parse of the same source
     /// (`SwiftParser().parse('/tmp/probe_ext.swift')`).
     #[test]
     fn swift_extracts_extensions_modifiers_and_variadic_arity() {
@@ -1419,7 +1419,7 @@ public final class Registry {
         assert_eq!(parsed.imports[0].line, 2);
     }
 
-    /// Mirrors a live Python ObjCParser run over the same source
+    /// Mirrors a recorded ObjC parse of the same source
     /// (`ObjCParser().parse('/tmp/probe_cat.m')`).
     #[test]
     fn objc_extracts_categories_and_protocols() {
@@ -1581,7 +1581,7 @@ public final class Registry {
 
         assert_eq!(
             resolve_relative_objc_import(&importer, "Peer.h"),
-            // canonicalize resolves symlinked tmp dirs, like Python's resolve().
+            // canonicalize resolves symlinked tmp dirs.
             Some(
                 dir.canonicalize()
                     .expect("canonical temp dir")

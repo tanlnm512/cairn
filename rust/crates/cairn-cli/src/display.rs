@@ -113,7 +113,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn theme_tokens_match_the_python_display_theme() {
+    fn theme_tokens_match_the_display_theme() {
         assert_eq!(SUCCESS, "\x1b[1;32m");
         assert_eq!(WARNING, "\x1b[1;33m");
         assert_eq!(ERROR, "\x1b[1;31m");

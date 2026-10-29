@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
 fn cairn_binary() -> PathBuf {
-    if let Some(path) = std::env::var_os("CAIRN_RUST_BIN") {
+    if let Some(path) = std::env::var_os("CAIRN_BIN") {
         return PathBuf::from(path);
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/cairn")

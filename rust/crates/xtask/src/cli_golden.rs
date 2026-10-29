@@ -10,6 +10,8 @@ use std::sync::LazyLock;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use cairn_query::json_compat::dumps_sorted;
+use cairn_query::textfmt::split_lines_universal;
 use clap::Parser;
 use regex::Regex;
 use rusqlite::Connection;
@@ -17,7 +19,6 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::audit_status::py_json_pretty;
 use crate::check_doc_links::repo_root;
 use crate::golden_record::{self as gr, ScrubRule};
 use crate::parity::{self, DB_NAME, Halt};
@@ -536,7 +537,7 @@ fn seed_wiki(scratch: &Path) -> Result<(), Halt> {
     mkdirs(&manifest_dir)?;
     write_text(
         &manifest_dir.join("manifest.json"),
-        &format!("{}\n", py_json_pretty(&manifest, true)),
+        &format!("{}\n", dumps_sorted(&manifest)),
     )
 }
 
@@ -787,7 +788,7 @@ fn seed_registry(scratch: &Path) -> Result<(), Halt> {
     let registry = Value::Object(Map::from_iter([(ws, Value::String(key))]));
     write_text(
         &scratch.join("home").join("workspaces.json"),
-        &format!("{}\n", py_json_pretty(&registry, true)),
+        &format!("{}\n", dumps_sorted(&registry)),
     )
 }
 
@@ -1184,7 +1185,7 @@ fn first_diff(
         if want == got {
             continue;
         }
-        let (wlines, glines) = (gr::py_splitlines(want), gr::py_splitlines(&got));
+        let (wlines, glines) = (split_lines_universal(want), split_lines_universal(&got));
         if let Some((i, (a, b))) = wlines
             .iter()
             .zip(&glines)
@@ -1193,8 +1194,8 @@ fn first_diff(
         {
             return Ok(Some(format!(
                 "{stream} line {i}: {} != {}",
-                gr::py_str_repr(a),
-                gr::py_str_repr(b)
+                gr::repr_str(a),
+                gr::repr_str(b)
             )));
         }
         let (side, extra) = if wlines.len() > glines.len() {
@@ -1210,7 +1211,7 @@ fn first_diff(
         return Ok(Some(format!(
             "{stream}: {side} has {} extra line(s): {}",
             extra.len(),
-            gr::py_str_repr(first)
+            gr::repr_str(first)
         )));
     }
     Ok(None)
@@ -1238,13 +1239,13 @@ fn load_cases() -> Result<Vec<Value>, Halt> {
         other => {
             let found = match other {
                 None => "None".to_string(),
-                Some(Value::String(text)) => gr::py_str_repr(text),
+                Some(Value::String(text)) => gr::repr_str(text),
                 Some(value) => value.to_string(),
             };
             return Err(format!(
                 "{}: schema {found} != {}",
                 cases_file().display(),
-                gr::py_str_repr(SCHEMA)
+                gr::repr_str(SCHEMA)
             )
             .into());
         }
@@ -1257,7 +1258,7 @@ fn label_of(case: &Value) -> &str {
 }
 
 /// `json.dumps(value, indent=1, ensure_ascii=False)`.
-fn py_json_indent1(value: &Value) -> String {
+fn json_indent1_utf8(value: &Value) -> String {
     let mut buf = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b" ");
     let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
@@ -1329,8 +1330,8 @@ fn record(
             let case = frozen.get(&label).cloned().ok_or_else(|| {
                 format!(
                     "no frozen case {} to keep outside --only {}",
-                    gr::py_str_repr(&label),
-                    gr::py_str_repr(prefix)
+                    gr::repr_str(&label),
+                    gr::repr_str(prefix)
                 )
             })?;
             cases.push(case);
@@ -1381,7 +1382,7 @@ fn record(
     });
     mkdirs(&fixture_dir())?;
     let path = cases_file();
-    write_text(&path, &format!("{}\n", py_json_indent1(&payload)))?;
+    write_text(&path, &format!("{}\n", json_indent1_utf8(&payload)))?;
     note(&format!(
         "recorded {} cases into {}",
         cases.len(),
@@ -1410,8 +1411,8 @@ fn replay(
         {
             return Err(format!(
                 "case {i}: live {} != frozen {}; re-record the fixtures",
-                gr::py_str_repr(live),
-                gr::py_str_repr(want)
+                gr::repr_str(live),
+                gr::repr_str(want)
             )
             .into());
         }
@@ -1512,7 +1513,7 @@ mod tests {
     fn record_serializer_reproduces_the_frozen_cases_file() {
         let text = fs::read_to_string(cases_file()).unwrap_or_else(|err| panic!("{err}"));
         let payload: Value = serde_json::from_str(&text).unwrap_or_else(|err| panic!("{err}"));
-        assert_eq!(format!("{}\n", py_json_indent1(&payload)), text);
+        assert_eq!(format!("{}\n", json_indent1_utf8(&payload)), text);
     }
 
     #[test]

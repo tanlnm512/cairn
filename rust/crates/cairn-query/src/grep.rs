@@ -119,7 +119,7 @@ pub fn graph_grep(
         let symbols = symbols_by_file.get(&file_id).unwrap_or(&empty);
         let (stored, excess_hits, excess_groups) = collect_file_hits(
             &matcher,
-            &py_splitlines(&source),
+            &crate::textfmt::split_lines_universal(&source),
             &repo,
             &path,
             symbols,
@@ -173,46 +173,6 @@ pub fn graph_grep(
         "dropped_groups": dropped_groups,
         "truncated": truncated,
     }))
-}
-
-/// Python `str.splitlines` boundary set (superset of `\n`, incl. \r, \v, \f,
-/// \x1c-\x1e, \x85, \u2028, \u2029).
-pub fn py_splitlines(source: &str) -> Vec<&str> {
-    let is_boundary = |c: char| {
-        matches!(
-            c,
-            '\n' | '\r'
-                | '\u{b}'
-                | '\u{c}'
-                | '\u{1c}'
-                | '\u{1d}'
-                | '\u{1e}'
-                | '\u{85}'
-                | '\u{2028}'
-                | '\u{2029}'
-        )
-    };
-    let mut lines = Vec::new();
-    let bytes = source.as_bytes();
-    let mut start = 0usize;
-    let mut i = 0usize;
-    while let Some(c) = source[i..].chars().next() {
-        let len = c.len_utf8();
-        if is_boundary(c) {
-            lines.push(&source[start..i]);
-            i += len;
-            if c == '\r' && bytes.get(i) == Some(&b'\n') {
-                i += 1;
-            }
-            start = i;
-        } else {
-            i += len;
-        }
-    }
-    if start < source.len() {
-        lines.push(&source[start..]);
-    }
-    lines
 }
 
 fn incoming_counts(conn: &Connection) -> HashMap<String, i64> {
@@ -386,17 +346,5 @@ mod tests {
         let mat = matcher.find(line).unwrap();
         let column = line[..mat.start()].chars().count() + 1;
         assert_eq!(column, 9);
-    }
-
-    #[test]
-    fn py_splitlines_matches_python_boundary_set() {
-        assert_eq!(py_splitlines("a\rb\nc\r\nd"), vec!["a", "b", "c", "d"]);
-        assert_eq!(py_splitlines("a\u{2028}b\u{85}c"), vec!["a", "b", "c"]);
-        assert_eq!(py_splitlines("no-newline"), vec!["no-newline"]);
-        assert_eq!(py_splitlines("a\n\nb"), vec!["a", "", "b"]);
-        // No segment after a trailing boundary.
-        assert_eq!(py_splitlines("a\n"), vec!["a"]);
-        assert_eq!(py_splitlines("a\n\n"), vec!["a", ""]);
-        assert_eq!(py_splitlines(""), Vec::<&str>::new());
     }
 }

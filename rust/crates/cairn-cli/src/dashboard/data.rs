@@ -1,4 +1,4 @@
-//! Read-only data access for the dashboard (data.py SQL layer port).
+//! Read-only data access for the dashboard.
 
 use std::path::PathBuf;
 
@@ -839,7 +839,7 @@ pub fn list_history(conn: &Connection, query: HistoryQuery<'_>) -> Value {
     json!({"rows": rows, "next": next_cursor, "prev": prev_cursor})
 }
 
-/// Heuristic-mode chars-per-token divisor; exact calibration is a Python-only mode.
+/// Heuristic-mode chars-per-token divisor; exact calibration is not supported.
 fn estimate_divisor(_conn: &Connection, _clauses: &[String], _params: &[P]) -> i64 {
     CHARS_PER_TOKEN
 }

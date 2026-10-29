@@ -1833,7 +1833,7 @@ mod tests {
     }
 
     #[test]
-    fn golden_output_matches_python_fixtures() {
+    fn golden_output_matches_fixtures() {
         let cases = [
             ("go", "sample.go"),
             ("rust", "sample.rs"),

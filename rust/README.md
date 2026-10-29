@@ -8,7 +8,7 @@ bumped at release time; the release tag must equal it.
 - Frozen contracts: the `.kg` schema (C-1) and the 26-tool MCP surface (C-2),
   pinned by the goldens under `golden/`
 - Oracle replay: `cargo xtask` (canonical dump/diff, parity runner, cli
-  goldens) plus `scripts/rust_migration/` (g2 dump-parity check)
+  goldens) plus `scripts/g2_check.sh` (g2 dump-parity check)
 - Gates: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
   -- -D warnings`, `cargo test --workspace` (CI leg `.github/workflows/rust.yml`)
 - Dependency and pin rulings (D-###): the migration spec, campaign ledger,

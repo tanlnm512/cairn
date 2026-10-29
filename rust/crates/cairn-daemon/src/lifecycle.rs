@@ -13,8 +13,6 @@ use serde_json::Value;
 pub const LABEL: &str = "dev.cairn.mcp";
 pub const DEFAULT_PORT: u16 = 9876;
 pub const DEFAULT_HOST: &str = "127.0.0.1";
-/// Path of the Rust daemon binary a daemon start execs.
-pub const RUST_BIN_ENV: &str = "CAIRN_RUST_BIN";
 const LAUNCHCTL_TIMEOUT: Duration = Duration::from_secs(15);
 const PROCBE_TIMEOUT: Duration = Duration::from_secs(5);
 const HEALTHZ_TIMEOUT: Duration = Duration::from_secs(2);
@@ -261,17 +259,9 @@ pub fn write_plist_file(path: &Path, plist: &LaunchdPlist) -> std::io::Result<Pa
 // --- stray sweep ------------------------------------------------------------
 
 /// True when `cmdline` is a real `cairn serve` server invocation (anchored,
-/// subcommands excluded); the shebang form only matches strays from old installs.
+/// subcommands excluded).
 pub fn is_cairn_serve_cmdline(cmdline: &str) -> bool {
-    let mut tokens: Vec<&str> = cmdline.split_whitespace().collect();
-    if tokens.len() >= 3
-        && Path::new(tokens[0])
-            .file_name()
-            .is_some_and(|n| n.to_string_lossy().starts_with("python"))
-    {
-        // Shebang exec: console scripts run as `python <path>/cairn serve ...`.
-        tokens.remove(0);
-    }
+    let tokens: Vec<&str> = cmdline.split_whitespace().collect();
     if tokens.len() < 2 {
         return false;
     }
@@ -777,28 +767,6 @@ pub fn healthz_json(port: u16, host: &str) -> Option<Value> {
     serde_json::from_slice(&body).ok()
 }
 
-// --- impl selection -----------------------------------------------------------
-
-/// Rust daemon binary path: CAIRN_RUST_BIN, else this process when named
-/// `cairn` (the Rust binary is itself the Rust daemon); None when neither.
-pub fn rust_bin() -> Option<String> {
-    if let Ok(cand) = std::env::var(RUST_BIN_ENV)
-        && !cand.trim().is_empty()
-        && Path::new(&cand).exists()
-    {
-        return Some(cand);
-    }
-    std::env::current_exe()
-        .ok()
-        .filter(|exe| exe.file_name().is_some_and(is_cairn_binary_name))
-        .map(|exe| exe.to_string_lossy().into_owned())
-}
-
-/// Binary a daemon start execs: the Rust binary, else cg_bin().
-pub fn daemon_bin() -> Result<String, String> {
-    Ok(rust_bin().unwrap_or_else(cg_bin))
-}
-
 // --- bind discovery -------------------------------------------------------------
 
 /// Extract the (--port, --host) pair from a `serve run` argv; Nones when absent.
@@ -1049,7 +1017,7 @@ fn ensure_running_launchd(
     }
     sweep_strays(&store.db, true);
     let plist = render_plist(
-        &daemon_bin()?,
+        &cg_bin(),
         port,
         host,
         Some(&store.workspace.to_string_lossy()),
@@ -1077,7 +1045,7 @@ fn ensure_running_daemonize(
     }
     cycle_wedged_daemon(port, host, &store.db);
     sweep_strays(&store.db, true);
-    let pid = spawn_daemonized(&daemon_bin()?, port, host, store, api_key)
+    let pid = spawn_daemonized(&cg_bin(), port, host, store, api_key)
         .map_err(|e| format!("failed to start the daemon: {e}"))?;
     write_pidfile(pid);
     if !wait_for_healthz(port, host) {

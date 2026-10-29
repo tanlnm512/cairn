@@ -9,6 +9,7 @@ use rusqlite::Connection;
 use yaml_rust2::Yaml;
 use yaml_rust2::yaml::Hash;
 
+use crate::textfmt::{repr_single_quoted, title_bool};
 use crate::tools_km::{
     self, Bundle, Concept, CriticResult, ToolError, critic_concept_opts, extract_file_refs,
     file_exists, iso_utc_now, normalize_doc_id, parse_iso_ts, strip_private_data, symbol_exists,
@@ -51,35 +52,34 @@ fn ystr(v: Option<&Yaml>) -> String {
         Some(Yaml::String(s)) => s.clone(),
         Some(Yaml::Real(s)) => s.clone(),
         Some(Yaml::Integer(i)) => i.to_string(),
-        Some(Yaml::Boolean(b)) => if *b { "True" } else { "False" }.into(),
+        Some(Yaml::Boolean(b)) => title_bool(*b).into(),
         _ => String::new(),
     }
 }
 
-/// Python str() of a loaded YAML value (containers render elements repr-style).
-pub fn py_display(v: &Yaml) -> String {
+/// `str()` of a loaded YAML value: strings bare, everything else via `yaml_repr`.
+pub fn yaml_display(v: &Yaml) -> String {
     match v {
         Yaml::String(s) => s.clone(),
-        Yaml::Array(_) | Yaml::Hash(_) => py_repr(v),
-        other => py_repr(other),
+        other => yaml_repr(other),
     }
 }
 
-fn py_repr(v: &Yaml) -> String {
+fn yaml_repr(v: &Yaml) -> String {
     match v {
-        Yaml::String(s) => format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'")),
-        Yaml::Boolean(b) => if *b { "True" } else { "False" }.into(),
+        Yaml::String(s) => repr_single_quoted(s),
+        Yaml::Boolean(b) => title_bool(*b).into(),
         Yaml::Integer(i) => i.to_string(),
         Yaml::Real(s) => s.clone(),
         Yaml::Null => "None".into(),
         Yaml::Array(items) => {
-            let inner: Vec<String> = items.iter().map(py_repr).collect();
+            let inner: Vec<String> = items.iter().map(yaml_repr).collect();
             format!("[{}]", inner.join(", "))
         }
         Yaml::Hash(h) => {
             let inner: Vec<String> = h
                 .iter()
-                .map(|(k, val)| format!("{}: {}", py_repr(k), py_repr(val)))
+                .map(|(k, val)| format!("{}: {}", yaml_repr(k), yaml_repr(val)))
                 .collect();
             format!("{{{}}}", inner.join(", "))
         }
@@ -177,7 +177,7 @@ fn task_to_concept(task: &Task) -> Concept {
     if !task.facts.is_empty() {
         lines.push("## Facts (graph-grounded — do not invent beyond these)".into());
         for (key, val) in &task.facts {
-            lines.push(format!("**{}:** {}", py_display(key), py_display(val)));
+            lines.push(format!("**{}:** {}", yaml_display(key), yaml_display(val)));
         }
         lines.push(String::new());
     }
@@ -821,8 +821,8 @@ pub fn complete_task(
         }
         return Ok(CompleteOutcome::held(task_id, Vec::new()));
     };
-    // any failure past this point mirrors Python's except handler: the task
-    // stays in-progress and re-completable, nothing is promoted
+    // any failure past this point leaves the task
+    // in-progress and re-completable, nothing is promoted
     Ok(complete_with_critic(
         bundle,
         conn,
@@ -1167,7 +1167,7 @@ pub fn drop_task(bundle: &Bundle, task_id: &str) -> Result<DropOutcome, ToolErro
     })
 }
 
-// --- output specs (llm/tasks.py `_output_spec` port) ---------------------------
+// --- output specs ---------------------------
 
 pub fn output_spec(task_kind: &str, facts: &Hash) -> String {
     let specs: &[(&str, &str)] = &[
@@ -1247,7 +1247,7 @@ pub fn output_spec(task_kind: &str, facts: &Hash) -> String {
     spec
 }
 
-// --- doc-link results (knowledge/doc_link.py port) ----------------------------
+// --- doc-link results ----------------------------
 
 /// Parse one edge per result line; returns (edges, errors).
 pub fn parse_doc_link_result(result: &str) -> (Vec<(String, String, String)>, Vec<String>) {
@@ -1457,7 +1457,7 @@ fn normalize_entry(item: &Yaml, out: &mut Vec<Yaml>) {
     }
 }
 
-// --- knowledge index rebuild (knowledge/index.py port) -------------------------
+// --- knowledge index rebuild -------------------------
 
 struct DocRec {
     doc_id: String,
@@ -2360,13 +2360,13 @@ mod tests {
     }
 
     #[test]
-    fn py_display_matches_python_str() {
-        assert_eq!(py_display(&ys("plain")), "plain");
-        assert_eq!(py_display(&Yaml::Integer(3)), "3");
-        assert_eq!(py_display(&Yaml::Boolean(true)), "True");
-        assert_eq!(py_display(&Yaml::Null), "None");
+    fn yaml_display_renders_bare_strings_and_reprs() {
+        assert_eq!(yaml_display(&ys("plain")), "plain");
+        assert_eq!(yaml_display(&Yaml::Integer(3)), "3");
+        assert_eq!(yaml_display(&Yaml::Boolean(true)), "True");
+        assert_eq!(yaml_display(&Yaml::Null), "None");
         assert_eq!(
-            py_display(&Yaml::Array(vec![ys("src/graph/queries.py")])),
+            yaml_display(&Yaml::Array(vec![ys("src/graph/queries.py")])),
             "['src/graph/queries.py']"
         );
     }
@@ -2391,7 +2391,7 @@ mod tests {
     }
 
     #[test]
-    fn task_body_renders_like_python() {
+    fn task_body_renders_the_expected_text() {
         let task = Task {
             id: "abc123".into(),
             task_kind: "wiki-page".into(),

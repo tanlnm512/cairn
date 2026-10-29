@@ -1,10 +1,9 @@
-//! `json.dumps(obj, indent=2)` byte parity (ensure_ascii + key insertion order).
+//! `json.dumps`-compatible JSON rendering and YAML-to-JSON scalar typing.
 
 use serde_json::Value;
 use yaml_rust2::Yaml;
 
-/// YAML value -> JSON with Python `yaml.safe_load`'s scalar typing and
-/// insertion-ordered hash keys (serde_json's preserve_order map).
+/// YAML value to JSON with `yaml.safe_load` scalar typing and insertion-ordered keys.
 pub fn yaml_to_value(v: &Yaml) -> Value {
     match v {
         Yaml::Array(items) => Value::Array(items.iter().map(yaml_to_value).collect()),
@@ -34,115 +33,59 @@ pub fn yaml_to_value(v: &Yaml) -> Value {
     }
 }
 
-/// Serialize like python `json.dumps(value, indent=2)`: two-space pretty
-/// printing, insertion-ordered keys, and `ensure_ascii` string escaping.
+/// `json.dumps(value, indent=2)`: insertion-ordered keys, `ensure_ascii` escaping.
 pub fn dumps(value: &Value) -> String {
-    let mut out = String::new();
-    write_value(&mut out, value, Some(2), 0);
-    out
+    dumps_with(value, Some(2), false)
 }
 
-/// Serialize like python `json.dumps(value)` (compact, `", "` / `": "` separators).
+/// `json.dumps(value)`: compact, `", "` / `": "` separators.
 pub fn dumps_compact(value: &Value) -> String {
-    let mut out = String::new();
-    write_value(&mut out, value, None, 0);
-    out
+    dumps_with(value, None, false)
 }
 
-/// Serialize like python `json.dumps(value, indent=2, sort_keys=True)`.
+/// `json.dumps(value, indent=2, sort_keys=True)`.
 pub fn dumps_sorted(value: &Value) -> String {
+    dumps_with(value, Some(2), true)
+}
+
+/// `json.dumps(value, indent=indent, sort_keys=sort_keys)` with `ensure_ascii`.
+pub fn dumps_with(value: &Value, indent: Option<usize>, sort_keys: bool) -> String {
     let mut out = String::new();
-    write_sorted(&mut out, value, 0);
+    write_value(&mut out, value, indent, sort_keys, 0);
     out
 }
 
-fn write_sorted(out: &mut String, value: &Value, level: usize) {
+fn write_value(out: &mut String, value: &Value, indent: Option<usize>, sort: bool, level: usize) {
+    let separator = if indent.is_none() { ", " } else { "," };
     match value {
+        Value::Object(map) if map.is_empty() => out.push_str("{}"),
+        Value::Array(items) if items.is_empty() => out.push_str("[]"),
         Value::Object(map) => {
-            if map.is_empty() {
-                out.push_str("{}");
-                return;
-            }
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            out.push('{');
-            for (i, key) in keys.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                out.push('\n');
-                out.push_str(&"  ".repeat(level + 1));
-                write_string(out, key);
-                out.push_str(": ");
-                write_sorted(out, &map[*key], level + 1);
-            }
-            out.push('\n');
-            out.push_str(&"  ".repeat(level));
-            out.push('}');
-        }
-        Value::Array(items) => {
-            if items.is_empty() {
-                out.push_str("[]");
-                return;
-            }
-            out.push('[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                out.push('\n');
-                out.push_str(&"  ".repeat(level + 1));
-                write_sorted(out, item, level + 1);
-            }
-            out.push('\n');
-            out.push_str(&"  ".repeat(level));
-            out.push(']');
-        }
-        Value::String(s) => write_string(out, s),
-        other => out.push_str(&serde_json::to_string(other).unwrap_or_else(|_| "null".into())),
-    }
-}
-
-fn write_value(out: &mut String, value: &Value, indent: Option<usize>, level: usize) {
-    match value {
-        Value::Object(map) => {
-            if map.is_empty() {
-                out.push_str("{}");
-                return;
+            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+            if sort {
+                entries.sort_by(|a, b| a.0.cmp(b.0));
             }
             out.push('{');
-            for (i, (key, item)) in map.iter().enumerate() {
+            for (i, (key, item)) in entries.into_iter().enumerate() {
                 if i > 0 {
-                    if indent.is_none() {
-                        out.push_str(", ");
-                    } else {
-                        out.push(',');
-                    }
+                    out.push_str(separator);
                 }
                 newline_indent(out, indent, level + 1);
                 write_string(out, key);
                 out.push_str(": ");
-                write_value(out, item, indent, level + 1);
+                write_value(out, item, indent, sort, level + 1);
             }
             newline_indent(out, indent, level);
             out.push('}');
         }
         Value::Array(items) => {
-            if items.is_empty() {
-                out.push_str("[]");
-                return;
-            }
             out.push('[');
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {
-                    if indent.is_none() {
-                        out.push_str(", ");
-                    } else {
-                        out.push(',');
-                    }
+                    out.push_str(separator);
                 }
                 newline_indent(out, indent, level + 1);
-                write_value(out, item, indent, level + 1);
+                write_value(out, item, indent, sort, level + 1);
             }
             newline_indent(out, indent, level);
             out.push(']');
@@ -159,8 +102,7 @@ fn newline_indent(out: &mut String, indent: Option<usize>, level: usize) {
     }
 }
 
-/// Python `ensure_ascii` string literal: control chars short-escaped, everything
-/// non-ASCII as `\uXXXX` with surrogate pairs past the BMP.
+/// `ensure_ascii` string literal: short control escapes, non-ASCII as `\uXXXX` surrogate pairs.
 fn write_string(out: &mut String, text: &str) {
     out.push('"');
     for unit in text.encode_utf16() {
@@ -185,7 +127,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn matches_python_indent_two_shapes() {
+    fn indent_two_shapes() {
         let value = json!({
             "b": 1,
             "a": [1, "x"],
@@ -200,11 +142,30 @@ mod tests {
     }
 
     #[test]
-    fn escapes_non_ascii_like_python() {
-        // python: json.dumps({"k": "é☃\U0001F600"}, indent=2)
+    fn escapes_non_ascii_as_surrogate_pairs() {
         assert_eq!(
             dumps(&json!({"k": "é\u{2603}\u{1F600}"})),
             "{\n  \"k\": \"\\u00e9\\u2603\\ud83d\\ude00\"\n}"
+        );
+    }
+
+    #[test]
+    fn sorted_and_compact_shapes() {
+        let value = json!({
+            "b": ["é", "x\"\\\n\t\u{1}"],
+            "a": {},
+            "c": [],
+            "d": [{"z": 1, "y": true, "x": null}],
+        });
+        let indented = "{\n  \"a\": {},\n  \"b\": [\n    \"\\u00e9\",\n    \"x\\\"\\\\\\n\\t\\u0001\"\n  ],\n  \"c\": [],\n  \"d\": [\n    {\n      \"x\": null,\n      \"y\": true,\n      \"z\": 1\n    }\n  ]\n}";
+        assert_eq!(dumps_sorted(&value), indented);
+        assert_eq!(
+            dumps_with(&json!({"b": ["é😀"], "a": 1}), None, true),
+            r#"{"a": 1, "b": ["\u00e9\ud83d\ude00"]}"#
+        );
+        assert_eq!(
+            dumps_compact(&json!({"b": [1, "x"], "a": {}})),
+            r#"{"b": [1, "x"], "a": {}}"#
         );
     }
 

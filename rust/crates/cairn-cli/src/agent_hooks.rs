@@ -277,7 +277,7 @@ fn failure_record_args(data: &Map<String, Value>) -> Option<Vec<String>> {
         .map(scalar_text)?;
 
     let cap = |text: String| text.chars().take(FAILURE_FIELD_CHARS).collect::<String>();
-    let safe_input = cap(strip_private_data(&crate::py_json::dumps_compact(
+    let safe_input = cap(strip_private_data(&crate::json_compat::dumps_compact(
         &tool_input,
     )));
     let safe_error = cap(strip_private_data(&error));

@@ -13,8 +13,8 @@ use serde_json::{Map, Value};
 
 use crate::cli_rows;
 use crate::display;
+use crate::json_compat;
 use crate::pack;
-use crate::py_json;
 use crate::rail::{self, Rail};
 use crate::store_paths;
 
@@ -495,7 +495,7 @@ fn config(args: crate::cmds_core::ConfigArgs) -> ExitCode {
             "scip".into(),
             load_config(store.workspace.clone()).scip_json(),
         );
-        println!("{}", py_json::dumps_compact(&Value::Object(object)));
+        println!("{}", json_compat::dumps_compact(&Value::Object(object)));
         return ExitCode::SUCCESS;
     }
 
@@ -521,7 +521,7 @@ fn config(args: crate::cmds_core::ConfigArgs) -> ExitCode {
         server.insert("cairn".into(), Value::Object(entry));
         let mut snippet = Map::new();
         snippet.insert("mcpServers".into(), Value::Object(server));
-        println!("{}", py_json::dumps(&Value::Object(snippet)));
+        println!("{}", json_compat::dumps(&Value::Object(snippet)));
         eprintln!("Run `cairn connect` to start or reuse the daemon and print its URL.");
         return ExitCode::SUCCESS;
     }
@@ -1324,7 +1324,7 @@ fn find_def(args: crate::cmds_core::DefArgs) -> ExitCode {
     if args.as_json {
         println!(
             "{}",
-            py_json::dumps(&Value::Array(rows.into_iter().map(Value::Object).collect()))
+            json_compat::dumps(&Value::Array(rows.into_iter().map(Value::Object).collect()))
         );
         return ExitCode::SUCCESS;
     }
@@ -1405,7 +1405,7 @@ fn callers(args: crate::cmds_core::CallersArgs) -> ExitCode {
     if args.as_json {
         println!(
             "{}",
-            py_json::dumps(&Value::Array(rows.into_iter().map(Value::Object).collect()))
+            json_compat::dumps(&Value::Array(rows.into_iter().map(Value::Object).collect()))
         );
         return ExitCode::SUCCESS;
     }
@@ -1437,7 +1437,7 @@ fn search(args: crate::cmds_core::SearchArgs) -> ExitCode {
     if args.as_json {
         println!(
             "{}",
-            py_json::dumps(&Value::Array(rows.into_iter().map(Value::Object).collect()))
+            json_compat::dumps(&Value::Array(rows.into_iter().map(Value::Object).collect()))
         );
         return ExitCode::SUCCESS;
     }
@@ -1472,7 +1472,7 @@ fn callees(args: crate::cmds_core::CalleesArgs) -> ExitCode {
     if args.as_json {
         println!(
             "{}",
-            py_json::dumps(&Value::Array(rows.into_iter().map(Value::Object).collect()))
+            json_compat::dumps(&Value::Array(rows.into_iter().map(Value::Object).collect()))
         );
         return ExitCode::SUCCESS;
     }
@@ -1558,7 +1558,7 @@ fn impact(args: crate::cmds_core::ImpactArgs) -> ExitCode {
             }
             object.insert("guard".into(), Value::Object(guard));
         }
-        println!("{}", py_json::dumps(&Value::Object(object)));
+        println!("{}", json_compat::dumps(&Value::Object(object)));
         if empty {
             return ExitCode::FAILURE;
         }
@@ -1694,7 +1694,7 @@ fn deps(args: crate::cmds_core::DepsArgs) -> ExitCode {
         let mut object = Map::new();
         object.insert("dependencies".into(), Value::Array(dependencies_json));
         object.insert("dependents".into(), Value::Array(dependents_json));
-        println!("{}", py_json::dumps(&Value::Object(object)));
+        println!("{}", json_compat::dumps(&Value::Object(object)));
         if result.dependencies.is_empty() && result.dependents.is_empty() {
             return ExitCode::FAILURE;
         }
@@ -1828,7 +1828,7 @@ fn federated_search(args: crate::cmds_core::FederatedSearchArgs) -> ExitCode {
             states_map.insert(ws.clone(), Value::from(state.clone()));
         }
         object.insert("states".into(), Value::Object(states_map));
-        println!("{}", py_json::dumps(&Value::Object(object)));
+        println!("{}", json_compat::dumps(&Value::Object(object)));
         if fused_hits.is_empty() {
             return ExitCode::FAILURE;
         }
@@ -2238,7 +2238,7 @@ fn semantic(args: crate::cmds_core::SemanticArgs) -> ExitCode {
         })
         .collect();
     if args.as_json {
-        println!("{}", py_json::dumps(&Value::Array(rows_json)));
+        println!("{}", json_compat::dumps(&Value::Array(rows_json)));
         return ExitCode::SUCCESS;
     }
     if rows.is_empty() {
@@ -2270,7 +2270,7 @@ fn semantic(args: crate::cmds_core::SemanticArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Python float json rendering (repr keeps shortest round-trip form).
+/// Float json rendering (repr keeps shortest round-trip form).
 fn number_value(value: f64) -> Value {
     serde_json::Number::from_f64(value)
         .map(Value::Number)
@@ -2359,7 +2359,7 @@ fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
         Err(message) => return command_error(&message),
     };
     let ann_outcome = if build_ann {
-        // Python's bar force-draws the description change, then stop() draws
+        // The bar force-draws the description change, then stop() draws
         // again after the rebuild: two indeterminate `ANN index` segments.
         crate::cmds_lifecycle::plain_progress_draw(
             "ANN index",
@@ -2497,7 +2497,7 @@ fn grep(args: crate::cmds_core::GrepArgs) -> ExitCode {
         Err(message) => return usage_error(&message),
     };
     if args.as_json {
-        println!("{}", py_json::dumps(&payload));
+        println!("{}", json_compat::dumps(&payload));
         return ExitCode::SUCCESS;
     }
     println!("{}", grep_text(&payload));
@@ -2571,7 +2571,7 @@ fn map(args: crate::cmds_core::MapArgs) -> ExitCode {
         Err(e) => return command_error(&e.to_string()),
     };
     if args.as_json {
-        println!("{}", py_json::dumps(&payload));
+        println!("{}", json_compat::dumps(&payload));
         return ExitCode::SUCCESS;
     }
     println!("{}", map_text(&payload));
@@ -2643,7 +2643,7 @@ fn rationale(args: crate::cmds_core::RationaleArgs) -> ExitCode {
             Err(e) => return command_error(&e.to_string()),
         };
     if args.as_json {
-        println!("{}", py_json::dumps(&Value::Array(records)));
+        println!("{}", json_compat::dumps(&Value::Array(records)));
         return ExitCode::SUCCESS;
     }
     if records.is_empty() {
@@ -2935,7 +2935,7 @@ fn blast(args: crate::cmds_core::BlastArgs) -> ExitCode {
         Err(message) => return command_error(&message),
     };
     let rendered = if matches!(args.output_format, BlastFormat::Json) {
-        py_json::dumps_sorted(&result.to_json())
+        json_compat::dumps_sorted(&result.to_json())
     } else {
         let mut rendered = cairn_query::blast::render_blast(&result, args.output_format.as_str())
             .unwrap_or_default();
@@ -2976,7 +2976,7 @@ fn click_usage_error(usage: &str, command: &str, message: &str) -> ExitCode {
 fn route_json(outcome: &cairn_query::tools_km::RouteOutcome) -> Value {
     let mut results = Map::new();
     for (layer, data) in &outcome.results {
-        results.insert(layer.clone(), py_json::yaml_to_value(data));
+        results.insert(layer.clone(), json_compat::yaml_to_value(data));
     }
     let mut object = Map::new();
     object.insert("intent".into(), Value::from(outcome.intent));
@@ -3012,14 +3012,14 @@ fn print_route(outcome: &cairn_query::tools_km::RouteOutcome) {
                 for (key, value) in hash {
                     println!(
                         "  {}: {}",
-                        cairn_query::tools_km::py_str(key),
-                        cairn_query::tools_km::py_str(value)
+                        cairn_query::tools_km::router_display(key),
+                        cairn_query::tools_km::router_display(value)
                     );
                 }
             }
             Yaml::Array(items) => {
                 for item in items {
-                    println!("  {}", cairn_query::tools_km::py_str(item));
+                    println!("  {}", cairn_query::tools_km::router_display(item));
                 }
             }
             _ => {}
@@ -3047,7 +3047,7 @@ fn ask(args: crate::cmds_core::AskArgs) -> ExitCode {
     let bundle = cairn_query::tools_km::Bundle::new(knowledge);
     let outcome = cairn_query::tools_km::route_query(&conn, &bundle, &args.question);
     if args.as_json {
-        println!("{}", py_json::dumps(&route_json(&outcome)));
+        println!("{}", json_compat::dumps(&route_json(&outcome)));
         return ExitCode::SUCCESS;
     }
     print_route(&outcome);
@@ -3108,7 +3108,7 @@ fn ask_all_repos(args: &crate::cmds_core::AskArgs) -> ExitCode {
             "dropped".into(),
             Value::Array(dropped.iter().cloned().map(Value::from).collect()),
         );
-        println!("{}", py_json::dumps(&Value::Object(payload)));
+        println!("{}", json_compat::dumps(&Value::Object(payload)));
         return ExitCode::SUCCESS;
     }
     if states.is_empty() {
@@ -3427,7 +3427,7 @@ fn dataflow_lookup(args: crate::cmds_core::DataflowLookupArgs) -> ExitCode {
         return ExitCode::FAILURE;
     };
     if args.as_json {
-        println!("{}", py_json::dumps(&dataflow_json(&row)));
+        println!("{}", json_compat::dumps(&dataflow_json(&row)));
         return ExitCode::SUCCESS;
     }
     print_dataflow(&row);
@@ -3584,7 +3584,7 @@ fn viz(args: crate::cmds_core::VizArgs) -> ExitCode {
     };
     if let Some(export_path) = &args.export_path {
         let viewer = viewer_js();
-        let graph_json = py_json::dumps_compact(&graph).replace('<', "\\u003c");
+        let graph_json = json_compat::dumps_compact(&graph).replace('<', "\\u003c");
         let html = cairn_query::graph::to_html(&graph, &viewer, &graph_json);
         if let Err(e) = std::fs::write(export_path, html.as_bytes()) {
             return command_error(&format!("cannot write {export_path}: {e}"));
@@ -3601,7 +3601,7 @@ fn viz(args: crate::cmds_core::VizArgs) -> ExitCode {
             }
         }
         VizFormat::Dot => cairn_query::graph::to_dot(&graph),
-        VizFormat::Json => py_json::dumps(&graph),
+        VizFormat::Json => json_compat::dumps(&graph),
     };
     match &args.output {
         None => println!("{out}"),

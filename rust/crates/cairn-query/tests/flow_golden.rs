@@ -1,5 +1,5 @@
-//! Flow-tool golden parity: the Rust renders match the recorded Python
-//! fixtures over the checked-in corpus store (queries taken from the fixtures).
+//! Flow-tool golden parity: renders match the recorded fixtures
+//! over the checked-in corpus store (queries taken from the fixtures).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -122,7 +122,7 @@ fn normalize_value(value: &Value, rules: &[Rule]) -> Value {
 }
 
 fn sorted_lines(text: &str) -> String {
-    // Python's `"\n".join(sorted(text.splitlines()))`.
+    // `"\n".join(sorted(text.splitlines()))`.
     let mut lines: Vec<&str> = text.lines().collect();
     lines.sort();
     lines.join("\n")

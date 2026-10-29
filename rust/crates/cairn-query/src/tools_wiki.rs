@@ -1,5 +1,5 @@
 //! Wiki generation pipeline: catalog planner, manifest, task queue
-//! (wiki/catalog.py + pipeline.py + manifest.py + lifecycle.py port).
+//!.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -45,7 +45,7 @@ pub struct PageEntry {
 
 impl PageEntry {
     /// The plan-entry seeds: files + symbols + the empty docs list.
-    /// Key order is the canonicalization contract: Python hashes with
+    /// Key order is the canonicalization contract: the hash uses
     /// sort_keys, and serde_json (preserve_order) serializes insertion order.
     fn seeds_value(&self) -> Value {
         json!({
@@ -113,7 +113,7 @@ fn page_input_hash(entry: &PageEntry) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-// --- catalog planning (wiki/catalog.py port) ---------------------------------
+// --- catalog planning ---------------------------------
 
 /// Module directory for a path; mirrors graph.stats.group_by_top_level exactly.
 fn module_of(path: &str, repo_root: &str) -> String {
@@ -341,7 +341,7 @@ pub fn build_page_plan(
     Ok(plan)
 }
 
-// --- refined-outline validation (wiki/refine.py port) ------------------------
+// --- refined-outline validation ------------------------
 
 fn module_in_graph(conn: &Connection, module: &str, repo: &str) -> Result<bool, rusqlite::Error> {
     let like = like_under_prefix(module);
@@ -493,7 +493,7 @@ fn validate_refined_outline(
     Ok(effective)
 }
 
-// --- manifest (wiki/manifest.py port) ----------------------------------------
+// --- manifest ----------------------------------------
 
 fn manifest_path(bundle: &Bundle) -> std::path::PathBuf {
     bundle.root.join("_wiki").join("manifest.json")
@@ -546,7 +546,7 @@ pub fn load_manifest(bundle: &Bundle) -> Result<Value, PipelineError> {
     Ok(doc)
 }
 
-/// Recreate Python `json.dump(..., sort_keys=True, indent=2)` output.
+/// Render `json.dump(..., sort_keys=True, indent=2)`-format output.
 fn sorted_json(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
@@ -594,7 +594,7 @@ fn save_manifest(bundle: &Bundle, manifest: &Value) -> Result<bool, ToolError> {
     }
 }
 
-// --- task queue (llm/tasks.py + wiki/lifecycle.py port) ----------------------
+// --- task queue ----------------------
 
 /// One listed task record (only the fields the pipeline consumes).
 #[derive(Clone, Debug)]
@@ -812,7 +812,7 @@ fn is_promoted(bundle: &Bundle, repo: &str, page_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-// --- pipeline (wiki/pipeline.py port) ----------------------------------------
+// --- pipeline ----------------------------------------
 
 /// One run outcome: the (effective) plan plus what got queued.
 pub struct WikiOutcome {
@@ -902,7 +902,7 @@ fn parse_outline(result: Option<String>) -> Option<Vec<Value>> {
     }
 }
 
-/// The result body for a completed task (tasks.py read_result port).
+/// The result body for a completed task.
 fn read_result(bundle: &Bundle, task_id: &str) -> Option<String> {
     bundle
         .read_concept(&format!("_tasks/{task_id}.result"))
@@ -1130,7 +1130,7 @@ pub fn wiki_generate_text(
     Ok(out.join("\n"))
 }
 
-// --- lifecycle read model (wiki/lifecycle.py port) ----------------------------
+// --- lifecycle read model ----------------------------
 
 /// The lifecycle vocabulary every read model exposes, derived at read time.
 pub const DERIVED_STATES: [&str; 6] = [
@@ -1184,7 +1184,7 @@ pub fn derived_state(bundle: &Bundle, repo: &str, page_id: &str, chain: &[TaskRe
     if chain.iter().any(|t| t.status == "dropped") {
         return "dropped".into();
     }
-    // Python max() keeps the first maximal element on (created_at, attempt) ties.
+    // First maximal element wins on (created_at, attempt) ties.
     let mut latest: Option<&TaskRec> = None;
     for task in chain.iter().filter(|t| t.status == "done") {
         if latest.is_none_or(|l| (&task.created_at, task.attempt) > (&l.created_at, l.attempt)) {
@@ -1219,7 +1219,7 @@ pub fn staleness(recorded: Option<&str>, head: Option<&str>) -> &'static str {
     }
 }
 
-// --- retry + enrich (wiki/cli + pipeline.py port) -------------------------------
+// --- retry + enrich -------------------------------
 
 /// One re-queued page: (task id, manifest key, new queue_attempts).
 pub struct RequeuedPage {
@@ -1382,7 +1382,7 @@ pub fn queue_enrich_tasks(
     Ok(queued)
 }
 
-// --- deterministic generator (wiki/generator.py port) ---------------------------
+// --- deterministic generator ---------------------------
 
 const REPORT_SECTION_VOCAB: [&str; 5] = [
     "## Overview",
@@ -1687,7 +1687,7 @@ mod tests {
         assert_eq!(queued[0].repo, "cairn");
     }
     #[test]
-    fn page_input_hash_matches_python_canonicalization() {
+    fn page_input_hash_matches_canonicalization() {
         let entry = PageEntry {
             page_id: "overview".into(),
             title: "corpus architecture overview".into(),

@@ -15,6 +15,7 @@ use crate::tasks::{
     DanglingPointer, KnowledgeIndexReport, StagedPointerRow, dangling_manifest_pointers,
     extract_relationships, normalize_relationships, queue_doc_link_tasks, rebuild_knowledge_index,
 };
+use crate::textfmt::{os_error_text, repr_single_quoted, title_bool};
 use crate::tools_km::{
     self, Bundle, Concept, ToolError, check_bundle, doc_type_slug, extract_file_refs,
     extract_symbol_refs, file_exists, list_documents, normalize_doc_id, search_knowledge_docs,
@@ -38,12 +39,12 @@ fn ystr(v: Option<&Yaml>) -> Option<String> {
         Some(Yaml::String(s)) => Some(s.clone()),
         Some(Yaml::Real(s)) => Some(s.clone()),
         Some(Yaml::Integer(i)) => Some(i.to_string()),
-        Some(Yaml::Boolean(b)) => Some(if *b { "True" } else { "False" }.into()),
+        Some(Yaml::Boolean(b)) => Some(title_bool(*b).into()),
         _ => None,
     }
 }
 
-// --- ingest config (ingest/config.py port) --------------------------------------
+// --- ingest config --------------------------------------
 
 /// Workspace overrides layered over the ingest built-in defaults.
 #[derive(Debug, Clone, Default)]
@@ -51,21 +52,6 @@ pub struct IngestConfig {
     pub classification: Vec<(String, String)>,
     pub skip_add: Vec<String>,
     pub skip_disable: Vec<String>,
-}
-
-/// Python's OSError str(): "[Errno <n>] <message>: '<path>'".
-fn py_oserror_text(e: &std::io::Error, path: &str) -> String {
-    let message = e
-        .to_string()
-        .trim_end_matches(&format!(
-            " (os error {})",
-            e.raw_os_error().unwrap_or_default()
-        ))
-        .to_string();
-    match e.raw_os_error() {
-        Some(code) => format!("[Errno {code}] {message}: '{path}'"),
-        None => format!("{message}: '{path}'"),
-    }
 }
 
 fn utf8_lead_len(b: u8) -> Option<usize> {
@@ -78,8 +64,8 @@ fn utf8_lead_len(b: u8) -> Option<usize> {
     }
 }
 
-/// Python's UnicodeDecodeError message for non-UTF-8 bytes; None when valid.
-fn py_unicode_decode_error(bytes: &[u8]) -> Option<String> {
+/// UnicodeDecodeError-style message for non-UTF-8 bytes; None when valid.
+fn utf8_decode_error_text(bytes: &[u8]) -> Option<String> {
     let prefix = |start: usize, end: usize, reason: &str| -> String {
         if start == end {
             format!(
@@ -126,9 +112,9 @@ fn py_unicode_decode_error(bytes: &[u8]) -> Option<String> {
     None
 }
 
-/// Python's json.JSONDecodeError text for the shapes serde reports the same
+/// JSONDecodeError-style text for the shapes serde reports the same
 /// position on; other shapes keep serde's own wording.
-fn py_json_error_text(text: &str, e: &serde_json::Error) -> String {
+fn json_error_text(text: &str, e: &serde_json::Error) -> String {
     let raw = e.to_string();
     let head = raw.split(" at ").next().unwrap_or("").to_string();
     let mut eof_shaped = false;
@@ -207,7 +193,7 @@ fn py_json_error_text(text: &str, e: &serde_json::Error) -> String {
 }
 
 /// Read the ingest section of the workspace's cairn.json; malformed content
-/// yields the warning lines Python's load_config prints.
+/// yields warning lines.
 pub fn load_ingest_config(workspace_root: &Path) -> IngestConfig {
     let (config, warnings) = ingest_config_with_warnings(workspace_root);
     for warning in &warnings {
@@ -228,12 +214,12 @@ pub fn ingest_config_with_warnings(workspace_root: &Path) -> (IngestConfig, Vec<
         Err(e) => {
             warnings.push(format!(
                 "warning: {shown}: could not read ({}); ignoring config",
-                py_oserror_text(&e, &shown)
+                os_error_text(&e, &shown)
             ));
             return (config, warnings);
         }
     };
-    let text = match py_unicode_decode_error(&bytes) {
+    let text = match utf8_decode_error_text(&bytes) {
         Some(err) => {
             warnings.push(format!(
                 "warning: {shown}: not valid UTF-8 ({err}); ignoring config"
@@ -247,7 +233,7 @@ pub fn ingest_config_with_warnings(workspace_root: &Path) -> (IngestConfig, Vec<
         Err(e) => {
             warnings.push(format!(
                 "warning: {shown}: invalid JSON ({}); ignoring config",
-                py_json_error_text(&text, &e)
+                json_error_text(&text, &e)
             ));
             return (config, warnings);
         }
@@ -302,7 +288,7 @@ pub fn ingest_config_with_warnings(workspace_root: &Path) -> (IngestConfig, Vec<
     (config, warnings)
 }
 
-// --- source parsing (ingest/parser.py port) -------------------------------------
+// --- source parsing -------------------------------------
 
 /// Metadata and frontmatter-stripped body of one source document.
 #[derive(Debug, Clone, Default)]
@@ -520,7 +506,7 @@ fn first_heading(body: &str, re: &ParserRegexes) -> Option<String> {
     None
 }
 
-// --- classification (ingest/classifier.py port) ----------------------------------
+// --- classification ----------------------------------
 
 const SKIP_STATUSES: [&str; 5] = ["draft", "proposed", "review", "superseded", "deprecated"];
 const DECISION_DIR_TOKENS: [&str; 4] = ["decisions", "decision", "adr", "adrs"];
@@ -730,7 +716,7 @@ fn classify_relpath(relpath: &str) -> Option<String> {
     None
 }
 
-// --- identity (ingest/identity.py port) ------------------------------------------
+// --- identity ------------------------------------------
 
 /// Derived identity of one source document.
 #[derive(Debug, Clone)]
@@ -964,7 +950,7 @@ fn first_meaningful_paragraph(body: &str) -> Option<String> {
     (!lines.is_empty()).then(|| lines.join(" "))
 }
 
-// --- source adapters (ingest/adapters.py port) -----------------------------------
+// --- source adapters -----------------------------------
 
 /// The adapter yield contract: (repo, relpath, text, origin).
 type SourcedDoc = (String, String, String, String);
@@ -1268,7 +1254,7 @@ fn repo_scan_docs(
     Ok((docs, skipped))
 }
 
-// --- ADR supersede detection (ingest/adr.py port) --------------------------------
+// --- ADR supersede detection --------------------------------
 
 fn adr_regexes() -> &'static (Regex, Regex, Regex) {
     static RES: OnceLock<(Regex, Regex, Regex)> = OnceLock::new();
@@ -1433,7 +1419,7 @@ fn detect_supersede_relationships(entries: &[StagedEntry]) -> HashMap<(String, S
     detected
 }
 
-// --- staging (ingest/staging.py port) ---------------------------------------------
+// --- staging ---------------------------------------------
 
 /// One source document ready to stage.
 pub struct StagedEntry {
@@ -1701,10 +1687,10 @@ fn stage_document(
         return Err(format!(
             "staging cross-check failed for {staged_path}: expected title={} type={}, staged \
              title={} type={}",
-            py_repr(&title),
-            py_repr(&expected_type),
-            py_repr(staged_back.title.as_deref().unwrap_or("None")),
-            py_repr(&staged_back.type_)
+            repr_single_quoted(&title),
+            repr_single_quoted(&expected_type),
+            repr_single_quoted(staged_back.title.as_deref().unwrap_or("None")),
+            repr_single_quoted(&staged_back.type_)
         ));
     }
     Ok(StagedRow {
@@ -1725,15 +1711,11 @@ fn stage_document(
     })
 }
 
-fn py_repr(s: &str) -> String {
-    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
-}
-
 fn str_list_yaml(items: &[String]) -> Yaml {
     Yaml::Array(items.iter().map(|i| ys(i.clone())).collect())
 }
 
-// --- run_ingest (ingest/__init__.py port) ----------------------------------------
+// --- run_ingest ----------------------------------------
 
 /// Stage fed and scanned documents without touching the knowledge store.
 pub fn run_ingest(
@@ -1860,7 +1842,7 @@ fn apply_fed_tag(origin: &str, parsed: &ParsedDoc, classification: &mut Classifi
     }
 }
 
-// --- doc refs (ingest/refs.py port) ----------------------------------------------
+// --- doc refs ----------------------------------------------
 
 /// Refs verified against the graph: files before symbols.
 pub fn resolve_doc_refs(conn: &Connection, body: &str) -> Vec<(String, String)> {
@@ -1879,7 +1861,7 @@ pub fn resolve_doc_refs(conn: &Connection, body: &str) -> Vec<(String, String)> 
     entries
 }
 
-// --- executor (ingest/executor.py port) -------------------------------------------
+// --- executor -------------------------------------------
 
 /// The approved-run report; each verify leg is a named boolean/count.
 #[derive(Debug, Clone)]
@@ -2238,7 +2220,7 @@ mod tests {
     }
 
     #[test]
-    fn ingest_config_warnings_match_python_shapes() {
+    fn ingest_config_warnings_match_shapes() {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock")
@@ -2288,7 +2270,7 @@ mod tests {
             "{warnings:?}"
         );
 
-        // invalid UTF-8: Python's UnicodeDecodeError text
+        // invalid UTF-8: UnicodeDecodeError-style text
         std::fs::write(dir.join("cairn.json"), b"{\"a\": 1}\n\xe2\x80").expect("write");
         let (_, warnings) = ingest_config_with_warnings(&dir);
         assert_eq!(
@@ -2303,10 +2285,10 @@ mod tests {
     }
 
     #[test]
-    fn py_json_error_text_matches_the_reference_vectors() {
+    fn json_error_text_matches_the_reference_vectors() {
         let mapped = |raw: &str| -> String {
             let e = serde_json::from_str::<Value>(raw).expect_err("must fail");
-            py_json_error_text(raw, &e)
+            json_error_text(raw, &e)
         };
         assert_eq!(mapped(""), "Expecting value: line 1 column 1 (char 0)");
         assert_eq!(mapped("x"), "Expecting value: line 1 column 1 (char 0)");
@@ -2338,7 +2320,7 @@ mod tests {
     }
 
     #[test]
-    fn py_unicode_decode_error_matches_the_reference_vectors() {
+    fn utf8_decode_error_text_matches_the_reference_vectors() {
         let cases: &[(&[u8], &str)] = &[
             (
                 b"a\x80",
@@ -2383,12 +2365,12 @@ mod tests {
         ];
         for (raw, expected) in cases {
             assert_eq!(
-                py_unicode_decode_error(raw).as_deref(),
+                utf8_decode_error_text(raw).as_deref(),
                 Some(*expected),
                 "input {raw:?}"
             );
         }
-        assert_eq!(py_unicode_decode_error(b"valid \xe2\x82\xac text"), None);
+        assert_eq!(utf8_decode_error_text(b"valid \xe2\x82\xac text"), None);
     }
 
     #[test]

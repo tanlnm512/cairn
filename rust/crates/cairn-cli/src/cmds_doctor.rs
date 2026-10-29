@@ -1,4 +1,4 @@
-//! `cairn doctor`: system health checks (system/doctor.py port).
+//! `cairn doctor`: system health checks.
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use crate::agent_install;
 use crate::display;
-use crate::py_json;
+use crate::json_compat;
 use crate::store_paths;
 
 const PASS: &str = "PASS";
@@ -96,7 +96,7 @@ pub fn run(args: DoctorArgs) -> ExitCode {
                 })
             }
         };
-        println!("{}", py_json::dumps(&payload));
+        println!("{}", json_compat::dumps(&payload));
     } else {
         for r in &results {
             let (glyph, style) = match r.status {
@@ -1616,7 +1616,7 @@ fn backup_and_write(path: &Path, data: &Value) -> bool {
         path.file_name().unwrap_or_default().to_string_lossy()
     ));
     crate::agent_install::copy_to_backup(path, &backup)
-        && std::fs::write(path, py_json::dumps(data) + "\n").is_ok()
+        && std::fs::write(path, json_compat::dumps(data) + "\n").is_ok()
 }
 
 fn load_json_object(path: &Path) -> Option<Value> {

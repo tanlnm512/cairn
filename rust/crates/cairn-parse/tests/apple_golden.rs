@@ -102,7 +102,7 @@ fn expected(lang: &str) -> Value {
 }
 
 #[test]
-fn swift_output_matches_the_python_golden() {
+fn swift_output_matches_the_golden() {
     let parsed = SwiftParser
         .parse_file(&golden_dir().join("swift/sample.swift"))
         .expect("parse swift sample");
@@ -110,7 +110,7 @@ fn swift_output_matches_the_python_golden() {
 }
 
 #[test]
-fn objc_output_matches_the_python_golden() {
+fn objc_output_matches_the_golden() {
     let parsed = ObjCParser
         .parse_file(&golden_dir().join("objc/sample.m"))
         .expect("parse objc sample");

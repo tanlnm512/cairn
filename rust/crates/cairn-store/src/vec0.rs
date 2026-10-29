@@ -226,7 +226,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sanitizes_model_names_like_the_python_sanitizer() {
+    fn sanitizes_model_names() {
         assert_eq!(
             table_name("all-MiniLM-L6-v2", VecSource::Embeddings),
             "vec_all_MiniLM_L6_v2"

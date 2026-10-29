@@ -25,7 +25,7 @@ pub(crate) struct SymbolRow {
 
 pub(crate) struct Projection {
     pub(crate) symbols: Vec<SymbolRow>,
-    /// Repo ids in sorted order (Python iterates a sorted dict).
+    /// Repo ids in sorted order.
     repos: Vec<String>,
     paths: BTreeMap<String, BTreeSet<String>>,
 }
@@ -294,7 +294,7 @@ pub const CLI_DEFAULT_CLUSTER_CAP: usize = DEFAULT_CLUSTER_CAP;
 pub const CLI_DEFAULT_HUB_CAP: usize = DEFAULT_HUB_CAP;
 pub const CLI_DEFAULT_HOTSPOT_CAP: usize = DEFAULT_HOTSPOT_CAP;
 
-/// The `cairn map` JSON payload (python `build_repo_map` dict shape/order).
+/// The `cairn map` JSON payload (dict shape and key order).
 pub fn repo_map_payload(
     conn: &Connection,
     cluster_cap: usize,

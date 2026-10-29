@@ -121,11 +121,11 @@ PREK_VERSION="$(sed -n 's/^ *PREK_VERSION: "\(.*\)"$/\1/p' "$MOUNT_POINT/.github
 # Rust in the container: toolchain + cargo-deny live in the cache; the cargo
 # target dir is per-arch and OUTSIDE the bind-mounted rust/target so container
 # (linux) builds never thrash the host's darwin artifacts. The xtask oracles
-# honor CARGO_TARGET_DIR / CAIRN_RUST_BIN.
+# honor CARGO_TARGET_DIR / CAIRN_BIN.
 ARCH_TAG="${CI_LOCAL_ARCH##*/}"
 export CARGO_HOME="$CACHE/cargo-home"
 export CARGO_TARGET_DIR="$CACHE/cargo-target-$ARCH_TAG"
-export CAIRN_RUST_BIN="$CARGO_TARGET_DIR/release/cairn"
+export CAIRN_BIN="$CARGO_TARGET_DIR/release/cairn"
 
 ensure_cargo() {
   if ! command -v cargo >/dev/null 2>&1; then
@@ -193,7 +193,7 @@ case "$JOB" in
     cargo xtask parity --store self
     cargo xtask cli-golden
     log "G2 base leg (rust-parity.yml)"
-    bash scripts/rust_migration/g2_check.sh
+    bash scripts/g2_check.sh
     ;;
 
   *) die "inner: unknown job '$JOB'" ;;

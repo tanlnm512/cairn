@@ -30,7 +30,7 @@ jobs:
     steps:
       # CHANGELOG.md lives in the repo; the changelog-extraction step below
       # needs the source tree.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Extract version from tag
         id: ver
@@ -55,7 +55,7 @@ jobs:
             echo "No CHANGELOG.md section for $VERSION -- check the release flow." >&2
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           name: ${{ steps.ver.outputs.version }}
           body_path: release-notes.md
