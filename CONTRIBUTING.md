@@ -127,7 +127,7 @@ license notice in the file or add it to `NOTICE`.
 File bugs via **GitHub Issues**. Please include:
 
 - cairn version (`cairn version`)
-- OS and install channel (Homebrew / cargo / tarball)
+- OS and install channel (cargo binstall / cargo install / tarball)
 - Steps to reproduce, expected vs. actual behavior, and any relevant logs
 
 For security-sensitive reports, see **SECURITY.md** instead of a public issue.

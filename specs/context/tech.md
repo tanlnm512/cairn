@@ -35,7 +35,7 @@ Stack, build and test runners, and gates. Cited from `Cargo.toml`,
 | `rust.yml` | push, PR, merge queue | fmt, clippy, test, deny, release build matrix (macOS and Linux gnu/musl targets) |
 | `rust-parity.yml` | PR (cheap subset), nightly, dispatch | parity, parity-stores, g2-legs |
 | `release.yml` | tag | GitHub release |
-| `release-rust.yml` | tag | binaries, GitHub release, Homebrew tap, crates.io |
+| `release-rust.yml` | tag | binaries, GitHub release |
 | `weekly-smoke.yml` | weekly, dispatch | smoke |
 | `review.yml` | PR | advisory review |
 | `extension-release.yml` | tag | VS Code extension |

@@ -893,7 +893,7 @@
   {
    "label": "uninstall --dry-run --graph-only",
    "exit": 0,
-   "stdout": "\nCairn Uninstaller\n(dry-run: nothing will be deleted)\n\n➜ Graph and knowledge data\n  removing: <CAIRN_HOME>/<STORE_KEY>\n  size:     15 MB\n  would: rm -rf <CAIRN_HOME>/<STORE_KEY>\n\n\nDry-run complete — nothing was deleted\n\n  Remaining (never removed):\n    CLAUDE.md, AGENTS.md  — instruction files (created create-if-absent only)\n    Source code            — your repos are untouched\n\n  To reinstall: ./scripts/install.sh  (or brew install / cargo binstall cairn-cli)\n",
+   "stdout": "\nCairn Uninstaller\n(dry-run: nothing will be deleted)\n\n➜ Graph and knowledge data\n  removing: <CAIRN_HOME>/<STORE_KEY>\n  size:     15 MB\n  would: rm -rf <CAIRN_HOME>/<STORE_KEY>\n\n\nDry-run complete — nothing was deleted\n\n  Remaining (never removed):\n    CLAUDE.md, AGENTS.md  — instruction files (created create-if-absent only)\n    Source code            — your repos are untouched\n\n  To reinstall: ./scripts/install.sh  (or cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli)\n",
    "stderr": ""
   },
   {

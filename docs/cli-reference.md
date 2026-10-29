@@ -7,8 +7,8 @@ command runs through the `cairn` entry point. Pass `--db` / `--workspace`
 explicitly in scripts — `CAIRN_HOME` and friends are read at process start,
 not per call.
 
-One engine serves every install channel: the `cairn` binary (Homebrew tap,
-`cargo binstall`, release tarball) is the whole surface below.
+One engine serves every install channel: the `cairn` binary (`cargo binstall`,
+`cargo install`, release tarball) is the whole surface below.
 `cairn --help` and `cairn <command> --help` are authoritative.
 
 Machine contracts (`config --json`/`--db`/`--mcp-config` shapes, stdout-pure

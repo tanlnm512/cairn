@@ -1898,7 +1898,9 @@ pub fn run_uninstall(args: UninstallArgs) -> ExitCode {
     println!("    CLAUDE.md, AGENTS.md  — instruction files (created create-if-absent only)");
     println!("    Source code            — your repos are untouched");
     println!();
-    println!("  To reinstall: ./scripts/install.sh  (or brew install / cargo binstall cairn-cli)");
+    println!(
+        "  To reinstall: ./scripts/install.sh  (or cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli)"
+    );
     ExitCode::SUCCESS
 }
 

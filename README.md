@@ -48,16 +48,16 @@ path.
 Every channel ships the same engine binary:
 
 ```bash
-brew install tanlnm512/cairn/cairn                 # Homebrew tap
-cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli
+cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli  # prebuilt binary
+cargo install --git https://github.com/tanlnm512/cairn cairn-cli   # build from source
 ```
 
-Release tarballs (aarch64 / x86_64 on macOS and Linux, musl-static on
+Always pass `--git`: the `cairn-cli` crate on crates.io is an unrelated
+project. Release tarballs (aarch64 / x86_64 on macOS and Linux, musl-static on
 Linux) are on the [releases page](https://github.com/tanlnm512/cairn/releases),
 and `cargo install --path rust/crates/cairn-cli` builds from a clone. Release
-tags populate the tarballs, the Homebrew formula, and the binstall metadata;
-`docx` and PDF conversion run natively in the engine. Every channel
-(Homebrew, cargo, tarball) upgrades through its own package manager.
+tags populate the tarballs that `cargo binstall` downloads; `docx` and PDF
+conversion run natively in the engine. Upgrade by re-running the same command.
 
 **2. Wire up your agent(s)**
 
@@ -404,7 +404,7 @@ make ci-local                     # clean-room CI replication in a Linux contain
 ```
 
 Releases are cut by tagging `vX.Y.Z`: the tag-triggered workflows build the
-platform binaries, the Homebrew formula, and the crates.io publish (see
+platform binaries and attach them to the GitHub Release (see
 [docs/release-checklist.md](docs/release-checklist.md)).
 Contributions follow [docs/review-checklist.md](docs/review-checklist.md).
 
