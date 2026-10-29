@@ -45,7 +45,17 @@ path.
 
 **1. Install the CLI**
 
-Every channel ships the same engine binary:
+Every channel ships the same engine binary. Both commands need a Rust
+toolchain ([rustup.rs](https://rustup.rs)); `cargo binstall` also needs
+[cargo-binstall](https://github.com/cargo-bins/cargo-binstall):
+
+```bash
+# prebuilt installer for cargo-binstall
+curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+# or: cargo install cargo-binstall
+```
+
+Then install cairn:
 
 ```bash
 cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli  # prebuilt binary
