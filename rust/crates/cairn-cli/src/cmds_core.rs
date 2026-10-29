@@ -590,6 +590,8 @@ fn config(args: crate::cmds_core::ConfigArgs) -> ExitCode {
                 );
             } else if backend == cairn_query::tools_search::EffectiveBackend::Hash {
                 println!("embed:      {}  (CAIRN_EMBED_BACKEND=hash)", env.model);
+            } else if backend == cairn_query::tools_search::EffectiveBackend::Native {
+                println!("embed:      {}  (CAIRN_EMBED_BACKEND=native)", env.model);
             } else {
                 println!("embed:      {}  (backend: server)", env.model);
             }
@@ -2187,6 +2189,25 @@ fn embed_count(conn: &Connection, model: &str) -> i64 {
     .unwrap_or(0)
 }
 
+/// Pre-warm handler: download the native model and exit without embedding;
+/// feature-off builds fail naming the cargo feature.
+fn embed_download_model() -> ExitCode {
+    match tools_search::native_warm_model() {
+        Ok(()) => {
+            display::info(
+                "bge-m3 model weights cached; native embedding ready \
+                 (CAIRN_EMBED_BACKEND=native)",
+            );
+            ExitCode::SUCCESS
+        }
+        Err(message) => {
+            display::error("Model download unavailable");
+            display::dim(&message);
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// semantic handler.
 fn semantic(args: crate::cmds_core::SemanticArgs) -> ExitCode {
     let env = tools_search::semantic_env(None);
@@ -2309,11 +2330,22 @@ fn attach_neighbors(conn: &Connection, name: &str, callers: bool) -> Vec<Value> 
 
 /// embed handler.
 fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
+    if args.download_model {
+        return embed_download_model();
+    }
     let env = tools_search::semantic_env(None);
     if env.backend == EffectiveBackend::Unavailable {
         return exit_backend_unavailable();
     }
-    if env.hash_fallback {
+    if env.native_cold {
+        display::warning(
+            "Using the hash embedder: the native model is not cached, so retrieval is degraded.",
+        );
+        display::dim(
+            "For real vectors run: CAIRN_EMBED_BACKEND=native cairn embed --download-model, \
+             then re-run cairn embed",
+        );
+    } else if env.hash_fallback {
         display::warning(
             "Using the hash embedder (dep-free): token-overlap vectors only, so retrieval is \
              degraded.",
@@ -3964,6 +3996,9 @@ pub struct EmbedArgs {
     /// Skip deleting embedding rows for symbols that no longer exist.
     #[arg(long = "no-reap")]
     pub no_reap: bool,
+    /// Download the native bge-m3 model weights and exit (local-embed builds).
+    #[arg(long = "download-model")]
+    pub download_model: bool,
     /// Rebuild native ANN index after embedding.
     #[arg(long = "build-index")]
     pub build_index: bool,

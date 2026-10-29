@@ -56,8 +56,11 @@ fn probe_store(db_path: &str) -> Result<(), rusqlite::Error> {
 /// CAIRN_EMBED_BACKEND=hash / CAIRN_ANN_BACKEND=off is an informed choice.
 fn degradation_count() -> usize {
     let mut count = 0usize;
-    // The default `local` resolution is the hash embedder in the Rust port.
-    if cairn_query::tools_search::backend_name() == "local" {
+    // Hash in effect without an explicit hash configuration: the default
+    // `local` resolution or the native cold-cache fallback.
+    let name = cairn_query::tools_search::backend_name();
+    let env = cairn_query::tools_search::semantic_env(None);
+    if env.hash_fallback && name != "hash" {
         count += 1; // embeddings=hash_fallback
     }
     if !cairn_query::tools_search::ann_backend_enabled() {

@@ -148,7 +148,11 @@ pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
             return degraded;
         }
     };
-    let mut results = vec![check_schema(&conn), check_embeddings(), check_ann(&conn)];
+    let mut results = vec![
+        check_schema(&conn),
+        check_embeddings(&conn),
+        check_ann(&conn),
+    ];
     results.extend(check_embed_server(&conn));
     results.push(check_freshness(&conn));
     results.push(check_parse_errors(&conn));
@@ -245,9 +249,12 @@ fn check_schema(conn: &Connection) -> CheckResult {
 
 // --- 2. embeddings ----------------------------------------------------------------
 
-fn check_embeddings() -> CheckResult {
+fn check_embeddings(conn: &Connection) -> CheckResult {
     use cairn_query::tools_search;
     let configured = tools_search::backend_name();
+    if configured == "native" {
+        return check_native_embeddings(conn);
+    }
     let effective_hash = !matches!(
         tools_search::resolve_backend(&configured).0,
         tools_search::EffectiveBackend::Server
@@ -261,6 +268,44 @@ fn check_embeddings() -> CheckResult {
         );
     }
     result("embeddings", PASS, format!("backend: {configured}"), None)
+}
+
+/// Native facts in any build: feature state, model-cache state, row count.
+fn check_native_embeddings(conn: &Connection) -> CheckResult {
+    use cairn_query::tools_search;
+    let native_rows = query_i64(
+        conn,
+        "SELECT COUNT(*) FROM embeddings WHERE model = ?1",
+        &[&tools_search::NATIVE_MODEL.to_string()],
+        0,
+    );
+    if !tools_search::native_feature_enabled() {
+        return result(
+            "embeddings",
+            WARN,
+            format!(
+                "backend: native, feature not compiled ({native_rows} native embedding(s) in store)"
+            ),
+            Some(tools_search::native_feature_hint()),
+        );
+    }
+    if tools_search::native_model_cached() {
+        return result(
+            "embeddings",
+            PASS,
+            format!("backend: native, model cached, {native_rows} native embedding(s)"),
+            None,
+        );
+    }
+    result(
+        "embeddings",
+        WARN,
+        "backend: native, model not cached -- hash fallback in use, retrieval degraded",
+        Some(
+            "run CAIRN_EMBED_BACKEND=native cairn embed --download-model, then re-run cairn embed"
+                .to_string(),
+        ),
+    )
 }
 
 // --- 3. ann ------------------------------------------------------------------------

@@ -141,7 +141,7 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 
 | Command | Purpose |
 |---|---|
-| `cairn embed` | compute/refresh symbol embeddings with the configured backend (`--batch-size`, `--limit`, `--no-reap`, `--build-index` rebuilds the vec0 ANN index, `--no-multivector` stores one vector per symbol) |
+| `cairn embed` | compute/refresh symbol embeddings with the configured backend (`--batch-size`, `--limit`, `--no-reap`, `--build-index` rebuilds the vec0 ANN index, `--no-multivector` stores one vector per symbol, `--download-model` pre-warms the native bge-m3 weights and exits — `local-embed` feature builds only, erroring with the feature hint otherwise) |
 
 The backend is `CAIRN_EMBED_BACKEND`: `local` (the default) resolves to the
 dep-free `hash-256-v1` embedder and `cairn embed` warns that the vectors are

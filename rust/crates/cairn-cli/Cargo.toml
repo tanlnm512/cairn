@@ -38,5 +38,12 @@ pkg-fmt = "tgz"
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 
+[features]
+local-embed = [
+  "cairn-build/local-embed",
+  "cairn-daemon/local-embed",
+  "cairn-query/local-embed",
+]
+
 [lints]
 workspace = true

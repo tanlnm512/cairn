@@ -178,13 +178,17 @@ fundamentally cannot see.
 
 ### Honest trade-offs
 
-- **Semantic retrieval is mid-band and needs an embeddings server for real
-  vectors.** The binary ships no local inference: the default backend is a
+- **Semantic retrieval is mid-band and needs real vectors from somewhere.**
+  The default binary ships no local inference: the default backend is a
   dep-free hash embedder (token-overlap vectors; `cairn doctor` warns while
   it is active), which is why the structural tools carry the precision story.
-  Point `CAIRN_EMBED_BACKEND` at a local OpenAI-compatible embeddings server
-  (`omlx`, `ollama`, or `server` + `CAIRN_EMBED_BASE_URL`) for bge-m3-class
-  vectors with no model download inside cairn. No cross-encoder reranker
+  For bge-m3-class vectors either point `CAIRN_EMBED_BACKEND` at a local
+  OpenAI-compatible embeddings server (`omlx`, `ollama`, or `server` +
+  `CAIRN_EMBED_BASE_URL`) with no model download inside cairn, or install a
+  `local-embed` feature build (`cargo install --git
+  https://github.com/tanlnm512/cairn --features local-embed cairn-cli`) and
+  run `CAIRN_EMBED_BACKEND=native cairn embed --download-model` once for
+  in-process bge-m3 with zero infrastructure. No cross-encoder reranker
   ships in this build.
 - **Synthesized docs need an LLM pass.** Compass/wiki generation runs through
   the task queue (`cairn task`) with the critic gate — deterministic, but it
@@ -354,7 +358,7 @@ effective value and where it came from):
 | Variable | Effect |
 |----------|--------|
 | `CAIRN_HOME` | store location (default `~/.cairn`) |
-| `CAIRN_EMBED_BACKEND` | `local` (default; resolves to the dep-free hash embedder), or an OpenAI-compatible embeddings server: `omlx`, `ollama`, or `server` + `CAIRN_EMBED_BASE_URL` (`CAIRN_EMBED_SERVER_MODEL`, `CAIRN_EMBED_API_KEY` optional) |
+| `CAIRN_EMBED_BACKEND` | `local` (default; resolves to the dep-free hash embedder), `native` (in-process bge-m3, `local-embed` feature builds only; falls back to hash until `cairn embed --download-model` warms the model cache), or an OpenAI-compatible embeddings server: `omlx`, `ollama`, or `server` + `CAIRN_EMBED_BASE_URL` (`CAIRN_EMBED_SERVER_MODEL`, `CAIRN_EMBED_API_KEY` optional) |
 | `CAIRN_ANN_BACKEND` | `sqlite-vec` (default, statically linked) or `off` for the brute-force scan |
 | `CAIRN_FUSION` | RRF fusion of BM25 + vectors (default on; `0` disables) |
 | `CAIRN_WORKERS` | parse-pool size (default: CPU count) |

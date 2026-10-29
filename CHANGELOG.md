@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- In-process bge-m3 embedding behind an opt-in cargo feature (spec `native-embed`): `cargo install --features local-embed` builds gain `CAIRN_EMBED_BACKEND=native` (dense 1024-dim vectors stamped `native/BAAI/bge-m3`, one stamp on the corpus and query legs) and the restored `cairn embed --download-model` pre-warm, which downloads the weights into the standard HuggingFace cache and exits. Default builds stay dependency-identical: `native` resolves as unavailable with a hint naming the `local-embed` feature, and a cold cache on feature builds falls back to the hash embedder with a hint naming the pre-warm command (`cairn doctor` and the daemon `/healthz` report the native feature, cache, and row-count state; the fallback counts as a healthz degradation). The `--download-model` flag retired in 0.24.2 is back for feature builds.
+
 ### Changed
 
 - Install is cargo-only: `cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli` (prebuilt) or `cargo install --git …` (source), plus the release tarballs. The Homebrew tap and crates.io publish jobs are removed; the `cairn-cli` crate on crates.io is an unrelated project, so `--git` is required.
