@@ -31,7 +31,7 @@ jobs:
       # runner store starts memory-empty and would key nothing.
       CAIRN_KNOWLEDGE: ${{ github.workspace }}/.cairn-knowledge
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The pre-submit diff is HEAD vs main's merge base; the engine
           # resolves `main` locally and requires full history.
