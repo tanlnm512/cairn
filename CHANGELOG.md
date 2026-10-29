@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+
+## [0.24.2] - 2026-10-29
 ### Changed
 - The PyPI wheel channel is retired: `pyproject.toml`, `uv.lock`, the maturin builds, and every wheel/publish job are gone. A `v*` tag now cuts the GitHub Release (changelog notes) while `release-rust.yml` attaches the binary tarballs, updates the Homebrew tap, and publishes to crates.io; Homebrew, `cargo binstall`, and the tarballs are the install channels.
 - `cairn uninstall` reports the running binary and its channel-appropriate removal command instead of driving pip/pipx/uv; `cairn report` no longer prints a `python` line.
