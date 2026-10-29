@@ -205,8 +205,8 @@ graph/compass/memory; `search_knowledge(query, type_filter="Wiki")` queries page
 
 ## CLI Fallback (if MCP tools are unavailable)
 
-Every install channel runs the same `cairn` engine binary — Homebrew tap,
-`cargo binstall`, or a release tarball. It serves this fallback against the
+Every install channel runs the same `cairn` engine binary — `cargo binstall`,
+`cargo install`, or a release tarball. It serves this fallback against the
 workspace store directly:
 
 - `cairn def <symbol>` -- find definition

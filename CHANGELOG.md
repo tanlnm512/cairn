@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Install is cargo-only: `cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli` (prebuilt) or `cargo install --git …` (source), plus the release tarballs. The Homebrew tap and crates.io publish jobs are removed; the `cairn-cli` crate on crates.io is an unrelated project, so `--git` is required.
+
 ## [0.24.2] - 2026-10-29
 ### Changed
 - The PyPI wheel channel is retired: `pyproject.toml`, `uv.lock`, the maturin builds, and every wheel/publish job are gone. A `v*` tag now cuts the GitHub Release (changelog notes) while `release-rust.yml` attaches the binary tarballs, updates the Homebrew tap, and publishes to crates.io; Homebrew, `cargo binstall`, and the tarballs are the install channels.

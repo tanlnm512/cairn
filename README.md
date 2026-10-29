@@ -45,19 +45,29 @@ path.
 
 **1. Install the CLI**
 
-Every channel ships the same engine binary:
+Every channel ships the same engine binary. Both commands need a Rust
+toolchain ([rustup.rs](https://rustup.rs)); `cargo binstall` also needs
+[cargo-binstall](https://github.com/cargo-bins/cargo-binstall):
 
 ```bash
-brew install tanlnm512/cairn/cairn                 # Homebrew tap
-cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli
+# prebuilt installer for cargo-binstall
+curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+# or: cargo install cargo-binstall
 ```
 
-Release tarballs (aarch64 / x86_64 on macOS and Linux, musl-static on
+Then install cairn:
+
+```bash
+cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli  # prebuilt binary
+cargo install --git https://github.com/tanlnm512/cairn cairn-cli   # build from source
+```
+
+Always pass `--git`: the `cairn-cli` crate on crates.io is an unrelated
+project. Release tarballs (aarch64 / x86_64 on macOS and Linux, musl-static on
 Linux) are on the [releases page](https://github.com/tanlnm512/cairn/releases),
 and `cargo install --path rust/crates/cairn-cli` builds from a clone. Release
-tags populate the tarballs, the Homebrew formula, and the binstall metadata;
-`docx` and PDF conversion run natively in the engine. Every channel
-(Homebrew, cargo, tarball) upgrades through its own package manager.
+tags populate the tarballs that `cargo binstall` downloads; `docx` and PDF
+conversion run natively in the engine. Upgrade by re-running the same command.
 
 **2. Wire up your agent(s)**
 
@@ -404,7 +414,7 @@ make ci-local                     # clean-room CI replication in a Linux contain
 ```
 
 Releases are cut by tagging `vX.Y.Z`: the tag-triggered workflows build the
-platform binaries, the Homebrew formula, and the crates.io publish (see
+platform binaries and attach them to the GitHub Release (see
 [docs/release-checklist.md](docs/release-checklist.md)).
 Contributions follow [docs/review-checklist.md](docs/review-checklist.md).
 

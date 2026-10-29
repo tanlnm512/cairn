@@ -7,8 +7,8 @@ Python trees. Every path below was read from the tree; re-verify with
 ## Distribution
 - One engine binary, `cairn`, built from `rust/crates/cairn-cli` and versioned
   by `Cargo.toml` `[workspace.package]`.
-- Channels: GitHub release tarballs, a Homebrew tap, and crates.io/binstall
-  (`.github/workflows/release-rust.yml`).
+- Channels: GitHub release tarballs (`.github/workflows/release-rust.yml`),
+  installed directly or via `cargo binstall --git`, and `cargo install --git`.
 
 ## Cargo workspace (`rust/`)
 | Crate | Role |
@@ -35,7 +35,6 @@ Vendored: `rust/vendor/tree-sitter-dart` (workspace member) and
   and the measured gates (`cargo xtask` lists them).
 - `scripts/`: installers and `g2_check.sh`.
 - `tests/fixtures/`: SCIP-indexing fixture repos.
-- `packaging/`: the Homebrew formula template.
 
 ## Tests and oracles
 - Rust: unit tests in each crate, integration suites under
