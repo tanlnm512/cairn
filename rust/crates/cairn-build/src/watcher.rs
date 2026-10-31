@@ -271,7 +271,7 @@ fn path_forms(workspace: &str, abs_path: &Path) -> Option<(String, String, Strin
     let resolved = scanner::resolve_lenient(abs_path);
     let repo = scanner::infer_repo_for_path(workspace, &resolved)?;
     let repo_path = scanner::resolve_repo_path(workspace, &repo).ok()?;
-    let root = std::fs::canonicalize(&repo_path).unwrap_or_else(|_| repo_path.clone());
+    let root = scanner::resolve_lenient(&repo_path);
     let rel = resolved
         .strip_prefix(&root)
         .ok()?
