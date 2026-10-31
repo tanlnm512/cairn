@@ -7947,17 +7947,15 @@ mod tests {
         assert!(hits[0].score > 0.1 && hits[0].score < 1.0, "{hits:?}");
 
         // A lexical hit wins the slot; the same doc is never listed twice.
-        let lexical_query = "how does the refund work";
+        // Multi-token query: stop words ("how does the work") collapse to one
+        // token and take the substring fallback, not the ranked path.
+        let lexical_query = "refund policy processing";
+        let lex = lexical_search(&conn, &bundle, lexical_query, 10, false).expect("lexical arm");
+        assert_eq!(lex.len(), 1, "{lex:?}");
         let hits = search_knowledge_docs(&conn, &bundle, lexical_query, 10).expect("merged");
         assert_eq!(hits.len(), 1, "{hits:?}");
         assert_eq!(hits[0].concept_id, "knowledge/spec/refund");
-        let lex_probe = lexical_search(&conn, &bundle, lexical_query, 10, false).expect("lex");
-        assert_eq!(
-            hits[0].provenance,
-            "lexical_knowledge",
-            "lex_probe={lex_probe:?} ids={:?}",
-            bundle.list_concepts(Some("knowledge/"))
-        );
+        assert_eq!(hits[0].provenance, "lexical_knowledge", "{hits:?}");
 
         unsafe {
             match saved {
