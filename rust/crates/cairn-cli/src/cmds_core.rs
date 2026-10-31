@@ -11,6 +11,7 @@ use clap::Subcommand;
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
+use crate::cli_paths::db_arg;
 use crate::cli_rows;
 use crate::display;
 use crate::json_compat;
@@ -227,20 +228,37 @@ fn refresh_probe(
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false)
     });
-    let workspace = conn_store_workspace(conn, db);
-    let mut drifted = cairn_build::incremental::detect_changed(conn, &workspace);
-    drifted.sort();
-    drifted.dedup();
-    if drifted.is_empty() || !repair {
+    if !repair {
+        let workspace = conn_store_workspace(db);
+        let mut drifted = cairn_build::incremental::detect_changed(conn, &workspace);
+        drifted.sort();
+        drifted.dedup();
         return Ok(stale_banner(&drifted));
     }
     let _lock = match cairn_store::swap::build_lock(Path::new(db)) {
         Ok(lock) => lock,
         // Contention: a concurrent build owns the store; defer the repair and
         // let the read proceed against the stale graph.
-        Err(_) => return Ok(stale_banner(&drifted)),
+        Err(_) => {
+            let workspace = conn_store_workspace(db);
+            let mut drifted = cairn_build::incremental::detect_changed(conn, &workspace);
+            drifted.sort();
+            drifted.dedup();
+            return Ok(stale_banner(&drifted));
+        }
     };
-    cairn_build::incremental::repair_changed(conn, &workspace, &drifted, true).map(|_| None)
+    // The connection must be opened under the lock: one opened earlier keeps
+    // writing to the replaced file across a full-build swap.
+    let mut conn = cairn_store::schema::open_initialized(Path::new(db))
+        .map_err(|e| format!("open {db}: {e}"))?;
+    let workspace = conn_store_workspace(db);
+    let mut drifted = cairn_build::incremental::detect_changed(&conn, &workspace);
+    drifted.sort();
+    drifted.dedup();
+    if drifted.is_empty() {
+        return Ok(None);
+    }
+    cairn_build::incremental::repair_changed(&mut conn, &workspace, &drifted, true).map(|_| None)
 }
 
 fn stale_banner(drifted: &[String]) -> Option<StaleDrift> {
@@ -274,7 +292,7 @@ fn banner_if_unrepaired(banner: &str) {
 }
 
 /// Registered workspace whose canonical store backs this db, else resolve_workspace.
-fn conn_store_workspace(conn: &Connection, db: &str) -> String {
+fn conn_store_workspace(db: &str) -> String {
     let Ok(resolved) = std::fs::canonicalize(db) else {
         return store_paths::resolve_workspace(None)
             .to_string_lossy()
@@ -288,7 +306,6 @@ fn conn_store_workspace(conn: &Connection, db: &str) -> String {
             }
         }
     }
-    let _ = conn;
     store_paths::resolve_workspace(None)
         .to_string_lossy()
         .into_owned()
@@ -299,11 +316,6 @@ fn default_db() -> String {
         .db
         .to_string_lossy()
         .into_owned()
-}
-
-/// Strip non-option db arg precedence: explicit --db wins, else the store.
-fn db_arg(db: &Option<String>) -> String {
-    db.clone().unwrap_or_else(default_db)
 }
 
 // --- cairn init --------------------------------------------------------------
@@ -491,10 +503,11 @@ fn config(args: crate::cmds_core::ConfigArgs) -> ExitCode {
             "knowledge".into(),
             Value::from(store.knowledge.to_string_lossy().to_string()),
         );
-        object.insert(
-            "scip".into(),
-            load_config(store.workspace.clone()).scip_json(),
-        );
+        let scip = match cairn_build::config::load_config(&store.workspace) {
+            Ok(cfg) => scip_config_json(&cfg),
+            Err(message) => return command_error(&message),
+        };
+        object.insert("scip".into(), scip);
         println!("{}", json_compat::dumps_compact(&Value::Object(object)));
         return ExitCode::SUCCESS;
     }
@@ -635,16 +648,12 @@ fn config(args: crate::cmds_core::ConfigArgs) -> ExitCode {
         }
     }
 
-    let scip_indexes = cfg.scip_indexes();
-    println!("scip indexes:");
-    if scip_indexes.is_empty() {
-        println!("  (none configured — SCIP edges stay off)");
-    } else {
-        let mut sorted = scip_indexes.clone();
-        sorted.sort();
-        for (lang, index_path) in sorted {
-            println!("  {lang} -> {index_path}");
-        }
+    let scip_cfg = match cairn_build::config::load_config(&store.workspace) {
+        Ok(cfg) => cfg,
+        Err(message) => return command_error(&message),
+    };
+    for line in scip_config_lines(&scip_cfg) {
+        println!("{line}");
     }
 
     println!();
@@ -653,30 +662,81 @@ fn config(args: crate::cmds_core::ConfigArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Parsed `cairn.json` (exclude/repo_namespaces/scip/taint) for CLI consumers.
-pub struct WorkspaceConfig {
-    pub repo_namespaces: Option<Vec<(String, String)>>,
-    scip_indexes: Vec<(String, String)>,
-    pub taint_sources: Vec<(String, Vec<String>)>,
-    pub taint_sinks: Vec<(String, Vec<String>)>,
-}
-
-impl WorkspaceConfig {
-    /// The `scip` JSON fragment for `config --json` ({} or {"indexes": {...}}).
-    fn scip_json(&self) -> Value {
-        if self.scip_indexes.is_empty() {
-            return serde_json::json!({});
-        }
+/// The `scip` block of `cairn config --json`: {} or the configured
+/// indexes/generated/commands fragments.
+fn scip_config_json(cfg: &cairn_build::config::CairnConfig) -> Value {
+    let mut scip = Map::new();
+    if !cfg.scip_indexes.is_empty() {
         let mut indexes = Map::new();
-        for (lang, path) in &self.scip_indexes {
+        for (lang, path) in &cfg.scip_indexes {
             indexes.insert(lang.clone(), Value::from(path.clone()));
         }
-        serde_json::json!({ "indexes": Value::Object(indexes) })
+        scip.insert("indexes".into(), Value::Object(indexes));
     }
+    if !cfg.scip_generated.is_empty() {
+        let mut langs = cfg.scip_generated.clone();
+        langs.sort();
+        scip.insert(
+            "generated".into(),
+            Value::Array(langs.into_iter().map(Value::from).collect()),
+        );
+    }
+    if !cfg.scip_commands.is_empty() {
+        let mut commands = Map::new();
+        for (lang, argv) in &cfg.scip_commands {
+            commands.insert(
+                lang.clone(),
+                Value::Array(argv.iter().map(|part| Value::from(part.clone())).collect()),
+            );
+        }
+        scip.insert("commands".into(), Value::Object(commands));
+    }
+    Value::Object(scip)
+}
 
-    fn scip_indexes(&self) -> Vec<(String, String)> {
-        self.scip_indexes.clone()
+/// The scip section lines of `cairn config` (text display).
+fn scip_config_lines(cfg: &cairn_build::config::CairnConfig) -> Vec<String> {
+    if cfg.scip_indexes.is_empty() && cfg.scip_generated.is_empty() && cfg.scip_commands.is_empty()
+    {
+        return vec![
+            "scip indexes:".to_string(),
+            "  (none configured — SCIP edges stay off)".to_string(),
+        ];
     }
+    let mut lines = Vec::new();
+    if !cfg.scip_indexes.is_empty() {
+        lines.push("scip indexes:".to_string());
+        let mut sorted = cfg.scip_indexes.clone();
+        sorted.sort();
+        for (lang, index_path) in sorted {
+            lines.push(format!("  {lang} -> {index_path}"));
+        }
+    }
+    if !cfg.scip_generated.is_empty() {
+        lines.push("scip generated:".to_string());
+        let mut sorted = cfg.scip_generated.clone();
+        sorted.sort();
+        for lang in sorted {
+            lines.push(format!("  {lang}"));
+        }
+    }
+    if !cfg.scip_commands.is_empty() {
+        lines.push("scip commands:".to_string());
+        let mut sorted = cfg.scip_commands.clone();
+        sorted.sort();
+        for (lang, argv) in sorted {
+            lines.push(format!("  {lang} -> {}", argv.join(" ")));
+        }
+    }
+    lines
+}
+
+/// Parsed `cairn.json` (repo_namespaces/taint) for CLI consumers; scip keys
+/// come from [`cairn_build::config::load_config`].
+pub struct WorkspaceConfig {
+    pub repo_namespaces: Option<Vec<(String, String)>>,
+    pub taint_sources: Vec<(String, Vec<String>)>,
+    pub taint_sinks: Vec<(String, Vec<String>)>,
 }
 
 /// Load `cairn.json` from the workspace root; defaults when absent or invalid.
@@ -684,7 +744,6 @@ pub fn load_config(workspace: PathBuf) -> WorkspaceConfig {
     let path = workspace.join("cairn.json");
     let empty = WorkspaceConfig {
         repo_namespaces: None,
-        scip_indexes: vec![],
         taint_sources: vec![],
         taint_sinks: vec![],
     };
@@ -747,37 +806,11 @@ pub fn load_config(workspace: PathBuf) -> WorkspaceConfig {
         let map = string_map("repo_namespaces");
         if map.is_empty() { None } else { Some(map) }
     });
-    let scip_indexes = string_map("scip")
-        .into_iter()
-        .filter(|(k, _)| k == "indexes")
-        .flat_map(|(_, _)| string_map_nested(object, "scip", "indexes"))
-        .collect::<Vec<_>>();
     WorkspaceConfig {
         repo_namespaces,
-        scip_indexes,
         taint_sources: name_table("sources"),
         taint_sinks: name_table("sinks"),
     }
-}
-
-fn string_map_nested(
-    object: &serde_json::Map<String, Value>,
-    outer: &str,
-    inner: &str,
-) -> Vec<(String, String)> {
-    object
-        .get(outer)
-        .and_then(|v| v.get(inner))
-        .and_then(Value::as_object)
-        .map(|map| {
-            map.iter()
-                .filter_map(|(k, v)| {
-                    let v = v.as_str()?;
-                    Some((k.clone(), v.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 // --- cairn build -------------------------------------------------------------
@@ -880,16 +913,17 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
                 kv_pairs.push(("skipped".into(), fmt_int(summary.skipped as i64)));
             }
             if let Some(scip) = &summary.scip
-                && scip.edges > 0
+                && (scip.edges > 0 || scip.stale_files > 0 || scip.join_anomalies > 0)
             {
-                kv_pairs.push((
-                    "scip".into(),
-                    format!(
-                        "{} edges ({} disagreements)",
-                        fmt_int(scip.edges as i64),
-                        fmt_int(scip.disagreements as i64)
-                    ),
-                ));
+                let mut scip_text = format!(
+                    "{} edges ({} disagreements)",
+                    fmt_int(scip.edges as i64),
+                    fmt_int(scip.disagreements as i64)
+                );
+                if scip.stale_files > 0 {
+                    scip_text.push_str(&format!(", {} stale", fmt_int(scip.stale_files as i64)));
+                }
+                kv_pairs.push(("scip".into(), scip_text));
             }
             let resolution = &summary.resolution;
             let total_edges = i64::max(summary.edges as i64, 1);
@@ -977,8 +1011,9 @@ fn import_scip(args: crate::cmds_core::ImportScipArgs) -> ExitCode {
         String::new()
     };
     println!(
-        "scip: {} edges ({} disagreements) matched {}/{} documents{} from {}",
+        "scip: {} edges ({} disagreements, {} join anomalies) matched {}/{} documents{} from {}",
         record.edges,
+        record.disagreements,
         record.join_anomalies,
         record.matched_documents,
         record.documents,
@@ -1008,14 +1043,20 @@ fn stats(args: crate::cmds_core::StatsArgs) -> ExitCode {
             fmt_int(s.edges_resolved)
         ),
     );
-    let (exact, ambiguous, unresolved) = s.resolution;
+    let resolution = s.resolution;
+    let external_note = if resolution.external > 0 {
+        format!(" / {} external", fmt_int(resolution.external))
+    } else {
+        String::new()
+    };
     display::kv(
         "resolution",
         &format!(
-            "{} exact / {} ambiguous / {} unresolved ({} / {} of pool)",
-            fmt_int(exact),
-            fmt_int(ambiguous),
-            fmt_int(unresolved),
+            "{} exact / {} ambiguous / {} unresolved{} ({} / {} of resolved)",
+            fmt_int(resolution.exact),
+            fmt_int(resolution.ambiguous),
+            fmt_int(resolution.unresolved),
+            external_note,
             fmt_pct(s.exact_share),
             fmt_pct(s.ambiguous_share)
         ),
@@ -1200,8 +1241,9 @@ fn update(args: crate::cmds_core::UpdateArgs) -> ExitCode {
             display::warning(&format!(
                 "no reindexable change for {rel_path} in repo {repo}"
             ));
+        } else {
+            display::success(&format!("Reindexed {rel_path} in repo {repo}"));
         }
-        display::success(&format!("Reindexed {rel_path} in repo {repo}"));
         return ExitCode::SUCCESS;
     }
 
@@ -4410,6 +4452,47 @@ mod tests {
             size_after,
             drifted.len() as i64,
             "repair must run once the lock frees"
+        );
+        let _ = std::fs::remove_dir_all(env.dir());
+    }
+
+    #[test]
+    fn refresh_probe_reports_fresh_through_the_locked_path() {
+        let env = crate::test_env::EnvScope::new("refresh-fresh");
+        let ws = env.dir().join("ws");
+        std::fs::create_dir_all(ws.join(".git")).expect("repo marker");
+        std::fs::write(ws.join("mod.py"), "def one():\n    return 1\n").expect("source");
+        let db = ws.join("store.kg");
+        let db_str = db.to_string_lossy().to_string();
+        let ws_str = ws.to_string_lossy().to_string();
+        cairn_build::builder::build_graph(&ws_str, &db_str, None, Some(1)).expect("full build");
+        let _ = std::fs::remove_file(format!("{db_str}.build.lock"));
+
+        let saved = std::env::var_os("CAIRN_WORKSPACE");
+        // SAFETY: EnvScope holds the env lock for the rest of this test.
+        unsafe { std::env::set_var("CAIRN_WORKSPACE", &ws) };
+        let mut conn = cairn_store::schema::open_initialized(&db).expect("open store");
+        let files_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))
+            .expect("files count");
+        let probe = refresh_conn(&mut conn, &db_str, Some(true));
+        // SAFETY: still holding the env lock.
+        unsafe {
+            match &saved {
+                Some(v) => std::env::set_var("CAIRN_WORKSPACE", v),
+                None => std::env::remove_var("CAIRN_WORKSPACE"),
+            }
+        }
+
+        assert!(probe.is_ok(), "fresh probe must not error: {probe:?}");
+        let files_after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))
+            .expect("files count");
+        assert_eq!(files_before, files_after);
+        drop(conn);
+        assert!(
+            Path::new(&format!("{db_str}.build.lock")).exists(),
+            "the repair path must acquire the build lock before detecting"
         );
         let _ = std::fs::remove_dir_all(env.dir());
     }

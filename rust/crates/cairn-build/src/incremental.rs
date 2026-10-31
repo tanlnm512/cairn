@@ -1,8 +1,7 @@
 //! Incremental graft: per-file delete+reinsert with resolver repair, plus
-//! change detection (git listings unioned with stat drift) and boot catch-up. Embedding
-//! backends land with the 2f workstream; this module only purges stale rows.
+//! change detection (git listings unioned with stat drift) and boot catch-up.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 use rusqlite::{Connection, params};
@@ -47,6 +46,9 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
     // Consumer repos whose imports edges the delete-leg backfill nulls; they
     // need a materialize pass even with no file of their own reindexed.
     let mut imports_refresh_repos: Vec<String> = Vec::new();
+    // (model, rowid) of embedding rows deleted by committed legs; their vec0
+    // mirrors must go with them.
+    let mut doomed_vec_rows: Vec<(String, i64)> = Vec::new();
 
     for abs_path in paths {
         let Some((repo, rel_to_repo)) = repo_relative_path(workspace, abs_path) else {
@@ -111,6 +113,7 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
                 ("DELETE FROM rationale WHERE file_id = ?", fid),
             ];
             let mut failed: Option<String> = None;
+            let mut doomed: Vec<(String, i64)> = Vec::new();
             for (sql, param) in legs {
                 if let Err(e) = tx.execute(sql, [param]) {
                     failed = Some(e.to_string());
@@ -129,8 +132,14 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
                 }
             }
             // Embedding rows FK-reference symbols(id); clear them BEFORE the
-            // symbol delete or the FK blocks it. Base tables only — vec0
-            // mirrors rebuild wholesale.
+            // symbol delete or the FK blocks it. Their rowids are collected
+            // first so the vec0 mirrors can follow them out.
+            if failed.is_none() {
+                match embedding_rowids(&tx, fid) {
+                    Ok(rowids) => doomed = rowids,
+                    Err(e) => failed = Some(e),
+                }
+            }
             if failed.is_none() {
                 for table in ["embeddings", "embeddings_mv"] {
                     let sql = format!(
@@ -167,6 +176,7 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
                 );
                 continue;
             }
+            doomed_vec_rows.append(&mut doomed);
         }
 
         // Check if file still exists on disk.
@@ -297,7 +307,35 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
         }
     }
 
+    // Stale vec0 rows would pair a reused embeddings rowid with an
+    // unrelated vector.
+    let mut by_model: HashMap<&str, Vec<i64>> = HashMap::new();
+    for (model, rowid) in &doomed_vec_rows {
+        by_model.entry(model.as_str()).or_default().push(*rowid);
+    }
+    for (model, rowids) in by_model {
+        if let Err(e) = cairn_store::vec0::delete_index_rows(conn, model, &rowids) {
+            result.errors.push(format!("vec0/{model}: {e}"));
+        }
+    }
+
     result
+}
+
+/// (model, rowid) of a file's embedding rows ahead of their delete.
+fn embedding_rowids(conn: &Connection, file_id: &str) -> Result<Vec<(String, i64)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT model, rowid FROM embeddings WHERE symbol_id IN \
+             (SELECT id FROM symbols WHERE file_id = ?)",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([file_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
 }
 
 /// Parse and insert one file inside the graft transaction; returns its new file id.
@@ -616,13 +654,10 @@ pub fn detect_changed(conn: &Connection, workspace: &str) -> Vec<String> {
     };
     for record in records {
         let repo_name = record.repo_id.as_str();
+        // An unknown repo scope never falls back to every repo's rows.
         let Some(file_rows) = file_stat_rows(conn, repo_name) else {
             continue;
         };
-        // An unknown repo scope never falls back to every repo's rows.
-        if file_rows.is_empty() {
-            continue;
-        }
 
         for row in &file_rows {
             let p = scanner::resolve_file_path(workspace, repo_name, &row.path);

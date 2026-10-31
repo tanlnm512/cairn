@@ -94,16 +94,8 @@ pub(crate) fn query_rows(
         for (index, name) in names.iter().enumerate() {
             let value: Value = row
                 .get_ref(index)
-                .map(|ref_val| match ref_val {
-                    rusqlite::types::ValueRef::Null => Value::Null,
-                    rusqlite::types::ValueRef::Integer(int) => Value::from(int),
-                    rusqlite::types::ValueRef::Real(float) => Value::from(float),
-                    rusqlite::types::ValueRef::Text(text) => {
-                        Value::from(String::from_utf8_lossy(text).into_owned())
-                    }
-                    rusqlite::types::ValueRef::Blob(blob) => {
-                        Value::from(blob.iter().map(|b| format!("{b:02x}")).collect::<String>())
-                    }
+                .map(|ref_val| {
+                    crate::cli_rows::json_value(ref_val, crate::cli_rows::BlobEncoding::Hex)
                 })
                 .unwrap_or(Value::Null);
             map.insert(name.clone(), value);

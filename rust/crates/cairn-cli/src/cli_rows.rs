@@ -7,19 +7,45 @@ use serde_json::{Map, Value};
 /// One row as an insertion-ordered {column: value} map (`dict(sqlite3.Row)`).
 pub type PyRow = Map<String, Value>;
 
+/// How a BLOB column serializes to JSON.
+#[derive(Clone, Copy)]
+pub enum BlobEncoding {
+    /// Lossy UTF-8 string.
+    Utf8Lossy,
+    /// Array of byte numbers.
+    Bytes,
+    /// Lowercase hex string.
+    Hex,
+}
+
+/// One SQLite value as JSON under the caller's blob encoding.
+pub fn json_value(value: ValueRef, blob: BlobEncoding) -> Value {
+    match value {
+        ValueRef::Null => Value::Null,
+        ValueRef::Integer(n) => Value::from(n),
+        ValueRef::Real(f) => serde_json::Number::from_f64(f)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+        ValueRef::Text(s) => Value::from(String::from_utf8_lossy(s).into_owned()),
+        ValueRef::Blob(b) => match blob {
+            BlobEncoding::Utf8Lossy => Value::from(String::from_utf8_lossy(b).into_owned()),
+            BlobEncoding::Bytes => Value::Array(b.iter().copied().map(Value::from).collect()),
+            BlobEncoding::Hex => Value::from(
+                b.iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>(),
+            ),
+        },
+    }
+}
+
 fn row_to_pyrow(row: &Row<'_>, names: &[String]) -> rusqlite::Result<PyRow> {
     let mut map = Map::new();
     for (i, name) in names.iter().enumerate() {
-        let value = match row.get_ref(i)? {
-            ValueRef::Null => Value::Null,
-            ValueRef::Integer(n) => Value::from(n),
-            ValueRef::Real(f) => serde_json::Number::from_f64(f)
-                .map(Value::Number)
-                .unwrap_or(Value::Null),
-            ValueRef::Text(s) => Value::from(String::from_utf8_lossy(s).to_string()),
-            ValueRef::Blob(b) => Value::from(String::from_utf8_lossy(b).to_string()),
-        };
-        map.insert(name.clone(), value);
+        map.insert(
+            name.clone(),
+            json_value(row.get_ref(i)?, BlobEncoding::Utf8Lossy),
+        );
     }
     Ok(map)
 }
@@ -365,6 +391,15 @@ pub fn get_tree_rows(conn: &Connection, repo: &str) -> rusqlite::Result<Vec<(Str
     Ok(rows)
 }
 
+/// Reference-edge resolution buckets for calls/references edges.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ResolutionCounts {
+    pub exact: i64,
+    pub ambiguous: i64,
+    pub unresolved: i64,
+    pub external: i64,
+}
+
 /// Aggregate counts behind the `stats` command (`get_stats`).
 #[derive(Debug, Default)]
 pub struct GraphStats {
@@ -376,7 +411,7 @@ pub struct GraphStats {
     pub by_kind: Vec<(String, i64)>,
     pub by_repo: Vec<(String, i64)>,
     pub edges_resolved: i64,
-    pub resolution: (i64, i64, i64),
+    pub resolution: ResolutionCounts,
     pub exact_share: f64,
     pub ambiguous_share: f64,
     pub edge_sources: Vec<(String, i64)>,
@@ -428,7 +463,7 @@ pub fn get_stats(conn: &Connection) -> GraphStats {
         conn,
         "SELECT resolution, COUNT(*) FROM edges \
          WHERE kind IN ('calls','references') \
-         AND resolution IN ('exact','ambiguous','unresolved') GROUP BY resolution",
+         AND resolution IN ('exact','ambiguous','unresolved','external') GROUP BY resolution",
     );
     let pick = |name: &str| {
         resolution_counts
@@ -437,15 +472,20 @@ pub fn get_stats(conn: &Connection) -> GraphStats {
             .map(|(_, n)| *n)
             .unwrap_or(0)
     };
-    stats.resolution = (pick("exact"), pick("ambiguous"), pick("unresolved"));
-    let pool = stats.resolution.0 + stats.resolution.1;
+    stats.resolution = ResolutionCounts {
+        exact: pick("exact"),
+        ambiguous: pick("ambiguous"),
+        unresolved: pick("unresolved"),
+        external: pick("external"),
+    };
+    let pool = stats.resolution.exact + stats.resolution.ambiguous;
     stats.exact_share = if pool > 0 {
-        stats.resolution.0 as f64 / pool as f64
+        stats.resolution.exact as f64 / pool as f64
     } else {
         0.0
     };
     stats.ambiguous_share = if pool > 0 {
-        stats.resolution.1 as f64 / pool as f64
+        stats.resolution.ambiguous as f64 / pool as f64
     } else {
         0.0
     };

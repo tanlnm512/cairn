@@ -19,7 +19,9 @@ pub use viz::{
 };
 
 /// Structural edges are followed by default; service edges require opt-in.
-pub const STRUCTURAL_EDGE_KINDS: [&str; 4] = ["calls", "call", "extends", "implements"];
+/// The single workspace-wide definition: closure building (cairn-build),
+/// traversal, and community weighting all consume this order.
+pub const STRUCTURAL_EDGE_KINDS: [&str; 4] = ["call", "calls", "extends", "implements"];
 
 /// One symbol row joined with its file.
 #[derive(Clone, Debug)]
@@ -439,18 +441,38 @@ pub(crate) mod impact {
             .is_ok()
     }
 
+    struct ClosureHit {
+        source_id: String,
+        entry: ImpactEntry,
+    }
+
     fn impact_from_closure(
         conn: &Connection,
         seed_ids: &[String],
         max_depth: i64,
         limit: usize,
     ) -> Option<ImpactResult> {
+        let (hits, truncated) = closure_hits(conn, seed_ids, max_depth, limit)?;
+        Some(ImpactResult {
+            total: hits.len(),
+            impacted: hits.into_iter().map(|h| h.entry).collect(),
+            cycles: vec![],
+            truncated,
+        })
+    }
+
+    fn closure_hits(
+        conn: &Connection,
+        seed_ids: &[String],
+        max_depth: i64,
+        limit: usize,
+    ) -> Option<(Vec<ClosureHit>, bool)> {
         if seed_ids.is_empty() {
-            return Some(ImpactResult::default());
+            return Some((Vec::new(), false));
         }
         let ph = vec!["?"; seed_ids.len()].join(",");
         let sql = format!(
-            "SELECT s.name AS symbol, f.path AS file, f.repo_id AS repo, \
+            "SELECT t.source_id, s.name AS symbol, f.path AS file, f.repo_id AS repo, \
              MIN(t.distance) - 1 AS depth \
              FROM transitive_edges t \
              JOIN symbols s ON s.id = t.source_id \
@@ -471,28 +493,80 @@ pub(crate) mod impact {
         let row_limit = (limit + 1) as i64;
         refs.push(&max_distance);
         refs.push(&row_limit);
-        let rows: Vec<ImpactEntry> = conn
+        let rows: Vec<ClosureHit> = conn
             .prepare(&sql)
             .ok()?
             .query_map(refs.as_slice(), |r| {
-                Ok(ImpactEntry {
-                    symbol: r.get(0)?,
-                    file: r.get(1)?,
-                    repo: r.get(2)?,
-                    depth: r.get(3)?,
+                Ok(ClosureHit {
+                    source_id: r.get(0)?,
+                    entry: ImpactEntry {
+                        symbol: r.get(1)?,
+                        file: r.get(2)?,
+                        repo: r.get(3)?,
+                        depth: r.get(4)?,
+                    },
                 })
             })
             .ok()?
             .collect::<Result<_, _>>()
             .ok()?;
         let truncated = rows.len() > limit;
-        let impacted: Vec<ImpactEntry> = rows.into_iter().take(limit).collect();
-        Some(ImpactResult {
-            total: impacted.len(),
-            impacted,
+        Some((rows.into_iter().take(limit).collect(), truncated))
+    }
+
+    /// Structural-edge callers of one symbol id (the DFS root query).
+    fn root_callers(conn: &Connection, name: &str, seed_id: &str) -> Vec<CallerRow> {
+        let allowed: HashSet<&'static str> = STRUCTURAL_EDGE_KINDS.iter().copied().collect();
+        get_callers(conn, name, false, 200, Some(seed_id))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|c| allowed.contains(c.edge_kind.as_str()))
+            .collect()
+    }
+
+    /// The closure table keeps one row per (source, target name), so a caller
+    /// of two same-named symbols survives with only one target id; union the
+    /// seed's own callers so the fast path is never narrower than the DFS.
+    fn closure_hits_with_roots(
+        conn: &Connection,
+        name: &str,
+        seed_id: &str,
+        mut hits: Vec<ClosureHit>,
+        mut truncated: bool,
+        limit: usize,
+    ) -> ImpactResult {
+        let present: HashSet<String> = hits.iter().map(|h| h.source_id.clone()).collect();
+        for c in root_callers(conn, name, seed_id) {
+            if c.caller_id == seed_id || present.contains(&c.caller_id) {
+                continue;
+            }
+            hits.push(ClosureHit {
+                source_id: c.caller_id.clone(),
+                entry: ImpactEntry {
+                    symbol: c.caller_name,
+                    file: c.file_path,
+                    repo: c.repo,
+                    depth: 0,
+                },
+            });
+        }
+        hits.sort_by(|a, b| {
+            a.entry
+                .depth
+                .cmp(&b.entry.depth)
+                .then_with(|| a.entry.symbol.cmp(&b.entry.symbol))
+                .then_with(|| a.entry.file.cmp(&b.entry.file))
+        });
+        if hits.len() > limit {
+            hits.truncate(limit);
+            truncated = true;
+        }
+        ImpactResult {
+            total: hits.len(),
+            impacted: hits.into_iter().map(|h| h.entry).collect(),
             cycles: vec![],
             truncated,
-        })
+        }
     }
 
     /// Recursive caller traversal (closure fast path, DFS fallback).
@@ -541,14 +615,16 @@ pub(crate) mod impact {
             && max_depth < CLOSURE_MAX_DEPTH
             && closure_available(conn)
             && !closure_has_seed_cycle(conn, std::slice::from_ref(&seed_id.to_string()))
-            && let Some(result) = impact_from_closure(
+            && let Some((hits, truncated)) = closure_hits(
                 conn,
                 std::slice::from_ref(&seed_id.to_string()),
                 max_depth,
                 limit,
             )
         {
-            return Ok(result);
+            return Ok(closure_hits_with_roots(
+                conn, name, seed_id, hits, truncated, limit,
+            ));
         }
         let mut state = DfsState {
             conn,
@@ -2828,5 +2904,62 @@ mod viz {
         let m = if mp < 10 { mp + 3 } else { mp - 9 };
         let y = if m <= 2 { y + 1 } else { y };
         format!("{y:04}-{m:02}-{d:02}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Impact traversal contracts on a synthetic store.
+
+    use super::impact::impact_analysis_seeded;
+
+    fn store() -> rusqlite::Connection {
+        let conn =
+            cairn_store::schema::open_initialized(std::path::Path::new(":memory:")).expect("store");
+        conn.execute_batch(
+            "INSERT INTO repos (id, name, path, language) VALUES ('r', 'r', '.', 'python');
+             INSERT INTO files (id, repo_id, path, language) VALUES ('f1', 'r', 'src/app.py', 'python');
+             INSERT INTO symbols (id, file_id, name, qualified_name, kind, line_start, line_end)
+               VALUES ('s-invoke-a', 'f1', 'invoke', 'A.invoke', 'method', 1, 2),
+                      ('s-invoke-b', 'f1', 'invoke', 'B.invoke', 'method', 4, 5),
+                      ('s-caller', 'f1', 'caller', 'caller', 'function', 8, 9);
+             INSERT INTO edges (id, source_id, target_id, kind, resolution)
+               VALUES ('e1', 's-caller', 's-invoke-a', 'call', 'exact'),
+                      ('e2', 's-caller', 's-invoke-b', 'call', 'exact');",
+        )
+        .expect("seed rows");
+        conn
+    }
+
+    #[test]
+    fn closure_fast_path_keeps_direct_callers_of_an_overloaded_seed() {
+        let conn = store();
+        // The closure builder dedupes by (source, target name), so only one
+        // of the two `invoke` targets survives the build.
+        conn.execute(
+            "INSERT INTO transitive_edges (source_id, target_name, target_id, distance) \
+             VALUES ('s-caller', 'invoke', 's-invoke-a', 1)",
+            [],
+        )
+        .expect("closure row");
+        let impacted: Vec<(String, i64)> =
+            impact_analysis_seeded(&conn, "invoke", "s-invoke-b", 2, 100, false)
+                .expect("impact")
+                .impacted
+                .into_iter()
+                .map(|e| (e.symbol, e.depth))
+                .collect();
+        assert_eq!(impacted, vec![("caller".to_string(), 0)]);
+    }
+
+    #[test]
+    fn closure_fast_path_matches_the_dfs_without_a_closure_table() {
+        let conn = store();
+        for seed in ["s-invoke-a", "s-invoke-b"] {
+            let dfs =
+                impact_analysis_seeded(&conn, "invoke", seed, 2, 100, false).expect("dfs impact");
+            assert_eq!(dfs.impacted.len(), 1, "seed {seed}");
+            assert_eq!(dfs.impacted[0].symbol, "caller");
+        }
     }
 }

@@ -227,9 +227,12 @@ async fn serve_on(
     let addr = listener.local_addr()?;
     let shutdown = handle.cancellation_token.clone();
     tokio::spawn(async move {
-        let _ = axum::serve(listener, router)
-            .with_graceful_shutdown(async move { shutdown.cancelled_owned().await })
-            .await;
+        let _ = axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move { shutdown.cancelled_owned().await })
+        .await;
     });
     Ok((addr, handle))
 }

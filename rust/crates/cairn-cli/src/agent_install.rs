@@ -88,9 +88,7 @@ pub struct InstallReport {
 
 // --- shared path / config resolution ---------------------------------------------
 
-fn home_dir() -> PathBuf {
-    cairn_store::home::platform_home().unwrap_or_else(|| PathBuf::from("/"))
-}
+use crate::cli_paths::home_dir;
 
 pub(crate) fn which(name: &str) -> Option<PathBuf> {
     cairn_store::exec::which(name)

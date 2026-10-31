@@ -17,6 +17,10 @@ const KIND_METHOD: i32 = 26;
 
 const SKIP_PARSE_ERROR: &str = "scip_parse_error";
 const SKIP_JOIN_ANOMALY: &str = "scip_join_anomaly";
+const SKIP_INDEX_TOO_LARGE: &str = "scip_index_too_large";
+/// Reading an index larger than this would size the whole file into memory
+/// up front (fs::read preallocates from metadata length) and OOM the build.
+const MAX_INDEX_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Per-document edge-yield rate below which the file keeps its tree-sitter
 /// edges and the anomaly is recorded.
@@ -69,6 +73,13 @@ pub struct ImportRecord {
     pub join_anomalies: usize,
     pub disagreements: usize,
     pub upgrades: usize,
+    /// Reference edges whose symbol is one of the index's `external_symbols`:
+    /// a known dependency symbol (library, stdlib) with no workspace
+    /// definition. Unresolvable by design, not a parser or join failure.
+    pub external: usize,
+    /// Documents skipped because the indexed file changed after the index was
+    /// generated (file mtime > index mtime); they keep tree-sitter edges.
+    pub stale_documents: usize,
 }
 
 /// (symbol id, 1-based line span) rows from `SYMBOL_SPANS_SQL`, innermost first.
@@ -154,6 +165,17 @@ fn innermost(spans: &[SpanRow], span: &Span) -> Option<String> {
 /// Canonical /-separated form of a document's repo-relative path.
 fn norm_rel(rel_path: &str) -> String {
     rel_path.replace('\\', "/")
+}
+
+/// Whether the indexed file's recorded mtime is strictly newer than the index
+/// itself (unix seconds); false on any missing value.
+fn file_is_newer(conn: &Connection, file_id: &str, index_mtime_secs: f64) -> Result<bool, String> {
+    let mtime: Option<f64> = conn
+        .query_row("SELECT mtime FROM files WHERE id = ?", [file_id], |row| {
+            row.get(0)
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(mtime.is_some_and(|t| t > index_mtime_secs))
 }
 
 /// Repo ids the scanner identity substrate discovers for this workspace.
@@ -268,6 +290,7 @@ fn plan_document(
     spans_by_rel: &HashMap<String, Option<Vec<SpanRow>>>,
     def_sites: &HashMap<String, Vec<(String, Option<Span>)>>,
     symbol_kinds: &HashMap<String, i32>,
+    external_symbols: &HashSet<String>,
     record: &mut ImportRecord,
 ) -> (Vec<EdgeRow>, bool) {
     let rel = norm_rel(&doc.relative_path);
@@ -298,6 +321,13 @@ fn plan_document(
                     continue;
                 }
                 TargetResolution::Exact(target) => (Some(target), "exact"),
+                TargetResolution::Unresolved
+                    if external_symbols.contains(&occ.symbol)
+                        || (is_package_scheme_symbol(&occ.symbol)
+                            && !def_sites.contains_key(&occ.symbol)) =>
+                {
+                    (None, "external")
+                }
                 TargetResolution::Unresolved => (None, "unresolved"),
             };
 
@@ -314,10 +344,10 @@ fn plan_document(
         } else {
             record.references += 1;
         }
-        if resolution == "unresolved" {
-            record.unresolved += 1;
-        } else {
-            record.exact += 1;
+        match resolution {
+            "external" => record.external += 1,
+            "unresolved" => record.unresolved += 1,
+            _ => record.exact += 1,
         }
         rows.push(EdgeRow {
             id: new_id(),
@@ -337,6 +367,13 @@ fn plan_document(
 
 /// (kind, line) -> tree-sitter (target_id, resolution) call/reference sites of one file.
 type TsSites = HashMap<(String, Option<i64>), Vec<(Option<String>, Option<String>)>>;
+
+/// Package-manager scheme prefix (`scip-java maven …`): the fallback
+/// dependency signal for indexers that leave `external_symbols` empty.
+/// Only symbols without an in-index definition site classify as external.
+fn is_package_scheme_symbol(symbol: &str) -> bool {
+    symbol.starts_with("scip-") && symbol != "scip-"
+}
 
 /// Return disagreements and upgrades for SCIP edges by kind and line.
 fn count_disagreements(
@@ -442,6 +479,28 @@ pub fn import_scip_file(
     scip_path: &str,
     workspace: &str,
 ) -> Result<ImportRecord, String> {
+    import_scip_file_opts(conn, scip_path, workspace, false)
+}
+
+/// Overlay-path import: with `stale_guard`, documents whose file mtime is
+/// newer than the index keep their tree-sitter edges; their current spans
+/// stay joinable, so references from other documents still resolve.
+pub fn import_scip_file_opts(
+    conn: &Connection,
+    scip_path: &str,
+    workspace: &str,
+    stale_guard: bool,
+) -> Result<ImportRecord, String> {
+    if let Ok(meta) = std::fs::metadata(scip_path)
+        && meta.len() > MAX_INDEX_BYTES
+    {
+        replace_skip_row(conn, "", scip_path, SKIP_INDEX_TOO_LARGE)?;
+        return Err(format!(
+            "SCIP index exceeds the {} MiB read cap: {scip_path} ({} bytes)",
+            MAX_INDEX_BYTES / (1024 * 1024),
+            meta.len()
+        ));
+    }
     let index = match parse_index(scip_path) {
         Ok(index) => index,
         Err(e) => {
@@ -462,6 +521,16 @@ pub fn import_scip_file(
         .iter()
         .map(|info| (info.symbol.clone(), info.kind))
         .collect();
+    let external_symbols: HashSet<String> = index
+        .external_symbols
+        .iter()
+        .map(|info| info.symbol.clone())
+        .collect();
+    let index_mtime = std::fs::metadata(scip_path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs_f64());
     let mut def_sites: HashMap<String, Vec<(String, Option<Span>)>> = HashMap::new();
     for doc in &index.documents {
         for info in &doc.symbols {
@@ -482,6 +551,7 @@ pub fn import_scip_file(
     let mut spans_by_rel: HashMap<String, Option<Vec<SpanRow>>> = HashMap::new();
     let mut covered_file_ids: HashMap<String, String> = HashMap::new();
     let mut covered_repo_ids: HashMap<String, String> = HashMap::new();
+    let mut stale_rels: HashSet<String> = HashSet::new();
     for doc in &index.documents {
         let rel = norm_rel(&doc.relative_path);
         match match_document_path(conn, &rel, &repo_ids)? {
@@ -503,6 +573,17 @@ pub fn import_scip_file(
                     .filter_map(Result::ok)
                     .collect::<Vec<SpanRow>>();
                 spans_by_rel.insert(rel.clone(), Some(spans));
+                if stale_guard
+                    && let Some(index_mtime) = index_mtime
+                    && file_is_newer(conn, &file_id, index_mtime)?
+                {
+                    // A stale document joins as a target but plans no rows
+                    // and keeps its tree-sitter edges: no covered id means
+                    // no kept rows and no authority DELETE.
+                    stale_rels.insert(rel);
+                    record.stale_documents += 1;
+                    continue;
+                }
                 covered_file_ids.insert(rel.clone(), file_id);
                 covered_repo_ids.insert(rel, repo_id);
                 record.matched_documents += 1;
@@ -512,9 +593,19 @@ pub fn import_scip_file(
 
     let mut planned: Vec<(String, bool, Vec<EdgeRow>)> = Vec::new();
     for doc in &index.documents {
-        let (rows, anomalous) =
-            plan_document(doc, &spans_by_rel, &def_sites, &symbol_kinds, &mut record);
-        planned.push((norm_rel(&doc.relative_path), anomalous, rows));
+        let rel = norm_rel(&doc.relative_path);
+        if stale_rels.contains(&rel) {
+            continue;
+        }
+        let (rows, anomalous) = plan_document(
+            doc,
+            &spans_by_rel,
+            &def_sites,
+            &symbol_kinds,
+            &external_symbols,
+            &mut record,
+        );
+        planned.push((rel, anomalous, rows));
     }
 
     // Read phase: every fallible step (per-document disagreement scan, counter

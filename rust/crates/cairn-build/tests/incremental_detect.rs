@@ -134,3 +134,39 @@ fn mtime_only_drift_does_not_trigger_freshness_repair() {
         "stored mtime must converge to disk after a hash match"
     );
 }
+
+/// A repo added after the last build has no files-table rows; its files are
+/// new, not invisible.
+#[test]
+fn detect_changed_enumerates_a_newly_added_repo() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "cairn-detect-newrepo-{}-{nanos}",
+        std::process::id()
+    ));
+    for repo in ["alpha", "beta"] {
+        fs::create_dir_all(root.join(repo).join(".git")).expect("repo marker");
+        fs::write(root.join(repo).join("mod.py"), "def one():\n    return 1\n").expect("source");
+    }
+    let ws = root.to_str().expect("ws").to_string();
+    let db = root.join("store.kg").to_string_lossy().into_owned();
+    build_graph(&ws, &db, None, Some(1)).expect("build");
+
+    fs::create_dir_all(root.join("gamma").join(".git")).expect("repo marker");
+    fs::write(
+        root.join("gamma").join("mod.py"),
+        "def two():\n    return 2\n",
+    )
+    .expect("source");
+
+    let conn = Connection::open(&db).expect("open store");
+    let drifted = cairn_build::incremental::detect_changed(&conn, &ws);
+    assert!(
+        drifted.iter().any(|p| p.contains("gamma")),
+        "a new repo's files must surface as drift: {drifted:?}"
+    );
+    let _ = fs::remove_dir_all(&root);
+}

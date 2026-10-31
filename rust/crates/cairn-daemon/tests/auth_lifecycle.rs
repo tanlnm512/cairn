@@ -326,9 +326,11 @@ fn healthz_payload_carries_the_reuse_guard_fields() {
     let dir = tempfile_dir("healthz");
     let db_path = dir.join("store.kg");
     std::fs::copy(&store_src, &db_path).expect("seed store");
+    let loopback: std::net::IpAddr = "127.0.0.1".parse().expect("loopback ip");
 
     let state = HealthzState::new(db_path.to_string_lossy(), false);
-    let payload: Value = serde_json::from_str(&state.payload().to_string()).expect("json payload");
+    let payload: Value =
+        serde_json::from_str(&state.payload(loopback).to_string()).expect("json payload");
     assert_eq!(payload["status"], "ok", "payload {payload}");
     assert_eq!(payload["store_reachable"], true);
     assert_eq!(payload["read_only"], false);
@@ -343,10 +345,23 @@ fn healthz_payload_carries_the_reuse_guard_fields() {
         "degradations is a count: {payload}"
     );
 
+    // Non-loopback peers learn the served store's file name, never its path.
+    let remote: std::net::IpAddr = "192.0.2.9".parse().expect("remote ip");
+    let payload: Value =
+        serde_json::from_str(&state.payload(remote).to_string()).expect("json payload");
+    assert_eq!(payload["db"], "store.kg");
+    assert!(
+        !payload["db"]
+            .as_str()
+            .unwrap()
+            .contains(&*dir.to_string_lossy()),
+        "the unauthenticated payload must not leak the store directory: {payload}"
+    );
+
     // An unreachable served store degrades to unhealthy with the db path intact.
     let missing = HealthzState::new(dir.join("missing.kg").to_string_lossy(), true);
     let payload: Value =
-        serde_json::from_str(&missing.payload().to_string()).expect("json payload");
+        serde_json::from_str(&missing.payload(loopback).to_string()).expect("json payload");
     assert_eq!(payload["status"], "unhealthy");
     assert_eq!(payload["store_reachable"], false);
     assert_eq!(payload["read_only"], true);
@@ -418,6 +433,15 @@ fn http_response_parser_covers_the_framings() {
     );
     assert_eq!(
         response("Transfer-Encoding: chunked", b"5\r\nhello\r\n0\r\n\r\n").expect("chunked"),
+        (200, b"hello".to_vec())
+    );
+    // A multi-coding transfer-encoding header still means chunked framing.
+    assert_eq!(
+        response(
+            "Transfer-Encoding: gzip, chunked",
+            b"5\r\nhello\r\n0\r\n\r\n"
+        )
+        .expect("multi-coding chunked"),
         (200, b"hello".to_vec())
     );
     assert_eq!(

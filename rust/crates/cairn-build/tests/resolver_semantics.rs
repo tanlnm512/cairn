@@ -19,7 +19,7 @@ fn fixture() -> Fixture {
            imported_path TEXT, local_alias TEXT);
          CREATE TABLE edges (id TEXT PRIMARY KEY, source_id TEXT, target_id TEXT,
            target_name TEXT, kind TEXT, line INTEGER, column INTEGER, resolution TEXT,
-           ref_name TEXT, receiver_type TEXT, call_arity INTEGER);",
+           ref_name TEXT, receiver_type TEXT, call_arity INTEGER, source TEXT);",
     )
     .expect("fixture schema");
     Fixture { conn }
@@ -83,6 +83,18 @@ impl Fixture {
                 rusqlite::params![id, source_id, target_name, kind],
             )
             .expect("edge");
+        self
+    }
+
+    /// A scip-overlay reference edge the importer left external.
+    fn overlay_edge(&mut self, id: &str, source_id: &str, target_name: &str) -> &mut Self {
+        self.conn
+            .execute(
+                "INSERT INTO edges (id, source_id, target_id, target_name, kind, resolution, source)
+                 VALUES (?1, ?2, NULL, ?3, 'references', 'external', 'scip')",
+                rusqlite::params![id, source_id, target_name],
+            )
+            .expect("overlay edge");
         self
     }
 
@@ -394,6 +406,31 @@ fn repair_resolves_only_named_targets_with_rust_generic_tier() {
     assert_eq!(empty, Stats::default());
     let missed = repair_incoming_edges(&mut fx.conn, &["nope"]).expect("repair");
     assert_eq!(missed, Stats::default());
+}
+
+/// The scip overlay owns its edges' external/unresolved verdicts; the
+/// name-based repair tiers must not rewrite them.
+#[test]
+fn repair_leaves_scip_overlay_edges_alone() {
+    let mut fx = fixture();
+    fx.file("f1", "r", "python")
+        .file("f2", "r", "python")
+        .symbol("s_owner", "f1", "main", None, "function", None)
+        .symbol("s_target", "f2", "add", None, "function", None);
+    fx.edge("e_ts", "s_owner", "add", "references");
+    fx.overlay_edge("e_scip", "s_owner", "add");
+
+    let stats = repair_incoming_edges(&mut fx.conn, &["add"]).expect("repair");
+
+    assert_eq!(
+        fx.row("e_ts"),
+        (Some("s_target".into()), None, Some("exact".into()))
+    );
+    assert_eq!(
+        fx.row("e_scip"),
+        (None, Some("add".into()), Some("external".into()))
+    );
+    assert_eq!(stats.exact, 1);
 }
 
 #[test]

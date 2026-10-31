@@ -484,15 +484,20 @@ impl Walk<'_> {
                 continue;
             }
             let mut name: Option<String> = None;
+            let mut pattern: Option<Node<'_>> = None;
             let mut value: Option<Node<'_>> = None;
             let mut seen_eq = false;
             for c in children(child) {
-                if c.kind() == "identifier" && name.is_none() {
-                    name = Some(self.node_text(c).trim().to_string());
-                } else if c.kind() == "=" {
+                if c.kind() == "=" {
                     seen_eq = true;
-                } else if seen_eq && value.is_none() {
-                    value = Some(c);
+                } else if seen_eq {
+                    if value.is_none() {
+                        value = Some(c);
+                    }
+                } else if c.kind() == "identifier" && name.is_none() {
+                    name = Some(self.node_text(c).trim().to_string());
+                } else if pattern.is_none() && c.is_named() {
+                    pattern = Some(c);
                 }
             }
             let is_func_value = value
@@ -524,23 +529,65 @@ impl Walk<'_> {
                     self.callable_scope.pop();
                 }
             } else {
-                if is_top && let Some(n) = &name {
-                    parsed.symbols.push(Symbol {
-                        name: n.clone(),
-                        kind: "variable".to_string(),
-                        qualified_name: Some(self.qualified_name(n)),
-                        line_start: child.start_position().row + 1,
-                        line_end: child.end_position().row + 1,
-                        column_start: child.start_position().column,
-                        column_end: child.end_position().column,
-                        ..Symbol::default()
-                    });
+                if is_top {
+                    if let Some(n) = &name {
+                        self.push_variable_symbol(n, child, parsed);
+                    }
+                    if let Some(pattern) = pattern {
+                        let mut bindings = Vec::new();
+                        self.pattern_bindings(pattern, &mut bindings);
+                        for (n, binding) in bindings {
+                            self.push_variable_symbol(&n, binding, parsed);
+                        }
+                    }
                 }
                 if let Some(v) = value {
                     // Visit initializer nodes directly so their own expression type emits an edge.
                     self.visit(v, parsed);
                 }
             }
+        }
+    }
+
+    /// Push a variable symbol for `name` declared at `node`.
+    fn push_variable_symbol(&self, name: &str, node: Node<'_>, parsed: &mut ParsedFile) {
+        parsed.symbols.push(Symbol {
+            name: name.to_string(),
+            kind: "variable".to_string(),
+            qualified_name: Some(self.qualified_name(name)),
+            line_start: node.start_position().row + 1,
+            line_end: node.end_position().row + 1,
+            column_start: node.start_position().column,
+            column_end: node.end_position().column,
+            ..Symbol::default()
+        });
+    }
+
+    /// Bound (name, node) pairs of a destructuring pattern: shorthand,
+    /// renamed, rest, defaulted, and nested sub-patterns.
+    fn pattern_bindings<'a>(&self, node: Node<'a>, out: &mut Vec<(String, Node<'a>)>) {
+        match node.kind() {
+            "identifier" | "shorthand_property_identifier_pattern" => {
+                out.push((self.node_text(node).trim().to_string(), node));
+            }
+            "pair_pattern" => {
+                if let Some(value) = node.child_by_field_name("value") {
+                    self.pattern_bindings(value, out);
+                }
+            }
+            "assignment_pattern" | "object_assignment_pattern" => {
+                if let Some(left) = node.child_by_field_name("left") {
+                    self.pattern_bindings(left, out);
+                }
+            }
+            "object_pattern" | "array_pattern" | "rest_pattern" => {
+                for c in children(node) {
+                    if c.is_named() {
+                        self.pattern_bindings(c, out);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1097,6 +1144,77 @@ const limit = 10;
         assert_eq!(
             call_tuples(&parsed),
             vec![("makeCounter".into(), "bump".into(), None, Some(0))]
+        );
+    }
+
+    #[test]
+    fn destructuring_object_patterns_bind_pattern_names_not_the_rhs() {
+        let parsed = parse_js("const { useState } = React;\n");
+        assert_eq!(
+            symbol_tuples(&parsed),
+            vec![(
+                "useState".into(),
+                "variable".into(),
+                "sample.useState".into(),
+                None
+            )]
+        );
+
+        let rest = parse_js("let { a, ...rest } = cfg;\n");
+        assert_eq!(
+            symbol_tuples(&rest),
+            vec![
+                ("a".into(), "variable".into(), "sample.a".into(), None),
+                ("rest".into(), "variable".into(), "sample.rest".into(), None),
+            ]
+        );
+
+        let renamed = parse_ts("const { width: w, opts: { depth: d } } = cfg;\n");
+        assert_eq!(
+            symbol_tuples(&renamed),
+            vec![
+                ("w".into(), "variable".into(), "sample.w".into(), None),
+                ("d".into(), "variable".into(), "sample.d".into(), None),
+            ]
+        );
+
+        let scoped = parse_ts("function run(cfg) {\n    const { a } = cfg;\n}\n");
+        assert_eq!(
+            symbol_tuples(&scoped),
+            vec![(
+                "run".into(),
+                "function".into(),
+                "sample.run".into(),
+                Some(1)
+            )]
+        );
+    }
+
+    #[test]
+    fn destructuring_array_patterns_bind_elements_and_defaults() {
+        let parsed = parse_js("const [x] = arr;\n");
+        assert_eq!(
+            symbol_tuples(&parsed),
+            vec![("x".into(), "variable".into(), "sample.x".into(), None)]
+        );
+
+        let defaults = parse_js("const [x, y = z, ...rest] = arr;\n");
+        assert_eq!(
+            symbol_tuples(&defaults),
+            vec![
+                ("x".into(), "variable".into(), "sample.x".into(), None),
+                ("y".into(), "variable".into(), "sample.y".into(), None),
+                ("rest".into(), "variable".into(), "sample.rest".into(), None),
+            ]
+        );
+
+        let nested = parse_js("const [p, { q }] = pair;\n");
+        assert_eq!(
+            symbol_tuples(&nested),
+            vec![
+                ("p".into(), "variable".into(), "sample.p".into(), None),
+                ("q".into(), "variable".into(), "sample.q".into(), None),
+            ]
         );
     }
 

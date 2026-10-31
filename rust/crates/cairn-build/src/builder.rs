@@ -16,7 +16,7 @@ use crate::parse_dispatch::parse_language_file;
 use crate::resolver::EdgeSignal;
 use crate::routes;
 use crate::scanner;
-use crate::scip::importer::{import_scip_file, replace_skip_row};
+use crate::scip::importer::{import_scip_file_opts, replace_skip_row};
 use crate::scip::indexers::generate_index_result;
 use crate::service_calls;
 use crate::timefmt::now_iso;
@@ -57,6 +57,8 @@ pub struct ScipReport {
     pub disagreements: usize,
     pub upgrades: usize,
     pub join_anomalies: usize,
+    pub stale_files: usize,
+    pub external: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
@@ -163,12 +165,25 @@ pub fn build_graph_with(
     let started = Instant::now();
     let mut timings = StageTimings::default();
 
+    let db = Path::new(db_path);
+    let _lock = swap::build_lock(db)?;
+    // A full scan that finds no repository would leave the existing store
+    // serving the wrong workspace's graph.
+    if repo_filter.is_none()
+        && scanner::discover_repo_records(workspace)?.is_empty()
+        && store_file_holds_graph(db)
+    {
+        return Err(format!(
+            "no repositories discovered under {workspace} but {} already \
+             holds a graph — refusing to keep serving it; check the workspace path",
+            db.display()
+        ));
+    }
+
     let t = Instant::now();
     let (files, skips) = scanner::scan_workspace(workspace, repo_filter)?;
     timings.scan_ms = elapsed_ms(t);
 
-    let db = Path::new(db_path);
-    let _lock = swap::build_lock(db)?;
     let summary = match repo_filter {
         Some(_) => {
             let mut conn = open_store(db)?;
@@ -412,6 +427,25 @@ fn populate(
         summary.resolution.ambiguous += stats.ambiguous;
         summary.resolution.unresolved += stats.unresolved;
     }
+    // clear_repo demoted other repos' incoming edges to bare names; the
+    // rebuilt symbols must re-resolve them.
+    if let Some(repo) = repo_filter {
+        let names: Vec<String> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT DISTINCT s.name FROM symbols s
+                     JOIN files f ON s.file_id = f.id
+                     WHERE f.repo_id = ?1 AND s.name IS NOT NULL",
+                )
+                .map_err(rusqlite_err)?;
+            stmt.query_map([repo], |r| r.get::<_, String>(0))
+                .map_err(rusqlite_err)?
+                .collect::<Result<_, _>>()
+                .map_err(rusqlite_err)?
+        };
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        crate::resolver::repair_incoming_edges(conn, &refs).map_err(rusqlite_err)?;
+    }
     timings.resolve_ms = elapsed_ms(t);
 
     // Fourth pass: materialized module-import edges (not counted in the summary).
@@ -447,6 +481,29 @@ fn populate(
 
 const SCIP_SKIP_IMPORT_FAILED: &str = "scip_import_failed";
 const SCIP_SKIP_INDEX_MISSING: &str = "scip_index_missing";
+const SCIP_SKIP_COMMANDS_NOT_ALLOWED: &str = "scip_commands_not_allowed";
+/// Defensive catch-all for generation failures the indexers classify without a reason.
+const SCIP_SKIP_GEN_FAILED: &str = "scip_gen_failed";
+
+/// `scip.commands` runs repo-committed argv verbatim; it executes only with
+/// explicit operator opt-in via a non-empty CAIRN_SCIP_COMMANDS.
+fn scip_commands_allowed() -> bool {
+    std::env::var("CAIRN_SCIP_COMMANDS").is_ok_and(|v| !v.is_empty())
+}
+
+/// Whether any indexed file's mtime is newer than the index file's (unix seconds).
+fn index_is_stale(conn: &Connection, idx_path: &Path) -> bool {
+    let max_mtime: Option<f64> = conn
+        .query_row("SELECT MAX(mtime) FROM files", [], |r| r.get(0))
+        .ok()
+        .flatten();
+    let index_mtime = std::fs::metadata(idx_path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs_f64());
+    max_mtime.is_some_and(|t| index_mtime.is_some_and(|i| t > i))
+}
 
 /// Apply the configured SCIP indexes as an edges-only overlay; None when none
 /// is configured. Every failure degrades to tree-sitter edges with a skip row.
@@ -457,8 +514,8 @@ pub fn apply_scip_overlay(
     generate_missing: bool,
     log: &mut dyn FnMut(&str),
 ) -> Option<ScipReport> {
-    let mut indexes = match load_config(Path::new(workspace)) {
-        Ok(cfg) => cfg.scip_indexes,
+    let (indexes, generated, commands) = match load_config(Path::new(workspace)) {
+        Ok(cfg) => (cfg.scip_indexes, cfg.scip_generated, cfg.scip_commands),
         Err(e) => {
             log(&format!(
                 "  [scip] config load failed ({e}); overlay skipped"
@@ -466,10 +523,17 @@ pub fn apply_scip_overlay(
             return None;
         }
     };
-    if indexes.is_empty() {
+    for (lang, _) in &commands {
+        if !indexes.iter().any(|(l, _)| l == lang) && !generated.iter().any(|l| l == lang) {
+            log(&format!(
+                "  [scip] scip.commands.{lang} ignored: no scip.indexes or \
+                 scip.generated entry for {lang}"
+            ));
+        }
+    }
+    if indexes.is_empty() && generated.is_empty() {
         return None;
     }
-    indexes.sort();
 
     // Skip attribution is workspace-scoped, not per-document, so a repo id is
     // only safe to guess in a single-repo workspace.
@@ -485,31 +549,96 @@ pub fn apply_scip_overlay(
             return Some(report);
         }
     };
-    for (lang, rel_path) in &indexes {
-        let idx_path = ws_root.join(rel_path);
+    // Committed indexes resolve against the workspace root; `scip.generated`
+    // languages resolve into the cairn store. The stale guard covers store
+    // entries only: committed mtimes reflect checkout, not generation.
+    let mut entries: Vec<(String, std::path::PathBuf, String, bool)> = indexes
+        .iter()
+        .map(|(lang, rel)| (lang.clone(), ws_root.join(rel), rel.clone(), false))
+        .collect();
+    let store_dir = (!generated.is_empty())
+        .then(|| crate::scip::store_scip_dir(workspace))
+        .flatten();
+    for lang in &generated {
+        match &store_dir {
+            Some(dir) => {
+                let path = dir.join(format!("{lang}.scip"));
+                entries.push((
+                    lang.clone(),
+                    path.clone(),
+                    path.to_string_lossy().into_owned(),
+                    true,
+                ));
+            }
+            None => {
+                log(&format!(
+                    "  [scip] {lang}: no cairn store for this workspace \
+                     (run `cairn init`); generated index unavailable"
+                ));
+                record_scip_skip(
+                    conn,
+                    repo_id,
+                    &format!("scip/generated/{lang}.scip"),
+                    SCIP_SKIP_INDEX_MISSING,
+                );
+            }
+        }
+    }
+    entries.sort();
+    for (lang, idx_path, display_path, stale_guard) in &entries {
+        // cairn owns store indexes: a stale one is rebuilt by the generation
+        // path below rather than nagged about forever.
+        if *stale_guard
+            && generate_missing
+            && idx_path.exists()
+            && index_is_stale(conn, idx_path)
+            && let Err(e) = std::fs::remove_file(idx_path)
+        {
+            log(&format!(
+                "  [scip] {lang}: cannot remove stale store index ({e}); \
+                 keeping tree-sitter edges"
+            ));
+        }
         if !idx_path.exists() {
             if !generate_missing {
                 log(&format!(
-                    "  [scip] {lang}: index {rel_path} missing; keeping tree-sitter edges"
+                    "  [scip] {lang}: index {display_path} missing; keeping tree-sitter edges"
                 ));
-                record_scip_skip(conn, repo_id, rel_path, SCIP_SKIP_INDEX_MISSING);
+                record_scip_skip(conn, repo_id, display_path, SCIP_SKIP_INDEX_MISSING);
                 continue;
             }
-            let result =
-                generate_index_result(lang, &idx_path, &ws_root.to_string_lossy(), &mut |_| {});
-            if !result.ok {
-                if let Some(reason) = result.reason {
-                    record_scip_skip(conn, repo_id, rel_path, reason);
+            let configured = commands.iter().find(|(cmd_lang, _)| cmd_lang == lang);
+            let result = match configured {
+                Some(_) if !scip_commands_allowed() => {
                     log(&format!(
-                        "  [scip] {lang}: index generation failed ({reason}); \
-                         keeping tree-sitter edges. {}",
-                        result.detail
+                        "  [scip] {lang}: scip.commands entry ignored; running a \
+                         repo-committed command line is unsafe -- set \
+                         CAIRN_SCIP_COMMANDS=1 to allow it; keeping tree-sitter edges"
                     ));
+                    record_scip_skip(conn, repo_id, display_path, SCIP_SKIP_COMMANDS_NOT_ALLOWED);
+                    continue;
                 }
+                Some((_, argv)) => crate::scip::indexers::run_configured_command(
+                    lang,
+                    argv,
+                    idx_path,
+                    &ws_root.to_string_lossy(),
+                    log,
+                ),
+                None => generate_index_result(lang, idx_path, &ws_root.to_string_lossy(), log),
+            };
+            if !result.ok {
+                let reason = result.reason.unwrap_or(SCIP_SKIP_GEN_FAILED);
+                record_scip_skip(conn, repo_id, display_path, reason);
+                log(&format!(
+                    "  [scip] {lang}: index generation failed ({reason}); \
+                     keeping tree-sitter edges. {}",
+                    result.detail
+                ));
                 continue;
             }
         }
-        match import_scip_file(conn, &idx_path.to_string_lossy(), workspace) {
+        match import_scip_file_opts(conn, &idx_path.to_string_lossy(), workspace, *stale_guard) {
             Ok(record) => {
                 report.edges += record.edges;
                 report.disagreements += record.disagreements;
@@ -521,13 +650,22 @@ pub fn apply_scip_overlay(
                         record.join_anomalies
                     ));
                 }
+                if record.stale_documents > 0 {
+                    report.stale_files += record.stale_documents;
+                    log(&format!(
+                        "  [scip] {lang}: {} file(s) kept tree-sitter edges \
+                         (file newer than index; regenerate the index)",
+                        record.stale_documents
+                    ));
+                }
+                report.external += record.external;
             }
             Err(e) => {
                 log(&format!(
-                    "  [scip] index import failed ({rel_path}): {e}; \
+                    "  [scip] index import failed ({display_path}): {e}; \
                      keeping tree-sitter edges"
                 ));
-                record_scip_skip(conn, repo_id, rel_path, SCIP_SKIP_IMPORT_FAILED);
+                record_scip_skip(conn, repo_id, display_path, SCIP_SKIP_IMPORT_FAILED);
             }
         }
     }

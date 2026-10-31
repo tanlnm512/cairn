@@ -551,3 +551,56 @@ fn graft_keeps_signal_resolved_edges_equal_to_rebuild() {
         &["alpha/helpers2.py"],
     );
 }
+
+/// Embedding rows a graft deletes must take their vec0 mirror rows with
+/// them, or a later rowid reuse pairs the wrong vector with a symbol.
+#[test]
+fn graft_purges_the_vec0_rows_of_deleted_embeddings() {
+    let dir = corpus("vec0");
+    let ws = dir.to_str().expect("ws");
+    let db = dir.join("store.kg");
+    build_graph(ws, db.to_str().expect("db"), None, Some(1)).expect("build");
+
+    let add_symbol: String = {
+        let conn = cairn_store::schema::open_initialized(&db).expect("open store");
+        let symbol_id: String = conn
+            .query_row(
+                "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id \
+                 WHERE f.repo_id = 'alpha' AND f.path = 'util.py' AND s.name = 'add'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("add symbol");
+        conn.execute(
+            "INSERT INTO embeddings (symbol_id, model, dim, vec, chunk, embedded_at) \
+             VALUES (?1, 'm', 1, ?2, 'add', 1.0)",
+            rusqlite::params![symbol_id, vec![0u8, 0, 0, 0]],
+        )
+        .expect("seed embedding");
+        cairn_store::vec0::rebuild_index(&conn, "m", cairn_store::vec0::VecSource::Embeddings)
+            .expect("rebuild vec0");
+        conn.close().expect("close");
+        symbol_id
+    };
+
+    let rel = dir.join("alpha").join("util.py");
+    let src = fs::read_to_string(&rel).expect("read fixture");
+    fs::write(&rel, format!("{src}\n# tweak\n")).expect("edit fixture");
+    let mut conn = cairn_store::schema::open_initialized(&db).expect("reopen store");
+    let result = reindex_paths(&mut conn, ws, &[rel.to_string_lossy().into_owned()]);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+    let remaining: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM embeddings WHERE symbol_id = ?1",
+            [&add_symbol],
+            |r| r.get(0),
+        )
+        .expect("base rows");
+    assert_eq!(remaining, 0);
+    assert_eq!(
+        cairn_store::vec0::index_row_count(&conn, "m").expect("vec0 rows"),
+        Some(0)
+    );
+    let _ = fs::remove_dir_all(&dir);
+}

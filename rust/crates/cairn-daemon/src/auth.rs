@@ -2,20 +2,6 @@
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
-
-/// Effective CAIRN_HOME: the env value (absolute) when set, else `~/.cairn`.
-pub fn cairn_home() -> PathBuf {
-    let home = match env::var("CAIRN_HOME") {
-        Ok(v) if !v.trim().is_empty() => Some(PathBuf::from(v)),
-        _ => cairn_store::home::platform_home().map(|h| h.join(".cairn")),
-    };
-    match home {
-        Some(p) if p.is_absolute() => p,
-        Some(p) => env::current_dir().map(|cwd| cwd.join(&p)).unwrap_or(p),
-        None => PathBuf::from(".cairn"),
-    }
-}
 
 /// Return the explicit key when non-empty, else CAIRN_MCP_API_KEY, else None.
 pub fn resolve_api_key(explicit: Option<&str>) -> Option<String> {
@@ -29,7 +15,8 @@ pub fn resolve_api_key(explicit: Option<&str>) -> Option<String> {
 
 /// Return the init-persisted key from CAIRN_HOME/mcp-api-key, or None when absent or empty.
 pub fn persisted_api_key() -> Option<String> {
-    let value = fs::read_to_string(cairn_home().join("mcp-api-key")).ok()?;
+    let value =
+        fs::read_to_string(cairn_store::paths::current_cairn_home().join("mcp-api-key")).ok()?;
     let value = value.trim();
     if value.is_empty() {
         None

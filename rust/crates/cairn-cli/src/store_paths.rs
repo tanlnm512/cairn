@@ -5,57 +5,19 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-/// Effective CAIRN_HOME: the env value when set, else `~/.cairn`.
+/// Effective CAIRN_HOME: `~`-expanded env value when set, else `~/.cairn`.
 pub fn cairn_home() -> Option<PathBuf> {
-    if let Ok(home) = std::env::var("CAIRN_HOME")
-        && !home.is_empty()
-    {
-        return Some(PathBuf::from(home));
-    }
-    cairn_store::home::platform_home().map(|h| h.join(".cairn"))
+    cairn_store::paths::cairn_home()
 }
 
 /// `~`-expanded, absolute CAIRN_HOME (the `_current_cairn_home` contract).
 pub fn current_cairn_home() -> PathBuf {
-    let raw = std::env::var("CAIRN_HOME").ok().filter(|v| !v.is_empty());
-    match raw {
-        Some(home) => resolve_path(Path::new(&expanduser(&home))),
-        None => resolve_path(&PathBuf::from(expanduser("~/.cairn"))),
-    }
-}
-
-fn expanduser(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/")
-        && let Some(home) = cairn_store::home::platform_home()
-    {
-        return home.join(rest).to_string_lossy().into_owned();
-    }
-    path.to_string()
+    cairn_store::paths::current_cairn_home()
 }
 
 /// `Path.resolve()` (non-strict): absolute with symlinks resolved where possible.
 pub fn resolve_path(path: &Path) -> PathBuf {
-    if let Ok(resolved) = std::fs::canonicalize(path) {
-        return cairn_store::paths::strip_verbatim(resolved);
-    }
-    let joined = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|cwd| cwd.join(path))
-            .unwrap_or_else(|_| path.to_path_buf())
-    };
-    let mut out = PathBuf::new();
-    for component in joined.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
+    cairn_store::paths::resolve_path(path)
 }
 
 /// Stable short key for a workspace path (sha256 prefix).
@@ -88,26 +50,7 @@ impl StorePaths {
 
 /// The {workspace_abs_path: key} registry, sorted by path; empty when absent/corrupt.
 pub fn load_registry() -> BTreeMap<String, String> {
-    let Some(home) = cairn_home() else {
-        return BTreeMap::new();
-    };
-    let Ok(text) = std::fs::read_to_string(home.join("workspaces.json")) else {
-        return BTreeMap::new();
-    };
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return BTreeMap::new();
-    };
-    parsed
-        .as_object()
-        .map(|map| {
-            map.iter()
-                .filter_map(|(ws, key)| {
-                    let key = key.as_str()?;
-                    Some((ws.clone(), key.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    cairn_store::paths::load_registry()
 }
 
 /// Persist the registry atomically (tmp file + rename).
@@ -221,12 +164,16 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("dir");
         // SAFETY: EnvScope holds the env lock and restores CAIRN_HOME on drop.
         unsafe { std::env::set_var("CAIRN_HOME", &dir) };
+        let key_a = store_key(Path::new("/a"));
+        let key_b = store_key(Path::new("/b"));
         let mut reg = load_registry();
-        reg.insert("/b".into(), "k2".into());
-        reg.insert("/a".into(), "k1".into());
+        reg.insert("/b".into(), key_b.clone());
+        reg.insert("/a".into(), key_a.clone());
         save_registry(&reg).expect("save");
         let loaded = load_registry();
         let keys: Vec<&String> = loaded.keys().collect();
         assert_eq!(keys, ["/a", "/b"]);
+        assert_eq!(loaded.get("/a").map(String::as_str), Some(key_a.as_str()));
+        assert_eq!(loaded.get("/b").map(String::as_str), Some(key_b.as_str()));
     }
 }

@@ -615,7 +615,8 @@ pub fn repair_incoming_edges(
     }
 
     // ref_name finds resolved edges; target_id IS NULL keeps structurally
-    // pinned edges (contains) out of name re-resolution.
+    // pinned edges (contains) out of name re-resolution. scip overlay edges
+    // keep the importer's own external/unresolved verdicts.
     let mut rows: Vec<RepairRow> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for chunk in changed_target_names.chunks(SQLITE_IN_CHUNK) {
@@ -628,8 +629,9 @@ pub fn repair_incoming_edges(
              FROM edges e
              JOIN symbols s ON e.source_id = s.id
              JOIN files f ON s.file_id = f.id
-             WHERE e.ref_name IN ({placeholders})
-                OR (e.target_id IS NULL AND e.target_name IN ({placeholders}))"
+             WHERE coalesce(e.source, '') != 'scip'
+               AND (e.ref_name IN ({placeholders})
+                    OR (e.target_id IS NULL AND e.target_name IN ({placeholders})))"
         );
         let params: Vec<&dyn rusqlite::ToSql> = chunk
             .iter()

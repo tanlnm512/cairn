@@ -3,10 +3,8 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
+use cairn_query::graph::STRUCTURAL_EDGE_KINDS;
 use rusqlite::Connection;
-
-/// Edge kinds the closure follows, sorted so seed order is kind-major.
-pub const STRUCTURAL_EDGE_KINDS: [&str; 4] = ["call", "calls", "extends", "implements"];
 
 /// Default closure depth.
 pub const CLOSURE_MAX_DEPTH: usize = 4;

@@ -1121,6 +1121,21 @@ fn run_critic(conn: &Connection, task: &Task, result: &str) -> Result<CriticResu
             passed: true,
         });
     }
+    if task.task_kind.starts_with("memory-") {
+        // JSON-lines memory output has no compass headings to score; only an
+        // empty result fails.
+        let passed = !result.trim().is_empty();
+        return Ok(CriticResult {
+            errors: if passed {
+                Vec::new()
+            } else {
+                vec!["empty result".into()]
+            },
+            warnings: Vec::new(),
+            quality_score: if passed { 1.0 } else { 0.0 },
+            passed,
+        });
+    }
     if task.task_kind.starts_with("wiki-page") {
         return critic_concept_opts(&concept, conn, Some(&["## Sources"]), true);
     }
@@ -2167,6 +2182,49 @@ mod tests {
             complete_task(&bundle, &task.id, &result, Some(&conn), None, None).expect("c");
         assert!(outcome.revised, "Notes must be checked: {outcome:?}");
         assert!(!outcome.promoted);
+    }
+
+    #[test]
+    fn memory_extract_completion_passes_the_critic() {
+        let bundle = scratch_bundle("memextract");
+        let conn = seeded_conn();
+        let task = create_task(
+            &bundle,
+            "memory-extract",
+            "session-s1",
+            facts(&[("session_id", ys("s1"))]),
+            0,
+        )
+        .expect("create");
+        claim_task(&bundle, &task.id, "")
+            .expect("claim")
+            .expect("ok");
+        let result = "{\"type\":\"decision\",\"title\":\"Reindex before embedding\",\
+             \"body\":\"Reindex first, then embed the new symbols.\",\"confidence\":0.8}\n";
+        let outcome =
+            complete_task(&bundle, &task.id, result, Some(&conn), None, None).expect("complete");
+        assert!(!outcome.revised, "errors: {:?}", outcome.errors);
+        assert!(!outcome.dropped);
+        assert!(!outcome.promoted);
+        assert_eq!(
+            get_task(&bundle, &task.id).expect("g").expect("t").status,
+            "done"
+        );
+
+        let t2 = create_task(
+            &bundle,
+            "memory-extract",
+            "session-s2",
+            facts(&[("session_id", ys("s2"))]),
+            0,
+        )
+        .expect("create2");
+        claim_task(&bundle, &t2.id, "")
+            .expect("claim2")
+            .expect("ok");
+        let outcome = complete_task(&bundle, &t2.id, "  \n", Some(&conn), None, None).expect("c2");
+        assert!(outcome.revised);
+        assert!(outcome.errors.iter().any(|e| e.contains("empty result")));
     }
 
     #[test]

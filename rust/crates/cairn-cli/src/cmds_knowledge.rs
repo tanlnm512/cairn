@@ -18,6 +18,7 @@ use cairn_query::tools_search::{self, EffectiveBackend};
 use cairn_query::tools_wiki::{self, PipelineError};
 use cairn_store::{conn as store_conn, schema as store_schema};
 
+use crate::cli_paths::db_path;
 use crate::display;
 use crate::json_compat;
 use crate::store_paths::resolve_store;
@@ -1506,11 +1507,6 @@ fn knowledge_default() -> PathBuf {
 
 fn memory_bundle(knowledge: Option<&str>) -> Bundle {
     resolve_bundle(&knowledge.map_or_else(knowledge_default, PathBuf::from))
-}
-
-/// Effective db path: explicit > the resolved store.
-fn db_path(db: Option<&str>) -> PathBuf {
-    db.map_or_else(|| resolve_store(None).db, PathBuf::from)
 }
 
 /// _require_db_dir: exit cleanly when the db parent is missing.

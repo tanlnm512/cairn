@@ -13,6 +13,9 @@ pub const GEN_MISSING_BINARY: &str = "scip_gen_missing_binary";
 pub const GEN_NONZERO_EXIT: &str = "scip_gen_nonzero_exit";
 pub const GEN_TIMEOUT: &str = "scip_gen_timeout";
 pub const GEN_OS_ERROR: &str = "scip_gen_os_error";
+/// No registered indexer for the language, or a scip.commands entry that
+/// cannot express a command.
+pub const GEN_MISCONFIGURED: &str = "scip_gen_misconfigured";
 
 /// How to invoke one known SCIP indexer: PATH binary, argv template, env template, install hint.
 #[derive(Debug, Clone, Copy)]
@@ -73,7 +76,10 @@ fn cmd(parts: Vec<&str>) -> Vec<String> {
 
 const SCIP_JAVA_HINT: &str = "scip-java is the canonical SCIP indexer for Java AND Kotlin (the old \
 scip-kotlin has been merged in). It requires a Gradle or Maven build. \
-See https://github.com/sourcegraph/scip-java";
+CAVEAT: plain `scip-java index` is known to fail on some Android/Gradle \
+builds; for those, generate the index with a project-specific pipeline \
+and point `scip.commands` at it (or commit the index and list it in \
+`scip.indexes`). See https://github.com/sourcegraph/scip-java";
 
 /// Keyed by the scanner language name (the `cairn.json` `scip.indexes` key).
 /// Languages not in this registry are never auto-generated; a committed index
@@ -198,7 +204,7 @@ pub fn generate_index_result(
     let Some(spec) = spec_for(language) else {
         return GenerationResult {
             ok: false,
-            reason: None,
+            reason: Some(GEN_MISCONFIGURED),
             detail: format!("no registered indexer for '{language}'"),
         };
     };
@@ -238,11 +244,125 @@ pub fn generate_index_result(
     }
 }
 
+/// Run a `scip.commands`-configured indexer: `$out`/`$repo` argv template,
+/// argv[0] resolved on PATH, same failure taxonomy as the registry — for
+/// builds the fixed per-language specs cannot express.
+pub fn run_configured_command(
+    language: &str,
+    argv_template: &[String],
+    output_path: &Path,
+    repo_path: &str,
+    log: &mut dyn FnMut(&str),
+) -> GenerationResult {
+    if output_path.exists() {
+        // Never rebuild an existing index -- the user (or CI) owns regeneration.
+        return GenerationResult::success();
+    }
+    let argv: Vec<String> = argv_template
+        .iter()
+        .map(|part| {
+            part.replace("$out", &output_path.to_string_lossy())
+                .replace("$repo", repo_path)
+        })
+        .collect();
+    let Some((tool, args)) = argv.split_first() else {
+        return GenerationResult {
+            ok: false,
+            reason: Some(GEN_MISCONFIGURED),
+            detail: "empty scip.commands entry".to_string(),
+        };
+    };
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let prefix = format!("  scip[{language}]: ");
+    match exec_generation(
+        &prefix,
+        tool,
+        args,
+        &[],
+        &path_env,
+        repo_path,
+        output_path,
+        INDEX_TIMEOUT,
+        log,
+    ) {
+        Ok(()) => GenerationResult::success(),
+        Err(ToolFailure::Timeout) => configured_fail(
+            &prefix,
+            log,
+            GEN_TIMEOUT,
+            format!("{tool} timed out after {}s", INDEX_TIMEOUT.as_secs()),
+        ),
+        Err(ToolFailure::Invocation(e)) => configured_fail(
+            &prefix,
+            log,
+            GEN_OS_ERROR,
+            format!("{tool} invocation failed ({e})"),
+        ),
+        Err(ToolFailure::MissingBinary) => configured_fail(
+            &prefix,
+            log,
+            GEN_MISSING_BINARY,
+            format!("index missing and '{tool}' not on PATH"),
+        ),
+        Err(ToolFailure::NonZeroExit(code)) => configured_fail(
+            &prefix,
+            log,
+            GEN_NONZERO_EXIT,
+            format!("{tool} exited {code} without producing an index"),
+        ),
+    }
+}
+
+/// `run_configured_command` failure wrapper: log the detail and return the
+/// degraded result; a separate fn so the `log` borrow ends before use.
+fn configured_fail(
+    prefix: &str,
+    log: &mut dyn FnMut(&str),
+    reason: &'static str,
+    detail: String,
+) -> GenerationResult {
+    log(&format!("{prefix}{detail}"));
+    GenerationResult {
+        ok: false,
+        reason: Some(reason),
+        detail,
+    }
+}
+
 enum ToolFailure {
     MissingBinary,
     NonZeroExit(i32),
     Timeout,
     Invocation(String),
+}
+
+/// Shared generation pipeline of the registry and configured-command paths:
+/// prepare the output parent, resolve the tool on PATH, log, and exec.
+#[allow(clippy::too_many_arguments)]
+fn exec_generation(
+    prefix: &str,
+    tool: &str,
+    args: &[String],
+    env: &[(String, String)],
+    path_env: &str,
+    repo_path: &str,
+    output_path: &Path,
+    timeout: Duration,
+    log: &mut dyn FnMut(&str),
+) -> Result<(), ToolFailure> {
+    if let Some(parent) = output_path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        return Err(ToolFailure::Invocation(e.to_string()));
+    }
+    // Execute the which-resolved binary so the probe and the exec cannot
+    // disagree about what is on PATH.
+    let resolved = find_on_path(path_env, tool).ok_or(ToolFailure::MissingBinary)?;
+    log(&format!(
+        "{prefix}generating index with {tool} -> {}",
+        output_path.display()
+    ));
+    exec_tool_argv(resolved, args, env, repo_path, output_path, timeout, log)
 }
 
 /// Run the spec's indexer once under the bounded timeout and classify the outcome.
@@ -254,25 +374,37 @@ fn run_tool(
     timeout: Duration,
     log: &mut dyn FnMut(&str),
 ) -> Result<(), ToolFailure> {
-    // Execute the which-resolved binary so the probe and the exec cannot
-    // disagree about what is on PATH.
-    let resolved = find_on_path(path_env, spec.tool).ok_or(ToolFailure::MissingBinary)?;
-
-    if let Some(parent) = output_path.parent()
-        && let Err(e) = std::fs::create_dir_all(parent)
-    {
-        return Err(ToolFailure::Invocation(e.to_string()));
-    }
     let argv = (spec.build_command)(repo_path, &output_path.to_string_lossy());
-    let (_, args) = argv
-        .split_first()
-        .ok_or_else(|| ToolFailure::Invocation("empty command template".to_string()))?;
-    log(&format!(
-        "  scip[{}]: generating index with {} -> {}",
-        spec.language,
+    let Some((_, args)) = argv.split_first() else {
+        return Err(ToolFailure::Invocation(
+            "empty command template".to_string(),
+        ));
+    };
+    exec_generation(
+        &format!("  scip[{}]: ", spec.language),
         spec.tool,
-        output_path.display()
-    ));
+        args,
+        &(spec.env)(&output_path.to_string_lossy()),
+        path_env,
+        repo_path,
+        output_path,
+        timeout,
+        log,
+    )
+}
+
+/// Spawn the resolved indexer binary and babysit it to completion: drained
+/// pipes, deadline enforcement, and the nonzero/missing-output contract.
+#[allow(clippy::too_many_arguments)]
+fn exec_tool_argv(
+    resolved: std::path::PathBuf,
+    args: &[String],
+    env: &[(String, String)],
+    repo_path: &str,
+    output_path: &Path,
+    timeout: Duration,
+    log: &mut dyn FnMut(&str),
+) -> Result<(), ToolFailure> {
     let mut command = Command::new(resolved);
     command
         .args(args)
@@ -280,7 +412,7 @@ fn run_tool(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    command.envs((spec.env)(&output_path.to_string_lossy()));
+    command.envs(env.iter().cloned());
 
     let mut child = command
         .spawn()
@@ -465,7 +597,7 @@ mod tests {
         let res =
             generate_index_result("cobol", &out, "/nonexistent", &mut |l| logs.push(l.into()));
         assert!(!res.ok);
-        assert_eq!(res.reason, None);
+        assert_eq!(res.reason, Some(GEN_MISCONFIGURED));
         assert_eq!(res.detail, "no registered indexer for 'cobol'");
 
         std::fs::write(&out, b"scip-bytes").expect("seed output");

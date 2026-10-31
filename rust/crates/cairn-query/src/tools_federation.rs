@@ -18,29 +18,10 @@ struct FederatedResult {
     states: Vec<(String, String)>,
 }
 
-/// `(workspace_path, store_key)` pairs, workspace-sorted.
+/// `(workspace_path, store_key)` pairs, workspace-sorted; the shared loader
+/// drops registry entries whose key is not a canonical store key.
 fn iter_stores() -> Vec<(String, String)> {
-    let Some(home) = cairn_home() else {
-        return vec![];
-    };
-    let Ok(text) = std::fs::read_to_string(home.join("workspaces.json")) else {
-        return vec![];
-    };
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return vec![];
-    };
-    let Some(map) = parsed.as_object() else {
-        return vec![];
-    };
-    let mut pairs: Vec<(String, String)> = map
-        .iter()
-        .filter_map(|(ws, key)| {
-            let key = key.as_str()?;
-            Some((ws.clone(), key.to_string()))
-        })
-        .collect();
-    pairs.sort_by(|a, b| a.0.cmp(&b.0));
-    pairs
+    cairn_store::paths::load_registry().into_iter().collect()
 }
 
 /// `missing` / `unindexed` / `ok` from the filesystem alone.

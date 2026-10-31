@@ -1,6 +1,5 @@
 //! `cairn doctor`: system health checks.
 
-use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -522,115 +521,20 @@ fn split_base_url(base: &str) -> Option<(String, u16, String)> {
     Some((host, port, format!("/{path}")))
 }
 
-/// Bounded std-HTTP request (loopback-tool grade, no TLS).
-fn http_request(
-    host: &str,
-    port: u16,
-    method: &str,
-    path: &str,
-    body: Option<&str>,
-    timeout: Duration,
-) -> Option<(u16, Vec<u8>)> {
-    use std::net::ToSocketAddrs as _;
-    let addr = (host, port).to_socket_addrs().ok()?.next()?;
-    let mut stream = std::net::TcpStream::connect_timeout(&addr, timeout).ok()?;
-    stream.set_read_timeout(Some(timeout)).ok()?;
-    stream.set_write_timeout(Some(timeout)).ok()?;
-    let mut request =
-        format!("{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n");
-    if let Some(body) = body {
-        request.push_str("Content-Type: application/json\r\n");
-        request.push_str(&format!("Content-Length: {}\r\n", body.len()));
-    }
-    request.push_str("\r\n");
-    if let Some(body) = body {
-        request.push_str(body);
-    }
-    stream.write_all(request.as_bytes()).ok()?;
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).ok()?;
-    // Reuse the daemon's framing parser through the public GET is not possible;
-    // parse inline (status line + headers + length-delimited/eof body).
-    let header_end = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
-    let head = String::from_utf8_lossy(&raw[..header_end]);
-    let status = head
-        .lines()
-        .next()?
-        .split_whitespace()
-        .nth(1)?
-        .parse::<u16>()
-        .ok()?;
-    let mut content_length: Option<usize> = None;
-    let mut chunked = false;
-    for line in head.lines().skip(1) {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        let value = value.trim();
-        if name.eq_ignore_ascii_case("content-length") {
-            content_length = value.parse().ok();
-        } else if name.eq_ignore_ascii_case("transfer-encoding")
-            && value.eq_ignore_ascii_case("chunked")
-        {
-            chunked = true;
-        }
-    }
-    let body_bytes = &raw[header_end + 4..];
-    let body = if chunked {
-        decode_chunked(body_bytes)?
-    } else if let Some(len) = content_length {
-        body_bytes
-            .get(..len.min(body_bytes.len()))
-            .unwrap_or(body_bytes)
-            .to_vec()
-    } else {
-        body_bytes.to_vec()
-    };
-    Some((status, body))
-}
-
-fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
-    let mut out = Vec::new();
-    let mut rest = body;
-    loop {
-        let line_end = rest.windows(2).position(|w| w == b"\r\n")?;
-        let size = usize::from_str_radix(
-            String::from_utf8_lossy(&rest[..line_end])
-                .split(';')
-                .next()?
-                .trim(),
-            16,
-        )
-        .ok()?;
-        rest = &rest[line_end + 2..];
-        if size == 0 {
-            return Some(out);
-        }
-        if rest.len() < size {
-            return None;
-        }
-        out.extend_from_slice(&rest[..size]);
-        rest = rest.get(size + 2..).unwrap_or(&[]);
-    }
-}
-
-fn embed_auth_header() -> Option<String> {
-    cairn_query::tools_search::config_value("CAIRN_EMBED_API_KEY")
-        .map(|key| format!("Authorization: Bearer {key}\r\n"))
-}
-
 /// GET {base}/models -> (ids, configured model listed).
 fn fetch_model_listing(base: &str) -> Option<(Vec<String>, bool)> {
     let (host, port, prefix) = split_base_url(base)?;
-    let (_, body) = http_request(
+    let reply = cairn_query::http::request(
         &host,
         port,
         "GET",
         &format!("{prefix}/models"),
         None,
+        &[],
         Duration::from_secs(10),
-    )?;
-    let parsed: Value = serde_json::from_slice(&body).ok()?;
+    )
+    .ok()?;
+    let parsed: Value = serde_json::from_slice(&reply.body).ok()?;
     let ids: Vec<String> = parsed
         .get("data")?
         .as_array()?
@@ -644,71 +548,29 @@ fn fetch_model_listing(base: &str) -> Option<(Vec<String>, bool)> {
 
 /// POST {base}/embeddings with `texts`; returns one float vector per text.
 fn embed_vectors(base: &str, model: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
-    use std::net::ToSocketAddrs as _;
     let (host, port, prefix) = split_base_url(base)
         .ok_or_else(|| format!("{base} is not an http URL; the doctor probe is http-only"))?;
     let payload = json!({ "model": model, "input": texts }).to_string();
-    let headers = embed_auth_header();
-    let request_path = format!("{prefix}/embeddings");
-    let request = |body: &str| {
-        let mut raw = format!(
-            "POST {request_path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\
-             Content-Type: application/json\r\nContent-Length: {}\r\n",
-            body.len()
-        );
-        if let Some(header) = &headers {
-            raw.push_str(header);
-        }
-        raw.push_str("\r\n");
-        raw.push_str(body);
-        raw
-    };
-    let raw = request(&payload);
-    let addr = (host.as_str(), port)
-        .to_socket_addrs()
-        .map_err(|e| e.to_string())?
-        .next()
-        .ok_or_else(|| "resolve failed".to_string())?;
-    let mut stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(30))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(30)))
-        .map_err(|e| e.to_string())?;
-    stream
-        .write_all(raw.as_bytes())
-        .map_err(|e| e.to_string())?;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).map_err(|e| e.to_string())?;
-    let header_end = buf
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .ok_or("malformed HTTP response")?;
-    let head = String::from_utf8_lossy(&buf[..header_end]);
-    let status: u16 = head
-        .lines()
-        .next()
-        .and_then(|l| l.split_whitespace().nth(1))
-        .and_then(|s| s.parse().ok())
-        .ok_or("malformed status line")?;
-    let body_bytes = &buf[header_end + 4..];
-    let body = if head
-        .to_ascii_lowercase()
-        .contains("transfer-encoding: chunked")
-    {
-        decode_chunked(body_bytes).ok_or("malformed chunked body")?
-    } else {
-        body_bytes.to_vec()
-    };
-    if status != 200 {
+    let auth = cairn_query::tools_search::config_value("CAIRN_EMBED_API_KEY")
+        .map(|key| format!("Authorization: Bearer {key}"));
+    let headers: Vec<&str> = auth.iter().map(String::as_str).collect();
+    let reply = cairn_query::http::request(
+        &host,
+        port,
+        "POST",
+        &format!("{prefix}/embeddings"),
+        Some(&payload),
+        &headers,
+        Duration::from_secs(30),
+    )?;
+    if reply.status != 200 {
         return Err(format!(
-            "embedding server rejected the request (HTTP {status})"
+            "embedding server rejected the request (HTTP {})",
+            reply.status
         ));
     }
-    let body_text = String::from_utf8_lossy(&body).into_owned();
-    let parsed: Value = serde_json::from_slice(&body).map_err(|_| {
+    let body_text = String::from_utf8_lossy(&reply.body).into_owned();
+    let parsed: Value = serde_json::from_slice(&reply.body).map_err(|_| {
         let prefix: String = body_text.chars().take(120).collect();
         format!("embedding server returned malformed response: {prefix}")
     })?;
@@ -794,19 +656,14 @@ fn check_parity(
     }
     let chunks: Vec<String> = rows.iter().map(|(chunk, _)| chunk.clone()).collect();
     let vectors = embed_vectors(base, model, &chunks)?;
-    let mut cosines = Vec::new();
-    for ((_, stored_blob), served) in rows.iter().zip(&vectors) {
-        let stored = decode_f32(stored_blob);
-        if served.len() != stored.len() {
-            return Ok(ParityOutcome::Failed(format!(
-                "dim_mismatch stored={} server={}",
-                stored.len(),
-                served.len()
-            )));
-        }
-        cosines.push(cosine(&stored, served));
-    }
-    let mean = cosines.iter().sum::<f64>() / cosines.len() as f64;
+    let stored: Vec<Vec<f32>> = rows
+        .iter()
+        .map(|(_, blob)| crate::parity::decode_f32(blob))
+        .collect();
+    let mean = match crate::parity::mean_cosine(&stored, &vectors) {
+        Ok(mean) => mean,
+        Err(reason) => return Ok(ParityOutcome::Failed(reason)),
+    };
     if mean >= PARITY_GATE {
         Ok(ParityOutcome::Passed(mean))
     } else {
@@ -814,29 +671,6 @@ fn check_parity(
             "mean_cosine {mean:.4} below gate {PARITY_GATE}"
         )))
     }
-}
-
-fn decode_f32(blob: &[u8]) -> Vec<f32> {
-    blob.as_chunks::<4>()
-        .0
-        .iter()
-        .map(|c| f32::from_le_bytes(*c))
-        .collect()
-}
-
-fn cosine(left: &[f32], right: &[f32]) -> f64 {
-    let mut dot = 0.0f64;
-    let mut nl = 0.0f64;
-    let mut nr = 0.0f64;
-    for (a, b) in left.iter().zip(right) {
-        dot += *a as f64 * *b as f64;
-        nl += (*a as f64) * (*a as f64);
-        nr += (*b as f64) * (*b as f64);
-    }
-    if nl == 0.0 || nr == 0.0 {
-        return 0.0;
-    }
-    dot / (nl.sqrt() * nr.sqrt())
 }
 
 // --- 5. freshness ---------------------------------------------------------------------
@@ -1430,9 +1264,7 @@ fn client_config_paths(client: &str) -> Vec<(PathBuf, String, bool)> {
     pairs
 }
 
-fn home_dir() -> PathBuf {
-    cairn_store::home::platform_home().unwrap_or_else(|| PathBuf::from("/"))
-}
+use crate::cli_paths::home_dir;
 
 fn scrub_safe_display(path: &Path, home: &Path) -> String {
     path.strip_prefix(home)

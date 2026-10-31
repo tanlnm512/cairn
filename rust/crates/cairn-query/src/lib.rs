@@ -6,6 +6,7 @@ pub mod convert;
 pub mod embed_native;
 pub mod graph;
 pub mod grep;
+pub mod http;
 pub mod ingest;
 pub mod json_compat;
 pub mod review;

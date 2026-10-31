@@ -1,10 +1,11 @@
 //! /healthz: the bounded health payload `cairn connect`'s reuse guard reads.
 
-use std::sync::Arc;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::Response;
 use serde_json::{Value, json};
@@ -28,8 +29,9 @@ impl HealthzState {
         }
     }
 
-    /// The bounded health payload: an unreachable store degrades to status "unhealthy".
-    pub fn payload(&self) -> Value {
+    /// The bounded health payload for one requesting peer; an unreachable
+    /// store degrades to status "unhealthy".
+    pub fn payload(&self, peer: IpAddr) -> Value {
         let (store_reachable, degradations) = match probe_store(&self.db_path) {
             Ok(()) => (true, degradation_count()),
             Err(_) => (false, 0),
@@ -39,11 +41,23 @@ impl HealthzState {
             "store_reachable": store_reachable,
             "read_only": self.read_only,
             "degradations": degradations,
-            "db": self.db_path,
+            "db": db_field(&self.db_path, peer),
             "uptime_seconds": self.started.elapsed().as_secs_f64(),
             "impl": IMPL_MARKER,
         })
     }
+}
+
+/// The store path for loopback peers (the reuse guard compares it); the file
+/// name alone for any other unauthenticated requester.
+fn db_field(db_path: &str, peer: IpAddr) -> String {
+    if peer.is_loopback() {
+        return db_path.to_string();
+    }
+    std::path::Path::new(db_path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn probe_store(db_path: &str) -> Result<(), rusqlite::Error> {
@@ -52,9 +66,16 @@ fn probe_store(db_path: &str) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+/// Degradation count, computed once per process: resolving it probes the
+/// embedding server over a blocking socket.
+fn degradation_count() -> usize {
+    static COUNT: OnceLock<usize> = OnceLock::new();
+    *COUNT.get_or_init(degradation_markers)
+}
+
 /// Degradation markers derivable without a store probe; an explicit
 /// CAIRN_EMBED_BACKEND=hash / CAIRN_ANN_BACKEND=off is an informed choice.
-fn degradation_count() -> usize {
+fn degradation_markers() -> usize {
     let mut count = 0usize;
     // Hash in effect without an explicit hash configuration: the default
     // `local` resolution or the native cold-cache fallback.
@@ -79,6 +100,12 @@ fn json_response(status: StatusCode, body: Vec<u8>) -> Response {
 }
 
 /// GET /healthz: the bounded health payload as JSON (HTTP 200 even when unhealthy).
-pub async fn respond(State(state): State<Arc<HealthzState>>) -> Response {
-    json_response(StatusCode::OK, state.payload().to_string().into_bytes())
+pub async fn respond(
+    State(state): State<Arc<HealthzState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
+    json_response(
+        StatusCode::OK,
+        state.payload(peer.ip()).to_string().into_bytes(),
+    )
 }
