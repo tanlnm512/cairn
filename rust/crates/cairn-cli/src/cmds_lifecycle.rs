@@ -13,6 +13,7 @@ use rusqlite::Connection;
 use serde_json::{Map, Value, json};
 
 use crate::agent_install;
+use crate::cli_paths::db_arg;
 use crate::cli_rows;
 use crate::cmds_doctor;
 use crate::display;
@@ -106,15 +107,6 @@ pub fn run_status(args: StatusArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn db_arg(db: &Option<String>) -> String {
-    db.clone().unwrap_or_else(|| {
-        store_paths::resolve_store(None)
-            .db
-            .to_string_lossy()
-            .into_owned()
-    })
-}
-
 fn pending_sync_rows(conn: &Connection) -> Vec<String> {
     let Ok(mut stmt) = conn.prepare("SELECT path FROM pending_sync ORDER BY changed_at DESC")
     else {
@@ -162,6 +154,12 @@ pub fn run_sync(args: SyncArgs) -> ExitCode {
             .to_string_lossy()
             .into_owned()
     });
+    let lock = match cairn_store::swap::build_lock(Path::new(&db)) {
+        Ok(lock) => lock,
+        Err(e) => return crate::cmds_core::command_error(&e),
+    };
+    // The connection must be opened under the lock: one opened earlier keeps
+    // writing to the replaced file across a full-build swap.
     let Ok(mut conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
         return crate::cmds_core::command_error(&format!("cannot open {db}"));
     };
@@ -171,10 +169,6 @@ pub fn run_sync(args: SyncArgs) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let started = std::time::SystemTime::now();
-    let lock = match cairn_store::swap::build_lock(Path::new(&db)) {
-        Ok(lock) => lock,
-        Err(e) => return crate::cmds_core::command_error(&e),
-    };
     let closure_built = table_has_rows(&conn, "transitive_edges");
     let timer = Instant::now();
     let description = format!("Syncing {} files", changed.len());
@@ -1098,15 +1092,10 @@ fn gather_recent_errors(conn: Option<&Connection>) -> Value {
 }
 
 fn value_of(row: &rusqlite::Row, idx: usize) -> rusqlite::Result<Value> {
-    Ok(match row.get_ref(idx)? {
-        rusqlite::types::ValueRef::Null => Value::Null,
-        rusqlite::types::ValueRef::Integer(n) => json!(n),
-        rusqlite::types::ValueRef::Real(f) => json!(f),
-        rusqlite::types::ValueRef::Text(t) => {
-            json!(String::from_utf8_lossy(t).into_owned())
-        }
-        rusqlite::types::ValueRef::Blob(b) => json!(b.to_vec()),
-    })
+    Ok(cli_rows::json_value(
+        row.get_ref(idx)?,
+        cli_rows::BlobEncoding::Bytes,
+    ))
 }
 
 fn report_resolution(conn: Option<&Connection>) -> Value {
@@ -1117,12 +1106,13 @@ fn report_resolution(conn: Option<&Connection>) -> Value {
         "SELECT f.language AS language, \
                 SUM(e.resolution = 'exact') AS exact_n, \
                 SUM(e.resolution = 'ambiguous') AS ambiguous_n, \
-                SUM(e.resolution = 'unresolved') AS unresolved_n \
+                SUM(e.resolution = 'unresolved') AS unresolved_n, \
+                SUM(e.resolution = 'external') AS external_n \
          FROM files f \
          LEFT JOIN symbols s ON s.file_id = f.id \
          LEFT JOIN edges e ON e.source_id = s.id \
               AND e.kind IN ('calls','references') \
-              AND e.resolution IN ('exact','ambiguous','unresolved') \
+              AND e.resolution IN ('exact','ambiguous','unresolved','external') \
          GROUP BY f.language ORDER BY f.language",
     ) else {
         return json!({});
@@ -1133,27 +1123,31 @@ fn report_resolution(conn: Option<&Connection>) -> Value {
             row.get::<_, Option<i64>>(1)?,
             row.get::<_, Option<i64>>(2)?,
             row.get::<_, Option<i64>>(3)?,
+            row.get::<_, Option<i64>>(4)?,
         ))
     }) else {
         return json!({});
     };
     let mut obj = Map::new();
-    for (language, exact_n, ambiguous_n, unresolved_n) in rows.flatten() {
+    for (language, exact_n, ambiguous_n, unresolved_n, external_n) in rows.flatten() {
         let language = language.unwrap_or_default();
         let exact = exact_n.unwrap_or(0);
         let ambiguous = ambiguous_n.unwrap_or(0);
         let unresolved = unresolved_n.unwrap_or(0);
-        let total = exact + ambiguous + unresolved;
+        let external = external_n.unwrap_or(0);
+        let total = exact + ambiguous + unresolved + external;
         obj.insert(
             language,
             json!({
                 "exact": exact,
                 "ambiguous": ambiguous,
                 "unresolved": unresolved,
+                "external": external,
                 "total": total,
                 "exact_pct": if total > 0 { json!(exact as f64 / total as f64) } else { json!(0.0) },
                 "ambiguous_pct": if total > 0 { json!(ambiguous as f64 / total as f64) } else { json!(0.0) },
                 "unresolved_pct": if total > 0 { json!(unresolved as f64 / total as f64) } else { json!(0.0) },
+                "external_pct": if total > 0 { json!(external as f64 / total as f64) } else { json!(0.0) },
             }),
         );
     }
@@ -2254,6 +2248,34 @@ mod tests {
         assert_eq!(ConfirmAnswer::from_line(Some("\n")), Answer::No);
         assert_eq!(ConfirmAnswer::from_line(Some("")), Answer::Eof);
         assert_eq!(ConfirmAnswer::from_line(None), Answer::Eof);
+    }
+
+    /// SCIP imports write resolution='external' rows: the report's per-language
+    /// totals must count them or they contradict `cairn stats`.
+    #[test]
+    fn report_resolution_counts_external_edges() {
+        let dir = temp_dir("report-external");
+        std::fs::create_dir_all(&dir).expect("dir");
+        let conn = cairn_store::schema::open_initialized(&dir.join("report.kg")).expect("store");
+        conn.execute_batch(
+            "INSERT INTO repos (id, name, path) VALUES ('r', 'r', '.');
+             INSERT INTO files (id, repo_id, path, language) \
+                 VALUES ('f', 'r', 'pkg/app.py', 'python');
+             INSERT INTO symbols (id, file_id, name, kind) \
+                 VALUES ('s', 'f', 'main', 'function');
+             INSERT INTO edges (id, source_id, target_id, target_name, kind, resolution, line, column) VALUES
+                 ('e1', 's', 's',   'add', 'calls',      'exact',     1, 0),
+                 ('e2', 's', NULL, 'np',  'references', 'unresolved', 2, 0),
+                 ('e3', 's', NULL, 'np',  'references', 'external',   3, 0);",
+        )
+        .expect("seed");
+        let resolution = report_resolution(Some(&conn));
+        let python = &resolution["python"];
+        assert_eq!(python["exact"], json!(1));
+        assert_eq!(python["unresolved"], json!(1));
+        assert_eq!(python["external"], json!(1), "{resolution}");
+        assert_eq!(python["total"], json!(3));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A sync over a store whose closure was built must rebuild it: a stale

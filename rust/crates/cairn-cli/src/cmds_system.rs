@@ -173,7 +173,6 @@ pub enum SystemCommand {
         #[arg(short = 'y', long)]
         yes: bool,
     },
-    /// Upgrade cairn. Detects install method and updates in place.
     /// Print the installed cairn version.
     Version,
     /// Hook management: git hooks, and the agent hook entrypoints.
@@ -541,6 +540,17 @@ mod tests {
     #[test]
     fn version_prints_the_package_version() {
         assert_eq!(run(SystemCommand::Version), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn version_about_describes_printing_the_version() {
+        let about = tree::<SystemCommand>()
+            .find_subcommand("version")
+            .expect("version subcommand")
+            .get_about()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        assert_eq!(about, "Print the installed cairn version");
     }
 
     #[test]

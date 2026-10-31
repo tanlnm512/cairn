@@ -133,13 +133,59 @@ impl ConnPool {
             .acquire(&self.db_path, cairn_store::conn::open_read_only)
     }
 
-    /// The primary flavor: writable unless the daemon serves read-only.
+    /// The primary flavor: writable unless the daemon serves read-only. The
+    /// writable open never creates the store: a storeless workspace must not
+    /// materialize an empty db that blocks the next boot.
     pub fn primary(&self) -> Result<ConnLease, String> {
         if self.read_only {
-            self.read()
-        } else {
-            self.write
-                .acquire(&self.db_path, cairn_store::conn::open_writable)
+            return self.read();
         }
+        if !self.db_path.exists() {
+            return Err(format!(
+                "workspace store not initialized ({}); run `cairn build`",
+                self.db_path.display()
+            ));
+        }
+        self.write
+            .acquire(&self.db_path, cairn_store::conn::open_writable)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_db(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "cairn-connpool-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir.join("missing.kg")
+    }
+
+    #[test]
+    fn primary_refuses_to_create_a_missing_store() {
+        let db = temp_db("refuse");
+        let err = match ConnPool::new(&db, false).primary() {
+            Ok(_) => panic!("the writable flavor must refuse a storeless workspace"),
+            Err(err) => err,
+        };
+        assert!(err.contains("not initialized"), "{err}");
+        assert!(err.contains("cairn build"), "{err}");
+        assert!(
+            !db.exists(),
+            "the writable flavor must not create the store file"
+        );
+        drop(ConnPool::new(&db, true).primary());
+        assert!(
+            !db.exists(),
+            "the read-only flavor must not create the store file"
+        );
+        let _ = std::fs::remove_dir_all(db.parent().expect("parent"));
     }
 }

@@ -777,7 +777,6 @@ pub fn embed_knowledge(
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for ((cid, chunk), blob) in pairs.iter().zip(&blobs) {
             let dim = (blob.len() / 4) as i64;
-            // Rowid-stable upsert keeps the vec0 ANN index aligned across re-embeds.
             tx.execute(
                 "INSERT INTO knowledge_embeddings \
                  (doc_id, chunk_index, model, dim, vec, chunk, embedded_at) \

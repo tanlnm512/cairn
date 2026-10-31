@@ -822,6 +822,7 @@ mod tests {
     #[test]
     fn writable_conn_carries_the_store_pragmas() {
         let (dir, ctx) = temp_ctx("conn");
+        create_marker_store(&dir.join("t.kg"), "v");
         let conn = ctx.conn().expect("writable conn");
         let journal: String = conn
             .query_row("PRAGMA journal_mode", [], |r| r.get(0))
@@ -831,6 +832,22 @@ mod tests {
             .expect("mmap_size");
         assert_eq!((journal.as_str(), mmap), ("wal", 268_435_456));
         drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn conn_refuses_a_storeless_workspace_without_creating_the_store() {
+        let (dir, ctx) = temp_ctx("storeless");
+        let err = match ctx.conn() {
+            Ok(_) => panic!("writable-flavored tools must refuse a storeless workspace"),
+            Err(err) => err,
+        };
+        assert!(err.contains("not initialized"), "{err}");
+        assert!(err.contains("cairn build"), "{err}");
+        assert!(
+            !dir.join("t.kg").exists(),
+            "a tool call must not materialize an empty store that blocks the next boot"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

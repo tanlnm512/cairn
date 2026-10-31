@@ -166,7 +166,9 @@ fn top_level_records(root: &Path) -> Vec<RepositoryRecord> {
         if is_skip_dir_name(name) {
             continue;
         }
-        if child.join(".git").exists() {
+        // A child .git FILE is a submodule pointer: part of the parent repo,
+        // not a repository of its own to discover.
+        if child.join(".git").is_dir() {
             let repo_id = name.to_string();
             records.push(RepositoryRecord {
                 repo_id,
@@ -420,9 +422,10 @@ pub fn classify_file(
     (true, String::new())
 }
 
-/// One repo's file walk: sorted names, pruned skip/symlink/nested-repo
-/// dirs, symlink files skipped.
-fn walk_repo_files(repo_path: &Path) -> Vec<PathBuf> {
+/// One repo's file walk: sorted names, pruned symlink/nested-repo dirs,
+/// symlink files skipped. Skip dirs stay pruned unless `include` patterns
+/// must reach files inside them.
+fn walk_repo_files(repo_path: &Path, prune_skip_dirs: bool) -> Vec<PathBuf> {
     let mut boundaries: HashSet<String> = HashSet::new();
     for dir in descendant_directories(repo_path) {
         if dir.join(".git").exists()
@@ -451,7 +454,7 @@ fn walk_repo_files(repo_path: &Path) -> Vec<PathBuf> {
             let Some(name) = child.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
-            if is_skip_dir_name(name) {
+            if prune_skip_dirs && is_skip_dir_name(name) {
                 continue;
             }
             if let Ok(resolved) = child.canonicalize()
@@ -511,7 +514,7 @@ pub fn iter_files_and_skips(
 
     let mut files = Vec::new();
     let mut skips = Vec::new();
-    for path in walk_repo_files(repo_path) {
+    for path in walk_repo_files(repo_path, include_spec.is_none()) {
         let Some(suffix) = path
             .extension()
             .and_then(|e| e.to_str())
@@ -546,13 +549,28 @@ pub fn iter_files_and_skips(
                 });
                 continue;
             }
+            // classify_file stat'd the file moments earlier; a read failure
+            // in between is the same transient class, not a failed build.
+            let hash = match file_sha256(&path) {
+                Ok(hash) => hash,
+                Err(_) => {
+                    skips.push(SkipInfo {
+                        repo: repo_id.to_string(),
+                        path: path.to_string_lossy().into_owned(),
+                        rel_path: rel,
+                        reason: REASON_STAT_ERROR.to_string(),
+                        size_bytes: None,
+                    });
+                    continue;
+                }
+            };
             files.push(FileInfo {
                 repo: repo_id.to_string(),
                 repo_path: repo_path.to_string_lossy().into_owned(),
                 path: path.to_string_lossy().into_owned(),
                 rel_path: rel,
                 language,
-                hash: file_sha256(&path)?,
+                hash,
             });
         } else {
             let size_bytes = std::fs::metadata(&path).ok().map(|m| m.len() as i64);
@@ -765,7 +783,8 @@ pub fn is_single_repo_workspace(workspace: &str) -> bool {
     };
     for entry in entries.filter_map(|e| e.ok()) {
         let child = entry.path();
-        if child.is_dir() && child.join(".git").exists() {
+        // A .git file marks a submodule of the root, not a separate repo.
+        if child.is_dir() && child.join(".git").is_dir() {
             return false;
         }
     }

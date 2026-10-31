@@ -4,8 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, ToSql};
 
-/// Edge kinds the traversal follows unless service edges are opted in.
-pub const STRUCTURAL_EDGE_KINDS: &[&str] = &["calls", "call", "extends", "implements"];
+use crate::graph::STRUCTURAL_EDGE_KINDS;
 
 /// Cap on traversal depth in the recursive impact walk.
 pub const MAX_TRAVERSAL_DEPTH: i64 = 100;
@@ -887,7 +886,7 @@ pub fn impact_analysis(
     let allowed = if include_service_edges {
         None
     } else {
-        Some(STRUCTURAL_EDGE_KINDS)
+        Some(STRUCTURAL_EDGE_KINDS.as_slice())
     };
     let mut dfs = Dfs {
         conn,

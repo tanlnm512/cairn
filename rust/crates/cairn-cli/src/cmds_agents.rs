@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, IsTerminal, Write as _};
+use std::path::Path;
 use std::process::ExitCode;
 
 use cairn_daemon::lifecycle as lc;
@@ -25,18 +26,6 @@ pub struct UninstallAgentsArgs {
     pub workspace: Option<String>,
 }
 
-fn resolve_workspace(arg: Option<&str>) -> std::path::PathBuf {
-    if let Some(ws) = arg {
-        return std::path::PathBuf::from(ws);
-    }
-    if let Ok(ws) = std::env::var("CAIRN_WORKSPACE")
-        && !ws.is_empty()
-    {
-        return std::path::PathBuf::from(ws);
-    }
-    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-}
-
 fn client_choices() -> Vec<String> {
     agent_install::CLIENTS
         .iter()
@@ -55,7 +44,7 @@ pub fn run_install(args: InstallAgentsArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let ws = resolve_workspace(args.workspace.as_deref());
+    let ws = crate::store_paths::resolve_workspace(args.workspace.as_deref().map(Path::new));
     let detections = agent_install::detect_clients(&ws);
     let installed_map = agent_install::check_installed(&ws);
 
@@ -231,6 +220,30 @@ enum PromptOutcome {
 }
 
 fn prompt_clients(detected: &[&str], not_yet: &[String]) -> PromptOutcome {
+    let items: Vec<crate::picker::PickerItem> = detected
+        .iter()
+        .map(|client| crate::picker::PickerItem {
+            label: client.to_string(),
+            preselected: not_yet.iter().any(|c| c == client),
+        })
+        .collect();
+    let hint = "(click/space toggle · a all · numbers work too · enter confirm · esc abort)";
+    match crate::picker::pick("Select clients to install cairn for:", &items, hint) {
+        Some(crate::picker::PickOutcome::Confirmed(indexes)) => {
+            let picked: Vec<String> = indexes.iter().map(|i| detected[*i].to_string()).collect();
+            if picked.is_empty() {
+                return PromptOutcome::Empty;
+            }
+            println!("Selected: {}", picked.join(", "));
+            PromptOutcome::Selected(picked)
+        }
+        Some(crate::picker::PickOutcome::Aborted) => PromptOutcome::Aborted,
+        None => prompt_clients_line(detected, not_yet),
+    }
+}
+
+/// Line-based fallback for terminals without interactive rendering.
+fn prompt_clients_line(detected: &[&str], not_yet: &[String]) -> PromptOutcome {
     println!("Select clients to install cairn for:");
     for (index, client) in detected.iter().enumerate() {
         let mark = if not_yet.contains(&client.to_string()) {
@@ -309,7 +322,7 @@ pub fn run_uninstall(args: UninstallAgentsArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let ws = resolve_workspace(args.workspace.as_deref());
+    let ws = crate::store_paths::resolve_workspace(args.workspace.as_deref().map(Path::new));
     let Ok(report) = agent_install::uninstall(
         &ws,
         if args.clients.is_empty() {

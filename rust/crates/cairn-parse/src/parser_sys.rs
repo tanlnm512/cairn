@@ -1068,12 +1068,12 @@ impl CFamilyWalk {
         None
     }
 
-    /// First identifier / field_identifier child text.
+    /// First identifier-like child text; a qualified_identifier (`Foo::bar`)
+    /// yields its terminal segment, matching inline method naming.
     fn decl_name(&self, node: Node<'_>, source: &[u8]) -> Option<String> {
         children(node)
             .into_iter()
-            .find(|child| matches!(child.kind(), "identifier" | "field_identifier"))
-            .map(|child| text_trimmed(child, source))
+            .find_map(|child| self.callee_name(child, source))
     }
 
     /// The type_identifier / namespace_identifier name of a class/struct/namespace.
@@ -1991,6 +1991,25 @@ mod tests {
         let helper = call_edge(&qualified, "helper");
         assert_eq!(helper.receiver_type, None);
         assert_eq!(helper.call_arity, Some(2));
+    }
+
+    #[test]
+    fn cpp_out_of_line_definitions_emit_symbols_and_walk_bodies() {
+        let parsed = cpp("void Foo::bar() { helper(); }\n");
+        let bar = symbol(&parsed, "bar");
+        assert_eq!(bar.kind, "function");
+        assert_eq!(call_edge(&parsed, "helper").source_name, "bar");
+
+        let ctor = cpp("Foo::Foo(int x) { init(x); }\n");
+        let foo = symbol(&ctor, "Foo");
+        assert_eq!(foo.kind, "function");
+        assert_eq!(call_edge(&ctor, "init").source_name, "Foo");
+
+        let nested = cpp("int app::Widget::compute(int x) { return helper(x); }\n");
+        let compute = symbol(&nested, "compute");
+        assert_eq!(compute.qualified_name.as_deref(), Some("compute"));
+        assert_eq!(compute.arity, Some(1));
+        assert_eq!(call_edge(&nested, "helper").source_name, "compute");
     }
 
     #[test]

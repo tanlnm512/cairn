@@ -8,6 +8,8 @@ use std::time::Duration;
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 
+use crate::http::{self, HttpReply};
+
 // --- lexical: FTS5 bm25 with the LIKE fallback ------------------------------
 
 /// Shown rows before the "... and N more" truncation line.
@@ -252,12 +254,7 @@ pub fn config_value(name: &str) -> Option<String> {
 
 /// Effective CAIRN_HOME: the env value when set, else `~/.cairn`.
 pub fn cairn_home() -> Option<PathBuf> {
-    if let Ok(home) = env::var("CAIRN_HOME")
-        && !home.trim().is_empty()
-    {
-        return Some(PathBuf::from(home));
-    }
-    cairn_store::home::platform_home().map(|h| h.join(".cairn"))
+    cairn_store::paths::cairn_home()
 }
 
 /// Backend name resolved env > config file > `local`.
@@ -279,6 +276,7 @@ fn server_preset_base_url(name: &str) -> Option<&'static str> {
 /// Active server base URL (config override, then the `omlx`/`ollama` preset).
 pub fn server_base_url(name: &str) -> Result<String, String> {
     if let Some(configured) = config_value("CAIRN_EMBED_BASE_URL") {
+        parse_http_url(&configured).map_err(|e| format!("CAIRN_EMBED_BASE_URL: {e}"))?;
         return Ok(configured);
     }
     if let Some(preset) = server_preset_base_url(name) {
@@ -519,11 +517,6 @@ pub fn floats_to_blob(floats: &[f32]) -> Vec<u8> {
 
 // --- OpenAI-compatible embeddings-server transport ---------------------------
 
-struct HttpReply {
-    status: u16,
-    body: Vec<u8>,
-}
-
 fn embed_timeout() -> Result<Duration, String> {
     const DEFAULT_S: f64 = 30.0;
     match config_value("CAIRN_EMBED_TIMEOUT") {
@@ -533,6 +526,32 @@ fn embed_timeout() -> Result<Duration, String> {
             _ => Err(format!("invalid CAIRN_EMBED_TIMEOUT: {raw}")),
         },
     }
+}
+
+/// True for loopback targets: 127.0.0.0/8, ::1, and the `localhost` name.
+fn is_loopback_host(host: &str) -> bool {
+    let bare = host.trim_matches(['[', ']']);
+    if bare.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    bare.parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Refuse cleartext http off the loopback unless opted in: the bearer key and
+/// the embedded corpus would travel unencrypted.
+fn ensure_loopback_http(scheme: &str, host: &str) -> Result<(), String> {
+    if scheme.eq_ignore_ascii_case("http")
+        && !is_loopback_host(host)
+        && env::var("CAIRN_EMBED_ALLOW_REMOTE_HTTP").ok().as_deref() != Some("1")
+    {
+        return Err(format!(
+            "refusing cleartext http to non-loopback host '{host}': the API key and \
+             indexed text would travel unencrypted; set CAIRN_EMBED_ALLOW_REMOTE_HTTP=1 \
+             to allow it"
+        ));
+    }
+    Ok(())
 }
 
 fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
@@ -557,6 +576,7 @@ fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
         ),
         None => (authority.to_string(), 80),
     };
+    ensure_loopback_http(scheme, &host)?;
     Ok((host, port, path))
 }
 
@@ -574,98 +594,9 @@ fn http_request(
         path_suffix.trim_start_matches('/')
     );
     let (host, port, path) = parse_http_url(&url)?;
-    let addr = format!("{host}:{port}")
-        .parse()
-        .map_err(|e| format!("resolve {host}:{port}: {e}"))?;
-    let mut stream = std::net::TcpStream::connect_timeout(&addr, timeout)
-        .map_err(|e| format!("connect {host}:{port}: {e}"))?;
-    stream
-        .set_read_timeout(Some(timeout))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(timeout))
-        .map_err(|e| e.to_string())?;
-    let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\n");
-    if let Some(body) = body {
-        request.push_str("Content-Type: application/json\r\n");
-        request.push_str(&format!("Content-Length: {}\r\n", body.len()));
-    }
-    if let Some(key) = api_key {
-        request.push_str(&format!("Authorization: Bearer {key}\r\n"));
-    }
-    request.push_str("Connection: close\r\n\r\n");
-    use std::io::{Read, Write};
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|e| format!("send: {e}"))?;
-    if let Some(body) = body {
-        stream
-            .write_all(body.as_bytes())
-            .map_err(|e| format!("send: {e}"))?;
-    }
-    let mut raw: Vec<u8> = Vec::new();
-    stream
-        .read_to_end(&mut raw)
-        .map_err(|e| format!("read: {e}"))?;
-    parse_http_response(&raw)
-}
-
-fn parse_http_response(raw: &[u8]) -> Result<HttpReply, String> {
-    let header_end = find_subsequence(raw, b"\r\n\r\n")
-        .ok_or_else(|| "response missing header terminator".to_string())?;
-    let head = String::from_utf8_lossy(&raw[..header_end]);
-    let mut lines = head.split("\r\n");
-    let status_line = lines.next().unwrap_or_default();
-    let status = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse::<u16>().ok())
-        .ok_or_else(|| format!("bad status line: {status_line}"))?;
-    let mut content_length: Option<usize> = None;
-    let mut chunked = false;
-    for line in lines {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        let value = value.trim();
-        if name.eq_ignore_ascii_case("content-length") {
-            content_length = value.parse().ok();
-        } else if name.eq_ignore_ascii_case("transfer-encoding")
-            && value.to_ascii_lowercase().contains("chunked")
-        {
-            chunked = true;
-        }
-    }
-    let mut body_raw = &raw[header_end + 4..];
-    let body = if chunked {
-        let mut out = Vec::new();
-        while let Some(line_end) = find_subsequence(body_raw, b"\r\n") {
-            let size =
-                usize::from_str_radix(String::from_utf8_lossy(&body_raw[..line_end]).trim(), 16)
-                    .map_err(|_| "bad chunk size".to_string())?;
-            body_raw = &body_raw[line_end + 2..];
-            if size == 0 {
-                break;
-            }
-            if body_raw.len() < size + 2 {
-                return Err("truncated chunk".to_string());
-            }
-            out.extend_from_slice(&body_raw[..size]);
-            body_raw = &body_raw[size + 2..];
-        }
-        out
-    } else if let Some(len) = content_length {
-        body_raw[..len.min(body_raw.len())].to_vec()
-    } else {
-        body_raw.to_vec()
-    };
-    Ok(HttpReply { status, body })
-}
-
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
+    let auth = api_key.map(|key| format!("Authorization: Bearer {key}"));
+    let headers: Vec<&str> = auth.iter().map(String::as_str).collect();
+    http::request(&host, port, method, &path, body, &headers, timeout)
 }
 
 fn probe_server(base: &str, model: &str, api_key: Option<&str>) -> bool {

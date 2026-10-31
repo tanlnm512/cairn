@@ -1,8 +1,6 @@
 //! Daemon lifecycle: launchd plist, stray sweep, healthz reuse probe, daemon start.
 
 use std::collections::HashSet;
-use std::io::{Read as _, Write as _};
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -43,7 +41,7 @@ pub fn log_path() -> PathBuf {
 
 /// CAIRN_HOME for daemon state, resolved at call time (env override wins).
 pub fn daemon_home() -> PathBuf {
-    crate::auth::cairn_home()
+    cairn_store::paths::current_cairn_home()
 }
 
 pub fn daemon_log_path() -> PathBuf {
@@ -683,74 +681,9 @@ fn xml_unescape(text: &str) -> String {
 /// Bounded HTTP/1.1 GET returning (status, body); None on any transport or
 /// parse failure. Loopback-tool grade: no TLS, no redirects, no keep-alive.
 pub fn http_get(host: &str, port: u16, path: &str, timeout: Duration) -> Option<(u16, Vec<u8>)> {
-    use std::net::ToSocketAddrs as _;
-    let addr = (host, port).to_socket_addrs().ok()?.next()?;
-    let mut stream = TcpStream::connect_timeout(&addr, timeout).ok()?;
-    stream.set_read_timeout(Some(timeout)).ok()?;
-    stream.set_write_timeout(Some(timeout)).ok()?;
-    let request =
-        format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
-    stream.write_all(request.as_bytes()).ok()?;
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).ok()?;
-    parse_http_response(&raw)
-}
-
-/// Split a head-of-line-blocked response into (status, body), decoding
-/// content-length, chunked, and read-to-end framings.
-fn parse_http_response(raw: &[u8]) -> Option<(u16, Vec<u8>)> {
-    let header_end = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
-    let head = String::from_utf8_lossy(&raw[..header_end]);
-    let mut lines = head.lines();
-    let status = lines
-        .next()?
-        .split_whitespace()
-        .nth(1)?
-        .parse::<u16>()
-        .ok()?;
-    let mut content_length: Option<usize> = None;
-    let mut chunked = false;
-    for line in lines {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        let value = value.trim();
-        if name.eq_ignore_ascii_case("content-length") {
-            content_length = value.parse().ok();
-        } else if name.eq_ignore_ascii_case("transfer-encoding")
-            && value.eq_ignore_ascii_case("chunked")
-        {
-            chunked = true;
-        }
-    }
-    let body = &raw[header_end + 4..];
-    let body = if chunked {
-        decode_chunked(body)?
-    } else if let Some(len) = content_length {
-        body.get(..len.min(body.len())).unwrap_or(body).to_vec()
-    } else {
-        body.to_vec()
-    };
-    Some((status, body))
-}
-
-fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
-    let mut out = Vec::new();
-    let mut rest = body;
-    loop {
-        let line_end = rest.windows(2).position(|w| w == b"\r\n")?;
-        let size_text = String::from_utf8_lossy(&rest[..line_end]);
-        let size = usize::from_str_radix(size_text.split(';').next()?.trim(), 16).ok()?;
-        rest = &rest[line_end + 2..];
-        if size == 0 {
-            return Some(out);
-        }
-        if rest.len() < size {
-            return None;
-        }
-        out.extend_from_slice(&rest[..size]);
-        rest = rest.get(size + 2..).unwrap_or(&[]);
-    }
+    cairn_query::http::request(host, port, "GET", path, None, &[], timeout)
+        .ok()
+        .map(|reply| (reply.status, reply.body))
 }
 
 /// True when the daemon answers GET /healthz with 200 within `HEALTHZ_TIMEOUT`.

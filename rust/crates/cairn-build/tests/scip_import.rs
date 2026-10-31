@@ -207,7 +207,8 @@ fn overlay_writes_exact_call_and_reference_edges() {
     assert_eq!(record.calls, 5);
     assert_eq!(record.references, 2);
     assert_eq!(record.exact, 5);
-    assert_eq!(record.unresolved, 2);
+    assert_eq!(record.external, 2);
+    assert_eq!(record.unresolved, 0);
     assert_eq!(record.joined_occurrences, 7);
     assert_eq!(record.unjoined_occurrences, 2);
     assert_eq!(record.join_anomalies, 0);
@@ -242,7 +243,7 @@ fn overlay_writes_exact_call_and_reference_edges() {
             "references".into(),
             5,
             17,
-            "unresolved".into(),
+            "external".into(),
         ),
         (
             "s-main".into(),
@@ -278,7 +279,7 @@ fn overlay_writes_exact_call_and_reference_edges() {
             "calls".into(),
             12,
             0,
-            "unresolved".into(),
+            "external".into(),
         ),
     ];
     assert_eq!(edges, expected, "\ngot: {edges:?}");
@@ -468,6 +469,33 @@ fn corrupt_index_records_skip_and_fails_before_writes() {
 }
 
 #[test]
+fn oversized_index_records_skip_without_reading() {
+    let ws = temp_ws("too-large");
+    let repo_id = discovered_repo_id(&ws);
+    let conn = open_store(&ws);
+    seed_graph(&conn, &repo_id);
+    let index_path = ws.join("huge.scip");
+    // Sparse: set_len reserves the length without writing the bytes.
+    std::fs::File::create(&index_path)
+        .expect("create")
+        .set_len(256 * 1024 * 1024 + 1)
+        .expect("sparse length");
+
+    let err = import_scip_file(&conn, index_path.to_str().unwrap(), ws.to_str().unwrap())
+        .expect_err("oversized index must fail");
+    assert!(err.contains("exceeds the 256 MiB read cap"), "{err}");
+    assert_eq!(
+        skip_rows(&conn),
+        vec![(
+            "".to_string(),
+            index_path.to_string_lossy().to_string(),
+            "scip_index_too_large".to_string()
+        )]
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
 fn ambiguous_path_match_skips_every_document() {
     // Two sibling repos both holding pkg/util.py and pkg/app.py: the scanner
     // discovers both, so every fixture document path matches two files rows.
@@ -512,5 +540,384 @@ fn ambiguous_path_match_skips_every_document() {
     assert_eq!(record.skipped_documents, 3);
     assert_eq!(record.edges, 0);
     assert!(scip_edges(&conn).is_empty());
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn external_symbol_references_classified_as_external() {
+    let ws = temp_ws("external");
+    let repo_id = discovered_repo_id(&ws);
+    let conn = open_store(&ws);
+    seed_graph(&conn, &repo_id);
+
+    let mut doc = proto::Document {
+        relative_path: "pkg/app.py".to_string(),
+        ..proto::Document::default()
+    };
+    doc.symbols.push(proto::SymbolInformation {
+        symbol: "scip-fixture a 1.0.0/a( f).".to_string(),
+        kind: 17,
+        ..proto::SymbolInformation::default()
+    });
+    // Definition of the local call target: joins to s_main.
+    doc.occurrences.push(occ(
+        "scip-fixture a 1.0.0/a( f).",
+        single_line(4, 10, 16),
+        1,
+    ));
+    // Exact call into the local target.
+    doc.occurrences.push(occ(
+        "scip-fixture a 1.0.0/a( f).",
+        single_line(4, 20, 24),
+        0,
+    ));
+    // Reference to a dependency symbol declared in external_symbols: no
+    // workspace definition exists by design, so it must classify as
+    // 'external', not 'unresolved'.
+    doc.occurrences
+        .push(occ("pip numpy 1.0.0/numpy( f).", single_line(4, 30, 35), 0));
+    let index_path = ws.join("external.scip");
+    fs::write(
+        &index_path,
+        proto::Index {
+            documents: vec![doc],
+            external_symbols: vec![proto::SymbolInformation {
+                symbol: "pip numpy 1.0.0/numpy( f).".to_string(),
+                kind: 17,
+                ..proto::SymbolInformation::default()
+            }],
+            ..proto::Index::default()
+        }
+        .encode_to_vec(),
+    )
+    .expect("write index");
+
+    let record = import_scip_file(&conn, index_path.to_str().unwrap(), ws.to_str().unwrap())
+        .expect("import");
+    assert_eq!(record.edges, 2);
+    assert_eq!(record.exact, 1);
+    assert_eq!(record.external, 1);
+    assert_eq!(record.unresolved, 0);
+    let external_rows: Vec<String> = conn
+        .prepare("SELECT resolution FROM edges WHERE source = 'scip'")
+        .expect("stmt")
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("query")
+        .filter_map(Result::ok)
+        .collect();
+    assert!(
+        external_rows.contains(&"external".to_string()),
+        "{external_rows:?}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn stale_guard_keeps_tree_sitter_edges_for_files_newer_than_index() {
+    let ws = temp_ws("stale");
+    let repo_id = discovered_repo_id(&ws);
+    let conn = open_store(&ws);
+    seed_graph(&conn, &repo_id);
+    // Incumbent tree-sitter edge for app.py that the guarded import must keep.
+    conn.execute(
+        "INSERT INTO edges (id, source_id, target_id, target_name, kind, line, column, resolution) \
+         VALUES ('ts-1', 's-main', 's-add', 'add', 'calls', 5, 0, 'exact')",
+        [],
+    )
+    .expect("seed ts edge");
+    let index_path = ws.join("stale.scip");
+    fs::copy(fixture_path("sample.scip"), &index_path).expect("fixture index");
+    // app.py edited after the index was generated.
+    let newer = future_mtime(100.0);
+    conn.execute("UPDATE files SET mtime = ? WHERE id = 'f-app'", [newer])
+        .expect("bump mtime");
+
+    let record = cairn_build::scip::importer::import_scip_file_opts(
+        &conn,
+        index_path.to_str().unwrap(),
+        ws.to_str().unwrap(),
+        true,
+    )
+    .expect("guarded import");
+    assert_eq!(record.stale_documents, 1);
+    // The stale file keeps its tree-sitter edges: no scip rows for app.py.
+    let app_scip: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM edges e JOIN symbols s ON e.source_id = s.id \
+             WHERE s.file_id = 'f-app' AND e.source = 'scip'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count");
+    assert_eq!(app_scip, 0);
+    let ts_kept: i64 = conn
+        .query_row("SELECT count(*) FROM edges WHERE id = 'ts-1'", [], |row| {
+            row.get(0)
+        })
+        .expect("count");
+    assert_eq!(ts_kept, 1);
+
+    // The unguarded explicit import still covers the file (user intent).
+    let record = import_scip_file(&conn, index_path.to_str().unwrap(), ws.to_str().unwrap())
+        .expect("unguarded import");
+    assert_eq!(record.stale_documents, 0);
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// Unix-seconds mtime `offset` seconds from now (files.mtime is REAL seconds).
+fn future_mtime(offset: f64) -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs_f64()
+        + offset
+}
+
+#[test]
+fn stale_document_remains_a_join_target() {
+    let ws = temp_ws("stale-join");
+    let repo_id = discovered_repo_id(&ws);
+    let conn = open_store(&ws);
+    seed_graph(&conn, &repo_id);
+    // A scheme-prefixed symbol defined in util.py and referenced from app.py:
+    // util.py is stale, but its current spans must still join app.py's call.
+    let mut util = proto::Document {
+        relative_path: "pkg/util.py".to_string(),
+        ..proto::Document::default()
+    };
+    util.occurrences
+        .push(occ("scip-x pkg 1.0.0/util.add().", single_line(1, 0, 3), 1));
+    let mut app = proto::Document {
+        relative_path: "pkg/app.py".to_string(),
+        ..proto::Document::default()
+    };
+    app.occurrences
+        .push(occ("scip-x pkg 1.0.0/util.add().", single_line(4, 0, 3), 0));
+    let index_path = ws.join("stale-join.scip");
+    fs::write(
+        &index_path,
+        proto::Index {
+            documents: vec![util, app],
+            ..proto::Index::default()
+        }
+        .encode_to_vec(),
+    )
+    .expect("write index");
+    conn.execute(
+        "UPDATE files SET mtime = ? WHERE id = 'f-util'",
+        [future_mtime(100.0)],
+    )
+    .expect("bump mtime");
+
+    let record = cairn_build::scip::importer::import_scip_file_opts(
+        &conn,
+        index_path.to_str().unwrap(),
+        ws.to_str().unwrap(),
+        true,
+    )
+    .expect("guarded import");
+    assert_eq!(record.stale_documents, 1);
+    assert_eq!(record.exact, 1);
+    assert_eq!(record.external, 0);
+    // The stale document plans no rows of its own; the fresh document's
+    // reference resolves exactly into it.
+    let edges = scip_edges(&conn);
+    assert_eq!(edges.len(), 1, "{edges:?}");
+    assert_eq!(edges[0].0, "s-main");
+    assert_eq!(edges[0].1.as_deref(), Some("s-add"));
+    assert_eq!(edges[0].6, "exact");
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn scheme_symbol_with_in_index_definition_is_unresolved_not_external() {
+    let ws = temp_ws("scheme-def");
+    let repo_id = discovered_repo_id(&ws);
+    let conn = open_store(&ws);
+    seed_graph(&conn, &repo_id);
+    // app.py references a scheme-prefixed symbol whose only definition site
+    // sits in a document matching no workspace file: a workspace symbol that
+    // failed to join, not a dependency.
+    let symbol = "scip-x pkg 1.0.0/util.add().";
+    let mut app = proto::Document {
+        relative_path: "pkg/app.py".to_string(),
+        ..proto::Document::default()
+    };
+    app.occurrences.push(occ(symbol, single_line(4, 0, 3), 0));
+    let mut ghost = proto::Document {
+        relative_path: "pkg/ghost.py".to_string(),
+        ..proto::Document::default()
+    };
+    ghost.occurrences.push(occ(symbol, single_line(1, 0, 3), 1));
+    let index_path = ws.join("scheme-def.scip");
+    fs::write(
+        &index_path,
+        proto::Index {
+            documents: vec![app, ghost],
+            ..proto::Index::default()
+        }
+        .encode_to_vec(),
+    )
+    .expect("write index");
+
+    let record = import_scip_file(&conn, index_path.to_str().unwrap(), ws.to_str().unwrap())
+        .expect("import");
+    assert_eq!(record.skipped_documents, 1);
+    assert_eq!(record.unresolved, 1);
+    assert_eq!(record.external, 0);
+    let edges = scip_edges(&conn);
+    assert_eq!(edges.len(), 1, "{edges:?}");
+    assert_eq!(edges[0].1, None);
+    assert_eq!(edges[0].6, "unresolved");
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn committed_index_overlays_without_the_stale_guard() {
+    let ws = temp_ws("committed");
+    let repo_id = discovered_repo_id(&ws);
+    fs::write(
+        ws.join("cairn.json"),
+        r#"{"scip": {"indexes": {"python": "index.scip"}}}"#,
+    )
+    .expect("config");
+    fs::copy(fixture_path("sample.scip"), ws.join("index.scip")).expect("committed index");
+    let conn = open_store(&ws);
+    seed_graph(&conn, &repo_id);
+    // A checked-out file is newer than the committed index; committed
+    // indexes are trusted regardless of checkout-order mtimes.
+    conn.execute(
+        "UPDATE files SET mtime = ? WHERE id = 'f-app'",
+        [future_mtime(100.0)],
+    )
+    .expect("bump mtime");
+
+    let report = cairn_build::builder::apply_scip_overlay(
+        &conn,
+        ws.to_str().unwrap(),
+        std::slice::from_ref(&repo_id),
+        false,
+        &mut |_| {},
+    )
+    .expect("overlay report");
+    assert_eq!(report.edges, 7);
+    assert_eq!(report.stale_files, 0);
+    assert_eq!(scip_edges(&conn).len(), 7);
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+#[cfg(unix)]
+fn stale_store_index_is_regenerated_by_the_overlay() {
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let ws = temp_ws("store-regen");
+    let repo_id = discovered_repo_id(&ws);
+    // The index the configured command installs into the store slot.
+    let mut fresh = proto::Document {
+        relative_path: "pkg/app.py".to_string(),
+        ..proto::Document::default()
+    };
+    fresh.symbols.push(proto::SymbolInformation {
+        symbol: "scip-fixture a 1.0.0/a( f).".to_string(),
+        kind: 17,
+        ..proto::SymbolInformation::default()
+    });
+    fresh.occurrences.push(occ(
+        "scip-fixture a 1.0.0/a( f).",
+        single_line(4, 10, 16),
+        1,
+    ));
+    fresh.occurrences.push(occ(
+        "scip-fixture a 1.0.0/a( f).",
+        single_line(4, 20, 24),
+        0,
+    ));
+    let fresh_path = ws.join("fresh.scip");
+    let fresh_bytes = proto::Index {
+        documents: vec![fresh],
+        ..proto::Index::default()
+    }
+    .encode_to_vec();
+    fs::write(&fresh_path, &fresh_bytes).expect("write fresh index");
+
+    // Register the workspace in an isolated cairn home.
+    let home = ws.join("cairn-home");
+    let canonical = fs::canonicalize(&ws).expect("canonical ws");
+    fs::create_dir_all(&home).expect("home dir");
+    fs::write(
+        home.join("workspaces.json"),
+        format!(r#"{{"{}": "0123456789abcdef"}}"#, canonical.display()),
+    )
+    .expect("registry");
+    let config = serde_json::json!({
+        "scip": {
+            "generated": {"python": true},
+            "commands": {"python": ["cp", fresh_path.to_string_lossy(), "$out"]},
+        }
+    });
+    fs::write(ws.join("cairn.json"), config.to_string()).expect("config");
+    let saved_home = std::env::var_os("CAIRN_HOME");
+    let saved_commands = std::env::var_os("CAIRN_SCIP_COMMANDS");
+    // SAFETY: ENV_LOCK serializes env-mutating tests; restored before returning.
+    unsafe {
+        std::env::set_var("CAIRN_HOME", &home);
+        std::env::set_var("CAIRN_SCIP_COMMANDS", "1");
+    }
+
+    // A store index older than every indexed file: cairn owns it, so the
+    // overlay must rebuild it instead of guarding against it forever.
+    let store_index = home
+        .join("0123456789abcdef")
+        .join("scip")
+        .join("python.scip");
+    fs::create_dir_all(store_index.parent().expect("parent")).expect("store scip dir");
+    fs::write(&store_index, b"stale bytes").expect("seed store index");
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(200);
+    std::fs::File::options()
+        .write(true)
+        .open(&store_index)
+        .expect("open store index")
+        .set_times(std::fs::FileTimes::new().set_modified(old))
+        .expect("backdate mtime");
+
+    let conn = open_store(&ws);
+    seed_graph(&conn, &repo_id);
+    let file_mtime = future_mtime(-100.0);
+    conn.execute("UPDATE files SET mtime = ?", [file_mtime])
+        .expect("set file mtimes");
+
+    let report = cairn_build::builder::apply_scip_overlay(
+        &conn,
+        ws.to_str().unwrap(),
+        std::slice::from_ref(&repo_id),
+        true,
+        &mut |_| {},
+    )
+    .expect("overlay report");
+
+    assert_eq!(
+        fs::read(&store_index).expect("regenerated store index"),
+        fresh_bytes,
+        "the stale store index must be rebuilt from the configured command"
+    );
+    assert_eq!(report.edges, 1);
+    assert_eq!(report.stale_files, 0);
+    assert_eq!(scip_edges(&conn).len(), 1);
+
+    // SAFETY: still holding ENV_LOCK.
+    unsafe {
+        match saved_home {
+            Some(v) => std::env::set_var("CAIRN_HOME", v),
+            None => std::env::remove_var("CAIRN_HOME"),
+        }
+        match saved_commands {
+            Some(v) => std::env::set_var("CAIRN_SCIP_COMMANDS", v),
+            None => std::env::remove_var("CAIRN_SCIP_COMMANDS"),
+        }
+    }
     let _ = fs::remove_dir_all(&ws);
 }

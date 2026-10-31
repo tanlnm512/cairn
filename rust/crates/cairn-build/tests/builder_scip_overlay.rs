@@ -189,3 +189,161 @@ fn missing_index_without_generation_records_skip_and_touches_nothing() {
     let _ = conn.close();
     let _ = fs::remove_dir_all(&ws);
 }
+
+/// Index generation routes its lifecycle line and the failing command's
+/// stderr tail through the caller's log callback.
+#[test]
+fn index_generation_output_reaches_the_log_callback() {
+    let _env = CommandsEnv::allow();
+    let ws = materialize("covered-off", "genlog");
+    let db = ws.join("genlog.kg");
+    build(&ws, &db);
+    fs::write(
+        ws.join("cairn.json"),
+        r#"{"scip":{"indexes":{"python":"index.scip"},
+             "commands":{"python":["sh","-c","echo boom >&2; exit 3"]}}}"#,
+    )
+    .expect("config");
+
+    let conn = cairn_store::schema::open_initialized(&db).expect("open store");
+    let repo_id: String = conn
+        .query_row("SELECT repo_id FROM files LIMIT 1", [], |r| r.get(0))
+        .expect("repo id");
+    let mut lines: Vec<String> = Vec::new();
+    let report = cairn_build::builder::apply_scip_overlay(
+        &conn,
+        ws.to_str().expect("ws"),
+        std::slice::from_ref(&repo_id),
+        true,
+        &mut |line| lines.push(line.to_string()),
+    )
+    .expect("overlay reports");
+
+    assert_eq!(report.edges, 0);
+    let logged = lines.join("\n");
+    assert!(logged.contains("generating index with"), "{logged}");
+    assert!(logged.contains("boom"), "{logged}");
+    let _ = conn.close();
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// Serializes the tests that flip CAIRN_SCIP_COMMANDS; restored on drop.
+static COMMANDS_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Pins CAIRN_SCIP_COMMANDS to `value` (None: unset) for the guard's lifetime.
+struct CommandsEnv {
+    saved: Option<std::ffi::OsString>,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl CommandsEnv {
+    fn allow() -> Self {
+        Self::set(Some("1"))
+    }
+
+    fn deny() -> Self {
+        Self::set(None)
+    }
+
+    fn set(value: Option<&str>) -> Self {
+        let _guard = COMMANDS_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var_os("CAIRN_SCIP_COMMANDS");
+        // SAFETY: COMMANDS_ENV_LOCK serializes env-mutating tests; restored on drop.
+        unsafe {
+            match value {
+                Some(v) => std::env::set_var("CAIRN_SCIP_COMMANDS", v),
+                None => std::env::remove_var("CAIRN_SCIP_COMMANDS"),
+            }
+        }
+        Self { saved, _guard }
+    }
+}
+
+impl Drop for CommandsEnv {
+    fn drop(&mut self) {
+        // SAFETY: still holding COMMANDS_ENV_LOCK.
+        unsafe {
+            match &self.saved {
+                Some(v) => std::env::set_var("CAIRN_SCIP_COMMANDS", v),
+                None => std::env::remove_var("CAIRN_SCIP_COMMANDS"),
+            }
+        }
+    }
+}
+
+/// A workspace with a configured `scip.commands` entry, index absent.
+fn commands_workspace(tag: &str) -> (PathBuf, PathBuf, String) {
+    let ws = materialize("covered-off", tag);
+    let db = ws.join(format!("{tag}.kg"));
+    build(&ws, &db);
+    fs::write(
+        ws.join("cairn.json"),
+        r#"{"scip":{"indexes":{"python":"index.scip"},
+             "commands":{"python":["sh","-c","touch pwned.txt; : > $out"]}}}"#,
+    )
+    .expect("config");
+    let conn = cairn_store::schema::open_initialized(&db).expect("open store");
+    let repo_id: String = conn
+        .query_row("SELECT repo_id FROM files LIMIT 1", [], |r| r.get(0))
+        .expect("repo id");
+    let _ = conn.close();
+    (ws, db, repo_id)
+}
+
+#[test]
+fn configured_command_is_blocked_without_the_opt_in_env() {
+    let _env = CommandsEnv::deny();
+    let (ws, db, repo_id) = commands_workspace("cmd-blocked");
+    let conn = cairn_store::schema::open_initialized(&db).expect("open store");
+    let mut lines: Vec<String> = Vec::new();
+    let report = cairn_build::builder::apply_scip_overlay(
+        &conn,
+        ws.to_str().expect("ws"),
+        std::slice::from_ref(&repo_id),
+        true,
+        &mut |line| lines.push(line.to_string()),
+    )
+    .expect("overlay reports");
+
+    assert_eq!(report.edges, 0);
+    assert!(
+        !ws.join("pwned.txt").exists(),
+        "the configured command must not run"
+    );
+    let logged = lines.join("\n");
+    assert!(logged.contains("python"), "{logged}");
+    assert!(logged.contains("CAIRN_SCIP_COMMANDS=1"), "{logged}");
+    let row: (String, String) = conn
+        .query_row(
+            "SELECT path, reason FROM skipped_files \
+             WHERE reason = 'scip_commands_not_allowed'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("skip row");
+    assert_eq!(row.0, "index.scip".to_string());
+    let _ = conn.close();
+    let _ = fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn configured_command_runs_with_the_opt_in_env() {
+    let _env = CommandsEnv::allow();
+    let (ws, db, repo_id) = commands_workspace("cmd-allowed");
+    let conn = cairn_store::schema::open_initialized(&db).expect("open store");
+    let _ = cairn_build::builder::apply_scip_overlay(
+        &conn,
+        ws.to_str().expect("ws"),
+        std::slice::from_ref(&repo_id),
+        true,
+        &mut |_| {},
+    )
+    .expect("overlay reports");
+
+    assert!(
+        ws.join("pwned.txt").exists(),
+        "the opt-in env must let the configured command run"
+    );
+    let _ = conn.close();
+    let _ = fs::remove_dir_all(&ws);
+}

@@ -146,6 +146,128 @@ fn all_skipped_scan_refuses_to_replace_a_populated_store() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A populated store must not keep serving its graph when the scanned
+/// workspace holds no repository at all.
+#[test]
+fn zero_repo_scan_refuses_to_keep_serving_a_populated_store() {
+    let dir = temp_dir("norepo");
+    let db = dir.join("store.kg");
+    {
+        let conn = cairn_store::schema::open_initialized(&db).expect("open");
+        conn.execute_batch(
+            "INSERT INTO repos (id, name, path) VALUES ('r', 'r', '.');
+             INSERT INTO files (id, repo_id, path, language) VALUES ('f', 'r', 'x.py', 'python');
+             INSERT INTO symbols (id, file_id, name, kind) VALUES ('s', 'f', 'x', 'function');",
+        )
+        .expect("seed");
+    }
+    let missing = dir.join("missing").to_string_lossy().into_owned();
+    let err = build_graph(&missing, db.to_str().expect("db"), None, None).expect_err("must refuse");
+    assert!(err.contains("no repositories discovered"), "{err}");
+    assert!(
+        err.contains(&missing),
+        "error must name the workspace: {err}"
+    );
+
+    // A store that does not exist yet still builds nothing quietly (init on
+    // an empty workspace).
+    let fresh = dir.join("fresh.kg");
+    let (summary, _) =
+        build_graph(&missing, fresh.to_str().expect("db"), None, None).expect("empty build");
+    assert_eq!(summary.files, 0);
+    assert!(!fresh.exists());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A file that turns unreadable between classify and hash is a skip row,
+/// never an aborted build.
+#[test]
+#[cfg(unix)]
+fn unreadable_source_file_becomes_a_skip_row_not_a_failed_build() {
+    let dir = temp_dir("unreadable");
+    write(&dir, "src/app.py", "def main():\n    return 1\n");
+    let secret = dir.join("src/secret.py");
+    fs::write(&secret, "def hidden():\n    return 1\n").expect("write");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&secret, fs::Permissions::from_mode(0o000)).expect("chmod");
+    }
+    // Root and mode-ignoring filesystems still read the file; the failure
+    // path cannot be exercised there.
+    if fs::read(&secret).is_ok() {
+        let _ = fs::remove_dir_all(&dir);
+        return;
+    }
+    let db = dir.join("store.kg");
+    let (summary, _) = build_graph(
+        dir.to_str().expect("ws"),
+        db.to_str().expect("db"),
+        None,
+        Some(1),
+    )
+    .expect("build");
+    assert_eq!(summary.files, 1);
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM skipped_files WHERE reason = 'stat_error' \
+             AND path LIKE '%secret.py'"
+        ),
+        1
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `include` reaches files inside default skip dirs, per classify_file's
+/// include-override contract.
+#[test]
+fn include_pattern_rescues_files_under_skip_dirs() {
+    let dir = temp_dir("include");
+    fs::create_dir_all(dir.join("vendor")).expect("vendor dir");
+    write(&dir, "vendor/lib.py", "def vendored():\n    return 1\n");
+    write(&dir, "cairn.json", r#"{"include": ["vendor/**"]}"#);
+    let db = dir.join("store.kg");
+    build_graph(
+        dir.to_str().expect("ws"),
+        db.to_str().expect("db"),
+        None,
+        Some(1),
+    )
+    .expect("build");
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM files WHERE path = 'vendor/lib.py'"
+        ),
+        1
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A submodule (.git file) must not hide the root repo it belongs to.
+#[test]
+fn submodule_checkout_keeps_the_root_repo_indexed() {
+    let dir = temp_dir("submodule");
+    write(&dir, "src/app.py", "def main():\n    return 1\n");
+    fs::create_dir_all(dir.join("vendored")).expect("submodule dir");
+    fs::write(
+        dir.join("vendored").join(".git"),
+        "gitdir: ../.git/modules/vendored\n",
+    )
+    .expect("submodule pointer");
+    let ws = dir.to_str().expect("ws");
+    assert!(cairn_build::scanner::is_single_repo_workspace(ws));
+
+    let db = dir.join("store.kg");
+    let (summary, _) = build_graph(ws, db.to_str().expect("db"), None, Some(1)).expect("build");
+    assert_eq!(summary.repos, 1);
+    assert_eq!(
+        count(&db, "SELECT COUNT(*) FROM files WHERE path = 'src/app.py'"),
+        1
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Two-repo workspace (`alpha`, `beta`), each with one python module.
 fn two_repo_workspace(tag: &str) -> PathBuf {
     let dir = temp_dir(tag);
@@ -230,6 +352,34 @@ fn repo_rebuild_replaces_only_that_repo_in_place() {
         1
     );
     assert_eq!(count(&db, "SELECT COUNT(*) FROM repo_build_state"), 0);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A repo-filtered rebuild re-resolves the other repos' edges that
+/// clear_repo demoted to bare names.
+#[test]
+fn repo_rebuild_repairs_other_repos_incoming_edges() {
+    let dir = temp_dir("xrepo-repair");
+    fs::create_dir_all(dir.join("alpha").join(".git")).expect("alpha marker");
+    fs::create_dir_all(dir.join("beta").join(".git")).expect("beta marker");
+    write(&dir, "alpha/mod.py", "def shared():\n    return 1\n");
+    write(&dir, "beta/mod.py", "def c():\n    return shared()\n");
+    let ws = dir.to_str().expect("ws");
+    let db = dir.join("store.kg");
+    let db_str = db.to_str().expect("db");
+    build_graph(ws, db_str, None, Some(1)).expect("full build");
+
+    write(&dir, "alpha/extra.py", "def other():\n    return 2\n");
+    build_graph(ws, db_str, Some("alpha"), Some(1)).expect("repo rebuild");
+
+    let exact_cross_repo = "SELECT COUNT(*) FROM edges e \
+         JOIN symbols src ON e.source_id = src.id \
+         JOIN files sf ON src.file_id = sf.id \
+         JOIN symbols tgt ON e.target_id = tgt.id \
+         JOIN files tf ON tgt.file_id = tf.id \
+         WHERE sf.repo_id = 'beta' AND tf.repo_id = 'alpha' \
+         AND e.kind = 'calls' AND e.resolution = 'exact'";
+    assert_eq!(count(&db, exact_cross_repo), 1);
     let _ = fs::remove_dir_all(&dir);
 }
 

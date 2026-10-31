@@ -310,28 +310,29 @@ pub fn check_parity(conn: &rusqlite::Connection, stamp: &str) -> Value {
             "reason": format!("embed_count_mismatch texts={} blobs={}", rows.len(), blobs.len()),
         });
     }
-    let mut cosines: Vec<f64> = Vec::new();
-    for (row, blob) in rows.iter().zip(&blobs) {
-        let stored = row.get("vec").and_then(Value::as_str).map(hex_to_f32s);
-        let stored = match stored {
-            Some(vecs) => vecs,
-            None => {
-                return json!({
-                    "passed": false, "mean": "\u{2014}", "sampled": rows.len(),
-                    "reason": "vec_decode_failed",
-                });
-            }
-        };
-        let served = decode_f32(blob);
-        if served.len() != stored.len() {
+    let mut stored: Vec<Vec<f32>> = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let Some(hex) = row.get("vec").and_then(Value::as_str) else {
             return json!({
                 "passed": false, "mean": "\u{2014}", "sampled": rows.len(),
-                "reason": format!("dim_mismatch stored={} server={}", stored.len(), served.len()),
+                "reason": "vec_decode_failed",
+            });
+        };
+        stored.push(hex_to_f32s(hex));
+    }
+    let served: Vec<Vec<f32>> = blobs
+        .iter()
+        .map(|blob| crate::parity::decode_f32(blob))
+        .collect();
+    let mean = match crate::parity::mean_cosine(&stored, &served) {
+        Ok(mean) => mean,
+        Err(reason) => {
+            return json!({
+                "passed": false, "mean": "\u{2014}", "sampled": rows.len(),
+                "reason": reason,
             });
         }
-        cosines.push(cosine(&stored, &served));
-    }
-    let mean = cosines.iter().sum::<f64>() / cosines.len() as f64;
+    };
     // Parity gate 0.98 — the shared constant (embed_ladder.PARITY_GATE).
     if mean >= 0.98 {
         json!({"passed": true, "mean": format!("{mean:.4}"), "sampled": rows.len(), "reason": "parity_ok"})
@@ -348,25 +349,7 @@ fn hex_to_f32s(hex: &str) -> Vec<f32> {
     let bytes = (0..hex.len() / 2)
         .filter_map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok())
         .collect::<Vec<u8>>();
-    decode_f32(&bytes)
-}
-
-fn decode_f32(blob: &[u8]) -> Vec<f32> {
-    blob.as_chunks::<4>()
-        .0
-        .iter()
-        .map(|chunk| f32::from_le_bytes(*chunk))
-        .collect()
-}
-
-fn cosine(a: &[f32], b: &[f32]) -> f64 {
-    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-    (dot / (norm_a * norm_b)) as f64
+    crate::parity::decode_f32(&bytes)
 }
 
 #[cfg(test)]
@@ -493,11 +476,5 @@ mod tests {
     fn embed_banner_stays_empty_without_a_server_backend() {
         // Default env in tests: no CAIRN_EMBED_BACKEND -> local -> "".
         assert_eq!(embed_banner(), "");
-    }
-
-    #[test]
-    fn cosine_matches_the_formula() {
-        assert!((cosine(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 1e-6);
-        assert_eq!(cosine(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
     }
 }

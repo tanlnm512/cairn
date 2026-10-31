@@ -10,7 +10,7 @@ use super::semantic_env;
 use super::{
     EffectiveBackend, HASH_MODEL, NATIVE_MODEL, SemanticEnv, SemanticMatch, ann_backend_enabled,
     cosine_scan, embed_query, exact_name_hit, floats_to_blob, fused_margin, hash_vec, install_hint,
-    is_fts_prefix_pattern, netloc_of, parse_http_response, pattern_to_fts, render_search_symbols,
+    is_fts_prefix_pattern, netloc_of, pattern_to_fts, render_search_symbols,
     render_semantic_search, resolve_backend, round4, rrf_fuse, vec_table_name,
 };
 
@@ -426,24 +426,68 @@ fn embed_query_hash_is_deterministic() {
     assert_eq!(blob_a.len(), 256 * 4);
 }
 
-// --- http response parsing ---------------------------------------------------
+// --- http transport policy ---------------------------------------------------
 
 #[test]
-fn http_response_parses_content_length_and_chunked() {
-    let raw =
-        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 5\r\n\r\nhello";
-    let reply = parse_http_response(raw).expect("parse");
-    assert_eq!(reply.status, 200);
-    assert_eq!(reply.body, b"hello");
-    let chunked = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
-    let reply = parse_http_response(chunked).expect("parse chunked");
-    assert_eq!(reply.status, 200);
-    assert_eq!(reply.body, b"hello");
+fn cleartext_http_off_loopback_requires_opt_in() {
+    let err = super::parse_http_url("http://gpu.internal:8000/v1").expect_err("remote cleartext");
+    assert!(err.contains("gpu.internal"), "{err}");
+    assert!(err.contains("CAIRN_EMBED_ALLOW_REMOTE_HTTP=1"), "{err}");
+    let saved = std::env::var("CAIRN_EMBED_ALLOW_REMOTE_HTTP").ok();
+    // SAFETY: no other test reads this var; restored before returning.
+    unsafe { std::env::set_var("CAIRN_EMBED_ALLOW_REMOTE_HTTP", "1") };
+    assert_eq!(
+        super::parse_http_url("http://gpu.internal:8000/v1"),
+        Ok(("gpu.internal".into(), 8000, "/v1".into()))
+    );
+    match saved {
+        // SAFETY: restoring the saved value.
+        Some(v) => unsafe { std::env::set_var("CAIRN_EMBED_ALLOW_REMOTE_HTTP", v) },
+        None => unsafe { std::env::remove_var("CAIRN_EMBED_ALLOW_REMOTE_HTTP") },
+    }
+    // Loopback http never needs the opt-in; https keeps its unsupported-scheme error.
+    for base in ["127.0.0.1", "[::1]", "localhost"] {
+        assert_eq!(
+            super::parse_http_url(&format!("http://{base}:8000/v1")),
+            Ok((base.to_string(), 8000, "/v1".into())),
+            "loopback host {base}"
+        );
+    }
+    let err = super::parse_http_url("https://gpu.internal:8000/v1").expect_err("https");
+    assert!(err.contains("unsupported URL scheme 'https'"), "{err}");
 }
 
 #[test]
-fn http_response_reports_bad_status_lines() {
-    assert!(parse_http_response(b"garbage\r\n\r\n").is_err());
+fn server_base_url_validates_the_configured_transport() {
+    let saved_base = std::env::var("CAIRN_EMBED_BASE_URL").ok();
+    let saved_opt = std::env::var("CAIRN_EMBED_ALLOW_REMOTE_HTTP").ok();
+    // SAFETY: these vars are private to this test; restored before returning.
+    unsafe { std::env::set_var("CAIRN_EMBED_BASE_URL", "http://gpu.internal:8000/v1") };
+    let err = super::server_base_url("server").expect_err("remote cleartext base");
+    assert!(err.contains("CAIRN_EMBED_ALLOW_REMOTE_HTTP=1"), "{err}");
+    unsafe { std::env::set_var("CAIRN_EMBED_ALLOW_REMOTE_HTTP", "1") };
+    assert_eq!(
+        super::server_base_url("server"),
+        Ok("http://gpu.internal:8000/v1".to_string())
+    );
+    unsafe {
+        std::env::set_var("CAIRN_EMBED_BASE_URL", "http://127.0.0.1:8000/v1");
+        std::env::remove_var("CAIRN_EMBED_ALLOW_REMOTE_HTTP");
+    }
+    assert_eq!(
+        super::server_base_url("server"),
+        Ok("http://127.0.0.1:8000/v1".to_string())
+    );
+    unsafe {
+        match saved_base {
+            Some(v) => std::env::set_var("CAIRN_EMBED_BASE_URL", v),
+            None => std::env::remove_var("CAIRN_EMBED_BASE_URL"),
+        }
+        match saved_opt {
+            Some(v) => std::env::set_var("CAIRN_EMBED_ALLOW_REMOTE_HTTP", v),
+            None => std::env::remove_var("CAIRN_EMBED_ALLOW_REMOTE_HTTP"),
+        }
+    }
 }
 
 fn serve_once(response: String) -> String {
@@ -463,7 +507,7 @@ fn drain_request(stream: &mut std::net::TcpStream) {
     let mut raw: Vec<u8> = Vec::new();
     let mut buf = [0u8; 4096];
     let header_end = loop {
-        if let Some(end) = super::find_subsequence(&raw, b"\r\n\r\n") {
+        if let Some(end) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
             break end;
         }
         let n = stream.read(&mut buf).unwrap_or(0);

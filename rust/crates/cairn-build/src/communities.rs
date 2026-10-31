@@ -2,13 +2,20 @@
 
 use std::collections::HashMap;
 
+use cairn_query::graph::STRUCTURAL_EDGE_KINDS;
 use rusqlite::Connection;
 
 use crate::closure::{self, Graph};
 
-/// Structural edge weights per closure::STRUCTURAL_EDGE_KINDS slot.
-const STRUCTURAL_EDGE_WEIGHTS: [f64; closure::STRUCTURAL_EDGE_KINDS.len()] = [1.0, 1.0, 2.0, 2.0];
-const _: () = assert!(closure::STRUCTURAL_EDGE_KINDS.len() == STRUCTURAL_EDGE_WEIGHTS.len());
+/// Structural edge weight per kind, bound by name so a kind-list reorder can
+/// never remap a weight; coverage is pinned by the test at the file's foot.
+fn structural_edge_weight(kind: &str) -> f64 {
+    match kind {
+        "call" | "calls" => 1.0,
+        "extends" | "implements" => 2.0,
+        other => unreachable!("uncovered structural edge kind: {other}"),
+    }
+}
 
 /// Dominant first-path-segment share a community label needs.
 const DOMINANT_SEGMENT_SHARE: f64 = 0.60;
@@ -200,6 +207,7 @@ pub(crate) fn load_projection(conn: &Connection, graph: &Graph) -> Result<Projec
 
     let mut pair_weights: HashMap<(usize, usize), f64> = HashMap::new();
     for (slot, seeds) in graph.seeds.iter().enumerate() {
+        let weight = structural_edge_weight(STRUCTURAL_EDGE_KINDS[slot]);
         for &(src, tgt, _name) in seeds {
             let Some(target) = tgt else { continue };
             let (Some(&a), Some(&b)) = (
@@ -209,7 +217,7 @@ pub(crate) fn load_projection(conn: &Connection, graph: &Graph) -> Result<Projec
                 continue;
             };
             let key = if a <= b { (a, b) } else { (b, a) };
-            *pair_weights.entry(key).or_insert(0.0) += STRUCTURAL_EDGE_WEIGHTS[slot];
+            *pair_weights.entry(key).or_insert(0.0) += weight;
         }
     }
     let mut edges: Vec<(usize, usize, f64)> = pair_weights
@@ -552,6 +560,16 @@ fn str_err(e: rusqlite::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structural_edge_weight_covers_every_kind() {
+        for kind in STRUCTURAL_EDGE_KINDS {
+            assert!(
+                structural_edge_weight(kind) > 0.0,
+                "kind {kind} has no weight"
+            );
+        }
+    }
 
     type Fixture = (
         &'static [(&'static str, &'static str)],

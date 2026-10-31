@@ -1662,8 +1662,7 @@ fn age_days(ts: &str) -> f64 {
     (now - secs) as f64 / 86_400.0
 }
 
-/// Expire raw and stale tribal memories into the archived tier
-/// (embedding reap rides the embeddings workstream).
+/// Expire raw and stale tribal memories into the archived tier.
 pub fn decay(
     bundle: &Bundle,
     raw_max_days: i64,
@@ -2688,7 +2687,6 @@ fn find_supersession_candidate(
             }
         }
     }
-    // Tier 2 (cosine over embeddings) is gated on the embeddings workstream.
     let _ = conn;
     Ok(None)
 }
@@ -3161,7 +3159,7 @@ pub struct KnowledgeHit {
     pub graph_deps: Vec<(String, Yaml)>,
 }
 
-/// Scored lexical (or semantic-fallback) knowledge search with graph bridging.
+/// Scored knowledge search (lexical, semantic hits appended) with graph bridging.
 pub fn search_knowledge_docs(
     conn: &Connection,
     bundle: &Bundle,
@@ -3169,8 +3167,14 @@ pub fn search_knowledge_docs(
     limit: usize,
 ) -> Result<Vec<KnowledgeHit>, ToolError> {
     let mut results = lexical_search(conn, bundle, query, limit, false)?;
-    if results.is_empty() {
-        results = semantic_knowledge_search(conn, query, limit)?;
+    if results.len() < limit {
+        let seen: HashSet<String> = results.iter().map(|r| r.concept_id.clone()).collect();
+        for hit in semantic_knowledge_search(conn, bundle, query, limit - results.len())? {
+            if seen.contains(&hit.concept_id) {
+                continue;
+            }
+            results.push(hit);
+        }
     }
     for r in &mut results {
         if !r.affects_repos.is_empty() {
@@ -3401,21 +3405,78 @@ fn neighbors_or_empty(
     out
 }
 
+/// Each embedded knowledge doc once at its best-matching chunk, cosine-ranked
+/// above the threshold; best-effort — any failure yields an empty list, never
+/// an error.
 fn semantic_knowledge_search(
     conn: &Connection,
-    _query: &str,
-    _limit: usize,
+    bundle: &Bundle,
+    query: &str,
+    limit: usize,
 ) -> Result<Vec<KnowledgeHit>, ToolError> {
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM knowledge_embeddings", [], |r| {
-            r.get(0)
+    const THRESHOLD: f64 = 0.1;
+    const POOL: usize = 8;
+    let env = semantic_env(None);
+    let rows: Vec<(String, Vec<u8>, i64)> = (|| {
+        let mut stmt = conn
+            .prepare("SELECT doc_id, vec, dim FROM knowledge_embeddings WHERE model = ?")
+            .ok()?;
+        stmt.query_map([&env.model], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Vec<u8>>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
         })
-        .unwrap_or(0);
-    if count == 0 {
+        .ok()?
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+    })()
+    .unwrap_or_default();
+    if rows.is_empty() {
         return Ok(Vec::new());
     }
-    // Vector ranking lands with the embeddings workstream; degrade to no hits.
-    Ok(Vec::new())
+    let Ok((q_blob, q_dim)) = embed_query(&env, query) else {
+        return Ok(Vec::new());
+    };
+    let vectors: Vec<(Vec<u8>, i64)> = rows
+        .iter()
+        .map(|(_, vec, dim)| (vec.clone(), *dim))
+        .collect();
+    let prov = semantic_provenance(&env);
+    let mut out: Vec<KnowledgeHit> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for (score, index) in cosine_scan(&q_blob, q_dim, &vectors, THRESHOLD) {
+        if !seen.insert(rows[index].0.clone()) {
+            continue; // keep only the best-scoring chunk per doc
+        }
+        let Ok(concept) = bundle.read_concept(&rows[index].0) else {
+            continue; // row orphaned by a since-deleted document
+        };
+        if !doc_visible(&concept, false) {
+            continue;
+        }
+        out.push(KnowledgeHit {
+            concept_id: rows[index].0.clone(),
+            title: concept.title.clone().unwrap_or_default(),
+            doc_type: rows[index]
+                .0
+                .split('/')
+                .nth(1)
+                .unwrap_or("unknown")
+                .to_string(),
+            score,
+            provenance: prov.clone(),
+            affects_modules: ext_str_list(&concept, "affects_modules"),
+            affects_repos: ext_str_list(&concept, "affects_repos"),
+            chunk: chunk_of(&concept),
+            graph_deps: Vec::new(),
+        });
+        if out.len() >= POOL.min(limit) {
+            break;
+        }
+    }
+    Ok(out)
 }
 
 fn graph_bridge(conn: &Connection, repos: &[String]) -> Vec<(String, Yaml)> {
@@ -5335,7 +5396,7 @@ struct FlowCandidate {
 }
 
 fn flow_candidates(conn: &Connection, min_edges: i64) -> Result<Vec<FlowCandidate>, ToolError> {
-    let kinds = crate::tools_nav::STRUCTURAL_EDGE_KINDS;
+    let kinds = crate::graph::STRUCTURAL_EDGE_KINDS;
     let kind_ph = vec!["?"; kinds.len()].join(",");
     let sql = format!(
         "SELECT s.id, s.name, s.kind, f.path AS file_path, f.repo_id AS repo, \
@@ -7828,6 +7889,76 @@ mod tests {
         let out = strip_private_data("<private>hidden</private> api_key=abcdefghijklmnopqrst uvw");
         assert!(out.contains("[REDACTED]"));
         assert!(!out.contains("abcdefghijklmnopqrst"));
+    }
+
+    #[test]
+    fn search_knowledge_reads_back_embedded_docs() {
+        use crate::tools_search::{floats_to_blob, hash_vec};
+
+        // The hash embedder makes the row stamp and the query stamp identical.
+        let saved = std::env::var("CAIRN_EMBED_BACKEND").ok();
+        unsafe { std::env::set_var("CAIRN_EMBED_BACKEND", "hash") };
+
+        let bundle = scratch_bundle("kmbed");
+        std::fs::create_dir_all(bundle.root.join("knowledge/spec")).expect("spec dir");
+        std::fs::write(
+            bundle.root.join("knowledge/spec/refund.md"),
+            "---\ntype: Knowledge-spec\ntitle: Refund policy\n---\n\
+             How does the refund work\n",
+        )
+        .expect("knowledge doc");
+        let conn = Connection::open_in_memory().expect("mem db");
+        conn.execute_batch(
+            "CREATE TABLE knowledge_embeddings (doc_id TEXT NOT NULL, chunk_index INTEGER NOT NULL,
+                 model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL, chunk TEXT NOT NULL,
+                 embedded_at TEXT, PRIMARY KEY (doc_id, chunk_index, model));",
+        )
+        .expect("schema");
+
+        // Every token of the query is a stop word or under the 3-char token
+        // floor, so the lexical arm returns nothing and only vectors answer.
+        let stop_word_query = "how does it work";
+        assert!(
+            search_knowledge_docs(&conn, &bundle, stop_word_query, 10)
+                .expect("no embeddings yet")
+                .is_empty()
+        );
+
+        let env = semantic_env(None);
+        let chunk = "Refund policy How does the refund work";
+        let floats: Vec<f32> = hash_vec(chunk).iter().map(|v| *v as f32).collect();
+        conn.execute(
+            "INSERT INTO knowledge_embeddings VALUES (?1, 0, ?2, ?3, ?4, ?5, NULL)",
+            rusqlite::params![
+                "knowledge/spec/refund",
+                env.model,
+                floats.len() as i64,
+                floats_to_blob(&floats),
+                chunk
+            ],
+        )
+        .expect("embedding row");
+
+        let hits =
+            search_knowledge_docs(&conn, &bundle, stop_word_query, 10).expect("semantic search");
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].concept_id, "knowledge/spec/refund");
+        assert!(hits[0].provenance.starts_with("semantic"), "{hits:?}");
+        assert!(hits[0].score > 0.1 && hits[0].score < 1.0, "{hits:?}");
+
+        // A lexical hit wins the slot; the same doc is never listed twice.
+        let lexical_query = "how does the refund work";
+        let hits = search_knowledge_docs(&conn, &bundle, lexical_query, 10).expect("merged");
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].concept_id, "knowledge/spec/refund");
+        assert_eq!(hits[0].provenance, "lexical_knowledge");
+
+        unsafe {
+            match saved {
+                Some(previous) => std::env::set_var("CAIRN_EMBED_BACKEND", previous),
+                None => std::env::remove_var("CAIRN_EMBED_BACKEND"),
+            }
+        }
     }
 
     #[test]
