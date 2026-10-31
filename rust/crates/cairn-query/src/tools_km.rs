@@ -7951,7 +7951,13 @@ mod tests {
         let hits = search_knowledge_docs(&conn, &bundle, lexical_query, 10).expect("merged");
         assert_eq!(hits.len(), 1, "{hits:?}");
         assert_eq!(hits[0].concept_id, "knowledge/spec/refund");
-        assert_eq!(hits[0].provenance, "lexical_knowledge");
+        let lex_probe = lexical_search(&conn, &bundle, lexical_query, 10, false).expect("lex");
+        assert_eq!(
+            hits[0].provenance,
+            "lexical_knowledge",
+            "lex_probe={lex_probe:?} ids={:?}",
+            bundle.list_concepts(Some("knowledge/"))
+        );
 
         unsafe {
             match saved {

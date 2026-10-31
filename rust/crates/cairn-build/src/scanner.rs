@@ -696,7 +696,7 @@ pub fn resolve_lenient(path: &Path) -> PathBuf {
             _ => break,
         }
     }
-    let base = std::fs::canonicalize(&cur).unwrap_or(cur);
+    let base = cairn_store::paths::strip_verbatim(std::fs::canonicalize(&cur).unwrap_or(cur));
     tail.into_iter()
         .rev()
         .fold(base, |acc, part| acc.join(part))
@@ -708,7 +708,7 @@ pub fn infer_repo_for_path(workspace: &str, abs_path: &Path) -> Option<String> {
     let records = discover_repo_records(workspace).ok()?;
     let mut best: Option<(usize, String)> = None;
     for record in records {
-        let root = std::fs::canonicalize(&record.path).ok()?;
+        let root = cairn_store::paths::strip_verbatim(std::fs::canonicalize(&record.path).ok()?);
         if resolved != root
             && resolved.starts_with(&root)
             && best

@@ -28,9 +28,9 @@ fn update_file_zero_change_warns_without_a_success_line() {
         .expect("clock")
         .as_nanos();
     // update --file strips the canonicalized abs path against the discovered
-    // repo root, so the fixture must live symlink-free under /private/var.
-    let home = std::fs::canonicalize(std::env::temp_dir())
-        .expect("temp dir")
+    // repo root; resolve_path canonicalizes without the Windows verbatim
+    // prefix raw canonicalize() would leave in the fixture paths.
+    let home = cairn_store::paths::resolve_path(&std::env::temp_dir())
         .join(format!("cairn-update-file-{}-{nanos}", std::process::id()));
     let ws = home.join("ws");
     let repo = ws.join("repo");
