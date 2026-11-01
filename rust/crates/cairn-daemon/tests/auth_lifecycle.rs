@@ -409,7 +409,7 @@ async fn healthz_probe_reads_a_live_daemon() {
 }
 
 #[test]
-fn http_response_parser_covers_the_framings() {
+fn http_get_reads_a_chunked_response_over_a_socket() {
     fn response(headers: &str, body: &[u8]) -> Option<(u16, Vec<u8>)> {
         let mut raw = format!("HTTP/1.1 200 OK\r\n{headers}\r\n\r\n").into_bytes();
         raw.extend_from_slice(body);
@@ -427,29 +427,12 @@ fn http_response_parser_covers_the_framings() {
         result
     }
 
-    assert_eq!(
-        response("Content-Length: 5", b"hello").expect("framed"),
-        (200, b"hello".to_vec())
-    );
+    // Framing matrix lives in cairn-query http; here one chunked round trip
+    // proves the daemon wrapper reads a response over a socket.
     assert_eq!(
         response("Transfer-Encoding: chunked", b"5\r\nhello\r\n0\r\n\r\n").expect("chunked"),
         (200, b"hello".to_vec())
     );
-    // A multi-coding transfer-encoding header still means chunked framing.
-    assert_eq!(
-        response(
-            "Transfer-Encoding: gzip, chunked",
-            b"5\r\nhello\r\n0\r\n\r\n"
-        )
-        .expect("multi-coding chunked"),
-        (200, b"hello".to_vec())
-    );
-    assert_eq!(
-        response("X-Nothing: 1", b"eof-terminated").expect("eof"),
-        (200, b"eof-terminated".to_vec())
-    );
-    let (status, _) = response("Content-Length: 2", b"{}").expect("json shape");
-    assert_eq!(status, 200);
     assert!(lifecycle::http_get("127.0.0.1", 1, "/healthz", Duration::from_millis(300)).is_none());
 }
 
