@@ -20,6 +20,7 @@ pub mod cmds_serve;
 pub mod cmds_system;
 pub mod dashboard;
 pub mod display;
+pub mod help;
 pub mod pack;
 pub(crate) mod parity;
 pub mod picker;
