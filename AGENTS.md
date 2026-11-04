@@ -168,6 +168,42 @@ Applies to code comments, docstrings, logging, markdown, and CHANGELOG entries.
   per-caller contract differences are documented at the helper.
 - Add a new function only when no existing one satisfies the caller.
 
+## Dead code and stale-data hygiene (mandatory)
+
+Dead surface and stale mentions do not accumulate; every rule below is
+checked at review:
+
+- **Every pub item names a caller**: a `pub` fn/const/re-export with zero
+  in-workspace callers must not ship; thin wrapper or `pub use`-only modules
+  follow the same rule. Before deleting, verify with `get_callers` (fuzzy for
+  common names) — an empty precise result is "unproven", not "unused".
+- **Env knobs need a setter or a doc row**: a `CAIRN_*` variable read in code
+  is either set somewhere in the repo or listed in README's env table;
+  neither means dead surface — remove the read.
+- **Allow-annotations name their consumer**: `#[allow(dead_code)]` may stand
+  only where a live consumer exists (Drop side effects, shared test modules).
+  When the consumer disappears, delete the attribute or the item with it.
+- **Fixtures die with their feature**: removing a feature, command, or engine
+  removes its fixtures, provision scripts, and golden corpora in the same
+  change. A fixture no test materializes is dead weight; git history is the
+  archive, not the tree.
+- **One harness per contract**: shared golden/normalizer helpers live in a
+  per-crate `tests/common/mod.rs` or the existing table-driven test;
+  copy-pasting a harness into a new test file is a review-blocking finding.
+  Prefer table-driven rows over near-duplicate test functions, and make every
+  assert capable of failing.
+- **Single owner replay per golden fixture**: the test that owns a fixture is
+  the layer that owns the logic (in-process over the transport layer); the
+  server layer only adds its own replay when it asserts wire behavior nothing
+  else covers.
+- **Deletions update every mention**: removing a file, command, feature, env
+  knob, or CI behavior updates README, `docs/`, SECURITY.md, workflows,
+  `specs/context/`, and config files that name it, in the same change.
+  `rg` the deleted name before committing; CHANGELOG history is exempt.
+- **Delivered specs follow the removal policy**: a spec whose task list says
+  delivered is `rm -rf`'d (INDEX.md row included) in the landing PR — never
+  left in-tree as a draft.
+
 ## Tool Quirks (empirically verified)
 
 | Tool | Behavior | Workaround |
