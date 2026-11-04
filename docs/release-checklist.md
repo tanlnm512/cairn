@@ -120,8 +120,9 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix`/`refactor`/`perf`
    `[workspace.package]`) and the workspace entries in `Cargo.lock`
    together, commits as
    `bump: version A → B`, and tags `vB`; it refuses a dirty tree.
-   `release-rust.yml` refuses a tag that does not equal the workspace
-   version. (If the pre-release checklist above isn't done yet, run
+   Tag only from a tree whose workspace version already equals `vB` —
+   `release-rust.yml` derives the release from the tag name.
+   (If the pre-release checklist above isn't done yet, run
    `cargo xtask bump --files-only` to update files without committing or
    tagging.)
 

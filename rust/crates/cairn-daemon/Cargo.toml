@@ -17,9 +17,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "signal
 tokio-util = "0.7"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 
-[dev-dependencies]
-regex = "1"
-
 [features]
 local-embed = ["cairn-query/local-embed"]
 

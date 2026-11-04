@@ -56,11 +56,3 @@ repos:
         language: system
         pass_filenames: false
         files: ^rust/(.*\.(rs|toml)|Cargo\.lock)$
-
-  # NOTE: `cargo xtask verify-no-code-change` is deliberately NOT wired here.
-  # It compares the *working tree* against HEAD, but pre-commit always stashes
-  # unstaged changes and runs against the *staged* tree -- so as a hook it
-  # would silently Skip precisely when you need it (unstaged comment edits).
-  # Keep it as a direct invocation, which sees the real working tree:
-  #   make verify-no-code-change            # uncommitted edits
-  #   make verify-no-code-change REF=HEAD~1 # a just-made commit

@@ -1229,8 +1229,6 @@ mod taint {
         hop_id: String,
         hop_name: String,
         hop_file: String,
-        /// Kept for query-shape parity; consumed by the `path` surface.
-        #[allow(dead_code)]
         hop_line: Option<i64>,
         resolution: String,
     }

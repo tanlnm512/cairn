@@ -71,7 +71,7 @@ files inside it, and `--db` wins over everything in-process.
 | Crate | Purpose |
 |---|---|
 | `cairn-store` | `.kg` schema DDL, connection factory (bundled SQLite + FTS5 + sqlite-vec), vec0 helpers, the build lock and staged-swap primitives, canonical dump for parity diffs (`conn.rs`, `schema.rs`, `vec0.rs`, `swap.rs`, `dump.rs`) |
-| `cairn-query` | read path: FTS5 search, definition lookup, precise/fuzzy callers/callees, recursive impact, `explore` aggregation, flow/taint/pack/federation tools (`tools_*.rs`); the knowledge, memory, wiki, task-queue and skill layers; the `[ingest]` sidecar bridge (`sidecar.rs`) |
+| `cairn-query` | read path: FTS5 search, definition lookup, precise/fuzzy callers/callees, recursive impact, `explore` aggregation, flow/taint/pack/federation tools (`tools_*.rs`); the knowledge, memory, wiki, task-queue and skill layers; document ingestion (`convert.rs`, `ingest.rs`) |
 | `cairn-parse` | per-language tree-sitter symbol/edge extraction (15 languages; the Dart grammar is vendored and Kotlin is pinned to an upstream commit) |
 | `cairn-build` | scanner, rayon builder, resolver, incremental/graft, streaming closure, embeddings build, SCIP import |
 | `cairn-daemon` | streamable-HTTP MCP server, bearer auth, `/healthz`, the launchd/reuse lifecycle (`server.rs`, `auth.rs`, `healthz.rs`, `lifecycle.rs`) |

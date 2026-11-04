@@ -156,7 +156,7 @@ struct Selection {
 }
 
 enum SelectionError {
-    MissingDatabase(#[allow(dead_code)] String),
+    MissingDatabase,
 }
 
 /// Resolve request/form input to a validated registry store selection.
@@ -191,7 +191,7 @@ fn resolve_selection(
         .and_then(|row| row["state"].as_str())
         .unwrap_or("");
     if state_value != "populated" {
-        return Err(SelectionError::MissingDatabase(store_key));
+        return Err(SelectionError::MissingDatabase);
     }
     Ok(Selection {
         db: Some(

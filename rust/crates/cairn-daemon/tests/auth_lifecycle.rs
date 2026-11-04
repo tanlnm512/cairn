@@ -111,10 +111,8 @@ fn plist_template_execs_the_named_binary() {
     }
     assert!(plist.run_at_load && plist.keep_alive);
     assert_eq!(plist.stdout_path, plist.stderr_path);
-}
 
-#[test]
-fn plist_read_only_flag_and_optional_env() {
+    // Read-only row: the flag plus CAIRN_READ_ONLY, optional env omitted.
     let plist = render_plist("cairn", 9876, "0.0.0.0", None, None, None, true, None);
     assert!(plist.program_arguments.contains(&"--read-only".to_string()));
     let env: HashSet<(String, String)> = plist.environment_variables.iter().cloned().collect();

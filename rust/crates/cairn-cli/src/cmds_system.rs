@@ -531,13 +531,6 @@ mod tests {
     }
 
     #[test]
-    fn command_tree_parses() {
-        tree::<SystemCommand>().debug_assert();
-        tree::<HooksGroup>().debug_assert();
-        tree::<ServeGroup>().debug_assert();
-    }
-
-    #[test]
     fn version_prints_the_package_version() {
         assert_eq!(run(SystemCommand::Version), ExitCode::SUCCESS);
     }

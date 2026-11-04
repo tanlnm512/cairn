@@ -1,11 +1,15 @@
 //! Nav-tool golden parity: served text equals the recorded fixtures byte for byte.
 
+mod common;
+
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use cairn_query::tools_nav;
 use rusqlite::Connection;
 use serde_json::Value;
+
+use common::{TempStore, fixture_store, repo_root, sorted_lines};
 
 const TOOLS: [&str; 4] = [
     "find_definition",
@@ -14,57 +18,10 @@ const TOOLS: [&str; 4] = [
     "impact_analysis",
 ];
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()
-        .expect("repo root")
-}
-
-/// The store a fixture replays over: its `replay_store` pointer when present,
-/// else the legacy checked-in default.
-fn fixture_store(root: &Path, fixture: &Value, default: &str) -> PathBuf {
-    root.join(fixture["replay_store"].as_str().unwrap_or(default))
-}
-
-/// Copy-on-create scratch store; removes the directory on drop.
-struct TempStore(PathBuf);
-
-impl TempStore {
-    fn from_fixture(src: &Path) -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("cairn-p1b-nav-{}-{nanos}", std::process::id()));
-        fs::create_dir_all(&dir).expect("temp dir");
-        fs::copy(src, dir.join("nav-store.kg")).expect("copy fixture store");
-        Self(dir)
-    }
-
-    fn db(&self) -> PathBuf {
-        self.0.join("nav-store.kg")
-    }
-}
-
-impl Drop for TempStore {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
 fn nav_store_from(src: &Path) -> (Connection, TempStore) {
-    let temp = TempStore::from_fixture(src);
-    let conn = cairn_store::conn::open_read_only(&temp.db()).expect("open nav store");
+    let temp = TempStore::from_fixture(src, "nav");
+    let conn = cairn_store::conn::open_read_only(&temp.db(src)).expect("open nav store");
     (conn, temp)
-}
-
-/// `"\n".join(sorted(text.splitlines()))`.
-fn sorted_lines(text: &str) -> String {
-    let mut lines: Vec<&str> = text.lines().collect();
-    lines.sort();
-    lines.join("\n")
 }
 
 fn arg_i64(args: &Value, key: &str, default: i64) -> i64 {
@@ -103,8 +60,9 @@ fn call_tool(conn: &Connection, tool: &str, args: &Value) -> String {
 
 #[test]
 fn nav_tools_are_golden_equal() {
+    let root = repo_root();
     for tool in TOOLS {
-        let path = repo_root().join(format!("rust/golden/mcp/{tool}.json"));
+        let path = root.join(format!("rust/golden/mcp/{tool}.json"));
         let fixture: Value = serde_json::from_str(
             &fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display())),
         )
@@ -118,7 +76,7 @@ fn nav_tools_are_golden_equal() {
             "{tool}: fixture envelope drift"
         );
         let (conn, _temp) = nav_store_from(&fixture_store(
-            &repo_root(),
+            &root,
             &fixture,
             "rust/golden/nav/nav-store.kg",
         ));

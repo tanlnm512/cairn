@@ -1,31 +1,31 @@
-//! Golden parity for the script-family parsers against the fixtures
-//! under tests/fixtures/golden: normalized output must equal expected.json.
+//! Golden parity: per-language parsers reproduce the committed expected.json.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use cairn_parse::model::ParsedFile;
+use cairn_parse::ParsedFile;
+use cairn_parse::parser_apple::{ObjCParser, SwiftParser};
+use cairn_parse::parser_jvm::{JavaParser, KotlinParser};
 use cairn_parse::parser_script::{DartParser, PhpParser, PythonParser, RubyParser};
+use cairn_parse::parser_web::WebParser;
 use serde_json::{Value, json};
 
 fn golden_dir(lang: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../tests/fixtures/golden")
-        .join(lang)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../../tests/fixtures/golden/{lang}"))
 }
 
 fn expected(lang: &str) -> Value {
     let path = golden_dir(lang).join("expected.json");
-    serde_json::from_str(&std::fs::read_to_string(&path).expect("read expected.json"))
-        .expect("parse expected.json")
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {lang} golden: {e}"));
+    serde_json::from_str(&text).expect("parse expected.json")
 }
 
-/// Normalises to the expected.json schema (sorted symbols and edges).
-fn normalise(parsed: &ParsedFile) -> Value {
+/// Normalizes to the expected.json schema (sorted symbols, edges, imports).
+fn normalize(parsed: &ParsedFile) -> Value {
     let mut symbols: Vec<Value> = parsed
         .symbols
         .iter()
         .map(|s| {
-            let mut modifiers: Vec<String> = s.modifiers.clone();
+            let mut modifiers = s.modifiers.clone();
             modifiers.sort();
             json!({
                 "name": s.name,
@@ -44,10 +44,10 @@ fn normalise(parsed: &ParsedFile) -> Value {
         .collect();
     symbols.sort_by_key(|v| {
         (
-            v["kind"].as_str().expect("kind").to_string(),
-            v["name"].as_str().expect("name").to_string(),
-            v["line_start"].as_u64().expect("line_start"),
-            v["column_start"].as_u64().expect("column_start"),
+            v["kind"].as_str().unwrap_or_default().to_string(),
+            v["name"].as_str().unwrap_or_default().to_string(),
+            v["line_start"].as_i64().unwrap_or_default(),
+            v["column_start"].as_i64().unwrap_or_default(),
         )
     });
 
@@ -67,11 +67,11 @@ fn normalise(parsed: &ParsedFile) -> Value {
         .collect();
     edges.sort_by_key(|v| {
         (
-            v["source_name"].as_str().expect("source_name").to_string(),
-            v["kind"].as_str().expect("kind").to_string(),
-            v["target_name"].as_str().expect("target_name").to_string(),
-            v["line"].as_u64().expect("line"),
-            v["column"].as_u64().expect("column"),
+            v["source_name"].as_str().unwrap_or_default().to_string(),
+            v["kind"].as_str().unwrap_or_default().to_string(),
+            v["target_name"].as_str().unwrap_or_default().to_string(),
+            v["line"].as_i64().unwrap_or_default(),
+            v["column"].as_i64().unwrap_or_default(),
         )
     });
 
@@ -88,11 +88,8 @@ fn normalise(parsed: &ParsedFile) -> Value {
         .collect();
     imports.sort_by_key(|v| {
         (
-            v["imported_path"]
-                .as_str()
-                .expect("imported_path")
-                .to_string(),
-            v["line"].as_u64().expect("line"),
+            v["imported_path"].as_str().unwrap_or_default().to_string(),
+            v["line"].as_i64().unwrap_or_default(),
         )
     });
 
@@ -104,56 +101,53 @@ fn normalise(parsed: &ParsedFile) -> Value {
     })
 }
 
-fn sample_path(lang: &str, filename: &str) -> PathBuf {
-    let full = golden_dir(lang).join(filename);
-    assert!(full.exists(), "sample fixture missing for {lang}");
-    full
-}
+type SampleParser = fn(&Path) -> ParsedFile;
+
+const CASES: &[(&str, &str, SampleParser)] = &[
+    ("python", "sample.py", |p| {
+        PythonParser::new().parse(p).expect("parse python")
+    }),
+    ("php", "sample.php", |p| {
+        PhpParser::new().parse(p).expect("parse php")
+    }),
+    ("ruby", "sample.rb", |p| {
+        RubyParser::new().parse(p).expect("parse ruby")
+    }),
+    ("dart", "sample.dart", |p| {
+        DartParser::new().parse(p).expect("parse dart")
+    }),
+    ("java", "sample.java", |p| {
+        JavaParser::new().parse(p).expect("parse java")
+    }),
+    ("kotlin", "sample.kt", |p| {
+        KotlinParser::new().parse(p).expect("parse kotlin")
+    }),
+    ("swift", "sample.swift", |p| {
+        SwiftParser.parse_file(p).expect("parse swift")
+    }),
+    ("objc", "sample.m", |p| {
+        ObjCParser.parse_file(p).expect("parse objc")
+    }),
+    ("typescript", "sample.ts", |p| {
+        WebParser::typescript()
+            .parse_file(p)
+            .expect("parse typescript")
+    }),
+    ("javascript", "sample.js", |p| {
+        WebParser::javascript()
+            .parse_file(p)
+            .expect("parse javascript")
+    }),
+];
 
 #[test]
-fn python_matches_golden() {
-    let parsed = PythonParser::new()
-        .parse(&sample_path("python", "sample.py"))
-        .expect("parse python");
-    assert_eq!(
-        normalise(&parsed),
-        expected("python"),
-        "python diverged from golden"
-    );
-}
-
-#[test]
-fn php_matches_golden() {
-    let parsed = PhpParser::new()
-        .parse(&sample_path("php", "sample.php"))
-        .expect("parse php");
-    assert_eq!(
-        normalise(&parsed),
-        expected("php"),
-        "php diverged from golden"
-    );
-}
-
-#[test]
-fn ruby_matches_golden() {
-    let parsed = RubyParser::new()
-        .parse(&sample_path("ruby", "sample.rb"))
-        .expect("parse ruby");
-    assert_eq!(
-        normalise(&parsed),
-        expected("ruby"),
-        "ruby diverged from golden"
-    );
-}
-
-#[test]
-fn dart_matches_golden() {
-    let parsed = DartParser::new()
-        .parse(&sample_path("dart", "sample.dart"))
-        .expect("parse dart");
-    assert_eq!(
-        normalise(&parsed),
-        expected("dart"),
-        "dart diverged from golden"
-    );
+fn samples_match_the_committed_golden() {
+    for (lang, sample, parse) in CASES {
+        let parsed = parse(&golden_dir(lang).join(sample));
+        assert_eq!(
+            normalize(&parsed),
+            expected(lang),
+            "{lang} diverges from the committed golden"
+        );
+    }
 }

@@ -279,7 +279,6 @@ pub fn record_build_run(
         .ok()
         .and_then(|raw| raw.parse::<i64>().ok())
         .map(|n| n.clamp(1, 256));
-    let session = std::env::var("CAIRN_SESSION").unwrap_or_else(|_| "unknown".into());
     let _ = conn.execute(
         "INSERT INTO build_runs (kind, started_at, duration_s, phase_timings, repos, files, \
          symbols, edges, resolution_exact, resolution_ambiguous, resolution_unresolved, \
@@ -300,7 +299,7 @@ pub fn record_build_run(
             Option::<i64>::None,
             skipped as i64,
             workers,
-            session,
+            "unknown",
         ],
     );
 }

@@ -304,7 +304,6 @@ dependencies = [
  "axum",
  "cairn-query",
  "cairn-store",
- "regex",
  "rmcp",
  "rusqlite",
  "serde_json",

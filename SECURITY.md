@@ -37,15 +37,18 @@ code** via tree-sitter. The following are in scope:
 - Injection via `.knowledge/` markdown or graph data being rendered/executed
   unsafely.
 
-The `[semantic]` extra pulls **torch + sentence-transformers** (a large
-dependency tree). Treat **dependency/supply-chain** vulnerabilities in that set
-as a separate category — report them here so we can track and pin, but the
-upstream package is the canonical fix venue.
+The Rust dependency tree (tree-sitter grammars, sqlite-vec, crypto and HTTP
+crates) is vendored/pinned and gated by cargo-deny. Treat
+**dependency/supply-chain** vulnerabilities in that set as a separate
+category — report them here so we can track and pin, but the upstream
+package is the canonical fix venue. Optional semantic search talks to an
+external embeddings server you configure; opt-in native embedding ships as
+the `local-embed` build feature.
 
 ## Out of scope
 
 - Vulnerabilities in third-party dependencies themselves — report upstream
-  (e.g. PyTorch, sentence-transformers, tree-sitter grammars). Do let us know
+  (e.g. tree-sitter grammars, the embeddings backend you run). Do let us know
   so we can pin or document a workaround.
 - Issues already disclosed publicly (blog posts, public issues, CVEs).
 - Bugs with no security impact (use regular GitHub Issues — see CONTRIBUTING.md).

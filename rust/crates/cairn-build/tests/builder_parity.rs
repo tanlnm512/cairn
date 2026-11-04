@@ -117,6 +117,17 @@ fn output_is_identical_across_parse_pool_sizes() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A store holding a tiny graph; the seeded rows both refusal paths rely on.
+fn seed_populated_store(db: &Path) {
+    let conn = cairn_store::schema::open_initialized(db).expect("open");
+    conn.execute_batch(
+        "INSERT INTO repos (id, name, path) VALUES ('r', 'r', '.');
+         INSERT INTO files (id, repo_id, path, language) VALUES ('f', 'r', 'x.py', 'python');
+         INSERT INTO symbols (id, file_id, name, kind) VALUES ('s', 'f', 'x', 'function');",
+    )
+    .expect("seed");
+}
+
 #[test]
 fn all_skipped_scan_refuses_to_replace_a_populated_store() {
     let dir = temp_dir("empty");
@@ -124,17 +135,7 @@ fn all_skipped_scan_refuses_to_replace_a_populated_store() {
     fs::write(dir.join(".gitignore"), "skipme.py\n").expect("gitignore");
     fs::write(dir.join("skipme.py"), "x = 1\n").expect("skipped file");
     let db = dir.join("store.kg");
-    // Seed the store so it holds a graph, then scan a workspace with no
-    // indexable sources.
-    {
-        let conn = cairn_store::schema::open_initialized(&db).expect("open");
-        conn.execute_batch(
-            "INSERT INTO repos (id, name, path) VALUES ('r', 'r', '.');
-             INSERT INTO files (id, repo_id, path, language) VALUES ('f', 'r', 'x.py', 'python');
-             INSERT INTO symbols (id, file_id, name, kind) VALUES ('s', 'f', 'x', 'function');",
-        )
-        .expect("seed");
-    }
+    seed_populated_store(&db);
     let err = build_graph(
         dir.to_str().expect("ws"),
         db.to_str().expect("db"),
@@ -152,15 +153,7 @@ fn all_skipped_scan_refuses_to_replace_a_populated_store() {
 fn zero_repo_scan_refuses_to_keep_serving_a_populated_store() {
     let dir = temp_dir("norepo");
     let db = dir.join("store.kg");
-    {
-        let conn = cairn_store::schema::open_initialized(&db).expect("open");
-        conn.execute_batch(
-            "INSERT INTO repos (id, name, path) VALUES ('r', 'r', '.');
-             INSERT INTO files (id, repo_id, path, language) VALUES ('f', 'r', 'x.py', 'python');
-             INSERT INTO symbols (id, file_id, name, kind) VALUES ('s', 'f', 'x', 'function');",
-        )
-        .expect("seed");
-    }
+    seed_populated_store(&db);
     let missing = dir.join("missing").to_string_lossy().into_owned();
     let err = build_graph(&missing, db.to_str().expect("db"), None, None).expect_err("must refuse");
     assert!(err.contains("no repositories discovered"), "{err}");

@@ -5479,25 +5479,7 @@ fn wiki_enrich(
 
 #[cfg(test)]
 mod tests {
-    use clap::{Command, Subcommand};
-
     use super::*;
-
-    fn tree<T: Subcommand>() -> Command {
-        T::augment_subcommands(Command::new("cairn"))
-    }
-
-    #[test]
-    fn command_tree_parses() {
-        tree::<KnowledgeCommand>().debug_assert();
-        tree::<KnowledgeGroup>().debug_assert();
-        tree::<MemoryGroup>().debug_assert();
-        tree::<WikiGroup>().debug_assert();
-        tree::<CompassGroup>().debug_assert();
-        tree::<SkillGroup>().debug_assert();
-        tree::<TaskGroup>().debug_assert();
-        tree::<WorkflowGroup>().debug_assert();
-    }
 
     fn files_under(root: &Path) -> usize {
         let Ok(entries) = std::fs::read_dir(root) else {

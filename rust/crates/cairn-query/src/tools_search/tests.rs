@@ -45,27 +45,31 @@ fn canned_reply(body: &str) -> String {
 // --- FTS pattern conversion --------------------------------------------------
 
 #[test]
-fn prefix_patterns_pass_through() {
-    assert_eq!(pattern_to_fts("Acti*").as_deref(), Some("Acti*"));
-    assert!(is_fts_prefix_pattern("Acti*"));
-}
-
-#[test]
-fn underscored_names_take_the_phrase_path() {
-    assert_eq!(
-        pattern_to_fts("_render_active").as_deref(),
-        Some("\"render active\"*")
-    );
-    assert!(!is_fts_prefix_pattern("_render_active"));
-}
-
-#[test]
-fn non_ascii_and_empty_patterns_select_like() {
-    assert_eq!(pattern_to_fts(""), None);
-    assert_eq!(pattern_to_fts("  "), None);
-    assert!(pattern_to_fts("***").is_none());
-    // The FTS tokenizer splits on ASCII-only classes, so é breaks the token.
-    assert_eq!(pattern_to_fts("café").as_deref(), Some("\"caf\"*"));
+fn fts_pattern_routing_selects_the_conversion_path() {
+    // (pattern, pattern_to_fts, is_fts_prefix_pattern where pinned)
+    let rows: [(&str, Option<&str>, Option<bool>); 6] = [
+        ("Acti*", Some("Acti*"), Some(true)),
+        ("_render_active", Some("\"render active\"*"), Some(false)),
+        ("", None, None),
+        ("  ", None, None),
+        ("***", None, None),
+        // The FTS tokenizer splits on ASCII-only classes, so é breaks the token.
+        ("café", Some("\"caf\"*"), None),
+    ];
+    for (pattern, fts, prefix) in rows {
+        assert_eq!(
+            pattern_to_fts(pattern).as_deref(),
+            fts,
+            "conversion for {pattern:?}"
+        );
+        if let Some(prefix) = prefix {
+            assert_eq!(
+                is_fts_prefix_pattern(pattern),
+                prefix,
+                "prefix flag for {pattern:?}"
+            );
+        }
+    }
 }
 
 // --- hash embedder -----------------------------------------------------------

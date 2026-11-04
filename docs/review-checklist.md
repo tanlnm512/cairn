@@ -63,8 +63,8 @@ they actually ran — not just that they were claimed:
       performance path (ANN→brute-force, hash-embed, lock-contention swallow,
       result truncation, semantic-backend switch), `cairn doctor` was run and
       acted on, and the telemetry signal exposing any degradation is named
-      (spec §6.4 event catalog). A silent degrade is the bug class this codebase
-      is built to avoid.
+      (`cairn metrics` sections / the telemetry tables). A silent degrade is
+      the bug class this codebase is built to avoid.
 - [ ] Tests are hermetic — no dependence on the dev machine's PATH/HOME/env;
       Rust tests that touch the store build into a scratch path, never the
       live one.
