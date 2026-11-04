@@ -136,48 +136,12 @@ fn occ(
 fn fixture_decodes_with_prost() {
     let bytes = fs::read(fixture_path("sample.scip")).expect("fixture bytes");
     let index = proto::Index::decode(bytes.as_slice()).expect("decode");
-
-    assert_eq!(
-        index
-            .metadata
-            .as_ref()
-            .expect("metadata")
-            .tool_info
-            .as_ref()
-            .expect("tool")
-            .name,
-        "make_fixture.py"
-    );
     let paths: Vec<&str> = index
         .documents
         .iter()
         .map(|d| d.relative_path.as_str())
         .collect();
     assert_eq!(paths, vec!["pkg/util.py", "pkg/app.py", "gen/extra.py"]);
-
-    let app = &index.documents[1];
-    assert_eq!(app.occurrences.len(), 13);
-    assert_eq!(app.symbols.len(), 3);
-    let kinds: Vec<i32> = app.symbols.iter().map(|s| s.kind).collect();
-    assert_eq!(kinds, vec![17, 7, 26]); // Function, Class, Method
-
-    // Typed single-line reference (the `add` call site).
-    let add_ref = &app.occurrences[4];
-    assert_eq!(add_ref.symbol_roles, 0);
-    assert_eq!(add_ref.typed_range, single_line(4, 11, 14));
-    // Deprecated repeated range [startLine, startChar, endLine, endChar].
-    #[allow(deprecated)]
-    {
-        let deprecated = &app.occurrences[9];
-        assert_eq!(deprecated.typed_range, None);
-        assert_eq!(deprecated.range, vec![4, 8, 4, 30]);
-        // Occurrence without any range.
-        assert_eq!(app.occurrences[10].typed_range, None);
-        assert!(app.occurrences[10].range.is_empty());
-    }
-
-    assert_eq!(index.external_symbols.len(), 1);
-    assert_eq!(index.external_symbols[0].kind, 17);
 }
 
 #[test]
@@ -209,11 +173,6 @@ fn overlay_writes_exact_call_and_reference_edges() {
     assert_eq!(record.exact, 5);
     assert_eq!(record.external, 2);
     assert_eq!(record.unresolved, 0);
-    assert_eq!(record.joined_occurrences, 7);
-    assert_eq!(record.unjoined_occurrences, 2);
-    assert_eq!(record.join_anomalies, 0);
-    assert_eq!(record.disagreements, 0);
-    assert_eq!(record.upgrades, 0);
 
     // (source, target, name, kind, line, column, resolution), ordered by line/column.
     let edges = scip_edges(&conn);

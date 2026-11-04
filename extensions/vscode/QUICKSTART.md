@@ -6,7 +6,8 @@ extension manages for you.
 
 ## Install and use
 
-1. Install the extension — from the marketplace, or the manual path:
+1. Install the extension from a release — grab `cairn-ext.vsix` from the
+   [releases page](https://github.com/tanlnm512/cairn/releases) and run:
    `code --install-extension <downloaded>.vsix`
 2. Open a workspace that cairn has indexed.
 3. Done. On activation the extension connects to the local cairn process on

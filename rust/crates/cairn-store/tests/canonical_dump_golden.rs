@@ -22,20 +22,20 @@ fn dumped_text(opts: &DumpOptions) -> String {
 
 #[test]
 fn dump_is_byte_equal_to_the_golden() {
-    let expected = fs::read_to_string(golden_dir().join("corner-store.canonical.txt"))
-        .expect("read canonical golden");
-    assert_eq!(dumped_text(&DumpOptions::default()), expected);
-}
-
-#[test]
-fn dump_with_map_path_is_byte_equal_to_the_golden() {
-    let expected = fs::read_to_string(golden_dir().join("corner-store.mapped.canonical.txt"))
-        .expect("read mapped golden");
-    let opts = DumpOptions {
-        map_paths: vec![("/Users/x".to_string(), "<HOME>".to_string())],
-        only: None,
-    };
-    assert_eq!(dumped_text(&opts), expected);
+    let cases = [
+        ("corner-store.canonical.txt", DumpOptions::default()),
+        (
+            "corner-store.mapped.canonical.txt",
+            DumpOptions {
+                map_paths: vec![("/Users/x".to_string(), "<HOME>".to_string())],
+                only: None,
+            },
+        ),
+    ];
+    for (golden, opts) in cases {
+        let expected = fs::read_to_string(golden_dir().join(golden)).expect("read golden");
+        assert_eq!(dumped_text(&opts), expected, "{golden} diverges");
+    }
 }
 
 #[test]

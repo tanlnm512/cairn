@@ -2157,29 +2157,20 @@ mod tests {
                 .fact_str("parent_task_id"),
             t2.id
         );
-    }
 
-    #[test]
-    fn complete_checks_notes_section_of_results() {
-        let bundle = scratch_bundle("notes");
-        let conn = seeded_conn();
-        let task = create_task(
+        let t3 = create_task(
             &bundle,
             "compass-synthesize",
-            "src/graph",
+            "src/notes",
             facts(&[("key_files", Yaml::Array(vec![ys("src/graph/queries.py")]))]),
             0,
         )
-        .expect("create");
-        claim_task(&bundle, &task.id, "")
-            .expect("claim")
+        .expect("create3");
+        claim_task(&bundle, &t3.id, "")
+            .expect("claim3")
             .expect("ok");
-        let passing = "# What Does This Module Do?\nSee `src/graph/queries.py`.\n\
-             # Common Modification Patterns\n...\n# Build-Failure Patterns\n...\n\
-             # Cross-Module Dependencies\n...\n# Tribal Knowledge\n...\n";
         let result = format!("{passing}\n## Notes\n- see `no/such/file.py`\n");
-        let outcome =
-            complete_task(&bundle, &task.id, &result, Some(&conn), None, None).expect("c");
+        let outcome = complete_task(&bundle, &t3.id, &result, Some(&conn), None, None).expect("c3");
         assert!(outcome.revised, "Notes must be checked: {outcome:?}");
         assert!(!outcome.promoted);
     }

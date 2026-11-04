@@ -232,8 +232,8 @@ reference is `docs/cli-reference.md`.
 
 ## Knowledge Files
 
-The active OKF bundle is `<store>/.knowledge/` (see `cairn config --json`);
-the repository seed is `.cairn-knowledge/`. Bundle paths:
+The active OKF bundle is `<store>/.knowledge/` (see `cairn config --json`).
+Bundle paths:
 
 - `compass/` -- module navigation guides (25-35 lines each)
 - `wiki/` -- architectural documentation

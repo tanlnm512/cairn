@@ -1,3 +1,0 @@
-fun greet(name: String): String {
-    return "hello " + name
-}

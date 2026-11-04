@@ -3310,11 +3310,9 @@ mod tests {
         let report =
             uninstall(&dir, Some(&["claude".to_string()]), "workspace").expect("uninstall 2");
         assert!(
-            report.results[0]
-                .written
-                .iter()
-                .any(|p| p.contains("(nothing to remove)") || true)
-                || report.results[0].written.is_empty()
+            report.results[0].written.is_empty(),
+            "second uninstall must be a no-op: {:?}",
+            report.results[0].written
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3481,7 +3479,14 @@ mod tests {
         std::fs::write(&skill, b"modified").expect("modify");
         let report = uninstall(&dir, Some(&["kilo".to_string()]), "workspace").expect("uninstall");
         assert!(skill.exists(), "modified template file must be kept");
-        assert!(report.results[0].written.is_empty() || report.cross_tool.is_some());
+        assert!(
+            !report.results[0]
+                .written
+                .iter()
+                .any(|p| p.contains("SKILL.md")),
+            "modified file must not be reported removed: {:?}",
+            report.results[0].written
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

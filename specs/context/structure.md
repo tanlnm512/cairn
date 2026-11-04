@@ -1,8 +1,7 @@
 # Code structure: cairn
 
-Module map of the Rust engine, its entry points and the development-only
-Python trees. Every path below was read from the tree; re-verify with
-`rg --files rust/crates` before citing.
+Module map of the Rust engine and its entry points. Every path below was
+read from the tree; re-verify with `rg --files rust/crates` before citing.
 
 ## Distribution
 - One engine binary, `cairn`, built from `rust/crates/cairn-cli` and versioned
@@ -16,7 +15,7 @@ Python trees. Every path below was read from the tree; re-verify with
 | `cairn-store` | SQLite schema mirror and migrations (`schema.rs`), connection factory (`conn.rs`), build lock and atomic swap (`swap.rs`), sqlite-vec helpers (`vec0.rs`), canonical dump (`dump.rs`) |
 | `cairn-parse` | tree-sitter registry and per-language extraction (`parser_{script,web,apple,jvm,sys}.rs`), generic tier, symbol/edge/import model, rationale comments |
 | `cairn-build` | scanner, rayon builder, resolver (exact/ambiguous/unresolved triage, repair), incremental update and watcher, transitive closure, dataflow, embeddings, routes and service calls, SCIP import and overlay (`scip/`) |
-| `cairn-query` | read path and knowledge layer: search (FTS5 + vector + RRF), navigation and impact, flow and taint, federation, KM/memory/compass (`tools_km.rs`), wiki and task queue (`tools_wiki.rs`, `tasks.rs`), review engine, ingest, skill generation, Python sidecar resolution (`sidecar.rs`) |
+| `cairn-query` | read path and knowledge layer: search (FTS5 + vector + RRF), navigation and impact, flow and taint, federation, KM/memory/compass (`tools_km.rs`), wiki and task queue (`tools_wiki.rs`, `tasks.rs`), review engine, document ingestion (`convert.rs`, `ingest.rs`), skill generation |
 | `cairn-daemon` | rmcp Streamable HTTP server for the 26 MCP tools (`server.rs`, `tools.rs`), bearer auth, healthz, daemon lifecycle (launchd plist on macOS, detached process elsewhere) |
 | `cairn-cli` | the `cairn` binary: clap tree in `cli.rs` (Core / Knowledge / System groups dispatched to `cmds_*.rs`), agent install and hooks, doctor, dashboard (`dashboard/`, minijinja templates), pack |
 
@@ -47,4 +46,3 @@ Vendored: `rust/vendor/tree-sitter-dart` (workspace member) and
   workflow).
 - `docs/`: user and contributor documentation; `docs/cli-reference.md` is
   the CLI reference.
-- `.cairn-knowledge/`: repository seed for the knowledge bundle.

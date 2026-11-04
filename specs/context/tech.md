@@ -32,7 +32,7 @@ Stack, build and test runners, and gates. Cited from `Cargo.toml`,
 | Workflow | Trigger | Jobs |
 |---|---|---|
 | `ci.yml` | push, PR, merge queue | PR title, pre-commit, quality ratchet, dependency review, container |
-| `rust.yml` | push, PR, merge queue | fmt, clippy, test, deny, release build matrix (macOS and Linux gnu/musl targets) |
+| `rust.yml` | push, PR, merge queue | fmt, clippy, test, deny, windows leg (clippy + test + main-only release build) |
 | `rust-parity.yml` | PR (cheap subset), nightly, dispatch | parity, parity-stores, g2-legs |
 | `release.yml` | tag | GitHub release |
 | `release-rust.yml` | tag | binaries, GitHub release |
@@ -44,6 +44,3 @@ Stack, build and test runners, and gates. Cited from `Cargo.toml`,
 - Shipping workflow, test-first, dependency decisions and test isolation:
   `specs/CONSTITUTION.md` (C-01–C-04).
 - Comment, doc and log style and the reuse-first rule: `AGENTS.md`.
-- Local quirk: `cmds_doctor::tests::daemon_check_reports_the_serving_impl`
-  asserts against whatever daemon is live on the machine and fails while a
-  developer daemon runs.

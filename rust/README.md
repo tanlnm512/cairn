@@ -1,9 +1,10 @@
 # cairn — rust workspace
 
-Six crates (`cairn-store`, `cairn-query`, `cairn-parse`, `cairn-build`,
-`cairn-daemon`, `cairn-cli`) plus the vendored dart grammar build the `cairn`
-engine binary that every install channel ships. The workspace version is
-bumped at release time; the release tag must equal it.
+Seven crates (`cairn-store`, `cairn-query`, `cairn-parse`, `cairn-build`,
+`cairn-daemon`, `cairn-cli`, `xtask`) plus the vendored `tree-sitter-dart`
+and `sqlite-vec` crates build the `cairn` engine binary that every install
+channel ships. The workspace version is bumped at release time; cut the
+`v*` tag from a tree whose workspace version already equals it.
 
 - Frozen contracts: the `.kg` schema (C-1) and the 26-tool MCP surface (C-2),
   pinned by the goldens under `golden/`

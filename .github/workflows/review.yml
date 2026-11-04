@@ -27,9 +27,6 @@ jobs:
     env:
       # Deterministic embedder: graph build stays offline and reproducible.
       CAIRN_EMBED_BACKEND: hash
-      # Mistake/pattern memories ride the repo in this bundle; a fresh
-      # runner store starts memory-empty and would key nothing.
-      CAIRN_KNOWLEDGE: ${{ github.workspace }}/.cairn-knowledge
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

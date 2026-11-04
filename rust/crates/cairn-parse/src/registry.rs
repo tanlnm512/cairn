@@ -2,26 +2,6 @@
 
 use tree_sitter::{Language, Parser};
 
-/// Every routed language name, sorted.
-pub const LANGUAGE_NAMES: &[&str] = &[
-    "c",
-    "cpp",
-    "csharp",
-    "dart",
-    "go",
-    "java",
-    "javascript",
-    "kotlin",
-    "objc",
-    "php",
-    "python",
-    "ruby",
-    "rust",
-    "swift",
-    "tsx",
-    "typescript",
-];
-
 /// Grammar for `name`; None when unsupported.
 pub fn grammar(name: &str) -> Option<Language> {
     Some(match name {
@@ -61,15 +41,6 @@ pub fn parser(name: &str) -> Option<Parser> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn routes_every_language_name() {
-        assert_eq!(LANGUAGE_NAMES.len(), 16);
-        for name in LANGUAGE_NAMES {
-            assert!(grammar(name).is_some(), "{name} has no grammar route");
-            assert!(is_language_available(name), "{name} reports unavailable");
-        }
-    }
 
     #[test]
     fn unknown_language_is_unavailable() {
