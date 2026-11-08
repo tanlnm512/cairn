@@ -11,6 +11,10 @@ const IN_INDEX_CALLREF: &str = "SELECT count(*) FROM edges e JOIN symbols s ON e
      JOIN files f ON s.file_id = f.id WHERE f.path LIKE '%in_index.py' \
      AND e.kind IN ('calls', 'references')";
 
+const OUTSIDE_INDEX_CALLREF: &str = "SELECT count(*) FROM edges e JOIN symbols s ON e.source_id = s.id \
+     JOIN files f ON s.file_id = f.id WHERE f.path LIKE '%outside_index.py' \
+     AND e.kind IN ('calls', 'references')";
+
 fn fixture_dir(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../../tests/fixtures/scip-indexing")
@@ -84,6 +88,13 @@ fn build_applies_configured_index_and_reports_scip_summary() {
             &format!("{IN_INDEX_CALLREF} AND coalesce(e.source, '') != 'scip'")
         ),
         0
+    );
+    // A file outside the index keeps its tree-sitter calls/references.
+    assert!(
+        count(
+            &db,
+            &format!("{OUTSIDE_INDEX_CALLREF} AND coalesce(e.source, '') = 'tree_sitter'")
+        ) > 0
     );
     // The overlay touches calls/references only.
     assert_eq!(
