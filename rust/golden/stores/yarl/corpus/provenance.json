@@ -1,0 +1,16 @@
+{
+  "upstream_repo": "https://github.com/aio-libs/yarl",
+  "upstream_version": "1.24.5",
+  "source_archive": "https://files.pythonhosted.org/packages/31/33/ebe9e3d1f86c7a0b51094c0a146392045ca1631d2664889539dec8088a33/yarl-1.24.5.tar.gz",
+  "source_archive_sha256": "e81b83143bee16329c23db3c1b2d82b29892fcbcb849186d2f6e98a5abe9a57f",
+  "license": "Apache-2.0",
+  "license_file": "LICENSE",
+  "export_date": "2026-10-19",
+  "export_notes": [
+    "Pinned artifact = the yarl 1.24.5 sdist from PyPI (registry-pinned, not a moving git ref); the sha256 above matched the digest published on pypi.org/yarl/1.24.5 at authoring time.",
+    "Kept: yarl/ (package sources, _quoting_c.pyx, py.typed), tests/ (16 .py test files), LICENSE (verbatim Apache-2.0), NOTICE, README.rst, CHANGES.rst + CHANGES/, pyproject.toml (project identity metadata).",
+    "Excluded (docs/packaging machinery): docs/, packaging/, requirements/, yarl.egg-info/, MANIFEST.in, PKG-INFO (sdist metadata duplicate), setup.cfg, pytest.ini, tox.ini, towncrier.toml.",
+    "Every tracked .py byte-matches its copy in the sha256-pinned sdist (cmp-verified); vendored_bytes = 437498 across 33 tracked files."
+  ],
+  "vendored_bytes": 437498
+}
