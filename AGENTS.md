@@ -175,7 +175,8 @@ Applies to code comments, docstrings, logging, markdown, and CHANGELOG entries.
   section from `docs/flows/business-flows.md` when reviewing.
 - Tests may tag their flow (`// F#`); `cargo xtask flow-coverage` regenerates
   `docs/flows/coverage.md` — run it when tests are added or removed and commit
-  the result.
+  the result (the quality-ratchet CI job fails on a stale table; unclassified
+  test files are warned about as new-flow-or-misnamed-test candidates).
 
 ## Dead code and stale-data hygiene (mandatory)
 

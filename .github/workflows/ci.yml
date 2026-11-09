@@ -116,6 +116,8 @@ jobs:
           ' comment-style.json
       - name: Doc links resolve
         run: cargo xtask check-doc-links
+      - name: Flow coverage table is fresh
+        run: cargo xtask flow-coverage --check
       - name: Conformance table matches the fixtures
         run: cargo xtask conformance-table --check
       - name: SCIP fixture matches its generator

@@ -7,10 +7,10 @@ plus explicit `// F#` tags. Inline `#[cfg(test)]` modules are not counted.
 
 | Flow | Test files | Matching test files |
 | --- | --- | --- |
-| F1 Graph indexing / build pipeline | 13 | tests/import_scip_output.rs, tests/update_file.rs, tests/init_hooks.rs, tests/dashboard_parity.rs, tests/incremental_graft.rs, tests/closure_semantics.rs, tests/resolver_semantics.rs, tests/builder_parity.rs, tests/incremental_detect.rs, tests/scip_import.rs, tests/watcher_service.rs, tests/builder_scip_overlay.rs, tests/km_golden.rs |
-| F2 Graph query & navigation | 9 | tests/daemon_tools.rs, tests/dashboard_parity.rs, tests/impact_guard.rs, tests/incremental_graft.rs, tests/builder_parity.rs, tests/golden_search.rs, tests/km_golden.rs, tests/flow_golden.rs, tests/nav_golden.rs |
-| F3 Semantic search & embedding index | 5 | tests/daemon_tools.rs, tests/incremental_graft.rs, tests/embeddings_parity.rs, tests/golden_search.rs, tests/native_embed.rs |
-| F6 Memory lifecycle | 3 | tests/daemon_tools.rs, tests/dashboard_parity.rs, tests/km_golden.rs |
+| F1 Graph indexing / build pipeline | 14 | tests/builder_parity.rs, tests/builder_scip_overlay.rs, tests/closure_semantics.rs, tests/incremental_detect.rs, tests/incremental_graft.rs, tests/resolver_semantics.rs, tests/scip_import.rs, tests/watcher_service.rs, tests/dashboard_parity.rs, tests/import_scip_output.rs, tests/init_hooks.rs, tests/update_file.rs, tests/parser_golden.rs, tests/km_golden.rs |
+| F2 Graph query & navigation | 9 | tests/builder_parity.rs, tests/incremental_graft.rs, tests/dashboard_parity.rs, tests/impact_guard.rs, tests/daemon_tools.rs, tests/flow_golden.rs, tests/golden_search.rs, tests/km_golden.rs, tests/nav_golden.rs |
+| F3 Semantic search & embedding index | 5 | tests/embeddings_parity.rs, tests/incremental_graft.rs, tests/daemon_tools.rs, tests/golden_search.rs, tests/native_embed.rs |
+| F6 Memory lifecycle | 3 | tests/dashboard_parity.rs, tests/daemon_tools.rs, tests/km_golden.rs |
 | F4 Knowledge base, compass, routing | 2 | tests/daemon_tools.rs, tests/km_golden.rs |
 | F7 Federation & cross-repo | 2 | tests/daemon_tools.rs, tests/flow_golden.rs |
 | F8 MCP daemon serving | 2 | tests/auth_lifecycle.rs, tests/daemon_tools.rs |

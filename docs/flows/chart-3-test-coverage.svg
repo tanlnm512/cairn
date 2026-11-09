@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg viewBox="0 0 1000 500" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="cairn-testcov-title cairn-testcov-desc">
       <title id="cairn-testcov-title">Test files per cairn business flow</title>
-      <desc id="cairn-testcov-desc">Column chart of integration test files per cairn business flow: build pipeline thirteen, graph query nine, knowledge layer six, semantic search five, federation two, MCP daemon two, dashboard one, with federation flagged because its federated_search store walk has no test.</desc>
+      <desc id="cairn-testcov-desc">Column chart of integration test files per cairn business flow: build pipeline fourteen, graph query nine, knowledge layer six, semantic search five, federation two, MCP daemon two, dashboard one, with federation flagged because its federated_search store walk has no test.</desc>
       <defs><style>@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');</style></defs>
 
       <rect width="100%" height="100%" fill="#f5f5f5"/>
@@ -18,8 +18,8 @@
       <text transform="rotate(-90 24 230)" x="24" y="230" fill="#4f5d75" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">TEST FILES</text>
 
       <!-- bars (centers 156, 276, 396, 516, 636, 756, 876 · w=72) -->
-      <rect x="120" y="108" width="72" height="312" fill="rgba(79,93,117,0.15)" stroke="#4f5d75" stroke-width="1"/>
-      <text x="156" y="100" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">13</text>
+      <rect x="120" y="84" width="72" height="336" fill="rgba(79,93,117,0.15)" stroke="#4f5d75" stroke-width="1"/>
+      <text x="156" y="76" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">14</text>
 
       <rect x="240" y="204" width="72" height="216" fill="rgba(79,93,117,0.15)" stroke="#4f5d75" stroke-width="1"/>
       <text x="276" y="196" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">9</text>

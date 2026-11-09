@@ -33,6 +33,15 @@ pub(crate) struct FlowHits {
     pub(crate) files: Vec<String>,
 }
 
+/// Lists test files that matched no flow — a new flow missing from flows.json, or a misnamed test.
+pub(crate) fn unclassified_files(hits: &[FlowHits], paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|p| !hits.iter().any(|h| h.files.contains(p)))
+        .cloned()
+        .collect()
+}
+
 fn flow_matches(spec: &FlowSpec, rel_path: &str, content: &str) -> bool {
     spec.patterns
         .iter()
@@ -52,11 +61,12 @@ where
     flows
         .into_iter()
         .map(|spec| {
-            let matched = files
+            let mut matched = files
                 .iter()
                 .filter(|(path, content)| flow_matches(&spec, path, content))
                 .map(|(path, _)| path.clone())
                 .collect::<Vec<_>>();
+            matched.sort();
             FlowHits {
                 spec,
                 files: matched,
@@ -120,6 +130,7 @@ fn integration_test_files(root: &std::path::Path) -> Vec<(String, String)> {
         .filter(|e| {
             e.path().extension().is_some_and(|x| x == "rs")
                 && e.path().components().any(|c| c.as_os_str() == "tests")
+                && !e.path().components().any(|c| c.as_os_str() == "common")
         })
         .map(|e| {
             let rel = e
@@ -149,7 +160,24 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let hits = count_flows(registry.flows, integration_test_files(&root));
+    let files = integration_test_files(&root);
+    let paths: Vec<String> = files.iter().map(|(p, _)| p.clone()).collect();
+    let hits = count_flows(registry.flows, files);
+    let orphans = {
+        let mut o = unclassified_files(&hits, &paths);
+        o.sort();
+        o
+    };
+    if !orphans.is_empty() {
+        eprintln!(
+            "warning: {} test file(s) match no flow in {}; new flow or misnamed test?",
+            orphans.len(),
+            FLOWS_JSON
+        );
+        for path in &orphans {
+            eprintln!("  {path}");
+        }
+    }
     let rendered = render(&hits);
     if check {
         match fs::read_to_string(root.join(COVERAGE_MD)) {
@@ -235,5 +263,42 @@ mod tests {
             vec![("rust/crates/x/tests/a.rs".into(), "fn t() {}".into())],
         );
         assert!(hits.iter().all(|h| h.files.is_empty()));
+    }
+
+    #[test]
+    fn unclassified_files_flags_tests_matching_no_flow() {
+        let files: Vec<(String, String)> = vec![
+            (
+                "rust/crates/cairn-build/tests/builder_parity.rs".into(),
+                "use builder;".into(),
+            ),
+            ("rust/crates/x/tests/orphan.rs".into(), "fn t() {}".into()),
+        ];
+        let paths: Vec<String> = files.iter().map(|f| f.0.clone()).collect();
+        let hits = count_flows(flows(), files);
+        assert_eq!(
+            unclassified_files(&hits, &paths),
+            vec!["rust/crates/x/tests/orphan.rs".to_string()]
+        );
+    }
+
+    #[test]
+    fn matched_file_lists_are_sorted_regardless_of_input_order() {
+        let mk = |p: &str| (p.to_string(), "use builder;".to_string());
+        let hits = count_flows(
+            flows(),
+            vec![
+                mk("rust/crates/b/tests/b.rs"),
+                mk("rust/crates/a/tests/a.rs"),
+            ],
+        );
+        let f1 = hits.iter().find(|h| h.spec.id == "F1").unwrap();
+        assert_eq!(
+            f1.files,
+            vec![
+                "rust/crates/a/tests/a.rs".to_string(),
+                "rust/crates/b/tests/b.rs".to_string()
+            ]
+        );
     }
 }

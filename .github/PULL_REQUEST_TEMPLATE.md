@@ -9,6 +9,8 @@ is the human/agent audit layer.
 
 <!-- 1-3 lines: what & why. Link the issue if any. -->
 
+Flows affected: <!-- F1–F9 ids from docs/flows/index.md, e.g. `F2, F7`; `none` for docs-only changes -->
+
 ## Change type
 
 - [ ] Feature / improvement
@@ -26,6 +28,7 @@ Author — confirm before requesting review (procedure: `docs/review-checklist.m
 - [ ] **Memory recorded** — `record_memory` for any decision / pattern / mistake
 - [ ] **Fallback/perf paths** — if the change alters a fallback or performance path, `cairn doctor` was run and the telemetry signal exposing the degradation is named
 - [ ] **Tests** — change is covered (`cargo test --workspace`); new tests are hermetic (no PATH/HOME/env dependence; `result.stdout`, not `result.output`)
+- [ ] **Flows** — `flows:` ids named above; `cargo xtask flow-coverage` regenerated `docs/flows/coverage.md` if test files changed (CI gates staleness)
 - [ ] **CHANGELOG** — `[Unreleased]` entry added (feature/bugfix only)
 - [ ] **Comment, doc & log brevity** — 1-line docstrings default, no commentary blocks, no decision logs in code, non-verbose logging (AGENTS.md §"Comment, doc, and log style")
 - [ ] **Gates green** — pre-commit, cargo-deny, conventional PR title

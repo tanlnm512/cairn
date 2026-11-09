@@ -6,7 +6,8 @@
       "patterns": [
         "builder", "incremental", "scip_import", "import_scip", "resolver_semantics",
         "watcher_service", "closure_semantics", "update_file", "init_hooks",
-        "scan_workspace", "reindex_paths", "detect_changed", "install_staged", "build_graph_with"
+        "scan_workspace", "reindex_paths", "detect_changed", "install_staged", "build_graph_with",
+        "cairn_parse", "ParsedFile"
       ]
     },
     {
