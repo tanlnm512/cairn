@@ -83,7 +83,7 @@ pub(crate) fn query_rows(
         Ok(stmt) => stmt,
         Err(_) => return Vec::new(),
     };
-    let names: Vec<String> = stmt.column_names().into_iter().map(String::from).collect();
+    let names: Vec<String> = stmt.column_names().map(String::from).collect();
     let mut rows = match stmt.query(params) {
         Ok(rows) => rows,
         Err(_) => return Vec::new(),

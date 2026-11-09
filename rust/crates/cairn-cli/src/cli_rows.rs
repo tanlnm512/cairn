@@ -56,7 +56,7 @@ fn query_rows(
     params: &[&dyn rusqlite::ToSql],
 ) -> rusqlite::Result<Vec<PyRow>> {
     let mut stmt = conn.prepare(sql)?;
-    let names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let names: Vec<String> = stmt.column_names().map(|s| s.to_string()).collect();
     let mapped = stmt.query_map(params, |row| row_to_pyrow(row, &names))?;
     mapped.collect()
 }
