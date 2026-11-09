@@ -1,0 +1,82 @@
+{
+  "flows": [
+    {
+      "id": "F1",
+      "name": "Graph indexing / build pipeline",
+      "patterns": [
+        "builder", "incremental", "scip_import", "import_scip", "resolver_semantics",
+        "watcher_service", "closure_semantics", "update_file", "init_hooks",
+        "scan_workspace", "reindex_paths", "detect_changed", "install_staged", "build_graph_with"
+      ]
+    },
+    {
+      "id": "F2",
+      "name": "Graph query & navigation",
+      "patterns": [
+        "nav_golden", "flow_golden", "tools_nav", "callers_text", "callees_text",
+        "impact_analysis", "trace_flow", "find_definition", "explore",
+        "blast_radius", "build_pack", "pre_submit", "rationale", "taint",
+        "communities", "search_symbols", "impact_guard"
+      ]
+    },
+    {
+      "id": "F3",
+      "name": "Semantic search & embedding index",
+      "patterns": [
+        "golden_search", "embeddings_parity", "native_embed", "semantic_search",
+        "embed_all", "tools_search", "embed_backend", "hash_vec", "rrf_fuse",
+        "embed_knowledge", "embed_memory", "vec0"
+      ]
+    },
+    {
+      "id": "F4",
+      "name": "Knowledge base, compass, routing",
+      "patterns": [
+        "km_golden", "tools_km", "ask_compass", "generate_compass", "knowledge_add",
+        "search_knowledge", "route_query", "skillgen", "ingest", "generate_flow",
+        "trace_workflow", "Bundle"
+      ]
+    },
+    {
+      "id": "F5",
+      "name": "Wiki generation via LLM task queue",
+      "patterns": [
+        "tools_wiki", "wiki_generate", "build_page_plan", "complete_task",
+        "run_critic", "claim_task", "queue_enrich", "retry_failed", "derived_state",
+        "wiki_status"
+      ]
+    },
+    {
+      "id": "F6",
+      "name": "Memory lifecycle",
+      "patterns": [
+        "record_memory", "recall_memory", "capture_memory", "search_memory",
+        "decay_memory", "promote_memory", "demote_memory", "memory_refs",
+        "tier_for_score", "agent_hooks", "supersede", "reflect_store"
+      ]
+    },
+    {
+      "id": "F7",
+      "name": "Federation & cross-repo",
+      "patterns": [
+        "federated_search", "tools_federation", "cross_repo_deps", "load_registry",
+        "iter_stores"
+      ]
+    },
+    {
+      "id": "F8",
+      "name": "MCP daemon serving",
+      "patterns": [
+        "daemon_tools", "auth_lifecycle", "conn_pool", "bearer_gate", "healthz",
+        "ensure_daemon_running", "reuse_decision", "render_plist", "install_agents"
+      ]
+    },
+    {
+      "id": "F9",
+      "name": "Read-only web dashboard",
+      "patterns": [
+        "dashboard", "settings_save", "inspect_symbol", "AppState"
+      ]
+    }
+  ]
+}
