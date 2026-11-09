@@ -168,6 +168,15 @@ Applies to code comments, docstrings, logging, markdown, and CHANGELOG entries.
   per-caller contract differences are documented at the helper.
 - Add a new function only when no existing one satisfies the caller.
 
+## Flow reference (docs/flows/)
+
+- Business flows carry stable IDs F1–F9 (`docs/flows/index.md`).
+- PR descriptions name affected flows (e.g. `flows: F2, F7`); pull the flow's
+  section from `docs/flows/business-flows.md` when reviewing.
+- Tests may tag their flow (`// F#`); `cargo xtask flow-coverage` regenerates
+  `docs/flows/coverage.md` — run it when tests are added or removed and commit
+  the result.
+
 ## Dead code and stale-data hygiene (mandatory)
 
 Dead surface and stale mentions do not accumulate; every rule below is

@@ -384,6 +384,7 @@ effective value and where it came from):
 | [docs/mcp-tools.md](docs/mcp-tools.md) · [docs/cli-reference.md](docs/cli-reference.md) | the two tool surfaces |
 | [docs/deployment.md](docs/deployment.md) | HTTP serving: key policy, networked and container deployment |
 | [docs/review-checklist.md](docs/review-checklist.md) · [docs/release-checklist.md](docs/release-checklist.md) | contribution and release procedures |
+| [docs/flows/](docs/flows/index.md) | business-flow reference: stable F1–F9 IDs, charts, per-flow test coverage |
 
 ## Troubleshooting
 

@@ -62,13 +62,18 @@ jobs:
         with:
           path: ~/.cache/prek
           key: prek-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Cache prek binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/prek-install
+          key: prek-bin-v1-${{ env.PREK_VERSION }}
       - name: Install prek
-        env:
-          PREK_INSTALL_DIR: ${{ runner.temp }}/prek-bin
-          PREK_NO_MODIFY_PATH: "1"
+        # Release-CDN asset downloads intermittently 504; crates.io + local build is immune.
         run: |
-          curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/j178/prek/releases/download/v${PREK_VERSION}/prek-installer.sh" | sh
-          echo "$PREK_INSTALL_DIR" >> "$GITHUB_PATH"
+          if [ ! -x "$RUNNER_TEMP/prek-install/bin/prek" ]; then
+            cargo install prek --version "${PREK_VERSION}" --locked --root "$RUNNER_TEMP/prek-install"
+          fi
+          echo "$RUNNER_TEMP/prek-install/bin" >> "$GITHUB_PATH"
       - name: Run all hooks
         # Rust CI owns fmt/clippy and the quality ratchet owns comment-style.
         run: prek run --all-files

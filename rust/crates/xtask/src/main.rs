@@ -12,6 +12,7 @@ mod closure_bench;
 mod comment_style;
 mod conformance_table;
 mod corner_store;
+mod flow_coverage;
 mod golden_record;
 mod kg_diff;
 mod kg_dump;
@@ -31,6 +32,7 @@ const COMMANDS: &[&str] = &[
     "kg-normalize",
     "kg-diff",
     "corner-store",
+    "flow-coverage",
     "baseline",
     "closure-bench",
     "comment-style",
@@ -61,6 +63,7 @@ fn main() -> ExitCode {
         "kg-normalize" => kg_normalize::run(rest),
         "kg-diff" => kg_diff::run(rest),
         "corner-store" => corner_store::run(rest),
+        "flow-coverage" => flow_coverage::run(rest),
         "baseline" => baseline::run(rest),
         "closure-bench" => closure_bench::run(rest),
         "comment-style" => comment_style::run(rest),

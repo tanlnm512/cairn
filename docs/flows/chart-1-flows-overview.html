@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cairn business flows — one core, three surfaces, two stores</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #2d3142;
+      --color-muted:   #4f5d75;
+      --color-accent:  #eb6c36;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1200px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architecture · Business-flow map F1–F9</p>
+    <h1>One core, three surfaces, two stores</h1>
+
+    <svg viewBox="0 0 1000 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="cairn-flows-title cairn-flows-desc">
+      <title id="cairn-flows-title">cairn business flows F1–F9</title>
+      <desc id="cairn-flows-desc">Architecture map of the cairn workspace: three serving surfaces (MCP daemon, CLI, dashboard) dispatch into a shared cairn-query read core and a cairn-build write path, over the .kg SQLite store, the .knowledge bundle, and the cross-repo workspaces registry, with the nine business flows tagged F1 to F9.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <!-- zones -->
+      <rect x="60" y="40" width="880" height="152" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <rect x="76" y="44" width="72" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="112" y="53" fill="rgba(45,49,66,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">SURFACES</text>
+
+      <rect x="60" y="232" width="880" height="152" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <rect x="76" y="236" width="40" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="96" y="245" fill="rgba(45,49,66,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">CORE</text>
+
+      <rect x="60" y="424" width="880" height="152" rx="8" fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <rect x="76" y="428" width="52" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="102" y="437" fill="rgba(45,49,66,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">STORES</text>
+
+      <!-- arrows -->
+      <path d="M 468,152 V 216 Q 468,224 460,224 H 458 a 8,8 0 0,0 -16,0 H 238 Q 230,224 230,232 V 280"
+            fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="532" y1="152" x2="532" y2="280" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <path d="M 200,152 V 196 Q 200,204 208,204 H 442 Q 450,204 450,212 V 280"
+            fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <path d="M 800,152 V 216 Q 800,224 792,224 H 598 Q 590,224 590,232 V 280"
+            fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="230" y1="344" x2="230" y2="472" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <path d="M 430,344 V 392 Q 430,400 422,400 H 318 Q 310,400 310,408 V 472"
+            fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="530" y1="344" x2="530" y2="472" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <path d="M 610,344 V 392 Q 610,400 618,400 H 812 Q 820,400 820,408 V 472"
+            fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- arrow labels -->
+      <rect x="297" y="184" width="56" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="325" y="193" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">26 TOOLS</text>
+      <rect x="238" y="392" width="44" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="260" y="401" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">WRITE</text>
+      <rect x="318" y="428" width="36" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="336" y="437" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">READ</text>
+      <rect x="828" y="428" width="20" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="838" y="437" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">F7</text>
+
+      <!-- nodes: surfaces -->
+      <rect x="100" y="88" width="200" height="64" rx="6" fill="#f5f5f5"/>
+      <rect x="100" y="88" width="200" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <rect x="108" y="94" width="32" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="124" y="103" fill="rgba(45,49,66,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">MCP</text>
+      <text x="200" y="123" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">MCP Daemon</text>
+      <text x="200" y="139" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:9876 · TOOLS F2–F7</text>
+
+      <rect x="400" y="88" width="200" height="64" rx="6" fill="#f5f5f5"/>
+      <rect x="400" y="88" width="200" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <rect x="408" y="94" width="28" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="422" y="103" fill="rgba(45,49,66,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CLI</text>
+      <text x="500" y="123" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">cairn CLI</text>
+      <text x="500" y="139" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">clap · F1–F9</text>
+
+      <rect x="700" y="88" width="200" height="64" rx="6" fill="#f5f5f5"/>
+      <rect x="700" y="88" width="200" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <rect x="708" y="94" width="36" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="726" y="103" fill="rgba(45,49,66,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">HTTP</text>
+      <text x="800" y="123" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Dashboard</text>
+      <text x="800" y="139" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">:8765 · F9 · read-only</text>
+
+      <!-- nodes: core -->
+      <rect x="120" y="280" width="220" height="64" rx="6" fill="#f5f5f5"/>
+      <rect x="120" y="280" width="220" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <rect x="128" y="286" width="40" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="148" y="295" fill="rgba(45,49,66,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">WRITE</text>
+      <text x="230" y="315" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">cairn-build</text>
+      <text x="230" y="331" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">scan → parse → resolve · F1</text>
+
+      <rect x="380" y="280" width="280" height="64" rx="6" fill="#f5f5f5"/>
+      <rect x="380" y="280" width="280" height="64" rx="6" fill="rgba(235,108,54,0.10)" stroke="#eb6c36" stroke-width="1"/>
+      <rect x="388" y="286" width="36" height="12" rx="2" fill="transparent" stroke="rgba(235,108,54,0.50)" stroke-width="0.8"/>
+      <text x="406" y="295" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">READ</text>
+      <text x="520" y="315" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">cairn-query</text>
+      <text x="520" y="331" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">26 MCP tools share it · F2–F7</text>
+
+      <!-- nodes: stores -->
+      <rect x="120" y="472" width="220" height="64" rx="6" fill="#f5f5f5"/>
+      <rect x="120" y="472" width="220" height="64" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <rect x="128" y="478" width="28" height="12" rx="2" fill="transparent" stroke="rgba(235,108,54,0.50)" stroke-width="0.8"/>
+      <text x="142" y="487" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SQL</text>
+      <text x="230" y="507" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">.kg store</text>
+      <text x="230" y="523" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">SQLite · staged swap</text>
+
+      <rect x="420" y="472" width="240" height="64" rx="6" fill="#f5f5f5"/>
+      <rect x="420" y="472" width="240" height="64" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <rect x="428" y="478" width="28" height="12" rx="2" fill="transparent" stroke="rgba(79,93,117,0.40)" stroke-width="0.8"/>
+      <text x="442" y="487" fill="rgba(79,93,117,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">OKF</text>
+      <text x="540" y="507" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">.knowledge</text>
+      <text x="540" y="523" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">compass · wiki · memory · F4–F6</text>
+
+      <rect x="720" y="472" width="200" height="64" rx="6" fill="#f5f5f5"/>
+      <rect x="720" y="472" width="200" height="64" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <rect x="728" y="478" width="28" height="12" rx="2" fill="transparent" stroke="rgba(79,93,117,0.40)" stroke-width="0.8"/>
+      <text x="742" y="487" fill="rgba(79,93,117,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">REG</text>
+      <text x="820" y="507" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">workspaces.json</text>
+      <text x="820" y="523" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">cross-repo · F7</text>
+
+      <!-- legend -->
+      <line x1="60" y1="592" x2="940" y2="592" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="60" y="610" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+      <rect x="130" y="601" width="14" height="10" rx="2" fill="rgba(235,108,54,0.10)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="152" y="610" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">focal</text>
+      <rect x="230" y="601" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="252" y="610" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">component</text>
+      <rect x="350" y="601" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <text x="372" y="610" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">store / registry</text>
+      <text x="940" y="610" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end">F# = flow id · docs/flows/business-flows.md</text>
+    </svg>
+  </div>
+</body>
+</html>
