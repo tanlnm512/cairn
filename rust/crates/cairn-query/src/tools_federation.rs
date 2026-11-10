@@ -3,19 +3,17 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use rusqlite::Connection;
-
 use crate::tools_search::{
     EffectiveBackend, SemanticMatch, SymbolRow, cairn_home, rrf_fuse, search_symbols, semantic_env,
     semantic_search,
 };
 
 /// One aggregated federated outcome.
-struct FederatedResult {
+pub struct FederatedResult {
     /// (hit, owning workspace path) — attribution rides beside the match.
-    hits: Vec<(SemanticMatch, String)>,
-    dropped: Vec<String>,
-    states: Vec<(String, String)>,
+    pub hits: Vec<(SemanticMatch, String)>,
+    pub dropped: Vec<String>,
+    pub states: Vec<(String, String)>,
 }
 
 /// `(workspace_path, store_key)` pairs, workspace-sorted; the shared loader
@@ -25,7 +23,7 @@ fn iter_stores() -> Vec<(String, String)> {
 }
 
 /// `missing` / `unindexed` / `ok` from the filesystem alone.
-fn classify_store(home: &Path, db: &Path) -> &'static str {
+pub fn classify_store(home: &Path, db: &Path) -> &'static str {
     if !home.is_dir() {
         return "missing";
     }
@@ -54,8 +52,7 @@ fn lexical_hit(row: &SymbolRow) -> SemanticMatch {
 /// One store's ranked hits: semantic search, or BM25-only when the store has
 /// no embedding rows for the current model.
 fn search_store(db: &Path, query: &str, limit: usize) -> Result<Vec<SemanticMatch>, String> {
-    let conn = Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|e| e.to_string())?;
+    let conn = cairn_store::conn::open_read_only(db).map_err(|e| e.to_string())?;
     let env = semantic_env(None);
     if env.backend == EffectiveBackend::Unavailable {
         return Err("embedding backend unavailable".to_string());
@@ -74,7 +71,9 @@ fn search_store(db: &Path, query: &str, limit: usize) -> Result<Vec<SemanticMatc
     Ok(rows.iter().map(lexical_hit).collect())
 }
 
-fn federated_search(query: &str, limit: usize) -> Result<FederatedResult, String> {
+/// Walk every registered store and return the rank-fused, workspace-attributed
+/// hits; `limit` is applied to the fused ranking.
+pub fn federated_search_data(query: &str, limit: usize) -> Result<FederatedResult, String> {
     let Some(home) = cairn_home() else {
         return Ok(FederatedResult {
             hits: vec![],
@@ -100,8 +99,13 @@ fn federated_search(query: &str, limit: usize) -> Result<FederatedResult, String
         }
         let store_hits = match search_store(&db, query, limit) {
             Ok(hits) => hits,
-            Err(_) => {
-                result.states.push((ws_path.clone(), "error".to_string()));
+            Err(message) => {
+                let state = if message.contains("locked") || message.contains("busy") {
+                    "locked"
+                } else {
+                    "error"
+                };
+                result.states.push((ws_path.clone(), state.to_string()));
                 result.dropped.push(ws_path);
                 continue;
             }
@@ -141,7 +145,7 @@ pub fn federated_search_text(query: &str, limit: i64) -> Result<String, String> 
                 .to_string(),
         );
     }
-    let result = federated_search(query, limit)?;
+    let result = federated_search_data(query, limit)?;
     let ok_count = result
         .states
         .iter()
