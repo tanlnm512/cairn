@@ -5,7 +5,7 @@
       "name": "Graph indexing / build pipeline",
       "patterns": [
         "builder", "incremental", "scip_import", "import_scip", "resolver_semantics",
-        "watcher_service", "closure_semantics", "update_file", "init_hooks",
+        "closure_semantics", "update_file", "init_hooks",
         "scan_workspace", "reindex_paths", "detect_changed", "install_staged", "build_graph_with",
         "cairn_parse", "ParsedFile"
       ]
@@ -68,7 +68,7 @@
       "id": "F8",
       "name": "MCP daemon serving",
       "patterns": [
-        "daemon_tools", "auth_lifecycle", "conn_pool", "bearer_gate", "healthz",
+        "daemon_tools", "auth_lifecycle", "conn_pool", "bearer_gate", "healthz", "tool_metrics",
         "ensure_daemon_running", "reuse_decision", "render_plist", "install_agents"
       ]
     },

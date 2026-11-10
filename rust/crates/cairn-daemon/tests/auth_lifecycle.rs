@@ -8,19 +8,15 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
+mod common;
+
 use cairn_daemon::auth;
 use cairn_daemon::healthz::HealthzState;
 #[cfg(unix)]
 use cairn_daemon::lifecycle::SweepCtx;
 use cairn_daemon::lifecycle::{self, cg_bin_from, is_cairn_serve_cmdline, render_plist};
+use common::repo_root;
 use serde_json::Value;
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()
-        .expect("repo root")
-}
 
 // --- auth --------------------------------------------------------------------
 

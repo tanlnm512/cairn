@@ -16,12 +16,8 @@ pub(crate) const SCHEMA: &str = "cairn-rust-golden-mcp/1";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 const PROTOCOL_VERSION: &str = "2025-03-26";
 const SNIPPET_CHARS: usize = 200;
-/// `CAIRN_WATCH=0` keeps the live watcher from reindexing the workspace mid-capture.
-pub(crate) const ENV_PINS: [(&str, &str); 3] = [
-    ("CAIRN_EMBED_BACKEND", "hash"),
-    ("CAIRN_RERANK", "0"),
-    ("CAIRN_WATCH", "0"),
-];
+pub(crate) const ENV_PINS: [(&str, &str); 2] =
+    [("CAIRN_EMBED_BACKEND", "hash"), ("CAIRN_RERANK", "0")];
 
 /// `cargo xtask golden-record`: library-only; the MCP goldens are frozen and replayed by `parity`.
 pub fn run(_args: &[String]) -> ExitCode {

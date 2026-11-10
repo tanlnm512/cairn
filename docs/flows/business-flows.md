@@ -48,10 +48,10 @@ Storage layout: one SQLite store per workspace at
   8. Import edges materialized (`builder.rs:455 materialize_import_edges`), then configured SCIP indexes applied as an edges-only overlay, degrading to tree-sitter edges on failure (`builder.rs:464` → `apply_scip` at `builder.rs:510`; importer in `rust/crates/cairn-build/src/scip/`).
   9. Post-build derivatives (from the CLI build handler): transitive closure `build_transitive_closure` (`rust/crates/cairn-build/src/closure.rs:25`, called at `cmds_core.rs:841,1004`), build-run telemetry `record_build_run` (`rust/crates/cairn-cli/src/cmds_lifecycle.rs:258`, called at `cmds_core.rs:2537`).
   10. Incremental `update`: `incremental::incremental_update` (`rust/crates/cairn-build/src/incremental.rs:446`, called at `cmds_core.rs:1292`); single-file path `reindex_paths` (`incremental.rs:32`, called at `cmds_core.rs:1235`); drift detection `detect_changed` (`incremental.rs:650`). After the reindex the handler runs the memory-decay pass (`cmds_core.rs:1328-1342`, see F6).
-- Data stores: `.kg` SQLite tables `repos, files, symbols, edges, imports, parse_errors, skipped_files, pending_sync, repo_build_state, build_runs, transitive_edges, dataflow, communities, symbol_communities, rationale` (schema at `rust/crates/cairn-store/src/schema.rs:11-331`); staged store file + atomic swap (`swap.rs`); `cairn.json` SCIP config (`rust/crates/cairn-build/src/config.rs`).
+- Data stores: `.kg` SQLite tables `repos, files, symbols, edges, imports, parse_errors, skipped_files, pending_sync, repo_build_state, build_runs, transitive_edges, dataflow, communities, symbol_communities, rationale` (schema at `rust/crates/cairn-store/src/schema.rs:11-331`); staged store file + atomic swap (`swap.rs`); optional repo-root `cairn.json` SCIP config (`rust/crates/cairn-build/src/config.rs`; this repo carries none).
 - Output surfaces: CLI stdout (summary via `display`/`Rail`); `build_runs` rows feed `cairn metrics --builds` and the dashboard history views.
-- Test touchpoints: `builder_parity.rs`, `builder_scip_overlay.rs`, `incremental_detect.rs`, `incremental_graft.rs`, `resolver_semantics.rs`, `scip_import.rs`, `watcher_service.rs`, `closure_semantics.rs` (cairn-build/tests); `import_scip_output.rs`, `update_file.rs`, `init_hooks.rs`, `impact_guard.rs` (cairn-cli/tests); inline `#[cfg(test)]` in builder/resolver/scip/embeddings modules.
-- Notes: `FileWatcherService` (`rust/crates/cairn-build/src/watcher.rs:31`) has no production caller in the workspace — only `cairn-build/tests/watcher_service.rs` constructs it. Freshness is instead enforced pull-style by CLI read commands (`cmds_core.rs:200-262`). Dead entry point candidate.
+- Test touchpoints: `builder_parity.rs`, `builder_scip_overlay.rs`, `incremental_detect.rs`, `incremental_graft.rs`, `resolver_semantics.rs`, `scip_import.rs`, `closure_semantics.rs` (cairn-build/tests); `import_scip_output.rs`, `update_file.rs`, `init_hooks.rs`, `impact_guard.rs` (cairn-cli/tests); `parser_golden.rs` (cairn-parse/tests); inline `#[cfg(test)]` in builder/resolver/scip/embeddings modules.
+- Notes: the unwired `FileWatcherService` and its `CAIRN_WATCH` knob were removed; freshness is enforced pull-style by CLI read commands (`cmds_core.rs` drift probe + repair).
 
 ## F2: Graph query & navigation path
 
@@ -174,8 +174,8 @@ Storage layout: one SQLite store per workspace at
   5. Agent wiring: `install-agents` writes client configs/skills from `rust/crates/cairn-cli/templates/agent_integration/`; git post-commit/post-checkout hooks drive `cairn update`; `doctor --fix` repoints stale stdio/SSE registrations to the daemon URL (`rust/crates/cairn-cli/src/cmds_doctor.rs`).
 - Data stores: `.kg` (pooled, WAL pragmas per `tools.rs` tests); `~/.cairn/` daemon home: pidfile, log, launchd plist, `mcp-connect.lock` (`lifecycle.rs:35-59`); client config files under `.claude/` etc.
 - Output surfaces: MCP JSON-RPC over streamable HTTP; healthz JSON; CLI lifecycle messages; log file.
-- Test touchpoints: `daemon_tools.rs`, `auth_lifecycle.rs`, `tests/common/mod.rs` (cairn-daemon/tests); inline tests in `server.rs`-adjacent modules (`tools.rs`, `conn_pool.rs`, `auth.rs`, `lifecycle.rs`, `cmds_connect.rs`, `cmds_serve.rs`).
-- Notes: `tool_metrics` (`schema.rs:249`) is read by `metrics`/doctor/dashboard (`rust/crates/cairn-cli/src/cmds_doctor.rs:934-966`, `dashboard/data.rs`) but no production code in this workspace writes it (only xtask golden fixtures and a dashboard test insert). Provenance of rows `(unverified)` — likely external MCP clients or a legacy writer.
+- Test touchpoints: `daemon_tools.rs`, `auth_lifecycle.rs`, `tool_metrics.rs`, `tests/common/mod.rs` (cairn-daemon/tests); inline tests in `server.rs`-adjacent modules (`tools.rs`, `conn_pool.rs`, `auth.rs`, `lifecycle.rs`, `cmds_connect.rs`, `cmds_serve.rs`).
+- Notes: the daemon records a `tool_metrics` row per dispatched call (`ToolCtx::record_tool_metrics`, best-effort, read-only stores skip); doctor/dashboard history read it.
 
 ## F9: Read-only web dashboard
 
@@ -197,7 +197,7 @@ Storage layout: one SQLite store per workspace at
 
 | Flow | Entry surface | Core modules | Store | Test touchpoints (count) | Notes |
 |---|---|---|---|---|---|
-| F1 Indexing/build | CLI build/update/import-scip/sync | cairn-build (scanner/builder/resolver/incremental/scip/closure/dataflow), cairn-parse | .kg (repos/files/symbols/edges/imports/…), staged swap, cairn.json | 11 | FileWatcherService has no production caller (dead entry point candidate) |
+| F1 Indexing/build | CLI build/update/import-scip/sync | cairn-build (scanner/builder/resolver/incremental/scip/closure/dataflow), cairn-parse | .kg (repos/files/symbols/edges/imports/…), staged swap | 13 | unwired watcher + CAIRN_WATCH knob removed; pull-style drift repair keeps freshness |
 | F2 Graph query | MCP nav/flow tools + CLI def/callers/…/pack/review | cairn-query (tools_nav, tools_flow, graph, blast, review, grep) | .kg (symbols/edges/transitive_edges/dataflow/pending_sync) | 6 (+inline graph/tools_nav) | impact collision guard falls back to dataflow; staleness banners from pending_sync |
 | F3 Semantic search | MCP semantic_search + CLI semantic/embed | cairn-query::tools_search, cairn-build::embeddings, cairn-store::vec0 | .kg (embeddings, embeddings_mv/vec0, knowledge_embeddings, memory_embeddings) | 4 | Rerank scaffolded but unavailable; hash fallback is deterministic |
 | F4 Knowledge/compass | MCP knowledge_*/ask_compass/get_compass + CLI knowledge/compass/ask/context/skill | cairn-query::tools_km, ingest, skillgen | .knowledge/ bundle + .kg knowledge_* tables | 2 (+inline) | ask_compass empty-skeleton behavior on thin coverage is by design |

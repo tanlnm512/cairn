@@ -15,7 +15,6 @@ pub mod scanner;
 pub mod scip;
 pub mod service_calls;
 pub mod timefmt;
-pub mod watcher;
 
 pub use builder::{BuildSummary, ResolutionCounts, StageTimings, build_graph};
 

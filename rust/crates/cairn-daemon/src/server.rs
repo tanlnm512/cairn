@@ -92,13 +92,44 @@ impl ServerHandler for CairnServer {
             .arguments
             .map(Value::Object)
             .unwrap_or_else(|| json!({}));
+        let req_chars = args.to_string().chars().count();
+        let args_summary: String = {
+            let raw = args.to_string();
+            raw.chars().take(200).collect()
+        };
         let ctx = self.ctx.clone();
+        let started = std::time::Instant::now();
         let outcome = tokio::task::spawn_blocking(move || tools::dispatch(&ctx, &name, &args))
             .await
             .map_err(|e| ErrorData::internal_error(format!("tool task failed: {e}"), None))?;
+        let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
         let text = match outcome {
-            Ok(text) => truncate_result(&tool_name, text),
+            Ok(text) => {
+                let (text, truncated) = truncate_result(&tool_name, text);
+                let resp_chars = text.chars().count();
+                self.ctx.record_tool_metrics(tools::ToolCallMetrics {
+                    tool: &tool_name,
+                    duration_ms,
+                    status: "ok",
+                    error: None,
+                    req_chars,
+                    resp_chars,
+                    args_summary: &args_summary,
+                    truncated,
+                });
+                text
+            }
             Err(failure) => {
+                self.ctx.record_tool_metrics(tools::ToolCallMetrics {
+                    tool: &tool_name,
+                    duration_ms,
+                    status: "error",
+                    error: Some(&failure.0),
+                    req_chars,
+                    resp_chars: 0,
+                    args_summary: &args_summary,
+                    truncated: None,
+                });
                 let mut result = CallToolResult::error(vec![ContentBlock::text(failure.0.clone())]);
                 result.structured_content = Some(json!({ "result": failure.0 }));
                 return Ok(result.into());
@@ -112,14 +143,15 @@ impl ServerHandler for CairnServer {
 
 /// Hard cap on one tool result, cut at the last newline with a fixed notice
 /// (the `@instrument` decorator's central truncation contract).
-fn truncate_result(name: &str, result: String) -> String {
+/// Returns the (possibly truncated) text and `(from_chars, to_chars)` when cut.
+fn truncate_result(name: &str, result: String) -> (String, Option<(usize, usize)>) {
     let cap: usize = std::env::var("CAIRN_MAX_RESULT_CHARS")
         .ok()
         .and_then(|raw| raw.trim().parse().ok())
         .unwrap_or(60_000);
     let char_count = result.chars().count();
     if char_count <= cap {
-        return result;
+        return (result, None);
     }
     let mut head: String = result.chars().take(cap).collect();
     if let Some(cut) = head.rfind('\n')
@@ -127,12 +159,14 @@ fn truncate_result(name: &str, result: String) -> String {
     {
         head.truncate(cut);
     }
-    format!(
+    let text = format!(
         "{head}\n\n[TRUNCATED: '{name}' returned {char_count} chars, over the \
          {cap}-char cap. Narrow the query -- e.g. pass a smaller `limit`, use \
          fuzzy=False, a more specific pattern, or a lower `depth` -- rather \
          than relying on this truncated output.]"
-    )
+    );
+    let to_chars = text.chars().count();
+    (text, Some((char_count, to_chars)))
 }
 
 fn unauthorized() -> Response {
