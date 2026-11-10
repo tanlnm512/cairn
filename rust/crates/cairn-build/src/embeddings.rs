@@ -507,6 +507,56 @@ pub fn embed_all(
     })
 }
 
+/// After an incremental reindex, re-embed the affected symbols when a
+/// non-hash backend is configured; otherwise (or when the embed fails) count
+/// the symbols still lacking a current-model row — the embed debt. `dropped`
+/// names the models whose rows the reindex deleted.
+pub fn reembed_updated_symbols(
+    conn: &Connection,
+    workspace: &str,
+    symbol_ids: &[String],
+    dropped_models: &[String],
+) -> usize {
+    if symbol_ids.is_empty() {
+        return 0;
+    }
+    let Ok(env) = resolve_embed_env() else {
+        return 0;
+    };
+    if !matches!(env.transport, Transport::Hash)
+        && embed_symbols(conn, workspace, symbol_ids, true).is_ok()
+    {
+        return 0;
+    }
+    let owed = dropped_models.iter().any(|m| m == &env.model)
+        || conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM embeddings WHERE model = ?)",
+                [&env.model],
+                |r| r.get::<_, bool>(0),
+            )
+            .unwrap_or(false);
+    if !owed {
+        return 0;
+    }
+    let placeholders = vec!["?"; symbol_ids.len()].join(", ");
+    let sql = format!(
+        "SELECT COUNT(*) FROM symbols s WHERE s.id IN ({placeholders}) \
+         AND NOT EXISTS (SELECT 1 FROM embeddings e \
+                         WHERE e.symbol_id = s.id AND e.model = ?)"
+    );
+    let params: Vec<&str> = symbol_ids
+        .iter()
+        .map(|s| s.as_str())
+        .chain(std::iter::once(env.model.as_str()))
+        .collect();
+    conn.query_row(&sql, rusqlite::params_from_iter(params), |r| {
+        r.get::<_, i64>(0)
+    })
+    .map(|n| n as usize)
+    .unwrap_or(0)
+}
+
 /// Embed selected symbols and synchronously sync their vec0 rows.
 pub fn embed_symbols(
     conn: &Connection,

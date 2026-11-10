@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `cairn update` (and `update --file`) re-embed changed symbols automatically when a non-hash embed backend is configured, so edited code no longer silently drops out of semantic search; with the hash backend the dropped rows are reported as an embed debt ("N symbol(s) awaiting embed — run `cairn embed`") in the update summary, and `cairn doctor` surfaces the same debt (recorded as an `embed_debt` event so a fully dropped index stays visible).
 - MCP telemetry is back: every dispatched tool call records a `tool_metrics` row (tool, session, epoch `invoked_at`, duration, ok/error status, request/response sizes, capped args summary, truncation sizes; best-effort, skipped on read-only stores) — the python-era writer was lost in the rust migration while `cairn doctor`'s tool health and the dashboard's history views kept reading the table. Wire-level contract pinned by a daemon test.
 - `semantic_search`'s optional rerank stage now runs in `local-embed` feature builds: an in-process bge-reranker-v2-m3 cross-encoder (fastembed `TextRerank`, cached beside the bge-m3 model, downloaded on first use) activates under `CAIRN_RERANK=1`, the `rerank_enabled` marker, or the tool's `rerank` argument; logits are sigmoid-normalized, the ranking is reordered and the tail pruned at `best - CAIRN_RERANK_MIN_MARGIN`, and survivors carry `provenance: rerank`. Default builds keep the previous behavior (fused order, `reranker_available()` false).
 

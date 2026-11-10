@@ -1242,12 +1242,26 @@ fn update(args: crate::cmds_core::UpdateArgs) -> ExitCode {
             &workspace,
             &[abs.to_string_lossy().into_owned()],
         );
+        let awaiting = cairn_build::embeddings::reembed_updated_symbols(
+            &conn,
+            &workspace,
+            &result.reindexed_symbol_ids,
+            &result.dropped_embedding_models,
+        );
+        if awaiting > 0 {
+            cairn_build::incremental::record_embed_debt(&conn, awaiting);
+        }
         if result.reindexed + result.deleted == 0 {
             display::warning(&format!(
                 "no reindexable change for {rel_path} in repo {repo}"
             ));
         } else {
             display::success(&format!("Reindexed {rel_path} in repo {repo}"));
+        }
+        if awaiting > 0 {
+            display::warning(&format!(
+                "{awaiting} symbol(s) awaiting embed — run `cairn embed`"
+            ));
         }
         return ExitCode::SUCCESS;
     }
@@ -1327,6 +1341,12 @@ fn update(args: crate::cmds_core::UpdateArgs) -> ExitCode {
         display::success(&format!(
             "Updated: reindexed {} files{deleted_part} across {} repos",
             summary.files_reindexed, summary.repos_scanned
+        ));
+    }
+    if summary.symbols_awaiting_embed > 0 {
+        display::warning(&format!(
+            "{} symbol(s) awaiting embed — run `cairn embed`",
+            summary.symbols_awaiting_embed
         ));
     }
 

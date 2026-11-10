@@ -111,6 +111,16 @@ contention, or repair disabled) never stamps, so the next read retries.
   re-resolves edges in *other* files that pointed at deleted or renamed
   symbols — unique to the incremental path — and cross-repo `imports` edges
   nulled by the delete leg are re-materialized.
+- **Embeddings after `update`**: the reindex deletes the changed files'
+  embedding rows. When a non-hash embed backend is configured, `update`
+  (and `update --file`) re-embeds the affected symbols immediately; with the
+  hash backend the dropped rows are reported as an embed debt — the update
+  summary and `cairn doctor` show "N symbol(s) awaiting embed — run
+  `cairn embed`" (the debt is recorded as an `embed_debt` event so a fully
+  dropped index stays visible).
+  re-resolves edges in *other* files that pointed at deleted or renamed
+  symbols — unique to the incremental path — and cross-repo `imports` edges
+  nulled by the delete leg are re-materialized.
 
 ## What agents should know about resolution labels
 

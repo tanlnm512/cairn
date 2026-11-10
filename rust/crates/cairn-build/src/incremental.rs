@@ -17,6 +17,10 @@ pub struct ReindexResult {
     pub reindexed: usize,
     pub deleted: usize,
     pub errors: Vec<String>,
+    /// Ids of the symbols inserted by the reindexed files (post-commit).
+    pub reindexed_symbol_ids: Vec<String>,
+    /// Model stamps of the embedding rows the delete legs removed.
+    pub dropped_embedding_models: Vec<String>,
 }
 
 /// Summary of one `incremental_update` pass.
@@ -26,6 +30,9 @@ pub struct UpdateSummary {
     pub files_reindexed: usize,
     pub files_deleted: usize,
     pub errors: Vec<String>,
+    /// Symbols whose embeddings the reindex dropped and that still lack a
+    /// current-model row (0 when a real backend re-embedded them).
+    pub symbols_awaiting_embed: usize,
 }
 
 /// Reindex absolute paths (edit, create, or delete) and repair the graph.
@@ -257,8 +264,19 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
                 }
                 let committed = tx.commit();
                 changed_target_names.extend(changed_names);
-                if let Err(e) = committed {
-                    result.errors.push(format!("{abs_path}: {e}"));
+                match committed {
+                    Ok(()) => {
+                        if let Some(new_fid) = &new_file_id
+                            && let Ok(mut stmt) =
+                                conn.prepare("SELECT id FROM symbols WHERE file_id = ?")
+                        {
+                            let rows = stmt.query_map([new_fid], |r| r.get::<_, String>(0));
+                            if let Ok(rows) = rows {
+                                result.reindexed_symbol_ids.extend(rows.flatten());
+                            }
+                        }
+                    }
+                    Err(e) => result.errors.push(format!("{abs_path}: {e}")),
                 }
             }
             Err(e) => {
@@ -318,8 +336,32 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
             result.errors.push(format!("vec0/{model}: {e}"));
         }
     }
+    result.dropped_embedding_models = doomed_vec_rows
+        .iter()
+        .map(|(model, _)| model.clone())
+        .collect();
 
     result
+}
+
+/// Best-effort embed-debt event so doctor can report a fully dropped index.
+pub fn record_embed_debt(conn: &Connection, count: usize) {
+    let _ = conn.execute(
+        "INSERT INTO events (ts, name, session_id, attrs) VALUES (?, 'embed_debt', '', ?)",
+        params![crate::timefmt::now_iso(), count.to_string()],
+    );
+}
+
+/// The latest recorded embed-debt count; 0 when none or unreadable.
+pub fn recorded_embed_debt(conn: &Connection) -> usize {
+    conn.query_row(
+        "SELECT attrs FROM events WHERE name = 'embed_debt' ORDER BY id DESC LIMIT 1",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|s| s.trim().parse().ok())
+    .unwrap_or(0)
 }
 
 /// (model, rowid) of a file's embedding rows ahead of their delete.
@@ -473,11 +515,21 @@ pub fn incremental_update(
 
     let result = reindex_paths(&mut conn, workspace, &all_paths);
     detect_errors.extend(result.errors);
+    let symbols_awaiting_embed = crate::embeddings::reembed_updated_symbols(
+        &conn,
+        workspace,
+        &result.reindexed_symbol_ids,
+        &result.dropped_embedding_models,
+    );
+    if symbols_awaiting_embed > 0 {
+        record_embed_debt(&conn, symbols_awaiting_embed);
+    }
     Ok(UpdateSummary {
         repos_scanned: repos.len(),
         files_reindexed: result.reindexed,
         files_deleted: result.deleted,
         errors: detect_errors,
+        symbols_awaiting_embed,
     })
 }
 

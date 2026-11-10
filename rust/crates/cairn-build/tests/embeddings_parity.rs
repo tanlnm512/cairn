@@ -5,9 +5,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use cairn_build::embeddings::{current_model, embed_all, embed_symbols};
+use cairn_build::incremental::{incremental_update, recorded_embed_debt};
 use cairn_query::tools_search::{self, floats_to_blob, hash_vec};
 use cairn_store::swap::StorePin;
 use cairn_store::vec0::{self, VecSource};
+use rusqlite::Connection;
 use serde_json::Value;
 
 fn golden_dir() -> PathBuf {
@@ -436,4 +438,61 @@ fn native_config_stamps_both_legs_identically() {
         }
     }
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn update_reembeds_or_reports_the_embed_debt() {
+    let (dir, db, corpus) = stage("reembed");
+    {
+        let (conn, pin) = StorePin::open(&db).expect("open pinned store");
+        embed_all(&conn, corpus.to_str().expect("ws"), 64, None, true, true, &pin).expect("embed");
+    }
+    let model = current_model().expect("model");
+
+    // Edit one source file's content so the drift detector reindexes it.
+    let alpha = corpus.join("alpha.py");
+    let mut text = fs::read_to_string(&alpha).expect("read alpha");
+    text.push_str("\n\ndef reembed_probe():\n    return 42\n");
+    fs::write(&alpha, text).expect("edit alpha");
+
+    let summary = incremental_update(
+        corpus.to_str().expect("ws"),
+        db.to_str().expect("db"),
+        None,
+        None,
+    )
+    .expect("update");
+    assert!(summary.files_reindexed > 0, "errors: {:?}", summary.errors);
+
+    // Hash backend: the dropped rows are not silently recreated — the debt is
+    // counted in the summary and recorded for doctor.
+    assert!(
+        summary.symbols_awaiting_embed > 0,
+        "dropped rows must be reported: {summary:?}"
+    );
+    let conn = Connection::open(&db).expect("reopen");
+    let alpha_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM embeddings e JOIN symbols s ON s.id = e.symbol_id \
+             JOIN files f ON f.id = s.file_id WHERE f.path = 'alpha.py' AND e.model = ?",
+            [&model],
+            |r| r.get(0),
+        )
+        .expect("count alpha rows");
+    assert_eq!(alpha_rows, 0, "the reindexed file's rows are gone");
+    let any_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM embeddings WHERE model = ?",
+            [&model],
+            |r| r.get(0),
+        )
+        .expect("count rows");
+    assert!(any_rows > 0, "untouched files keep their rows");
+    assert_eq!(
+        recorded_embed_debt(&conn),
+        summary.symbols_awaiting_embed,
+        "the debt event must carry the summary count"
+    );
+    drop(conn);
+    let _ = fs::remove_dir_all(&dir);
 }
