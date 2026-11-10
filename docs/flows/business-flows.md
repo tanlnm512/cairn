@@ -122,7 +122,7 @@ Storage layout: one SQLite store per workspace at
   6. Read model: `wiki status` derives planned/queued/in-progress/promoted/failed/dropped at read time (`DERIVED_STATES` `tools_wiki.rs:1136`, `derived_state` `:1174`); `wiki retry` re-queues failed chains (`retry_failed_pages` `:1255`); `wiki enrich` queues append-only extensions (`queue_enrich_tasks` `:1336`). Doc-link tasks cross-link knowledge docs (`queue_doc_link_tasks` `tasks.rs:1717`, edge validation `:1307`).
 - Data stores: `.knowledge/_tasks/` (task + result concepts), `.knowledge/wiki/` (promoted pages + manifest), `.kg` read-only for critic fact-checks and plan building; `knowledge_edges` for doc links.
 - Output surfaces: MCP text (queued task ids); CLI stdout; dashboard `/tasks`, `/wiki` routes.
-- Test touchpoints: `daemon_tools.rs` (wiki_generate arm); inline tests in `tools_wiki.rs` and `tasks.rs` (`cfg(test)`).
+- Test touchpoints: `wiki_plan.rs` (plan→queue contract), `daemon_tools.rs` (wiki_generate arm); inline tests in `tools_wiki.rs` and `tasks.rs` (`cfg(test)`).
 - Notes: the critic is fully deterministic (no LLM in the loop) — the LLM only writes results; the graph is ground truth. Cairn never calls an LLM itself anywhere in the workspace.
 
 ## F6: Memory lifecycle
