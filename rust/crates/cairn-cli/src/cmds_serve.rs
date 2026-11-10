@@ -349,16 +349,38 @@ pub fn run_restart(args: ServeRestartArgs) -> ExitCode {
     // A failed stop must not leave the daemon down: start reuses a healthy
     // daemon or cycles a wedged one.
     let _ = run_stop();
-    run_start(ServeStartArgs {
+    run_start(restart_start_args(port, host))
+}
+
+/// Restart's start inputs: the resolved bind plus the client key
+/// (explicit > env > init-persisted) so a keyed daemon stays keyed.
+fn restart_start_args(port: u16, host: String) -> ServeStartArgs {
+    ServeStartArgs {
         port,
         host,
-        api_key: None,
-    })
+        api_key: cairn_daemon::auth::client_key(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restart_carries_the_client_key() {
+        // The env leg decides the row: a real init-persisted key under the
+        // ambient home must not make the keyless assertion flaky.
+        unsafe {
+            std::env::set_var("CAIRN_MCP_API_KEY", "restart-env-key");
+        }
+        let args = restart_start_args(9876, "127.0.0.1".to_string());
+        assert_eq!(args.port, 9876);
+        assert_eq!(args.host, "127.0.0.1");
+        assert_eq!(args.api_key.as_deref(), Some("restart-env-key"));
+        unsafe {
+            std::env::remove_var("CAIRN_MCP_API_KEY");
+        }
+    }
 
     fn inputs<'a>(
         loaded: bool,

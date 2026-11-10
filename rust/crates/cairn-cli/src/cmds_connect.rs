@@ -100,10 +100,11 @@ pub fn run(args: ConnectArgs) -> ExitCode {
     }
     let store = store_paths::resolve_store(None);
     lc::sweep_strays(&store.db, true);
+    let api_key = cairn_daemon::auth::client_key();
     match lc::ensure_daemon_running(
         args.port,
         &args.host,
-        None,
+        api_key.as_deref(),
         &lc::StoreBinding {
             workspace: store.workspace,
             db: store.db,

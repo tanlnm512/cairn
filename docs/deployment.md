@@ -28,7 +28,11 @@ All flags below work on both `cairn serve` and `cairn serve run`:
 launchd LaunchAgent (the plist execs the `cairn` binary), or a daemonized
 background process elsewhere. `cairn connect` is the lighter entrypoint: it
 starts the daemon on first dial and reuses a healthy one (its reuse-guard
-reads `/healthz`).
+reads `/healthz`). A start that loads but never turns healthy unloads the
+launchd job before failing, so a broken daemon is not respawned by KeepAlive;
+a wedged job from an older crash loop clears with `cairn serve stop` (or
+`launchctl unload ~/Library/LaunchAgents/dev.cairn.mcp.plist`) before the
+next start.
 
 ## Key policy
 
@@ -39,7 +43,11 @@ reads `/healthz`).
   daemon runs keyless.
 - Keyless operation is allowed only on loopback binds. A non-loopback
   `--host` without a key refuses to start with a clear error (exit code 1,
-  before binding).
+  before binding). `cairn connect` and `cairn serve restart` resolve the key
+  the same way (explicit > env > the init-persisted key) and refuse a keyless
+  non-loopback start before writing any launchd plist, so a misconfigured
+  remote bind fails once with a message instead of crash-looping under
+  KeepAlive.
 - Keyless loopback serves without the auth middleware.
 - Prefer `CAIRN_MCP_API_KEY` over `--api-key`: the flag is visible in
   process listings (`ps`). The key never appears in cairn's logs or boot

@@ -962,6 +962,8 @@ fn ensure_running_launchd(
     write_plist_file(&plist_path(), &plist).map_err(|e| e.to_string())?;
     load()?;
     if !wait_for_healthz(port, host) {
+        // KeepAlive would respawn a daemon that cannot serve: unload before erroring.
+        let _ = unload();
         return Err("daemon loaded but healthz not responding".to_string());
     }
     Ok((running_pid(), mcp_url(port, host), true))
@@ -987,6 +989,27 @@ fn ensure_running_daemonize(
     Ok((Some(pid), mcp_url(port, host), true))
 }
 
+/// Refuse a keyless start on a non-loopback IP bind before any plist write;
+/// the server's bind guard would otherwise exit under KeepAlive and crash-loop.
+pub fn keyless_remote_bind_refused(
+    host: &str,
+    port: u16,
+    api_key: Option<&str>,
+) -> Option<String> {
+    if api_key.is_some() {
+        return None;
+    }
+    let Ok(bind) = format!("{host}:{port}").parse::<std::net::SocketAddr>() else {
+        return None;
+    };
+    if bind.ip().is_loopback() {
+        return None;
+    }
+    Some(format!(
+        "refusing to start a keyless daemon on non-loopback host '{host}': pass --api-key or set CAIRN_MCP_API_KEY"
+    ))
+}
+
 /// Bring up the shared HTTP daemon; Ok carries (pid, mcp_url, started).
 pub fn ensure_daemon_running(
     port: u16,
@@ -994,6 +1017,9 @@ pub fn ensure_daemon_running(
     api_key: Option<&str>,
     store: &StoreBinding,
 ) -> Result<(Option<u32>, String, bool), String> {
+    if let Some(message) = keyless_remote_bind_refused(host, port, api_key) {
+        return Err(message);
+    }
     let _lock = lockfile_guard(
         &daemon_home().join("mcp-daemon.lock"),
         START_LOCK_TIMEOUT,
@@ -1059,5 +1085,23 @@ mod tests {
         } else {
             assert!(!is_cairn_binary_name(std::ffi::OsStr::new("cairn.exe")));
         }
+    }
+
+    #[test]
+    fn keyless_remote_bind_refusal_matrix() {
+        // Keyless + non-loopback IP bind: refused before any plist write.
+        let refused = keyless_remote_bind_refused("0.0.0.0", 9876, None);
+        let message = refused.expect("keyless non-loopback bind must be refused");
+        assert!(message.contains("non-loopback host '0.0.0.0'"), "{message}");
+        assert!(
+            keyless_remote_bind_refused("192.0.2.9", 9876, None).is_some(),
+            "any non-loopback IP is refused keyless"
+        );
+        // A key unlocks any bind; loopback stays keyless; hostnames defer to
+        // the server's own bind parse.
+        assert!(keyless_remote_bind_refused("0.0.0.0", 9876, Some("k")).is_none());
+        assert!(keyless_remote_bind_refused("127.0.0.1", 9876, None).is_none());
+        assert!(keyless_remote_bind_refused("::1", 9876, None).is_none());
+        assert!(keyless_remote_bind_refused("localhost", 9876, None).is_none());
     }
 }

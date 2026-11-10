@@ -32,7 +32,10 @@ code** via tree-sitter. The following are in scope:
 - Parser denial-of-service: malformed/pathological source files causing memory
   exhaustion, infinite loops, or crashes during indexing.
 - `cairn serve` / MCP transport issues: unauthenticated endpoints, request
-  amplification, or crashes triggered by malicious tool input.
+  amplification, or crashes triggered by malicious tool input. Keyless
+  serving is confined to loopback binds: a non-loopback bind requires an API
+  key, enforced both at the bind and before any daemon start writes its
+  launch configuration.
 - Path traversal or arbitrary file read/write outside the indexed workspace.
 - Injection via `.knowledge/` markdown or graph data being rendered/executed
   unsafely.
