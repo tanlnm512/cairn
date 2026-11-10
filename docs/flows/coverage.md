@@ -7,7 +7,7 @@ plus explicit `// F#` tags. Inline `#[cfg(test)]` modules are not counted.
 
 | Flow | Test files | Matching test files |
 | --- | --- | --- |
-| F1 Graph indexing / build pipeline | 14 | tests/builder_parity.rs, tests/builder_scip_overlay.rs, tests/closure_semantics.rs, tests/incremental_detect.rs, tests/incremental_graft.rs, tests/resolver_semantics.rs, tests/scip_import.rs, tests/watcher_service.rs, tests/dashboard_parity.rs, tests/import_scip_output.rs, tests/init_hooks.rs, tests/update_file.rs, tests/parser_golden.rs, tests/km_golden.rs |
+| F1 Graph indexing / build pipeline | 13 | tests/builder_parity.rs, tests/builder_scip_overlay.rs, tests/closure_semantics.rs, tests/incremental_detect.rs, tests/incremental_graft.rs, tests/resolver_semantics.rs, tests/scip_import.rs, tests/dashboard_parity.rs, tests/import_scip_output.rs, tests/init_hooks.rs, tests/update_file.rs, tests/parser_golden.rs, tests/km_golden.rs |
 | F2 Graph query & navigation | 9 | tests/builder_parity.rs, tests/incremental_graft.rs, tests/dashboard_parity.rs, tests/impact_guard.rs, tests/daemon_tools.rs, tests/flow_golden.rs, tests/golden_search.rs, tests/km_golden.rs, tests/nav_golden.rs |
 | F3 Semantic search & embedding index | 5 | tests/embeddings_parity.rs, tests/incremental_graft.rs, tests/daemon_tools.rs, tests/golden_search.rs, tests/native_embed.rs |
 | F6 Memory lifecycle | 3 | tests/dashboard_parity.rs, tests/daemon_tools.rs, tests/km_golden.rs |

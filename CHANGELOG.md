@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- The unwired `FileWatcherService` module and its `CAIRN_WATCH` knob (cairn-build). The watcher never had a production caller — freshness is enforced pull-style by the CLI's drift probe — and the knob's only readers were the watcher and golden-capture tooling; fixture env pins were re-frozen without it.
+
 ### Fixed
 - `federated_search` (MCP) now opens registered stores through the shared read-only connection helper, which registers the sqlite-vec module — on stores with embeddings the tool previously ran a degraded non-vector path and returned BM25-like results instead of semantic ones. The CLI `federated-search` deduplicates onto the same walk (`tools_federation::federated_search_data`) with byte-identical output.
 
