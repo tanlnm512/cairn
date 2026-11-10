@@ -2,55 +2,12 @@
 //! bearer gate, healthz parity, and the non-loopback bind guard.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
 
 use cairn_daemon::server::{self, DaemonConfig};
-use common::{McpClient, TempStore, http_request};
+use common::{McpClient, http_request, repo_root, seeded_store};
 use serde_json::{Value, json};
 
 mod common;
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()
-        .expect("repo root")
-}
-
-fn seeded_store(tag: &str) -> TempStore {
-    let temp = TempStore::from_fixture(&repo_root().join("rust/golden/nav/nav-store.kg"), tag);
-    // The km tools need their contract tables alongside the nav fixture's
-    // graph tables (the authoritative DDL lives in the cairn-query km golden).
-    let conn = rusqlite::Connection::open(temp.0.join("nav-store.kg")).expect("open seeded store");
-    conn.execute_batch(KM_TABLE_DDL).expect("seed km tables");
-    copy_tree(
-        &repo_root().join("rust/golden/km/bundle-seed"),
-        &temp.0.join(".knowledge"),
-    );
-    temp
-}
-
-const KM_TABLE_DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS memory_refs (id TEXT PRIMARY KEY, memory_path TEXT NOT NULL, session_id TEXT NOT NULL, referenced_at TIMESTAMP NOT NULL, context TEXT);
-CREATE TABLE IF NOT EXISTS memory_validity (concept_id TEXT PRIMARY KEY, valid_from TEXT NOT NULL, valid_until TEXT, successor_symbol TEXT);
-CREATE TABLE IF NOT EXISTS memory_embeddings (doc_id TEXT NOT NULL, chunk_index INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL, chunk TEXT NOT NULL, embedded_at TIMESTAMP, PRIMARY KEY (doc_id, chunk_index, model));
-CREATE TABLE IF NOT EXISTS knowledge_embeddings (doc_id TEXT NOT NULL, chunk_index INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL, chunk TEXT NOT NULL, embedded_at TIMESTAMP, PRIMARY KEY (doc_id, chunk_index, model));
-CREATE TABLE IF NOT EXISTS knowledge_edges (doc_id TEXT NOT NULL, related_id TEXT NOT NULL, relation TEXT NOT NULL, kind TEXT NOT NULL, provenance TEXT, created_at REAL, PRIMARY KEY (doc_id, related_id, relation, kind));
-CREATE TABLE IF NOT EXISTS agent_symbols (agent_id TEXT NOT NULL, symbol TEXT NOT NULL, memory_id TEXT, kind TEXT NOT NULL, ts TEXT NOT NULL);
-"#;
-
-fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
-    std::fs::create_dir_all(dst).expect("dst dir");
-    for entry in std::fs::read_dir(src).expect("src dir") {
-        let entry = entry.expect("entry");
-        let target = dst.join(entry.file_name());
-        if entry.path().is_dir() {
-            copy_tree(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), &target).expect("copy file");
-        }
-    }
-}
 
 /// The registered surface: every tool cairn-query ports, in catalog order.
 const EXPECTED_TOOLS: [&str; 26] = [

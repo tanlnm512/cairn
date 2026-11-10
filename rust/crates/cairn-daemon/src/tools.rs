@@ -60,10 +60,57 @@ impl ToolCtx {
     fn bundle(&self) -> km::Bundle {
         km::Bundle::new(self.knowledge_path.clone())
     }
+
+    /// Best-effort telemetry row for one dispatched call; never fails the tool result.
+    pub(crate) fn record_tool_metrics(&self, call: ToolCallMetrics<'_>) {
+        if self.read_only {
+            return;
+        }
+        let Ok(conn) = self.conn() else {
+            return;
+        };
+        let invoked_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        let session = self.session_id.as_deref().unwrap_or("unknown");
+        let (from_chars, to_chars) = call.truncated.map(|(f, t)| (f as i64, t as i64)).unzip();
+        let _ = conn.execute(
+            "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, duration_ms, \
+             status, error_message, req_chars, resp_chars, args_summary, source, \
+             truncated_from_chars, truncated_to_chars) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'mcp', ?10, ?11)",
+            rusqlite::params![
+                call.tool,
+                session,
+                invoked_at,
+                call.duration_ms,
+                call.status,
+                call.error,
+                call.req_chars as i64,
+                call.resp_chars as i64,
+                call.args_summary,
+                from_chars,
+                to_chars,
+            ],
+        );
+    }
 }
 
 /// Tool failure surfaced as an isError tool result (the FastMCP exception path).
 pub struct ToolFailure(pub String);
+
+/// One dispatched call's telemetry payload.
+pub(crate) struct ToolCallMetrics<'a> {
+    pub(crate) tool: &'a str,
+    pub(crate) duration_ms: f64,
+    pub(crate) status: &'a str,
+    pub(crate) error: Option<&'a str>,
+    pub(crate) req_chars: usize,
+    pub(crate) resp_chars: usize,
+    pub(crate) args_summary: &'a str,
+    pub(crate) truncated: Option<(usize, usize)>,
+}
 
 impl From<String> for ToolFailure {
     fn from(message: String) -> Self {

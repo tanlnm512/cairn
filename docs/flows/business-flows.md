@@ -174,8 +174,8 @@ Storage layout: one SQLite store per workspace at
   5. Agent wiring: `install-agents` writes client configs/skills from `rust/crates/cairn-cli/templates/agent_integration/`; git post-commit/post-checkout hooks drive `cairn update`; `doctor --fix` repoints stale stdio/SSE registrations to the daemon URL (`rust/crates/cairn-cli/src/cmds_doctor.rs`).
 - Data stores: `.kg` (pooled, WAL pragmas per `tools.rs` tests); `~/.cairn/` daemon home: pidfile, log, launchd plist, `mcp-connect.lock` (`lifecycle.rs:35-59`); client config files under `.claude/` etc.
 - Output surfaces: MCP JSON-RPC over streamable HTTP; healthz JSON; CLI lifecycle messages; log file.
-- Test touchpoints: `daemon_tools.rs`, `auth_lifecycle.rs`, `tests/common/mod.rs` (cairn-daemon/tests); inline tests in `server.rs`-adjacent modules (`tools.rs`, `conn_pool.rs`, `auth.rs`, `lifecycle.rs`, `cmds_connect.rs`, `cmds_serve.rs`).
-- Notes: `tool_metrics` (`schema.rs:249`) is read by `metrics`/doctor/dashboard (`rust/crates/cairn-cli/src/cmds_doctor.rs:934-966`, `dashboard/data.rs`) but no production code in this workspace writes it (only xtask golden fixtures and a dashboard test insert). Provenance of rows `(unverified)` — likely external MCP clients or a legacy writer.
+- Test touchpoints: `daemon_tools.rs`, `auth_lifecycle.rs`, `tool_metrics.rs`, `tests/common/mod.rs` (cairn-daemon/tests); inline tests in `server.rs`-adjacent modules (`tools.rs`, `conn_pool.rs`, `auth.rs`, `lifecycle.rs`, `cmds_connect.rs`, `cmds_serve.rs`).
+- Notes: the daemon records a `tool_metrics` row per dispatched call (`ToolCtx::record_tool_metrics`, best-effort, read-only stores skip); doctor/dashboard history read it.
 
 ## F9: Read-only web dashboard
 

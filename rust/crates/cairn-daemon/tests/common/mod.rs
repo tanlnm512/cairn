@@ -366,3 +366,22 @@ impl Drop for TempStore {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+
+pub fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .expect("repo root")
+}
+
+/// Nav fixture store brought up to the current schema, with the km bundle beside it.
+pub fn seeded_store(tag: &str) -> TempStore {
+    let temp = TempStore::from_fixture(&repo_root().join("rust/golden/nav/nav-store.kg"), tag);
+    let conn = rusqlite::Connection::open(temp.0.join("nav-store.kg")).expect("open seeded store");
+    cairn_store::schema::apply_schema(&conn).expect("apply current schema");
+    copy_tree(
+        &repo_root().join("rust/golden/km/bundle-seed"),
+        &temp.0.join(".knowledge"),
+    );
+    temp
+}

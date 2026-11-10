@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- MCP telemetry is back: every dispatched tool call records a `tool_metrics` row (tool, session, epoch `invoked_at`, duration, ok/error status, request/response sizes, capped args summary, truncation sizes; best-effort, skipped on read-only stores) — the python-era writer was lost in the rust migration while `cairn doctor`'s tool health and the dashboard's history views kept reading the table. Wire-level contract pinned by a daemon test.
+
 ### Removed
 - The unwired `FileWatcherService` module and its `CAIRN_WATCH` knob (cairn-build). The watcher never had a production caller — freshness is enforced pull-style by the CLI's drift probe — and the knob's only readers were the watcher and golden-capture tooling; fixture env pins were re-frozen without it.
 
