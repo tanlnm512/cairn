@@ -364,6 +364,7 @@ effective value and where it came from):
 | `CAIRN_EMBED_BACKEND` | `local` (default; resolves to the dep-free hash embedder), `native` (in-process bge-m3, `local-embed` feature builds only; falls back to hash until `cairn embed --download-model` warms the model cache), or an OpenAI-compatible embeddings server: `omlx`, `ollama`, or `server` + `CAIRN_EMBED_BASE_URL` (`CAIRN_EMBED_SERVER_MODEL`, `CAIRN_EMBED_API_KEY` optional) |
 | `CAIRN_ANN_BACKEND` | `sqlite-vec` (default, statically linked) or `off` for the brute-force scan |
 | `CAIRN_FUSION` | RRF fusion of BM25 + vectors (default on; `0` disables) |
+| `CAIRN_MAX_RESULT_CHARS` | cap for MCP tool text results (default 60000; read in `cairn-daemon/src/server.rs`) |
 | `CAIRN_WORKERS` | parse-pool size (default: CPU count) |
 | `CAIRN_READ_ONLY=1` | open the store read-only, skipping the pre-query freshness refresh (what `cairn serve --read-only` sets for the daemon) |
 | `CAIRN_TELEMETRY=off` | master kill switch for the local telemetry tables |
