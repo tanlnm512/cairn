@@ -33,7 +33,7 @@ Storage layout: one SQLite store per workspace at
   - `rust/crates/cairn-cli/src/cmds_core.rs:819` — `build()` (CLI `build`)
   - `rust/crates/cairn-cli/src/cmds_core.rs:961` — `import_scip()` (CLI `import-scip`)
   - `rust/crates/cairn-cli/src/cmds_core.rs:1193` — `update()` (CLI `update`; git-diff incremental)
-  - `rust/crates/cairn-cli/src/cmds_system.rs` Sync → `rust/crates/cairn-cli/src/cmds_lifecycle.rs:206` (CLI `sync`; mtime drift)
+  - `rust/crates/cairn-cli/src/cmds_system.rs` Sync → `rust/crates/cairn-cli/src/cmds_lifecycle.rs:150` (`run_sync`; mtime drift)
   - Drift self-repair on read paths: `rust/crates/cairn-cli/src/cmds_core.rs:200-262` (`fresh_conn`/`refresh_probe` → `incremental::repair_changed`)
 - Modules/crates: `cairn-build` (scanner, builder, resolver, incremental, closure,
   dataflow, communities, scip), `cairn-parse`, `cairn-store` (schema, swap)
@@ -42,11 +42,11 @@ Storage layout: one SQLite store per workspace at
   2. Guard: refuse to keep/replace an existing store when the scan finds nothing (`builder.rs:172-181`, `builder.rs:230-243`).
   3. Scan workspace → `scanner::scan_workspace` (`rust/crates/cairn-build/src/scanner.rs:606`); repos discovered via `discover_repo_records` (`scanner.rs:225`), respecting gitignore (`cairn-build/src/gitignore.rs`).
   4. Full build writes into a staged store (`swap.rs:42 staging_path`) and swaps atomically (`builder.rs:200-212` → `swap.rs:163 install_staged`); `--repo` filter rebuilds one repo in place with a `repo_build_state` marker (`builder.rs:319-330`).
-  5. Populate (`builder.rs:254`): repos upsert (`builder.rs:297`), then a rayon parse pool (`builder.rs:337-362`) calling `parse_language_file` (`rust/crates/cairn-parse` dispatch at `rust/crates/cairn-build/src/parse_dispatch.rs:20`; 16 languages — python/php/ruby/dart/kotlin/java/go/rust/c/cpp/csharp/swift/objc/ts/js).
+  5. Populate (`builder.rs:254`): repos upsert (`builder.rs:297`), then a rayon parse pool (`builder.rs:337-362`) calling `parse_language_file` (`rust/crates/cairn-parse` dispatch at `rust/crates/cairn-build/src/parse_dispatch.rs:20`; 15 languages — python/php/ruby/dart/kotlin/java/go/rust/c/cpp/csharp/swift/objc/ts/js).
   6. Insert pass: `insert_parsed_file` (`builder.rs:388`) writes files/symbols/edges/imports; parse failures become `parse_errors` rows, never aborts.
   7. Resolve pass: `crate::resolver::resolve_repo_edges` per repo (`builder.rs:423-429`) pins edge targets → exact/ambiguous/unresolved counts.
   8. Import edges materialized (`builder.rs:455 materialize_import_edges`), then configured SCIP indexes applied as an edges-only overlay, degrading to tree-sitter edges on failure (`builder.rs:464` → `apply_scip` at `builder.rs:510`; importer in `rust/crates/cairn-build/src/scip/`).
-  9. Post-build derivatives (from the CLI build handler): transitive closure `build_transitive_closure` (`rust/crates/cairn-build/src/closure.rs:25`, called at `cmds_core.rs:841,1004`), build-run telemetry `record_build_run` (`rust/crates/cairn-cli/src/cmds_lifecycle.rs:258`, called at `cmds_core.rs:2537`).
+  9. Post-build derivatives (from the CLI build handler): transitive closure `build_transitive_closure` (`rust/crates/cairn-build/src/closure.rs:25`, called at `cmds_core.rs:841,1004`), build-run telemetry `record_build_run` (`rust/crates/cairn-cli/src/cmds_lifecycle.rs:258`, called at `cmds_core.rs:2433`).
   10. Incremental `update`: `incremental::incremental_update` (`rust/crates/cairn-build/src/incremental.rs:446`, called at `cmds_core.rs:1292`); single-file path `reindex_paths` (`incremental.rs:32`, called at `cmds_core.rs:1235`); drift detection `detect_changed` (`incremental.rs:650`). After the reindex the handler runs the memory-decay pass (`cmds_core.rs:1328-1342`, see F6).
 - Data stores: `.kg` SQLite tables `repos, files, symbols, edges, imports, parse_errors, skipped_files, pending_sync, repo_build_state, build_runs, transitive_edges, dataflow, communities, symbol_communities, rationale` (schema at `rust/crates/cairn-store/src/schema.rs:11-331`); staged store file + atomic swap (`swap.rs`); optional repo-root `cairn.json` SCIP config (`rust/crates/cairn-build/src/config.rs`; this repo carries none).
 - Output surfaces: CLI stdout (summary via `display`/`Rail`); `build_runs` rows feed `cairn metrics --builds` and the dashboard history views.
@@ -81,7 +81,7 @@ Storage layout: one SQLite store per workspace at
 - Modules/crates: `cairn-query::tools_search` (query side), `cairn-build::embeddings` (index side), `cairn-store::vec0` (sqlite-vec virtual tables), `cairn-query::embed_native` (feature-gated bge-m3)
 - Steps:
   1. Backend resolution per call: `semantic_env` (`rust/crates/cairn-query/src/tools_search.rs:435`) resolves `CAIRN_EMBED_BACKEND` via `resolve_backend` (`tools_search.rs:396`) → Hash (deterministic 256-dim, `hash_vec` `tools_search.rs:471`) | Server (OpenAI-compatible embeddings-server, transport at `tools_search.rs:518+`, probe before use) | Native (bge-m3, cold cache degrades to hash, `tools_search.rs:419-432`).
-  2. `semantic_search_response` (`tools_search.rs:1385`) gates on backend availability and embedding count (`embeddings` table for the resolved model stamp).
+  2. `semantic_search_response` (`tools_search.rs:1426`) gates on backend availability and embedding count (`embeddings` table for the resolved model stamp).
   3. `semantic_search` (`tools_search.rs:1259`): dense retrieve (ANN via sqlite-vec vec0 table when `ann_backend_enabled` `tools_search.rs:382`, else brute cosine; vec0 naming at `tools_search.rs:963`) → RRF fusion with BM25 (`search_symbols` sparse leg, `rrf_fuse`, default on via `CAIRN_FUSION`, `tools_search.rs:389`) → optional cross-encoder rerank stage (in-process bge-reranker-v2-m3 behind the `local-embed` feature, `rerank_native.rs`; default builds degrade to the fused order).
   4. Index build: `cairn embed` → `embeddings::embed_all` (`rust/crates/cairn-build/src/embeddings.rs:429`) writes `embeddings` + vec0 rows; knowledge docs via `embed_knowledge` (`embeddings.rs:713`, wired from `cairn knowledge embed` at `rust/crates/cairn-cli/src/cmds_knowledge.rs:2484`), memories via `embed_memory_concepts` (`embeddings.rs:856`, wired at `cmds_core.rs:3440`).
 - Data stores: `.kg` tables `embeddings` (`schema.rs:150`), `embeddings_mv`/vec0 virtual tables (`schema.rs:161`, `rust/crates/cairn-store/src/vec0.rs`), `knowledge_embeddings` (`schema.rs:174`), `memory_embeddings` (`schema.rs:209`); native model cache under the cairn home.
@@ -118,7 +118,7 @@ Storage layout: one SQLite store per workspace at
   2. `--refine-catalog` first queues a single catalog task; otherwise one `wiki-page` task per page is queued into the bundle's `_tasks/` dir (`TASK_DIR` `rust/crates/cairn-query/src/tasks.rs:18`; `create_task` `:294`). Task state machine: pending → in-progress (`claim_task` `:421`, stale-claim reclaim after 1h `CLAIM_STALE_SECONDS` `:20`) → done/failed/dropped.
   3. An agent (human or LLM) writes the result and calls `task complete` → `complete_task` (`tasks.rs:721`): ownership check, private-data scrub for memory tasks, result concept persisted (`tasks.rs:798-812`), claim marker removed.
   4. Deterministic critic: `complete_with_critic` (`tasks.rs:838`) → `run_critic` (`:1097`) fact-checks the result against the graph; wiki pages must end with a `## Sources` footer whose file/symbol refs all resolve (`resolve_sources`/`file_exists`, `tasks.rs:850-893`).
-  5. Pass → page promoted into `.knowledge/wiki/` with sources metadata; fail → a `-revise` child task is spawned with the errors, up to `MAX_REVISE_CYCLES = 3` (`tasks.rs:906-921`).
+  5. Pass → page promoted into `.knowledge/wiki/` with sources metadata; fail → a `-revise` child task is spawned with the errors, up to `MAX_REVISE_CYCLES = 3` (`tasks.rs:19`, applied at `:906-921`).
   6. Read model: `wiki status` derives planned/queued/in-progress/promoted/failed/dropped at read time (`DERIVED_STATES` `tools_wiki.rs:1136`, `derived_state` `:1174`); `wiki retry` re-queues failed chains (`retry_failed_pages` `:1255`); `wiki enrich` queues append-only extensions (`queue_enrich_tasks` `:1336`). Doc-link tasks cross-link knowledge docs (`queue_doc_link_tasks` `tasks.rs:1717`, edge validation `:1307`).
 - Data stores: `.knowledge/_tasks/` (task + result concepts), `.knowledge/wiki/` (promoted pages + manifest), `.kg` read-only for critic fact-checks and plan building; `knowledge_edges` for doc links.
 - Output surfaces: MCP text (queued task ids); CLI stdout; dashboard `/tasks`, `/wiki` routes.
@@ -142,7 +142,7 @@ Storage layout: one SQLite store per workspace at
 - Data stores: `.knowledge/memory/{raw,drafts,tribal,archived}/` concept files + update log; `.kg` tables `memory_refs` (`schema.rs:101`), `memory_failure_signatures` (`:111`, recurrence gate for `--recurrence-key`), `memory_embeddings` (`:209`), `memory_validity` (`:221`).
 - Output surfaces: MCP text (score/tier/refs-verified); CLI stdout; dashboard `/memory`, `/memory/{tier}/{slug}` routes.
 - Test touchpoints: `km_golden.rs` (cairn-query/tests), `daemon_tools.rs`; inline tests in `tools_km.rs`.
-- Notes: tiers are advisory labels on directories, not DB state; the score/tier can be recomputed at any time from the graph. `explore` (F2) credits the memories it renders into `memory_refs` (`tools.rs:581-585`).
+- Notes: tiers are advisory labels on directories, not DB state; the score/tier can be recomputed at any time from the graph. `explore` (F2) credits the memories it renders into `memory_refs` in the query layer (`tools_flow.rs:469`); the daemon passes the session id through (`cairn-daemon/src/tools.rs:639`).
 
 ## F7: Federation & cross-repo analysis
 
@@ -151,7 +151,7 @@ Storage layout: one SQLite store per workspace at
   - CLI: `federated-search` (`rust/crates/cairn-cli/src/cmds_core.rs:1782`, renders `tools_federation::federated_search_data`), `deps` (`cmds_core.rs:1703`), `ask --all-repos` (`cmds_core.rs:3133`), `tree` (`:2000`).
 - Modules/crates: `cairn-query::tools_federation`, `cairn-query::graph` (`mod cross_repo` `graph.rs:1816`), `cairn-store::paths` (registry), `cairn-cli`
 - Steps:
-  1. `federated_search_text` (`rust/crates/cairn-query/src/tools_federation.rs:135`) → `federated_search` (`:77`): enumerate registered stores from `~/.cairn/workspaces.json` (`iter_stores` `:23` → `load_registry` `paths.rs:83`).
+  1. `federated_search_text` (`rust/crates/cairn-query/src/tools_federation.rs:135`) → `federated_search_data` (`:76`): enumerate registered stores from `~/.cairn/workspaces.json` (`iter_stores` `:23` → `load_registry` `paths.rs:83`).
   2. Per store: classify missing/unindexed/ok from the filesystem (`:28`); open `.kg` read-only and run semantic search, degrading to BM25-only when the store has no embeddings for the current model (`search_store` `:56-75`); a failing store is named and skipped, never fatal.
   3. Merge per-store rankings with RRF (`rrf_fuse` `:122`), attribute each hit with its owning workspace path.
   4. `cross_repo_deps` (`graph.rs:1890`, namespaces resolved per workspace via `resolve_namespaces` `graph.rs:1844` env/config/default table `tools_nav.rs:13-24`): imports in `repo` resolving to another repo's namespace → deps; reverse direction → dependents.
@@ -204,10 +204,10 @@ Storage layout: one SQLite store per workspace at
 | F5 Wiki/task queue | MCP wiki_generate + CLI wiki/task | cairn-query::tools_wiki, tasks | .knowledge/_tasks/, .knowledge/wiki/ | 1 (+inline tools_wiki/tasks) | Deterministic critic gates promotion; revise loop capped at 3 |
 | F6 Memory lifecycle | MCP record/recall + CLI memory * + update-hook decay | cairn-query::tools_km (memory), cairn-cli::agent_hooks | .knowledge/memory/{raw,drafts,tribal,archived} + .kg memory_* tables | 2 (+inline) | Decay piggybacks on `cairn update`; refs crediting via session ids |
 | F7 Federation/cross-repo | MCP federated_search/cross_repo_deps + CLI federated-search/deps/ask --all-repos | cairn-query::tools_federation, graph::cross_repo | ~/.cairn/workspaces.json + per-store .kg (read-only) | 3 | one shared walk (federated_search_data); contract pinned (federation_walk.rs) |
-| F8 MCP daemon | CLI serve/connect/install-agents + HTTP /mcp /healthz | cairn-daemon (server/tools/auth/conn_pool/healthz/lifecycle) | .kg (pooled), ~/.cairn daemon home, launchd plist | 2 (+tests/common) | tool_metrics has no production writer `(unverified)` |
+| F8 MCP daemon | CLI serve/connect/install-agents + HTTP /mcp /healthz | cairn-daemon (server/tools/auth/conn_pool/healthz/lifecycle) | .kg (pooled), ~/.cairn daemon home, launchd plist | 5 | every dispatched call records a tool_metrics row (read-only stores skip) |
 | F9 Dashboard | CLI dashboard + HTTP routes | cairn-cli::dashboard | .kg/.knowledge read-only, ~/.cairn/config.json | 1 (+inline dashboard/*) | Loopback-only; settings save is the sole mutating route |
 
-Cross-cutting: every read surface resolves the same store layout (`store_paths.rs:102`);
+Cross-cutting: `rrf_fuse` (`tools_search.rs:922`) is a tri-flow primitive — semantic search (F3), federation merge (F7, `tools_federation.rs:126`), and memory recall (F6, `tools_km.rs:2504`) all rank through it; rerank provenance (`SemanticMatch.reranked`, F3) also renders in the CLI federated-search JSON (F7). Every read surface resolves the same store layout (`store_paths.rs:102`);
 every MCP tool is a thin dispatch arm over a `cairn-query` function, so CLI and MCP
 share one core; `xtask` (golden recording, CLI smoke, parity, release bump) is dev
 tooling, excluded from the business-flow set.
