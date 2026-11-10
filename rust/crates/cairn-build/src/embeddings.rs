@@ -425,7 +425,8 @@ pub struct EmbedSummary {
     pub ann_synced: usize,
 }
 
-/// Embed stale symbols and refresh multivector, orphan, and term-df state.
+/// Embed stale symbols and refresh multivector, orphan, and term-df state;
+/// every write re-takes the build lock via `pin`, so the caller must not hold it.
 pub fn embed_all(
     conn: &Connection,
     workspace: &str,
@@ -433,6 +434,7 @@ pub fn embed_all(
     limit: Option<usize>,
     reap_orphans: bool,
     multivector: bool,
+    pin: &cairn_store::swap::StorePin,
 ) -> Result<EmbedSummary, String> {
     if batch_size == 0 {
         return Err("batch_size must be >= 1".to_string());
@@ -452,6 +454,7 @@ pub fn embed_all(
     for batch in stale_rows.chunks(batch_size) {
         let texts: Vec<String> = batch.iter().map(|s| s.chunk.clone()).collect();
         let (blobs, _dim) = embed_texts(&env, &texts)?;
+        let _guard = pin.write_lock()?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for (stale, blob) in batch.iter().zip(&blobs) {
             let dim = (blob.len() / 4) as i64;
@@ -471,6 +474,7 @@ pub fn embed_all(
     }
 
     let reaped = if reap_orphans {
+        let _guard = pin.write_lock()?;
         reap_orphaned_embeddings(conn).map_err(|e| e.to_string())?
     } else {
         0
@@ -478,14 +482,17 @@ pub fn embed_all(
 
     let mv_embedded = if multivector {
         Some(
-            embed_mv_kinds(conn, &env, &all_rows, &signatures, batch_size, limit)
+            embed_mv_kinds(conn, &env, &all_rows, &signatures, batch_size, limit, pin)
                 .map_err(|e| e.to_string())?,
         )
     } else {
         None
     };
 
-    rebuild_term_df(conn).map_err(|e| e.to_string())?;
+    {
+        let _guard = pin.write_lock()?;
+        rebuild_term_df(conn).map_err(|e| e.to_string())?;
+    }
 
     Ok(EmbedSummary {
         model: env.model,
@@ -597,7 +604,8 @@ pub fn embed_symbols(
     })
 }
 
-/// Refresh stale multi-vector rows and delete vanished docstring rows.
+/// Refresh stale multi-vector rows and delete vanished docstring rows; every
+/// write re-takes the build lock via `pin`.
 fn embed_mv_kinds(
     conn: &Connection,
     env: &EmbedEnv,
@@ -605,6 +613,7 @@ fn embed_mv_kinds(
     signatures: &HashMap<String, String>,
     batch_size: usize,
     limit: Option<usize>,
+    pin: &cairn_store::swap::StorePin,
 ) -> Result<usize, String> {
     let mut existing: HashMap<(String, String), String> = HashMap::new();
     {
@@ -652,6 +661,7 @@ fn embed_mv_kinds(
     }
 
     if !emptied_docstring.is_empty() {
+        let _guard = pin.write_lock()?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for sid in &emptied_docstring {
             tx.execute(
@@ -673,6 +683,7 @@ fn embed_mv_kinds(
     for batch in stale.chunks(batch_size) {
         let texts: Vec<String> = batch.iter().map(|(_, _, t, _)| t.clone()).collect();
         let (blobs, _dim) = embed_texts(env, &texts)?;
+        let _guard = pin.write_lock()?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for ((sid, kind, text, chash), blob) in batch.iter().zip(&blobs) {
             let dim = (blob.len() / 4) as i64;

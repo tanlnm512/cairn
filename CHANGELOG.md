@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The unwired `FileWatcherService` module and its `CAIRN_WATCH` knob (cairn-build). The watcher never had a production caller — freshness is enforced pull-style by the CLI's drift probe — and the knob's only readers were the watcher and golden-capture tooling; fixture env pins were re-frozen without it.
 
 ### Fixed
+- `cairn update --file` and `cairn embed` wrote to the live store without the build lock, so a concurrent full build could swap in a new DB and silently discard their writes. `update --file` now opens the store under the lock (`swap::open_locked`) and refuses with "Cannot acquire build lock" on contention; `embed` opens a pinned store (`swap::StorePin`) and re-takes the lock per batch, so a long embedding run interleaves with builds instead of blocking them. The daemon's private store-identity copy is deduplicated onto `swap::store_id`.
 - `federated_search` (MCP) now opens registered stores through the shared read-only connection helper, which registers the sqlite-vec module — on stores with embeddings the tool previously ran a degraded non-vector path and returned BM25-like results instead of semantic ones. The CLI `federated-search` deduplicates onto the same walk (`tools_federation::federated_search_data`) with byte-identical output.
 
 ### Added

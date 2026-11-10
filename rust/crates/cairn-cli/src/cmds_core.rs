@@ -247,8 +247,7 @@ fn refresh_probe(
             return Ok(stale_banner(&drifted));
         }
     };
-    // The connection must be opened under the lock: one opened earlier keeps
-    // writing to the replaced file across a full-build swap.
+    // Open under the lock as swap::open_locked requires; contention defers above.
     let mut conn = cairn_store::schema::open_initialized(Path::new(db))
         .map_err(|e| format!("open {db}: {e}"))?;
     let workspace = conn_store_workspace(db);
@@ -1228,9 +1227,9 @@ fn update(args: crate::cmds_core::UpdateArgs) -> ExitCode {
             ));
             return ExitCode::FAILURE;
         };
-        let mut conn = match cairn_store::schema::open_initialized(Path::new(&db)) {
-            Ok(conn) => conn,
-            Err(e) => return command_error(&format!("cannot open {db}: {e}")),
+        let (_lock, mut conn) = match cairn_store::swap::open_locked(Path::new(&db)) {
+            Ok(opened) => opened,
+            Err(e) => return command_error(&e),
         };
         let result = cairn_build::incremental::reindex_paths(
             &mut conn,
@@ -2300,8 +2299,9 @@ fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
     }
     let db = db_arg(&args.db);
     let workspace = store_paths::resolve_workspace(None);
-    let Ok(conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
-        return command_error(&format!("cannot open {db}"));
+    let (conn, pin) = match cairn_store::swap::StorePin::open(Path::new(&db)) {
+        Ok(opened) => opened,
+        Err(e) => return command_error(&e),
     };
     let sym_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM symbols", [], |r| r.get(0))
@@ -2324,6 +2324,7 @@ fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
         args.limit,
         !args.no_reap,
         multivector,
+        &pin,
     ) {
         Ok(summary) => summary,
         Err(message) => return command_error(&message),
@@ -2338,21 +2339,27 @@ fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
             timer.elapsed().as_secs_f64(),
             "symbols",
         );
-        let base = cairn_store::vec0::rebuild_index(
-            &conn,
-            &env.model,
-            cairn_store::vec0::VecSource::Embeddings,
-        )
-        .ok();
-        let mv = if multivector {
-            cairn_store::vec0::rebuild_index(
-                &conn,
-                &env.model,
-                cairn_store::vec0::VecSource::EmbeddingsMv,
-            )
-            .ok()
-        } else {
-            None
+        let (base, mv) = match pin.write_lock() {
+            Ok(_guard) => {
+                let base = cairn_store::vec0::rebuild_index(
+                    &conn,
+                    &env.model,
+                    cairn_store::vec0::VecSource::Embeddings,
+                )
+                .ok();
+                let mv = if multivector {
+                    cairn_store::vec0::rebuild_index(
+                        &conn,
+                        &env.model,
+                        cairn_store::vec0::VecSource::EmbeddingsMv,
+                    )
+                    .ok()
+                } else {
+                    None
+                };
+                (base, mv)
+            }
+            Err(e) => return command_error(&e),
         };
         crate::cmds_lifecycle::plain_progress_draw(
             "ANN index",

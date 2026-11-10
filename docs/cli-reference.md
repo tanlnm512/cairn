@@ -21,7 +21,7 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 |---|---|
 | `cairn init [--with-hooks] [--no-build]` | register the workspace and run a first build; `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)) |
 | `cairn build [--staging] [--with-closure] [--repo R]` | full workspace rebuild (see [indexing.md](indexing.md)); `--staging` builds into a temp DB and atomic-swaps it under the build lock |
-| `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
+| `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)); both forms take the store's build lock — a concurrent build/update makes the command refuse with "Cannot acquire build lock" instead of racing the swap |
 | `cairn stats` | graph statistics |
 | `cairn checkpoint` | checkpoint the WAL into the main file |
 | `cairn config` | show effective configuration (`--json` emits `cairn_home`/`workspace`/`db`/`knowledge` as one JSON document — read-only, registers nothing; `--db` prints only the DB path; `--mcp-config` prints the agent registration snippet; `--list` lists registered workspaces) |
@@ -141,7 +141,7 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 
 | Command | Purpose |
 |---|---|
-| `cairn embed` | compute/refresh symbol embeddings with the configured backend (`--batch-size`, `--limit`, `--no-reap`, `--build-index` rebuilds the vec0 ANN index, `--no-multivector` stores one vector per symbol, `--download-model` pre-warms the native bge-m3 weights and exits — `local-embed` feature builds only, erroring with the feature hint otherwise) |
+| `cairn embed` | compute/refresh symbol embeddings with the configured backend (`--batch-size`, `--limit`, `--no-reap`, `--build-index` rebuilds the vec0 ANN index, `--no-multivector` stores one vector per symbol, `--download-model` pre-warms the native bge-m3 weights and exits — `local-embed` feature builds only, erroring with the feature hint otherwise); each write batch re-takes the store's build lock, refusing on contention instead of racing a build |
 
 The backend is `CAIRN_EMBED_BACKEND`: `local` (the default) resolves to the
 dep-free `hash-256-v1` embedder and `cairn embed` warns that the vectors are

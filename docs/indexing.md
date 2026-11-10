@@ -78,7 +78,12 @@ Entry: `cairn-build` `builder.rs::build_graph`, run under the store's
 ## Incremental update (`cairn update`)
 
 Entry: `cairn-build` `incremental.rs::incremental_update`, which takes the
-build lock before opening its connection.
+build lock before opening its connection. `cairn update --file` opens the
+store the same way (`cairn-store` `swap.rs::open_locked`): while any build or
+update holds the lock it refuses with the "Cannot acquire build lock" error
+instead of racing the swap. `cairn embed` opens a pinned store and re-takes
+the lock per batch, so a long embedding run interleaves with builds rather
+than blocking them for its whole duration.
 
 - **Change detection**, per repo: `--diff-ref A..B` uses exactly
   `git diff -z --name-only A..B`; otherwise `git diff -z --name-only HEAD`

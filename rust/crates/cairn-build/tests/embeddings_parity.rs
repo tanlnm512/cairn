@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use cairn_build::embeddings::{current_model, embed_all, embed_symbols};
 use cairn_query::tools_search::{self, floats_to_blob, hash_vec};
-use cairn_store::schema::open_initialized;
+use cairn_store::swap::StorePin;
 use cairn_store::vec0::{self, VecSource};
 use serde_json::Value;
 
@@ -115,9 +115,9 @@ fn embed_reproduces_the_embed_golden() {
     let (dir, db, corpus) = stage("full");
 
     {
-        let conn = open_initialized(&db).expect("open store");
+        let (conn, pin) = StorePin::open(&db).expect("open pinned store");
         let summary =
-            embed_all(&conn, corpus.to_str().expect("ws"), 64, None, true, true).expect("embed");
+            embed_all(&conn, corpus.to_str().expect("ws"), 64, None, true, true, &pin).expect("embed");
         assert_eq!(summary.model, model);
         assert_eq!(
             summary.embedded,
@@ -259,7 +259,7 @@ fn embed_limit_bounds_base_and_mv_passes() {
     let golden = load_golden();
     let total = golden["summary"]["total"].as_u64().unwrap() as usize;
     let (dir, db, corpus) = stage("limit");
-    let conn = open_initialized(&db).expect("open store");
+    let (conn, pin) = StorePin::open(&db).expect("open pinned store");
     let summary = embed_all(
         &conn,
         corpus.to_str().expect("ws"),
@@ -267,6 +267,7 @@ fn embed_limit_bounds_base_and_mv_passes() {
         Some(2),
         false,
         true,
+        &pin,
     )
     .expect("embed");
     assert_eq!(summary.embedded, 2);
@@ -296,8 +297,8 @@ fn embed_symbols_resyncs_the_vec0_row_in_place() {
         .to_string();
     let (dir, db, corpus) = stage("resync");
 
-    let conn = open_initialized(&db).expect("open store");
-    embed_all(&conn, corpus.to_str().expect("ws"), 64, None, true, true).expect("embed");
+    let (conn, pin) = StorePin::open(&db).expect("open pinned store");
+    embed_all(&conn, corpus.to_str().expect("ws"), 64, None, true, true, &pin).expect("embed");
     vec0::rebuild_index(&conn, &model, VecSource::Embeddings).expect("rebuild");
     let before: i64 = vec0::index_row_count(&conn, &model)
         .expect("count")

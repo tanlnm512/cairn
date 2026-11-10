@@ -1,5 +1,6 @@
 //! Store replacement: advisory build lock, WAL-safe atomic swap, telemetry carry-over.
 
+use std::cell::Cell;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -69,6 +70,86 @@ pub fn build_lock(db: &Path) -> Result<BuildLock, String> {
 pub fn remove_sidecars(db: &Path) {
     for suffix in ["-wal", "-shm"] {
         let _ = std::fs::remove_file(with_suffix(db, suffix));
+    }
+}
+
+/// Store file identity: (dev, inode) on Unix; (len, mtime_ns) elsewhere.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct StoreId(u64, u64);
+
+/// The identity of the store file at `path`; None when it cannot be read.
+pub fn store_id(path: &Path) -> Option<StoreId> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(path).ok()?;
+        Some(StoreId(meta.dev(), meta.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        use std::time::UNIX_EPOCH;
+        let meta = std::fs::metadata(path).ok()?;
+        let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+        Some(StoreId(meta.len(), mtime.as_nanos() as u64))
+    }
+}
+
+/// Acquire the build lock, then open the store: a connection opened before a
+/// full build's swap keeps writing to the replaced (unlinked) file.
+pub fn open_locked(db: &Path) -> Result<(BuildLock, Connection), String> {
+    let lock = build_lock(db)?;
+    let conn = crate::schema::open_initialized(db)
+        .map_err(|e| format!("open store {}: {e}", db.display()))?;
+    Ok((lock, conn))
+}
+
+/// Pinned store identity for a write session that re-takes the build lock per
+/// write and aborts when a concurrent build replaced the store file.
+pub struct StorePin {
+    db: PathBuf,
+    id: Cell<Option<StoreId>>,
+}
+
+/// The build lock held for one write against a pinned store.
+pub struct PinnedLock<'a> {
+    pin: &'a StorePin,
+    _lock: BuildLock,
+}
+
+impl Drop for PinnedLock<'_> {
+    fn drop(&mut self) {
+        // Absorb this session's own writes so only a replacement trips the pin.
+        self.pin.id.set(store_id(&self.pin.db));
+    }
+}
+
+impl StorePin {
+    /// Open `db` under the build lock and pin its identity; the lock is released.
+    pub fn open(db: &Path) -> Result<(Connection, StorePin), String> {
+        let (_lock, conn) = open_locked(db)?;
+        Ok((
+            conn,
+            StorePin {
+                db: db.to_path_buf(),
+                id: Cell::new(store_id(db)),
+            },
+        ))
+    }
+
+    /// Re-acquire the build lock for one write; Err on contention or when the
+    /// pinned store file was replaced by a concurrent build.
+    pub fn write_lock(&self) -> Result<PinnedLock<'_>, String> {
+        let lock = build_lock(&self.db)?;
+        if store_id(&self.db) != self.id.get() {
+            return Err(format!(
+                "store replaced by a concurrent build on {}: re-run the command",
+                self.db.display()
+            ));
+        }
+        Ok(PinnedLock {
+            pin: self,
+            _lock: lock,
+        })
     }
 }
 
