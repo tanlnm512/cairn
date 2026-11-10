@@ -1787,118 +1787,81 @@ fn federated_search(args: crate::cmds_core::FederatedSearchArgs) -> ExitCode {
         return usage_error("query must not be empty");
     }
     let limit = args.limit.clamp(1, 1000) as usize;
-    let env = cairn_query::tools_search::semantic_env(None);
-    let mut hits: Vec<(String, Value)> = Vec::new();
-    let mut dropped: Vec<String> = Vec::new();
-    let mut states: Vec<(String, String)> = Vec::new();
-    let mut rankings: Vec<Vec<String>> = Vec::new();
-    let registry = store_paths::load_registry();
-    let home = store_paths::cairn_home();
-    for (ws_path, key) in &registry {
-        let Some(home) = &home else { break };
-        let store_home = home.join(key);
-        let db = store_home.join(".kg");
-        let state = classify_store(&store_home, &db);
-        if state != "ok" {
-            states.push((ws_path.clone(), state.to_string()));
-            dropped.push(ws_path.clone());
-            continue;
-        }
-        let Ok(conn) = cairn_store::conn::open_read_only(&db) else {
-            let state = "error".to_string();
-            states.push((ws_path.clone(), state.clone()));
-            dropped.push(ws_path.clone());
-            continue;
-        };
-        let store_hits = search_store_hits(&conn, &args.query, limit, &env);
-        let store_hits = match store_hits {
-            Ok(hits) => hits,
-            Err(message) => {
-                let state = if message.contains("locked") || message.contains("busy") {
-                    "locked"
-                } else {
-                    "error"
-                };
-                states.push((ws_path.clone(), state.to_string()));
-                dropped.push(ws_path.clone());
-                continue;
-            }
-        };
-        states.push((ws_path.clone(), "ok".to_string()));
-        let mut ranking = Vec::new();
-        for hit in store_hits {
-            let dir_name = store_home
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let doc_id = format!("{dir_name}:{}", hit["id"].as_str().unwrap_or_default());
-            let mut hit = hit;
-            if let Some(obj) = hit.as_object_mut() {
-                obj.insert("workspace".into(), Value::from(ws_path.clone()));
-            }
-            ranking.push(doc_id.clone());
-            hits.push((doc_id, hit));
-        }
-        rankings.push(ranking);
-    }
-    // RRF-fuse the per-store rankings, keeping fixed-precision rounding.
-    let hits_by_doc = hits;
-    let fused = cairn_query::tools_search::rrf_fuse(&rankings, 60);
-    let mut fused_hits: Vec<Value> = Vec::new();
-    for (doc_id, score) in &fused {
-        if let Some((_, hit)) = hits_by_doc.iter().find(|(id, _)| id == doc_id) {
-            let mut hit = hit.clone();
-            let rounded = (score * 10_000.0).round() / 10_000.0;
-            if let Some(existing) = hit.get_mut("score")
-                && let Some(v) = serde_json::Number::from_f64(rounded)
-            {
-                *existing = Value::Number(v);
-            }
-            fused_hits.push(hit);
-        }
-    }
-    fused_hits.truncate(limit);
-
+    let result = match cairn_query::tools_federation::federated_search_data(&args.query, limit) {
+        Ok(result) => result,
+        Err(message) => return usage_error(&message),
+    };
+    let hit_value = |hit: &cairn_query::tools_search::SemanticMatch, workspace: &str| -> Value {
+        serde_json::json!({
+            "id": hit.id,
+            "name": hit.name,
+            "kind": hit.kind,
+            "qualified_name": hit.qualified_name,
+            "file_path": hit.file_path,
+            "repo": hit.repo,
+            "score": hit.score,
+            "chunk": hit.chunk,
+            "provenance": hit.provenance,
+            "reranked": hit.reranked,
+            "workspace": workspace,
+        })
+    };
     if args.as_json {
         let mut object = Map::new();
         object.insert("query".into(), Value::from(args.query.clone()));
-        object.insert("hits".into(), Value::Array(fused_hits.clone()));
+        object.insert(
+            "hits".into(),
+            Value::Array(
+                result
+                    .hits
+                    .iter()
+                    .map(|(hit, ws)| hit_value(hit, ws))
+                    .collect(),
+            ),
+        );
         object.insert(
             "dropped".into(),
-            Value::Array(dropped.iter().map(|d| Value::from(d.clone())).collect()),
+            Value::Array(
+                result
+                    .dropped
+                    .iter()
+                    .map(|d| Value::from(d.clone()))
+                    .collect(),
+            ),
         );
         let mut states_map = Map::new();
-        for (ws, state) in &states {
+        for (ws, state) in &result.states {
             states_map.insert(ws.clone(), Value::from(state.clone()));
         }
         object.insert("states".into(), Value::Object(states_map));
         println!("{}", json_compat::dumps(&Value::Object(object)));
-        if fused_hits.is_empty() {
+        if result.hits.is_empty() {
             return ExitCode::FAILURE;
         }
         return ExitCode::SUCCESS;
     }
-    if states.is_empty() {
+    if result.states.is_empty() {
         eprintln!("No stores are registered.");
         return ExitCode::FAILURE;
     }
-    for hit in &fused_hits {
+    for (hit, workspace) in &result.hits {
         println!(
             "{:<10} {:<35} {}  ({})  [{}]  {}  {}",
-            str_of(hit.get("kind")),
-            str_of(hit.get("name")),
-            str_of(hit.get("file_path")),
-            str_of(hit.get("repo")),
-            str_of(hit.get("workspace")),
-            format_g(str_of(hit.get("score")).parse::<f64>().unwrap_or(0.0)),
-            str_of(hit.get("provenance")),
+            hit.kind,
+            hit.name,
+            hit.file_path,
+            hit.repo,
+            workspace,
+            format_g(hit.score),
+            hit.provenance,
         );
     }
-    if !dropped.is_empty() {
+    if !result.dropped.is_empty() {
         println!();
-        println!("Dropped stores ({}):", dropped.len());
-        for ws in &dropped {
-            let state = states
+        println!("Dropped stores ({}):", result.dropped.len());
+        for ws in &result.dropped {
+            let state = result
+                .states
                 .iter()
                 .find(|(w, _)| w == ws)
                 .map(|(_, s)| s.as_str())
@@ -1906,7 +1869,7 @@ fn federated_search(args: crate::cmds_core::FederatedSearchArgs) -> ExitCode {
             println!("  {state:<10} {ws}");
         }
     }
-    if fused_hits.is_empty() {
+    if result.hits.is_empty() {
         eprintln!("No hits for '{}'.", args.query);
         return ExitCode::FAILURE;
     }
@@ -1927,73 +1890,6 @@ fn format_g(value: f64) -> String {
         .trim_end_matches('0')
         .trim_end_matches('.')
         .to_string()
-}
-
-fn classify_store(home: &Path, db: &Path) -> &'static str {
-    if !home.is_dir() {
-        return "missing";
-    }
-    if !db.is_file() {
-        return "unindexed";
-    }
-    "ok"
-}
-
-/// One store's ranked hits: semantic when embeddings exist, bm25 otherwise.
-fn search_store_hits(
-    conn: &Connection,
-    query: &str,
-    limit: usize,
-    env: &cairn_query::tools_search::SemanticEnv,
-) -> Result<Vec<Value>, String> {
-    if env.backend == cairn_query::tools_search::EffectiveBackend::Unavailable {
-        return Err("embedding backend unavailable".to_string());
-    }
-    let has_embeddings: bool = conn
-        .query_row(
-            "SELECT 1 FROM embeddings WHERE model = ? LIMIT 1",
-            [&env.model],
-            |_| Ok(()),
-        )
-        .is_ok();
-    if has_embeddings {
-        let matches = cairn_query::tools_search::semantic_search(conn, query, limit, 0.3, env);
-        return Ok(matches
-            .into_iter()
-            .map(|m| {
-                serde_json::json!({
-                    "id": m.id,
-                    "name": m.name,
-                    "kind": m.kind,
-                    "qualified_name": m.qualified_name,
-                    "file_path": m.file_path,
-                    "repo": m.repo,
-                    "score": m.score,
-                    "chunk": m.chunk,
-                    "provenance": m.provenance,
-                    "reranked": m.reranked,
-                })
-            })
-            .collect());
-    }
-    let rows = cairn_query::graph::lexical_search_symbols(conn, query, None, limit as i64);
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            serde_json::json!({
-                "id": row.id,
-                "name": row.name,
-                "kind": row.kind,
-                "qualified_name": row.qualified_name,
-                "file_path": row.file_path,
-                "repo": row.repo,
-                "score": 0.0,
-                "chunk": "",
-                "provenance": "bm25",
-                "reranked": false,
-            })
-        })
-        .collect())
 }
 
 /// tree handler.
@@ -3141,7 +3037,8 @@ fn ask_all_repos(args: &crate::cmds_core::AskArgs) -> ExitCode {
         for (ws_path, key) in store_paths::load_registry() {
             let store_home = home.join(&key);
             let db = store_home.join(".kg");
-            let mut state = classify_store(&store_home, &db).to_string();
+            let mut state =
+                cairn_query::tools_federation::classify_store(&store_home, &db).to_string();
             if state == "ok" {
                 match cairn_store::conn::open_read_only(&db) {
                     Err(_) => state = "locked".into(),

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `federated_search` (MCP) now opens registered stores through the shared read-only connection helper, which registers the sqlite-vec module — on stores with embeddings the tool previously ran a degraded non-vector path and returned BM25-like results instead of semantic ones. The CLI `federated-search` deduplicates onto the same walk (`tools_federation::federated_search_data`) with byte-identical output.
+
 ### Added
 - Flow reference (`docs/flows/`): stable business-flow IDs F1–F9 joining code, tests, PRs, and charts — flow map with per-flow `file:line` paths, impact×effort backlog, and a per-flow test-coverage chart. `cargo xtask flow-coverage` regenerates `docs/flows/coverage.md` from `flows.json` patterns over integration test files (`--check` gates staleness); PR descriptions name affected flows (`flows: F2, F7`) and tests may tag `// F#`.
 - `cairn install-agents` client selection is an interactive picker (new `crossterm` dependency): click an item to toggle it, or use space/up/down, number keys (1-9), `a` for all, scroll wheel; enter confirms, esc aborts. Not-yet-installed clients start preselected, so plain enter matches the `--yes` default. Terminals that cannot render it (piped stdio, `TERM=dumb`, unsized ptys) fall back to the previous type-the-number prompt; the picker uses the alternate screen and restores the terminal exactly on exit.
