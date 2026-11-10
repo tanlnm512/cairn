@@ -5,8 +5,7 @@
   "captured_at": "2026-10-29T03:20:15.113331+00:00",
   "env_pins": {
    "CAIRN_EMBED_BACKEND": "hash",
-   "CAIRN_RERANK": "0",
-   "CAIRN_WATCH": "0"
+   "CAIRN_RERANK": "0"
   }
  },
  "normalization": [

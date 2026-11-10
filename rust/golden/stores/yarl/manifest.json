@@ -1,22 +1,21 @@
 {
-  "schema": "cairn-rust-parity-pinned-store/1",
-  "store": "yarl",
-  "cap_files": 100,
-  "corpus_files": 34,
-  "corpus_bytes": 437527,
-  "db_bytes": 4988928,
-  "total_bytes": 6284454,
-  "store_counts": {
-    "repos": 1,
-    "files": 24,
-    "symbols": 1090,
-    "edges": 4183
-  },
-  "knowledge_files": 540,
-  "knowledge_bundle_seeded_files": 540,
-  "env_pins": {
-    "CAIRN_EMBED_BACKEND": "hash",
-    "CAIRN_RERANK": "0",
-    "CAIRN_WATCH": "0"
-  }
+ "schema": "cairn-rust-parity-pinned-store/1",
+ "store": "yarl",
+ "cap_files": 100,
+ "corpus_files": 34,
+ "corpus_bytes": 437527,
+ "db_bytes": 4988928,
+ "total_bytes": 6284454,
+ "store_counts": {
+  "repos": 1,
+  "files": 24,
+  "symbols": 1090,
+  "edges": 4183
+ },
+ "knowledge_files": 540,
+ "knowledge_bundle_seeded_files": 540,
+ "env_pins": {
+  "CAIRN_EMBED_BACKEND": "hash",
+  "CAIRN_RERANK": "0"
+ }
 }

@@ -216,8 +216,8 @@ fn fresh_conn(db: &str, refresh: Option<bool>) -> Result<Connection, String> {
 /// Drift still present after a probe: repair disabled or lock contention.
 struct StaleDrift(String);
 
-/// Probe indexed files and repair drift (watcher.refresh_for_query); a failed
-/// strict repair is an error, unrepaired drift carries its banner text.
+/// Probe indexed files and repair drift; a failed strict repair is an error,
+/// unrepaired drift carries its banner text.
 fn refresh_probe(
     conn: &mut Connection,
     db: &str,
@@ -276,7 +276,7 @@ fn stale_banner(drifted: &[String]) -> Option<StaleDrift> {
     )))
 }
 
-/// Probe indexed files and repair drift before a read (watcher.refresh_for_query).
+/// Probe indexed files and repair drift before a read.
 fn refresh_conn(conn: &mut Connection, db: &str, repair: Option<bool>) -> Result<(), String> {
     match refresh_probe(conn, db, repair)? {
         Some(stale) => {

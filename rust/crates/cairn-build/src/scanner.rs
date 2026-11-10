@@ -727,7 +727,7 @@ pub fn path_under_skip_dir(rel: &Path) -> bool {
         .any(|c| c.as_os_str().to_str().is_some_and(is_skip_dir_name))
 }
 
-/// Whether the full scan filter skips a path (the watcher's drift gate).
+/// Whether the full scan filter skips a path.
 pub fn is_skipped(path: &Path, repo_root: &Path) -> Result<bool, String> {
     let is_source = path
         .extension()

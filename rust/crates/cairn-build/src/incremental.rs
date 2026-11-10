@@ -442,7 +442,7 @@ fn find_tracked_file_row(
     row(rel_to_repo, repo).or_else(|| row(abs_path, repo))
 }
 
-/// Reindex changed files; the entry the watcher's update pass drives.
+/// Reindex changed files; the entry the CLI update command drives.
 pub fn incremental_update(
     workspace: &str,
     db_path: &str,
