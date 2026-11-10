@@ -188,8 +188,11 @@ fundamentally cannot see.
   `local-embed` feature build (`cargo install --git
   https://github.com/tanlnm512/cairn --features local-embed cairn-cli`) and
   run `CAIRN_EMBED_BACKEND=native cairn embed --download-model` once for
-  in-process bge-m3 with zero infrastructure. No cross-encoder reranker
-  ships in this build.
+  in-process bge-m3 with zero infrastructure. The same feature build also
+  enables the optional cross-encoder rerank stage of `semantic_search`
+  (`CAIRN_RERANK=1` or the tool's `rerank` argument; the bge-reranker-v2-m3
+  model downloads into the fastembed cache on first use); default builds
+  keep the fused order.
 - **Synthesized docs need an LLM pass.** Compass/wiki generation runs through
   the task queue (`cairn task`) with the critic gate — deterministic, but it
   won't happen purely locally without any model access.

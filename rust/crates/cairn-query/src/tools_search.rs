@@ -361,9 +361,9 @@ pub fn rerank_enabled() -> bool {
     }
 }
 
-/// Whether a cross-encoder reranker can run; false until a native one exists.
+/// Whether a cross-encoder reranker can run (local-embed feature builds).
 pub fn reranker_available() -> bool {
-    false
+    cfg!(feature = "local-embed")
 }
 
 fn rerank_min_margin() -> f64 {
@@ -1324,11 +1324,52 @@ pub fn semantic_search(
         && !(env.rerank_override.is_none()
             && fusion_used
             && confidence_gate(query, &candidates, limit, env));
-    // No native cross-encoder: a requested rerank degrades to the fused order
-    // (the rerank call returns candidates unchanged), so both branches truncate.
-    debug_assert!(!rerank_on || !env.reranker_available);
+    if rerank_on {
+        let passages: Vec<String> = candidates.iter().map(rerank_passage).collect();
+        if let Some(scores) = crate::rerank_native::rerank_scores(query, &passages) {
+            candidates = apply_rerank_scores(candidates, &scores, env.min_margin);
+        }
+    }
     candidates.truncate(limit);
     candidates
+}
+
+/// The passage a cross-encoder scores: the qualified identity plus the chunk head.
+fn rerank_passage(m: &SemanticMatch) -> String {
+    let identity = m.qualified_name.as_deref().unwrap_or(&m.name);
+    if m.chunk.is_empty() {
+        format!("{identity} ({}) [{}]", m.file_path, m.repo)
+    } else {
+        let head: String = m.chunk.chars().take(1000).collect();
+        format!("{identity}\n{head}")
+    }
+}
+
+/// Reorder by cross-encoder score (desc), prune the tail below
+/// `best - margin`, and mark the survivors; a length mismatch degrades to
+/// the incoming order.
+fn apply_rerank_scores(
+    candidates: Vec<SemanticMatch>,
+    scores: &[f64],
+    margin: f64,
+) -> Vec<SemanticMatch> {
+    if scores.len() != candidates.len() || candidates.is_empty() {
+        return candidates;
+    }
+    let mut order: Vec<usize> = (0..candidates.len()).collect();
+    order.sort_by(|&a, &b| scores[b].total_cmp(&scores[a]));
+    let best = scores[order[0]];
+    order
+        .into_iter()
+        .filter(|&i| best - scores[i] <= margin)
+        .map(|i| {
+            let mut m = candidates[i].clone();
+            m.score = scores[i];
+            m.provenance = "rerank".to_string();
+            m.reranked = true;
+            m
+        })
+        .collect()
 }
 
 /// Render the semantic-search prose response.

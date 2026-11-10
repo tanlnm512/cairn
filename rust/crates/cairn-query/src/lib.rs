@@ -9,6 +9,7 @@ pub mod grep;
 pub mod http;
 pub mod ingest;
 pub mod json_compat;
+mod rerank_native;
 pub mod review;
 pub mod skillgen;
 pub mod tasks;

@@ -24,7 +24,7 @@
       "id": "F3",
       "name": "Semantic search & embedding index",
       "patterns": [
-        "golden_search", "embeddings_parity", "native_embed", "semantic_search",
+        "golden_search", "embeddings_parity", "native_embed", "semantic_search", "rerank_native",
         "embed_all", "tools_search", "embed_backend", "hash_vec", "rrf_fuse",
         "embed_knowledge", "embed_memory", "vec0"
       ]

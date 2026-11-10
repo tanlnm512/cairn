@@ -591,3 +591,57 @@ fn unreachable_server_fails_after_bounded_retries() {
     // Backoff schedule 0.5 + 1.0 + 2.0 elapses between the four attempts.
     assert!(started.elapsed() >= Duration::from_secs_f64(3.4));
 }
+
+// --- rerank stage ---------------------------------------------------------
+
+fn rerank_candidate(id: &str, chunk: &str) -> super::SemanticMatch {
+    super::SemanticMatch {
+        id: id.into(),
+        kind: "function".into(),
+        name: id.into(),
+        qualified_name: Some(id.into()),
+        file_path: format!("src/{id}.rs"),
+        repo: "cairn".into(),
+        score: 0.01,
+        provenance: "fused".into(),
+        reranked: false,
+        chunk: chunk.into(),
+    }
+}
+
+#[test]
+fn apply_rerank_scores_reorders_prunes_and_marks() {
+    let candidates = vec![
+        rerank_candidate("a", ""),
+        rerank_candidate("b", ""),
+        rerank_candidate("c", ""),
+    ];
+    // c wins, b sits inside the margin, a falls outside it.
+    let out = super::apply_rerank_scores(candidates, &[0.1, 0.6, 0.95], 0.45);
+    let ids: Vec<&str> = out.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["c", "b"], "desc order with tail pruned");
+    assert!(out.iter().all(|m| m.reranked && m.provenance == "rerank"));
+    assert!((out[0].score - 0.95).abs() < 1e-9);
+}
+
+#[test]
+fn apply_rerank_scores_length_mismatch_degrades_to_fused_order() {
+    let candidates = vec![rerank_candidate("a", ""), rerank_candidate("b", "")];
+    let out = super::apply_rerank_scores(candidates, &[0.9], 0.45);
+    assert_eq!(out.len(), 2, "mismatched scores keep every candidate");
+    assert!(
+        out.iter().all(|m| !m.reranked),
+        "unmarked, fused order intact"
+    );
+}
+
+#[test]
+fn rerank_passage_carries_identity_and_capped_chunk() {
+    let mut m = rerank_candidate("fn_x", "");
+    m.chunk = "x".repeat(2500);
+    let passage = super::rerank_passage(&m);
+    assert!(passage.starts_with("fn_x\n"));
+    assert!(passage.chars().count() <= 1100, "chunk head capped at 1000");
+    let bare = super::rerank_passage(&rerank_candidate("fn_y", ""));
+    assert!(bare.contains("src/fn_y.rs") && bare.contains("[cairn]"));
+}
