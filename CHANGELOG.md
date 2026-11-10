@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One shared HTTP/1.1 client (request, response parsing, chunked decoding incl. chunk extensions and multi-coding transfer encodings) serves the embedding transport, the daemon's lifecycle probes, and `cairn doctor`; the embedding-parity numerics (f32 decode + cosine) are shared between doctor and the dashboard with f64 accumulation.
 - Install is cargo-only: `cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli` (prebuilt) or `cargo install --git …` (source), plus the release tarballs. The Homebrew tap and crates.io publish jobs are removed; the `cairn-cli` crate on crates.io is an unrelated project, so `--git` is required.
 
+### Performance
+- The read-path freshness probe is a walk, not a hash: the new-file check no longer reads and SHA-256-hashes every indexable file in every repo on each CLI read (O(workspace bytes) per command) — it walks paths and stats only, content-hashing just the stat-drifted candidates. A short fixed probe-debounce stamp (`<db>.probe`, no new env knob) lets back-to-back reads skip the walk entirely; a probe that found unrepaired drift never stamps, so the retry fires immediately. Warm `cairn callers` on this repo: ~0.87 s → ~0.005 s back-to-back, ~0.5 s per isolated read.
+
 ## [0.24.2] - 2026-10-29
 ### Changed
 - The PyPI wheel channel is retired: `pyproject.toml`, `uv.lock`, the maturin builds, and every wheel/publish job are gone. A `v*` tag now cuts the GitHub Release (changelog notes) while `release-rust.yml` attaches the binary tarballs, updates the Homebrew tap, and publishes to crates.io; Homebrew, `cargo binstall`, and the tarballs are the install channels.

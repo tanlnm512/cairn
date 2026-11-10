@@ -223,6 +223,9 @@ fn refresh_probe(
     db: &str,
     repair: Option<bool>,
 ) -> Result<Option<StaleDrift>, String> {
+    if cairn_build::incremental::probe_recent(Path::new(db)) {
+        return Ok(None);
+    }
     let repair = repair.unwrap_or_else(|| {
         !std::env::var("CAIRN_NO_REFRESH")
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
@@ -231,6 +234,7 @@ fn refresh_probe(
     if !repair {
         let workspace = conn_store_workspace(db);
         let mut drifted = cairn_build::incremental::detect_changed(conn, &workspace);
+        cairn_build::incremental::mark_probe(Path::new(db));
         drifted.sort();
         drifted.dedup();
         return Ok(stale_banner(&drifted));
@@ -242,6 +246,7 @@ fn refresh_probe(
         Err(_) => {
             let workspace = conn_store_workspace(db);
             let mut drifted = cairn_build::incremental::detect_changed(conn, &workspace);
+            // Unrepaired drift must not debounce the next probe's retry.
             drifted.sort();
             drifted.dedup();
             return Ok(stale_banner(&drifted));
@@ -252,6 +257,7 @@ fn refresh_probe(
         .map_err(|e| format!("open {db}: {e}"))?;
     let workspace = conn_store_workspace(db);
     let mut drifted = cairn_build::incremental::detect_changed(&conn, &workspace);
+    cairn_build::incremental::mark_probe(Path::new(db));
     drifted.sort();
     drifted.dedup();
     if drifted.is_empty() {

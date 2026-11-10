@@ -632,7 +632,7 @@ fn changed_via_stat(workspace: &str, repo_path: &Path, conn: &Connection) -> Vec
     }
 
     // New source files not yet in the table.
-    if let Ok((files, _)) = scanner::iter_files_and_skips(&repo_name, repo_path) {
+    if let Ok((files, _)) = scanner::iter_files_walk(&repo_name, repo_path) {
         for f in files {
             if !existing_rel.contains(&f.rel_path) {
                 changed.push(f.rel_path);
@@ -640,6 +640,35 @@ fn changed_via_stat(workspace: &str, repo_path: &Path, conn: &Connection) -> Vec
         }
     }
     changed
+}
+
+/// Freshness-probe debounce window: back-to-back reads within it skip the walk.
+pub const PROBE_DEBOUNCE_SECS: f64 = 2.0;
+
+/// True when the last probe stamp `<db>.probe` is fresher than the debounce window.
+pub fn probe_recent(db: &Path) -> bool {
+    let stamp = probe_stamp_path(db);
+    let Ok(meta) = std::fs::metadata(&stamp) else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        return false;
+    };
+    modified
+        .elapsed()
+        .map(|e| e.as_secs_f64() < PROBE_DEBOUNCE_SECS)
+        .unwrap_or(true)
+}
+
+/// Best-effort refresh of the probe stamp; a failed write only disables debounce.
+pub fn mark_probe(db: &Path) {
+    let _ = std::fs::write(probe_stamp_path(db), b"");
+}
+
+fn probe_stamp_path(db: &Path) -> PathBuf {
+    let mut raw = db.as_os_str().to_os_string();
+    raw.push(".probe");
+    PathBuf::from(raw)
 }
 
 /// Files-table-vs-disk drift across every repo (the freshness probe).
@@ -674,7 +703,7 @@ pub fn detect_changed(conn: &Connection, workspace: &str) -> Vec<String> {
 
         // New source files not yet in the DB; compare on both stored forms.
         let existing: HashSet<&str> = file_rows.iter().map(|r| r.path.as_str()).collect();
-        if let Ok((files, _)) = scanner::iter_files_and_skips(repo_name, &record.path) {
+        if let Ok((files, _)) = scanner::iter_files_walk(repo_name, &record.path) {
             for f in files {
                 if !existing.contains(f.rel_path.as_str()) && !existing.contains(f.path.as_str()) {
                     changed.push(f.path);

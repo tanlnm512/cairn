@@ -85,6 +85,17 @@ instead of racing the swap. `cairn embed` opens a pinned store and re-takes
 the lock per batch, so a long embedding run interleaves with builds rather
 than blocking them for its whole duration.
 
+## Freshness probe (read-path drift detection)
+
+Every CLI read opens the store through `incremental.rs::detect_changed`
+(via the CLI's refresh probe) before querying: indexed files are compared by
+stat (size + mtime, 0.5 s tolerance) and only stat-drifted candidates are
+content-hashed; the new-file walk (`scanner.rs::iter_files_walk`) walks paths
+without reading or hashing file bytes. Back-to-back reads within a short
+fixed window (`PROBE_DEBOUNCE_SECS`) skip the walk entirely via the
+`<db>.probe` stamp — a probe that found but could not repair drift (lock
+contention, or repair disabled) never stamps, so the next read retries.
+
 - **Change detection**, per repo: `--diff-ref A..B` uses exactly
   `git diff -z --name-only A..B`; otherwise `git diff -z --name-only HEAD`
   plus `git ls-files -z --others --exclude-standard` (new untracked files),
