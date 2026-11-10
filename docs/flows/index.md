@@ -48,5 +48,6 @@ in the tooling.
 - [chart-1-flows-overview.html](chart-1-flows-overview.html) / [.svg](chart-1-flows-overview.svg) — architecture map
 - [chart-2-dev-priorities.html](chart-2-dev-priorities.html) / [.svg](chart-2-dev-priorities.svg) — impact × effort backlog
 - [chart-3-test-coverage.html](chart-3-test-coverage.html) / [.svg](chart-3-test-coverage.svg) — test files per flow (snapshot; coverage.md is the live truth)
+- [action-plan.md](action-plan.md) — open fix plan for the flow review (removed when delivered)
 - [flows.json](flows.json) — machine-readable flow registry
 - [coverage.md](coverage.md) — generated; do not edit by hand
