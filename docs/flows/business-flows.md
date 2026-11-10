@@ -157,7 +157,7 @@ Storage layout: one SQLite store per workspace at
   4. `cross_repo_deps` (`graph.rs:1890`, namespaces resolved per workspace via `resolve_namespaces` `graph.rs:1844` env/config/default table `tools_nav.rs:13-24`): imports in `repo` resolving to another repo's namespace → deps; reverse direction → dependents.
 - Data stores: `~/.cairn/workspaces.json` registry; each registered store's `.kg` opened read-only; `.kg` `imports`/`edges` for cross-repo evidence.
 - Output surfaces: MCP text (per-workspace attribution + dropped-store list); CLI stdout.
-- Test touchpoints: `flow_golden.rs` (cross_repo_deps golden), `daemon_tools.rs` (dispatch smoke); no test references `federated_search_text`/`load_registry` — the store walk itself is untested (see docs/flows/coverage.md).
+- Test touchpoints: `flow_golden.rs` (cross_repo_deps golden), `daemon_tools.rs` (dispatch smoke), `federation_walk.rs` (store-walk contract); see docs/flows/coverage.md.
 - Notes: the CLI `federated-search` (`cmds_core.rs:1782`) duplicates the store-walk logic instead of calling `tools_federation` (parity-tested via `rust/crates/cairn-cli/src/parity.rs` and `cairn-cli/tests/dashboard_parity.rs` for the dashboard twin). Cross-repo reach also surfaces inside `impact_analysis` output (per AGENTS.md; the graph layer includes cross-repo consumer reach).
 
 ## F8: MCP daemon serving & shared-daemon lifecycle
@@ -203,7 +203,7 @@ Storage layout: one SQLite store per workspace at
 | F4 Knowledge/compass | MCP knowledge_*/ask_compass/get_compass + CLI knowledge/compass/ask/context/skill | cairn-query::tools_km, ingest, skillgen | .knowledge/ bundle + .kg knowledge_* tables | 2 (+inline) | ask_compass empty-skeleton behavior on thin coverage is by design |
 | F5 Wiki/task queue | MCP wiki_generate + CLI wiki/task | cairn-query::tools_wiki, tasks | .knowledge/_tasks/, .knowledge/wiki/ | 1 (+inline tools_wiki/tasks) | Deterministic critic gates promotion; revise loop capped at 3 |
 | F6 Memory lifecycle | MCP record/recall + CLI memory * + update-hook decay | cairn-query::tools_km (memory), cairn-cli::agent_hooks | .knowledge/memory/{raw,drafts,tribal,archived} + .kg memory_* tables | 2 (+inline) | Decay piggybacks on `cairn update`; refs crediting via session ids |
-| F7 Federation/cross-repo | MCP federated_search/cross_repo_deps + CLI federated-search/deps/ask --all-repos | cairn-query::tools_federation, graph::cross_repo | ~/.cairn/workspaces.json + per-store .kg (read-only) | 2 | federated_search store walk untested; CLI duplicates the walk |
+| F7 Federation/cross-repo | MCP federated_search/cross_repo_deps + CLI federated-search/deps/ask --all-repos | cairn-query::tools_federation, graph::cross_repo | ~/.cairn/workspaces.json + per-store .kg (read-only) | 3 | store-walk contract pinned (federation_walk.rs); CLI still duplicates the walk |
 | F8 MCP daemon | CLI serve/connect/install-agents + HTTP /mcp /healthz | cairn-daemon (server/tools/auth/conn_pool/healthz/lifecycle) | .kg (pooled), ~/.cairn daemon home, launchd plist | 2 (+tests/common) | tool_metrics has no production writer `(unverified)` |
 | F9 Dashboard | CLI dashboard + HTTP routes | cairn-cli::dashboard | .kg/.knowledge read-only, ~/.cairn/config.json | 1 (+inline dashboard/*) | Loopback-only; settings save is the sole mutating route |
 
