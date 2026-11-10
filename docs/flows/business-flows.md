@@ -148,7 +148,7 @@ Storage layout: one SQLite store per workspace at
 
 - Entry points:
   - MCP: `federated_search` (`tools.rs:451-462`, dispatch `tools.rs:762-767`), `cross_repo_deps` (`tools.rs:258-269`, dispatch `tools.rs:606-616`).
-  - CLI: `federated-search` (`rust/crates/cairn-cli/src/cmds_core.rs:1782`, own store-walk implementation `:1932-1999`), `deps` (`cmds_core.rs:1703`), `ask --all-repos` (`cmds_core.rs:3133`), `tree` (`:2000`).
+  - CLI: `federated-search` (`rust/crates/cairn-cli/src/cmds_core.rs:1782`, renders `tools_federation::federated_search_data`), `deps` (`cmds_core.rs:1703`), `ask --all-repos` (`cmds_core.rs:3133`), `tree` (`:2000`).
 - Modules/crates: `cairn-query::tools_federation`, `cairn-query::graph` (`mod cross_repo` `graph.rs:1816`), `cairn-store::paths` (registry), `cairn-cli`
 - Steps:
   1. `federated_search_text` (`rust/crates/cairn-query/src/tools_federation.rs:135`) → `federated_search` (`:77`): enumerate registered stores from `~/.cairn/workspaces.json` (`iter_stores` `:23` → `load_registry` `paths.rs:83`).
@@ -158,7 +158,7 @@ Storage layout: one SQLite store per workspace at
 - Data stores: `~/.cairn/workspaces.json` registry; each registered store's `.kg` opened read-only; `.kg` `imports`/`edges` for cross-repo evidence.
 - Output surfaces: MCP text (per-workspace attribution + dropped-store list); CLI stdout.
 - Test touchpoints: `flow_golden.rs` (cross_repo_deps golden), `daemon_tools.rs` (dispatch smoke), `federation_walk.rs` (store-walk contract); see docs/flows/coverage.md.
-- Notes: the CLI `federated-search` (`cmds_core.rs:1782`) duplicates the store-walk logic instead of calling `tools_federation` (parity-tested via `rust/crates/cairn-cli/src/parity.rs` and `cairn-cli/tests/dashboard_parity.rs` for the dashboard twin). Cross-repo reach also surfaces inside `impact_analysis` output (per AGENTS.md; the graph layer includes cross-repo consumer reach).
+- Notes: one shared walk — the CLI `federated-search` renders `tools_federation::federated_search_data` (output verified byte-identical when the CLI's duplicate walk was removed); stores open through `cairn_store::conn::open_read_only`, which registers sqlite-vec so embedding stores take the semantic leg. Cross-repo reach also surfaces inside `impact_analysis` output (per AGENTS.md; the graph layer includes cross-repo consumer reach).
 
 ## F8: MCP daemon serving & shared-daemon lifecycle
 
@@ -203,7 +203,7 @@ Storage layout: one SQLite store per workspace at
 | F4 Knowledge/compass | MCP knowledge_*/ask_compass/get_compass + CLI knowledge/compass/ask/context/skill | cairn-query::tools_km, ingest, skillgen | .knowledge/ bundle + .kg knowledge_* tables | 2 (+inline) | ask_compass empty-skeleton behavior on thin coverage is by design |
 | F5 Wiki/task queue | MCP wiki_generate + CLI wiki/task | cairn-query::tools_wiki, tasks | .knowledge/_tasks/, .knowledge/wiki/ | 1 (+inline tools_wiki/tasks) | Deterministic critic gates promotion; revise loop capped at 3 |
 | F6 Memory lifecycle | MCP record/recall + CLI memory * + update-hook decay | cairn-query::tools_km (memory), cairn-cli::agent_hooks | .knowledge/memory/{raw,drafts,tribal,archived} + .kg memory_* tables | 2 (+inline) | Decay piggybacks on `cairn update`; refs crediting via session ids |
-| F7 Federation/cross-repo | MCP federated_search/cross_repo_deps + CLI federated-search/deps/ask --all-repos | cairn-query::tools_federation, graph::cross_repo | ~/.cairn/workspaces.json + per-store .kg (read-only) | 3 | store-walk contract pinned (federation_walk.rs); CLI still duplicates the walk |
+| F7 Federation/cross-repo | MCP federated_search/cross_repo_deps + CLI federated-search/deps/ask --all-repos | cairn-query::tools_federation, graph::cross_repo | ~/.cairn/workspaces.json + per-store .kg (read-only) | 3 | one shared walk (federated_search_data); contract pinned (federation_walk.rs) |
 | F8 MCP daemon | CLI serve/connect/install-agents + HTTP /mcp /healthz | cairn-daemon (server/tools/auth/conn_pool/healthz/lifecycle) | .kg (pooled), ~/.cairn daemon home, launchd plist | 2 (+tests/common) | tool_metrics has no production writer `(unverified)` |
 | F9 Dashboard | CLI dashboard + HTTP routes | cairn-cli::dashboard | .kg/.knowledge read-only, ~/.cairn/config.json | 1 (+inline dashboard/*) | Loopback-only; settings save is the sole mutating route |
 
