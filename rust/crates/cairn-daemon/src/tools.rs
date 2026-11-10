@@ -354,6 +354,7 @@ pub fn catalog() -> Vec<Tool> {
                 "body": prop("body", "string", "The learning; Why:/How to apply: lines for decisions/mistakes/workarounds."),
                 "resource": prop_default("resource", "string", "Optional resource path or URL.", Value::String(String::new())),
                 "confidence": prop_default("confidence", "number", "0.0-1.0.", serde_json::json!(0.7)),
+                "supersedes": prop_default("supersedes", "string", "Concept id of the latest memory this one replaces; a same-title match alone never supersedes.", Value::String(String::new())),
             }),
             &["type", "title", "body"],
             false,
@@ -708,6 +709,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
                     .and_then(Value::as_f64)
                     .unwrap_or(0.7),
                 arg_str(args, "stance"),
+                arg_str_or(args, "supersedes", ""),
             )
             .map_err(|e| ToolFailure(e.0))
         }

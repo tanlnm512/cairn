@@ -298,6 +298,7 @@ const GOLDEN_CASES: &[(&str, &str, ToolCall)] = &[
             "",
             0.7,
             None,
+            "",
         )
         .expect("record_memory")
     }),
@@ -499,14 +500,24 @@ fn record_recall_roundtrip_and_supersession() {
         "",
         0.7,
         None,
+        "",
     )
     .expect("record 1");
     assert!(
         first.starts_with("Recorded decision 'probe epsilon capture' -> memory/tribal/"),
         "{first}"
     );
-    assert!(first.contains("(score=0.578, tier=tribal)"), "{first}");
+    assert!(first.contains("(score=0.565, tier=tribal)"), "{first}");
+    let old_path = first
+        .split("-> ")
+        .nth(1)
+        .and_then(|rest| rest.split(" (score").next())
+        .expect("path in message")
+        .to_string();
+    let old_base = old_path.rsplit('/').next().expect("basename");
 
+    // Same title without an explicit supersedes id: never supersedes; the
+    // possible-duplicate hint names the older memory instead.
     let second = km::record_memory(
         &fx.conn,
         &fx.bundle,
@@ -516,20 +527,36 @@ fn record_recall_roundtrip_and_supersession() {
         "",
         0.7,
         None,
+        "",
     )
     .expect("record 2");
-    let old_path = first
-        .split("-> ")
-        .nth(1)
-        .and_then(|rest| rest.split(" (score").next())
-        .expect("path in message")
-        .to_string();
-    let old_base = old_path.rsplit('/').next().expect("basename");
-    // The candidate's read-back concept_id is echoed, which from_file makes
-    // absolute; the memory identity is the basename either way.
+    assert!(second.contains("[possible_duplicate "), "{second}");
+    assert!(!second.contains("[superseded"), "{second}");
     assert!(
-        second.contains(&format!("[superseded {old_path}]")) || second.contains(old_base),
-        "{second}"
+        fx.bundle
+            .read_concept(&old_path)
+            .expect("old concept readable")
+            .ext_bool("memory_is_latest")
+            == Some(true),
+        "a title match alone must not supersede"
+    );
+
+    // Explicit supersedes id replaces the older memory.
+    let third = km::record_memory(
+        &fx.conn,
+        &fx.bundle,
+        "decision",
+        "probe epsilon capture v2",
+        "body citing `src/main.py` again",
+        "",
+        0.7,
+        None,
+        &old_path,
+    )
+    .expect("record 3");
+    assert!(
+        third.contains(&format!("[superseded {old_path}]")) || third.contains(old_base),
+        "{third}"
     );
     let old_file = fx.bundle.root.join(format!("{old_path}.md"));
     assert!(old_file.exists(), "superseded memory stays in place");
@@ -540,11 +567,48 @@ fn record_recall_roundtrip_and_supersession() {
 
     let recall = km::recall_memory(&fx.conn, &fx.bundle, "epsilon", "", false, None, None, None)
         .expect("recall after supersession");
-    // Only the latest revision surfaces; the superseded one is hidden.
+    // Both latest revisions surface; the superseded one is hidden.
     assert!(
-        recall.contains("1 memories matching 'epsilon':"),
+        recall.contains("2 memories matching 'epsilon':"),
         "{recall}"
     );
+}
+
+#[test]
+fn ref_less_capture_lands_in_drafts_at_default_confidence() {
+    let fx = fixture("refless");
+    fx.seed_graph();
+    let msg = km::record_memory(
+        &fx.conn,
+        &fx.bundle,
+        "pattern",
+        "no refs probe",
+        "plain prose with no file or symbol references",
+        "",
+        0.7,
+        None,
+        "",
+    )
+    .expect("record");
+    assert!(msg.contains("-> memory/drafts/"), "{msg}");
+    assert!(msg.contains("(score=0.415, tier=drafts)"), "{msg}");
+}
+
+#[test]
+fn tier_for_score_cutoffs_table() {
+    let cases: &[(f64, &str)] = &[
+        (0.0, "raw"),
+        (0.299, "raw"),
+        (0.3, "drafts"),
+        (0.415, "drafts"),
+        (0.499, "drafts"),
+        (0.5, "tribal"),
+        (0.565, "tribal"),
+        (1.0, "tribal"),
+    ];
+    for (score, tier) in cases {
+        assert_eq!(km::tier_for_score(*score), *tier, "tier_for_score({score})");
+    }
 }
 
 #[test]
@@ -560,6 +624,7 @@ fn memory_demote_delete_decay_promote_lifecycle() {
         "",
         0.7,
         None,
+        "",
     )
     .expect("record");
     let path = msg
@@ -658,6 +723,7 @@ fn memory_demote_delete_decay_promote_lifecycle() {
         "",
         0.7,
         None,
+        "",
     )
     .expect("record deletable");
     let deletable = msg2

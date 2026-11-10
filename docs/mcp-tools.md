@@ -67,7 +67,7 @@ agent session loads it.
 
 | Tool | Purpose |
 |---|---|
-| `record_memory` | capture decision / pattern / mistake / workaround (redacted + scored) |
+| `record_memory` | capture decision / pattern / mistake / workaround (redacted + scored; optional `supersedes` concept id replaces a latest same-type memory — a same-title match alone only reports `possible_duplicate`) |
 | `recall_memory` | symbol/title-keyed hybrid recall |
 
 Lifecycle verbs are CLI-only: `cairn memory <verb>` where verb is

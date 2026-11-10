@@ -3262,6 +3262,7 @@ fn memory_record(
         confidence,
         None,
         stance,
+        None,
     ) {
         Ok(result) => result,
         Err(e) => return cli_err(&e.0),
@@ -3272,6 +3273,9 @@ fn memory_record(
         float_text(result.score),
         result.tier
     );
+    if let Some(dup) = &result.possible_duplicate {
+        println!("possible duplicate: {dup} (pass --supersedes to replace it)");
+    }
     ExitCode::SUCCESS
 }
 
@@ -3979,6 +3983,7 @@ fn memory_capture(
             None,
             confidence,
             Some(session_id),
+            None,
             None,
         ) {
             Ok(result) => {

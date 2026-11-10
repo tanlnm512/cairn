@@ -685,6 +685,7 @@ pub fn capture_review_event(
         CAPTURE_CONFIDENCE,
         None,
         None,
+        None,
     )
     .map_err(|e| e.0)?;
     Ok(CaptureOutcome {

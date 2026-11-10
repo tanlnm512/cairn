@@ -298,9 +298,9 @@ pub fn create_task(
     facts: Hash,
     parent_attempt: i64,
 ) -> Result<Task, ToolError> {
-    // memory-* facts derive from session content: scrub secret-shaped
-    // substrings; non-string facts pass through.
-    let facts = if task_kind.starts_with("memory-") && !facts.is_empty() {
+    // Task facts derive from session content: scrub secret-shaped substrings;
+    // non-string facts pass through.
+    let facts = if !facts.is_empty() {
         facts
             .iter()
             .map(|(k, v)| {
@@ -750,11 +750,8 @@ pub fn complete_task(
             )],
         ));
     }
-    // memory-* results derive from user session content: scrub before persist
-    let mut result = result.to_string();
-    if task.task_kind.starts_with("memory-") {
-        result = strip_private_data(&result);
-    }
+    // Task results derive from user session content: scrub before persist
+    let result = strip_private_data(&result.to_string());
     if task.task_kind.starts_with("wiki-page") && task.fact_str("repo").is_empty() {
         return Ok(CompleteOutcome::held(
             task_id,
@@ -2008,6 +2005,37 @@ mod tests {
         let outcome = drop_task(&bundle, "../outside").expect("drop");
         assert!(!outcome.dropped);
         assert_eq!(outcome.errors, vec!["task not found"]);
+    }
+
+    #[test]
+    fn every_task_result_is_stored_scrubbed() {
+        let bundle = scratch_bundle("scrub");
+        let task = create_task(&bundle, "wiki-catalog", "cairn", facts(&[]), 0).expect("create");
+        claim_task(&bundle, &task.id, "agent")
+            .expect("claim")
+            .expect("claimed");
+        let outcome = complete_task(
+            &bundle,
+            &task.id,
+            "catalog notes quoting a leak: api_key = AKIAABCDEFGHIJKLMNOP1234\n\n## Sources\n- none",
+            None,
+            Some("agent"),
+            None,
+        )
+        .expect("complete");
+        assert!(
+            !outcome.refused && !outcome.revised && !outcome.dropped,
+            "outcome: {outcome:?}"
+        );
+        let stored = bundle
+            .read_concept(&format!("{TASK_DIR}/{}.result", task.id))
+            .expect("result concept");
+        assert!(
+            stored.body.contains("[REDACTED_SECRET]"),
+            "secret must not survive storage: {}",
+            stored.body
+        );
+        assert!(!stored.body.contains("AKIAABCDEFGHIJKLMNOP"));
     }
 
     #[test]

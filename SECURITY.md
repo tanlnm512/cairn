@@ -38,7 +38,9 @@ code** via tree-sitter. The following are in scope:
   launch configuration.
 - Path traversal or arbitrary file read/write outside the indexed workspace.
 - Injection via `.knowledge/` markdown or graph data being rendered/executed
-  unsafely.
+  unsafely. Task-queue results (wiki/compass/catalog/memory) and their facts
+  are scrubbed of secret-shaped substrings before storage, so injected
+  credentials never reach `ask_compass` or the knowledge bundle.
 
 The Rust dependency tree (tree-sitter grammars, sqlite-vec, crypto and HTTP
 crates) is vendored/pinned and gated by cargo-deny. Treat
