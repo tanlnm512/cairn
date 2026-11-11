@@ -511,11 +511,17 @@ pub fn incremental_update(
     for r in &repos {
         let repo_path = scanner::resolve_repo_path(workspace, r)?;
         match changed_source_files(workspace, &repo_path, Some(&conn), diff_ref) {
-            Ok(changed) => all_paths.extend(
-                changed
-                    .into_iter()
-                    .map(|rel| repo_path.join(rel).to_string_lossy().into_owned()),
-            ),
+            Ok(changed) => {
+                for warning in &changed.warnings {
+                    detect_errors.push(format!("detect/{r}: {warning}"));
+                }
+                all_paths.extend(
+                    changed
+                        .paths
+                        .into_iter()
+                        .map(|rel| repo_path.join(rel).to_string_lossy().into_owned()),
+                );
+            }
             Err(e) => detect_errors.push(format!("detect/{r}: {e}")),
         }
     }
@@ -547,27 +553,44 @@ pub(crate) fn changed_source_files(
     repo_path: &Path,
     conn: Option<&Connection>,
     diff_ref: Option<&str>,
-) -> Result<Vec<String>, String> {
+) -> Result<ChangedFiles, String> {
     if let Some(diff_ref) = diff_ref {
         let paths = git_paths(&["diff", "-z", "--name-only", diff_ref], repo_path)?;
-        return Ok(filter_source_paths(paths));
+        return Ok(with_warnings(filter_source_paths(paths), Vec::new()));
     }
 
     let mut paths: Vec<String> = Vec::new();
-    let listed = git_paths(&["diff", "-z", "--name-only", "HEAD"], repo_path).and_then(|diff| {
-        paths.extend(diff);
-        git_paths(
-            &["ls-files", "-z", "--others", "--exclude-standard"],
-            repo_path,
-        )
-    });
-    if let Ok(untracked) = listed {
-        paths.extend(untracked);
+    let mut warnings: Vec<String> = Vec::new();
+    // Each git leg degrades independently: a repo with no commits fails
+    // `diff HEAD` but its untracked files still scan.
+    match git_paths(&["diff", "-z", "--name-only", "HEAD"], repo_path) {
+        Ok(diff) => paths.extend(diff),
+        Err(e) => warnings.push(format!("git diff HEAD: {e}")),
+    }
+    match git_paths(
+        &["ls-files", "-z", "--others", "--exclude-standard"],
+        repo_path,
+    ) {
+        Ok(untracked) => paths.extend(untracked),
+        Err(e) => warnings.push(format!("git ls-files --others: {e}")),
     }
     if let Some(conn) = conn {
         paths.extend(changed_via_stat(workspace, repo_path, conn));
     }
-    Ok(filter_source_paths(paths))
+    let filtered = filter_source_paths(paths);
+    warnings.retain(|w| !w.is_empty());
+    Ok(with_warnings(filtered, warnings))
+}
+
+/// Paths plus detection warnings (empty when every leg ran clean).
+#[derive(Debug, Clone, Default)]
+pub struct ChangedFiles {
+    pub paths: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+fn with_warnings(paths: Vec<String>, warnings: Vec<String>) -> ChangedFiles {
+    ChangedFiles { paths, warnings }
 }
 
 fn filter_source_paths(paths: Vec<String>) -> Vec<String> {

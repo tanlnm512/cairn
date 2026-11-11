@@ -875,7 +875,7 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
             rail.fail_close();
             command_error(&message)
         }
-        Ok((summary, _timings)) => {
+        Ok((summary, timings)) => {
             if args.staging && summary.files == 0 {
                 rail.fail_close();
                 return command_error(&empty_refusal);
@@ -883,11 +883,11 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
             rail.tick(&format!("{} found", fmt_int(summary.files as i64)));
             rail.finish(&format!("{} found", fmt_int(summary.files as i64)));
             rail.start("Parsing code");
-            rail.finish("done");
+            rail.finish(&format!("{:.1}s", timings.parse_ms / 1000.0));
             rail.start("Resolving refs");
-            rail.finish("done");
+            rail.finish(&format!("{:.1}s", timings.resolve_ms / 1000.0));
             rail.start("Persisting graph");
-            rail.finish("done");
+            rail.finish(&format!("{:.1}s", timings.insert_ms / 1000.0));
 
             if args.with_closure {
                 rail.start("Transitive closure");
@@ -1263,6 +1263,12 @@ fn update(args: crate::cmds_core::UpdateArgs) -> ExitCode {
                 "{awaiting} symbol(s) awaiting embed — run `cairn embed`"
             ));
         }
+        if !result.errors.is_empty() {
+            for err in &result.errors {
+                display::error(err);
+            }
+            return ExitCode::FAILURE;
+        }
         return ExitCode::SUCCESS;
     }
 
@@ -1286,16 +1292,20 @@ fn update(args: crate::cmds_core::UpdateArgs) -> ExitCode {
                 continue;
             };
             for endpoint in &endpoints {
-                let Ok(output) = std::process::Command::new("git")
+                let output = match std::process::Command::new("git")
                     .args(["rev-parse", "-q", "--verify", endpoint])
                     .current_dir(&repo_path)
                     .output()
-                else {
-                    display::error(&format!(
-                        "--diff-ref endpoint '{endpoint}' does not resolve in {}",
-                        repo_path.display()
-                    ));
-                    return ExitCode::FAILURE;
+                {
+                    Ok(output) => output,
+                    Err(e) => {
+                        // A git launch failure is not an unresolvable ref.
+                        display::error(&format!(
+                            "git failed in {}: {e}",
+                            repo_path.display()
+                        ));
+                        return ExitCode::FAILURE;
+                    }
                 };
                 if !output.status.success() {
                     display::error(&format!(
@@ -3804,7 +3814,8 @@ pub struct BuildArgs {
     /// Verbose per-file detail (parse errors, skip reasons).
     #[arg(short = 'v', long = "verbose", default_value_t = false)]
     pub verbose: bool,
-    /// Build to temp DB and atomic-swap for zero downtime.
+    /// Build to a temp DB and atomic-swap it in (default: build in place
+    /// under the build lock; the refuse-empty guard applies either way).
     #[arg(long = "staging", default_value_t = false)]
     pub staging: bool,
     /// Materialize the transitive closure (skipped by default).
