@@ -2,7 +2,7 @@
  "schema": "cairn-rust-golden-cli/1",
  "capture": {
   "reference": "rust/target/release/cairn",
-  "captured_at": "2026-11-11T02:47:40.163311+00:00",
+  "captured_at": "2026-11-11T04:30:07.883066+00:00",
   "env_pins": {
    "CAIRN_EMBED_BACKEND": "hash",
    "CAIRN_RERANK": "0"
@@ -184,13 +184,13 @@
   {
    "label": "task claim golden-claim",
    "exit": 0,
-   "stdout": "Claimed golden-claim. Write your result, then:\n  cairn task complete golden-claim --result-file <path>\n",
+   "stdout": "Claimed golden-claim. Write your result, then:\n  cairn task complete golden-claim --as <your-id> --result-file <path>\n",
    "stderr": ""
   },
   {
    "label": "task claim golden-claim --as alice",
    "exit": 0,
-   "stdout": "Claimed golden-claim. Write your result, then:\n  cairn task complete golden-claim --result-file <path> --as alice\n",
+   "stdout": "Claimed golden-claim. Write your result, then:\n  cairn task complete golden-claim --as <your-id> --result-file <path> --as alice\n",
    "stderr": ""
   },
   {
@@ -232,7 +232,7 @@
   {
    "label": "wiki generate --llm",
    "exit": 0,
-   "stdout": "Queued wiki-page task <ID>: corpus architecture overview (corpus)\nQueued wiki-page task <ID>: src/cairn (corpus)\nQueued wiki-page task <ID>: rust/crates/cairn-cli (corpus)\nQueued wiki-page task <ID>: src/cairn/graph (corpus)\nQueued wiki-page task <ID>: rust/crates/cairn-build (corpus)\nQueued wiki-page task <ID>: src/cairn/memory (corpus)\nQueued wiki-page task <ID>: src/cairn/agent_install (corpus)\nQueued wiki-page task <ID>: src/cairn/knowledge (corpus)\nQueued wiki-page task <ID>: src/cairn/parsers (corpus)\nQueued wiki-page task <ID>: src/cairn/cli (corpus)\nQueued 10 new wiki-page task(s); 0 page(s) already up to date. Any agent with the cairn skill can process them:\n  cairn task list --kind wiki-page --status pending\n  cairn task claim <id> && cairn task complete <id> --result-file <path>\n",
+   "stdout": "Queued wiki-page task <ID>: corpus architecture overview (corpus)\nQueued wiki-page task <ID>: src/cairn (corpus)\nQueued wiki-page task <ID>: rust/crates/cairn-cli (corpus)\nQueued wiki-page task <ID>: src/cairn/graph (corpus)\nQueued wiki-page task <ID>: rust/crates/cairn-build (corpus)\nQueued wiki-page task <ID>: src/cairn/memory (corpus)\nQueued wiki-page task <ID>: src/cairn/agent_install (corpus)\nQueued wiki-page task <ID>: src/cairn/knowledge (corpus)\nQueued wiki-page task <ID>: src/cairn/parsers (corpus)\nQueued wiki-page task <ID>: src/cairn/cli (corpus)\nQueued 10 new wiki-page task(s); 0 page(s) already up to date. Any agent with the cairn skill can process them:\n  cairn task list --kind wiki-page --status pending\n  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>\n",
    "stderr": ""
   },
   {
@@ -256,7 +256,7 @@
   {
    "label": "wiki retry",
    "exit": 0,
-   "stdout": "Re-queued wiki-page task <ID>: cairn/failed-page (attempt 2)\nRe-queued 1 failed wiki page(s). Any agent with the cairn skill can process them:\n  cairn task list --kind wiki-page --status pending\n  cairn task claim <id> && cairn task complete <id> --result-file <path>\n",
+   "stdout": "Re-queued wiki-page task <ID>: cairn/failed-page (attempt 2)\nRe-queued 1 failed wiki page(s). Any agent with the cairn skill can process them:\n  cairn task list --kind wiki-page --status pending\n  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>\n",
    "stderr": ""
   },
   {
@@ -502,7 +502,7 @@
   {
    "label": "embed --limit 5",
    "exit": 0,
-   "stdout": "⠿ Embedding 2,034 symbols with hash-256-v1\n\nEmbedding  0 symbols  0s\nEmbedding  [████████████████████] 5/5 symbols  100% <S>\n╭─ Embedded 5 symbols in <DUR> ─────────────────────────────────────────────────╮\n│ embedded       5                                                             │\n│ skipped        2,029                                                         │\n│ reaped         0                                                             │\n│ failed batches 0                                                             │\n│ model          hash-256-v1                                                   │\n│ vectors        2,034 -> 2,034                                                │\n│ mv vectors     5                                                             │\n╰──────────────────────────────────────────────────────────────────────────────╯\n",
+   "stdout": "⠿ Embedding 2,034 symbols with hash-256-v1\n\nEmbedding  0 symbols  0s\nEmbedding  [████████████████████] 5/5 symbols  100% <S>\n╭─ Embedded 5 symbols in <DUR> ─────────────────────────────────────────────────╮\n│ embedded       5                                                             │\n│ skipped        2,024                                                         │\n│ cut by --limit 5                                                             │\n│ reaped         0                                                             │\n│ failed batches 0                                                             │\n│ model          hash-256-v1                                                   │\n│ vectors        2,034 -> 2,034                                                │\n│ mv vectors     5                                                             │\n╰──────────────────────────────────────────────────────────────────────────────╯\n",
    "stderr": ""
   },
   {

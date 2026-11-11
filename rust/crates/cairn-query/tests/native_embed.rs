@@ -58,3 +58,4 @@ fn native_embed_produces_1024_dim_dense_vectors_under_one_stamp() {
         "vec_native_BAAI_bge_m3"
     );
 }
+

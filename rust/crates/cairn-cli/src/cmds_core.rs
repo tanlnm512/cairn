@@ -2550,6 +2550,10 @@ fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
     let mut kv_pairs: Vec<(&str, String)> = vec![
         ("embedded", fmt_int(summary.embedded as i64)),
         ("skipped", fmt_int(summary.skipped as i64)),
+        (
+            "cut by --limit",
+            fmt_int(summary.limit_cut as i64),
+        ),
         ("reaped", fmt_int(summary.reaped as i64)),
         ("failed batches", fmt_int(summary.failed_batches as i64)),
         ("model", summary.model.clone()),

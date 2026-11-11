@@ -38,6 +38,14 @@ struct EmbedEnv {
 
 /// Resolve the effective backend once: transport, availability, and stamp.
 fn resolve_embed_env() -> Result<EmbedEnv, String> {
+    let name = tools_search::backend_name();
+    let known = ["local", "hash", "native", "server", "omlx", "ollama"];
+    if !known.contains(&name.as_str()) {
+        return Err(format!(
+            "unknown CAIRN_EMBED_BACKEND '{name}': expected one of {}",
+            known.join(", ")
+        ));
+    }
     let env = semantic_env(None);
     match env.backend {
         EffectiveBackend::Hash => Ok(EmbedEnv {
@@ -417,6 +425,8 @@ pub struct EmbedSummary {
     pub embedded: usize,
     pub attempted: usize,
     pub failed_batches: usize,
+    /// Stale rows not embedded because --limit cut them.
+    pub limit_cut: usize,
     pub skipped: usize,
     pub total: usize,
     pub reaped: usize,
@@ -443,17 +453,30 @@ pub fn embed_all(
     let (all_rows, stale_rows, signatures) =
         select_stale_symbols(conn, &env.model, None, workspace).map_err(|e| e.to_string())?;
 
+    let stale_total = stale_rows.len();
     let mut stale_rows = stale_rows;
-    if let Some(limit) = limit {
+    let mut limit_cut = 0usize;
+    if let Some(limit) = limit
+        && stale_rows.len() > limit
+    {
+        limit_cut = stale_rows.len() - limit;
         stale_rows.truncate(limit);
     }
 
     let total = stale_rows.len();
     let now = now_iso();
     let mut embedded = 0usize;
+    let mut failed_batches = 0usize;
     for batch in stale_rows.chunks(batch_size) {
         let texts: Vec<String> = batch.iter().map(|s| s.chunk.clone()).collect();
-        let (blobs, _dim) = embed_texts(&env, &texts)?;
+        let (blobs, _dim) = match embed_texts(&env, &texts) {
+            Ok(ok) => ok,
+            // A failed batch is counted and skipped; committed batches stay.
+            Err(_) => {
+                failed_batches += 1;
+                continue;
+            }
+        };
         let _guard = pin.write_lock()?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for (stale, blob) in batch.iter().zip(&blobs) {
@@ -489,7 +512,7 @@ pub fn embed_all(
         None
     };
 
-    {
+    if embedded > 0 || reaped > 0 || mv_embedded.is_some_and(|n| n > 0) {
         let _guard = pin.write_lock()?;
         rebuild_term_df(conn).map_err(|e| e.to_string())?;
     }
@@ -498,8 +521,9 @@ pub fn embed_all(
         model: env.model,
         embedded,
         attempted: total,
-        failed_batches: 0,
-        skipped: all_rows.len() - total,
+        failed_batches,
+        limit_cut,
+        skipped: all_rows.len() - stale_total,
         total: all_rows.len(),
         reaped,
         mv_embedded,
@@ -576,6 +600,7 @@ pub fn embed_symbols(
             embedded: 0,
             attempted: 0,
             failed_batches: 0,
+            limit_cut: 0,
             skipped: 0,
             total: 0,
             reaped: 0,
@@ -592,6 +617,7 @@ pub fn embed_symbols(
             embedded: 0,
             attempted: 0,
             failed_batches: 0,
+            limit_cut: 0,
             skipped: rows.len(),
             total: rows.len(),
             reaped: 0,
@@ -646,6 +672,7 @@ pub fn embed_symbols(
         embedded: stale_rows.len(),
         attempted: stale_rows.len(),
         failed_batches: 0,
+        limit_cut: 0,
         skipped: rows.len() - stale_rows.len(),
         total: rows.len(),
         reaped: 0,

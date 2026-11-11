@@ -855,6 +855,14 @@ pub fn install_hint() -> String {
 
 /// Wrapper text shown when the store carries no embeddings for the model.
 pub fn empty_index_hint() -> String {
+    let mismatches = last_dim_mismatch();
+    if mismatches > 0 {
+        return format!(
+            "Semantic index has {mismatches} vector(s) whose model/dimension does \
+             not match the query — the index was embedded under a different backend \
+             or model. Re-run `cairn embed` with the current backend to re-index."
+        );
+    }
     "Semantic index is empty. Run `cairn embed` once to index the \
      corpus (build-time, ~1-2 min for 50k symbols), then retry \
      this query. Embedding is not done lazily during search to \
@@ -872,10 +880,20 @@ pub fn cosine_scan(
     rows: &[(Vec<u8>, i64)],
     threshold: f64,
 ) -> Vec<(f64, usize)> {
+    cosine_scan_with_mismatches(q_blob, q_dim, rows, threshold).0
+}
+
+/// The scan plus a count of rows skipped for model/dimension mismatch.
+pub fn cosine_scan_with_mismatches(
+    q_blob: &[u8],
+    q_dim: usize,
+    rows: &[(Vec<u8>, i64)],
+    threshold: f64,
+) -> (Vec<(f64, usize)>, usize) {
     let q = decode_f32s(q_blob);
     let q_norm = l2_norm(&q);
     if q_norm == 0.0 {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
     let q_unit: Vec<f64> = q
         .iter()
@@ -883,8 +901,10 @@ pub fn cosine_scan(
         .collect();
     let blob_size = q_dim * 4;
     let mut scored: Vec<(f64, usize)> = Vec::new();
+    let mut dim_mismatches = 0usize;
     for (index, (vec_blob, dim)) in rows.iter().enumerate() {
         if *dim != q_dim as i64 || vec_blob.len() != blob_size {
+            dim_mismatches += 1;
             continue;
         }
         let v = decode_f32s(vec_blob);
@@ -903,7 +923,7 @@ pub fn cosine_scan(
         }
     }
     scored.sort_by(|(a, _), (b, _)| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-    scored
+    (scored, dim_mismatches)
 }
 
 fn decode_f32s(blob: &[u8]) -> Vec<f32> {
@@ -916,6 +936,17 @@ fn decode_f32s(blob: &[u8]) -> Vec<f32> {
 
 fn l2_norm(v: &[f32]) -> f32 {
     v.iter().map(|x| x * x).sum::<f32>().sqrt()
+}
+
+thread_local! {
+    /// Rows the last brute scan skipped for model/dimension mismatch.
+    static LAST_DIM_MISMATCH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The mismatch count of the most recent brute scan (0 = none): the caller's
+/// "index empty" message turns into a model/dim hint when it is non-zero.
+pub fn last_dim_mismatch() -> usize {
+    LAST_DIM_MISMATCH.with(|c| c.get())
 }
 
 /// Reciprocal Rank Fusion: score desc, doc-id ascending on ties.
@@ -1174,7 +1205,10 @@ fn dense_retrieve(
         return Vec::new();
     }
     let vectors: Vec<(Vec<u8>, i64)> = rows.iter().map(|row| (row.vec.clone(), row.dim)).collect();
-    let scored = cosine_scan(&q_blob, q_dim, &vectors, threshold);
+    let (scored, dim_mismatches) = cosine_scan_with_mismatches(&q_blob, q_dim, &vectors, threshold);
+    if dim_mismatches > 0 {
+        LAST_DIM_MISMATCH.with(|c| c.set(dim_mismatches));
+    }
     scored
         .into_iter()
         .take(pool_size)

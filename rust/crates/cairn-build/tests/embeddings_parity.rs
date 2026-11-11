@@ -274,7 +274,11 @@ fn embed_limit_bounds_base_and_mv_passes() {
     .expect("embed");
     assert_eq!(summary.embedded, 2);
     assert_eq!(summary.attempted, 2);
-    assert_eq!(summary.skipped, total - 2);
+    // skipped counts only the genuinely up-to-date rows; limit-cut rows are
+    // reported as their own counter.
+    assert_eq!(summary.limit_cut, total - 2);
+    assert_eq!(summary.skipped, 0);
+    assert_eq!(summary.total, total);
     assert_eq!(summary.reaped, 0, "reap skipped with reap_orphans=false");
     assert_eq!(summary.mv_embedded, Some(2));
     drop(conn);
@@ -368,8 +372,7 @@ fn embed_symbols_resyncs_the_vec0_row_in_place() {
 /// builds reject the name on both legs.
 #[test]
 fn native_config_stamps_both_legs_identically() {
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = ENV_LOCK
+    let _guard = FILE_ENV_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let keys = ["CAIRN_EMBED_BACKEND", "FASTEMBED_CACHE_DIR", "HF_HOME"];
@@ -537,4 +540,21 @@ fn full_build_carries_embeddings_across_the_swap() {
     assert_eq!(summary.embedded, 0, "no row should be stale after the carry");
     drop(conn);
     let _ = fs::remove_dir_all(&dir);
+}
+
+static FILE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn unknown_backend_names_error_instead_of_degrading() {
+    let _guard = FILE_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let saved = std::env::var("CAIRN_EMBED_BACKEND").ok();
+    unsafe { std::env::set_var("CAIRN_EMBED_BACKEND", "hysh") };
+    let err = current_model().expect_err("unknown name must error");
+    assert!(err.contains("unknown CAIRN_EMBED_BACKEND 'hysh'"), "{err}");
+    unsafe {
+        match saved {
+            Some(previous) => std::env::set_var("CAIRN_EMBED_BACKEND", previous),
+            None => std::env::remove_var("CAIRN_EMBED_BACKEND"),
+        }
+    }
 }
