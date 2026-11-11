@@ -27,7 +27,7 @@ env:
 jobs:
   # --- Cheap oracles: run on PRs and nightly -------------------------------
   parity:
-    name: parity (self) + cli golden + G2 base
+    name: parity (self, yarl, attrs) + cli golden + G2 base
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -45,6 +45,10 @@ jobs:
         run: cargo build --release --manifest-path Cargo.toml -p cairn-daemon --example serve_search
       - name: parity replay (self)
         run: cargo xtask parity --store self
+      - name: parity replay (yarl)
+        run: cargo xtask parity --store yarl
+      - name: parity replay (attrs)
+        run: cargo xtask parity --store attrs
       - name: cli golden
         run: cargo xtask cli-golden
       - name: G2 (base leg)
