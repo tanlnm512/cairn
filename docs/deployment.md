@@ -32,7 +32,9 @@ reads `/healthz`). A start that loads but never turns healthy unloads the
 launchd job before failing, so a broken daemon is not respawned by KeepAlive;
 a wedged job from an older crash loop clears with `cairn serve stop` (or
 `launchctl unload ~/Library/LaunchAgents/dev.cairn.mcp.plist`) before the
-next start.
+next start. `launchctl unload` sends SIGTERM: the daemon drains in-flight
+calls and bundle writes for up to 5s before exiting (SIGINT behaves the
+same).
 
 ## Key policy
 

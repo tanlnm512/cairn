@@ -128,8 +128,20 @@ pub fn run_foreground(args: ServeForegroundArgs) -> ExitCode {
     let served = runtime.block_on(async move {
         match serve_config(config, bind).await {
             Ok((_addr, handle)) => {
-                let _ = tokio::signal::ctrl_c().await;
+                // Drain on SIGINT (ctrl_c) and SIGTERM (launchctl unload):
+                // in-flight calls and bundle writes finish before exit.
+                let sigterm = async {
+                    let mut sig =
+                        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                            .expect("SIGTERM handler");
+                    sig.recv().await;
+                };
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = sigterm => {}
+                }
                 handle.stop();
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 true
             }
             Err(e) => {
