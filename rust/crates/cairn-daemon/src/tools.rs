@@ -276,7 +276,7 @@ pub fn catalog() -> Vec<Tool> {
             "Recursive caller impact up to depth (precise by default; fuzzy adds unresolved edges; cached reads precomputed dataflow).",
             serde_json::json!({
                 "name": prop("name", "string", "Symbol to analyze blast radius for."),
-                "depth": prop_default("depth", "integer", "Traversal depth (1-10).", serde_json::json!(5)),
+                "depth": prop_default("depth", "integer", "Traversal depth (1-10; the default 3 rides the transitive-closure fast path).", serde_json::json!(3)),
                 "fuzzy": prop_default("fuzzy", "boolean", "Traverse unresolved name-match edges too.", Value::Bool(false)),
                 "limit": prop_default("limit", "integer", "Maximum impacted rows (1-1000).", serde_json::json!(500)),
             }),
@@ -611,7 +611,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
                 &conn,
                 arg_str(args, "name")
                     .ok_or_else(|| ToolFailure("impact_analysis requires a string name".into()))?,
-                arg_i64_or(args, "depth", 5),
+                arg_i64_or(args, "depth", 3),
                 arg_bool_or(args, "fuzzy", false),
                 arg_i64_or(args, "limit", 500),
                 "",

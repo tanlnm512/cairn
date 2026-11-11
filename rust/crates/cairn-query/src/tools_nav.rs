@@ -912,6 +912,8 @@ impl Dfs<'_> {
 }
 
 /// Recursive caller traversal with cycle detection (precise by default).
+/// Precise structural traversals under the closure depth take the
+/// precomputed `transitive_edges` fast path; everything else walks the DFS.
 pub fn impact_analysis(
     conn: &Connection,
     name: &str,
@@ -923,6 +925,48 @@ pub fn impact_analysis(
 ) -> rusqlite::Result<ImpactResult> {
     let max_depth = max_depth.min(MAX_TRAVERSAL_DEPTH);
     let limit = clamp(limit, 1, 1000);
+    if !fuzzy
+        && !include_service_edges
+        && seed_id.is_none()
+        && max_depth < crate::graph::CLOSURE_MAX_DEPTH
+        && crate::graph::closure_ready(conn)
+    {
+        // One seeded traversal per ladder-resolved definition over the fresh
+        // closure table (its DFS fallback resolves hops differently, so the
+        // closure must actually be ready before this path is taken).
+        let ids: Vec<String> = find_definition(conn, name, 200)?
+            .into_iter()
+            .map(|d| d.id)
+            .collect();
+        let mut impacted: Vec<ImpactEntry> = Vec::new();
+        let mut cycles: Vec<(String, i64)> = Vec::new();
+        let mut truncated = false;
+        let mut any = false;
+        for id in &ids {
+            let Ok(fast) = crate::graph::impact_analysis_seeded(
+                conn, name, id, max_depth, limit as usize, false,
+            ) else {
+                continue;
+            };
+            any = true;
+            impacted.extend(fast.impacted.into_iter().map(|e| ImpactEntry {
+                symbol: e.symbol,
+                file: e.file,
+                repo: e.repo,
+                depth: e.depth,
+            }));
+            cycles.extend(fast.cycles);
+            truncated |= fast.truncated;
+        }
+        if any {
+            return Ok(ImpactResult {
+                total: impacted.len(),
+                impacted,
+                cycles,
+                truncated,
+            });
+        }
+    }
     let allowed = if include_service_edges {
         None
     } else {

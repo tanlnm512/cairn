@@ -340,6 +340,13 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
         .iter()
         .map(|(model, _)| model.clone())
         .collect();
+    if result.reindexed > 0 || result.deleted > 0 {
+        let _ = conn.execute(
+            "INSERT INTO closure_state (key, value) VALUES ('stale', '1') \
+             ON CONFLICT(key) DO UPDATE SET value = '1'",
+            [],
+        );
+    }
 
     result
 }

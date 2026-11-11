@@ -4,7 +4,8 @@ use rusqlite::Connection;
 
 pub use cross_repo::{RepoDep, cross_repo_deps, resolve_namespaces, repo_namespaces_env_raw};
 pub use impact::{
-    CLOSURE_MAX_DEPTH, ImpactEntry, ImpactResult, impact_analysis, impact_analysis_seeded,
+    CLOSURE_MAX_DEPTH, ImpactEntry, ImpactResult, closure_ready, impact_analysis,
+    impact_analysis_seeded,
 };
 pub use lexical::{is_fts_prefix_pattern, lexical_search_symbols, pattern_to_fts};
 pub use taint::{
@@ -382,11 +383,28 @@ pub(crate) mod impact {
         pub truncated: bool,
     }
 
+    /// True when a fresh closure table can serve precise traversals.
+    pub fn closure_ready(conn: &Connection) -> bool {
+        closure_available(conn)
+    }
+
     pub(crate) fn closure_available(conn: &Connection) -> bool {
-        conn.query_row("SELECT 1 FROM transitive_edges LIMIT 1", [], |r| {
-            r.get::<_, i64>(0)
-        })
-        .is_ok()
+        // Rows must exist AND be fresh: an incremental reindex after the last
+        // closure build invalidates the table (stale marker = '1').
+        let fresh = conn
+            .query_row(
+                "SELECT value FROM closure_state WHERE key = 'stale'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .map(|v| v == "0")
+            .unwrap_or(false);
+        fresh
+            && conn
+                .query_row("SELECT 1 FROM transitive_edges LIMIT 1", [], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .is_ok()
     }
 
     fn closure_has_seed_cycle(conn: &Connection, seed_ids: &[String]) -> bool {
@@ -2935,5 +2953,31 @@ mod tests {
             assert_eq!(dfs.impacted.len(), 1, "seed {seed}");
             assert_eq!(dfs.impacted[0].symbol, "caller");
         }
+    }
+
+    #[test]
+    fn default_depth_rides_the_closure_fast_path() {
+        let conn = store();
+        conn.execute(
+            "INSERT INTO transitive_edges (source_id, target_name, target_id, distance) \
+             VALUES ('s-caller', 'invoke', 's-invoke-a', 1)",
+            [],
+        )
+        .expect("closure row");
+        // The MCP default depth is 3 (< CLOSURE_MAX_DEPTH): both entry points
+        // must agree with the DFS result at that depth.
+        let dfs = crate::graph::impact_analysis(&conn, "invoke", 3, false, 100).expect("impact");
+        assert!(
+            dfs.impacted.iter().any(|e| e.symbol == "caller"),
+            "closure path must surface the caller: {:?}",
+            dfs.impacted
+        );
+        let nav = crate::tools_nav::impact_analysis(&conn, "invoke", 3, false, 100, false, None)
+            .expect("nav impact");
+        assert!(
+            nav.impacted.iter().any(|e| e.symbol == "caller"),
+            "nav layer must ride the same fast path: {} entries",
+            nav.impacted.len()
+        );
     }
 }

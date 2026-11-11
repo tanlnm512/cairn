@@ -343,6 +343,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("files.size", "ALTER TABLE files ADD COLUMN size INTEGER"),
     ("files.mtime", "ALTER TABLE files ADD COLUMN mtime REAL"),
     (
+        "closure_state.table",
+        "CREATE TABLE IF NOT EXISTS closure_state (\n        key TEXT PRIMARY KEY,\n        value TEXT NOT NULL\n    )",
+    ),
+    (
         "symbols.metadata",
         "ALTER TABLE symbols ADD COLUMN metadata TEXT",
     ),
