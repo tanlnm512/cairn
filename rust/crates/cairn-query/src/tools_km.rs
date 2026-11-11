@@ -1375,6 +1375,7 @@ pub fn store_memory(
     old_id: Option<&str>,
     conn: Option<&Connection>,
 ) -> Result<String, ToolError> {
+    let _lock = bundle.lock()?;
     let old_rel = old_id.map(|o| rel_cid(bundle, o));
     let keep_id = old_rel
         .as_ref()
@@ -1444,6 +1445,20 @@ pub fn store_memory(
                 rusqlite::params![old_id],
             )
             .map_err(|e| ToolError(e.to_string()))?;
+            // Refs and embeddings follow the memory to its new id.
+            for (sql, new) in [
+                (
+                    "UPDATE memory_refs SET memory_path = ? WHERE memory_path = ?",
+                    concept.concept_id.as_str(),
+                ),
+                (
+                    "UPDATE memory_embeddings SET doc_id = ? WHERE doc_id = ?",
+                    concept.concept_id.as_str(),
+                ),
+            ] {
+                conn.execute(sql, rusqlite::params![new, old_id])
+                    .map_err(|e| ToolError(e.to_string()))?;
+            }
         }
     }
     Ok(concept.concept_id.clone())
@@ -1549,6 +1564,7 @@ pub fn demote_memory(
     target_tier: &str,
     conn: Option<&Connection>,
 ) -> Result<Option<String>, ToolError> {
+    let _lock = bundle.lock()?;
     let Some(mut concept) = get_memory(bundle, memory_path)? else {
         return Ok(None);
     };
@@ -1577,6 +1593,7 @@ pub fn promote_memory(
     memory_path: &str,
     conn: Option<&Connection>,
 ) -> Result<Option<String>, ToolError> {
+    let _lock = bundle.lock()?;
     let mut concept = match get_memory(bundle, memory_path)? {
         Some(c) => c,
         None => return Ok(None),
@@ -1651,6 +1668,17 @@ fn append_promotion(concept: &mut Concept, action: &str, score: f64) {
     }
 }
 
+/// The most recent memory_refs row's referenced_at for one memory path.
+fn last_recalled(conn: &Connection, memory_path: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT MAX(referenced_at) FROM memory_refs WHERE memory_path = ?",
+        rusqlite::params![memory_path],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+}
+
 fn age_days(ts: &str) -> f64 {
     let Some(secs) = parse_memory_timestamp(ts) else {
         return 0.0;
@@ -1669,6 +1697,7 @@ pub fn decay(
     tribal_max_stale: i64,
     conn: Option<&Connection>,
 ) -> Result<(usize, usize), ToolError> {
+    let _lock = bundle.lock()?;
     let mut expired = 0;
     let mut archived = 0;
     for concept in list_memories(bundle, Some("raw"), None) {
@@ -1684,8 +1713,12 @@ pub fn decay(
         }
     }
     for concept in list_memories(bundle, Some("tribal"), None) {
-        let stale = concept
-            .timestamp
+        // A memory that is still recalled stays: staleness runs from the last
+        // recall, falling back to the creation timestamp when never recalled.
+        let last_seen = conn
+            .and_then(|conn| last_recalled(conn, &rel_cid(bundle, &concept.concept_id)))
+            .or_else(|| concept.timestamp.clone());
+        let stale = last_seen
             .as_deref()
             .is_some_and(|ts| age_days(ts) > tribal_max_stale as f64);
         if stale {
@@ -1939,6 +1972,7 @@ pub struct BatchCriticResult {
 
 /// Run the deterministic critic over queued drafts; promote, drop, or keep.
 pub fn batch_critic(conn: &Connection, bundle: &Bundle) -> Result<BatchCriticResult, ToolError> {
+    let _lock = bundle.lock()?;
     let drafts = list_memories(bundle, Some("drafts"), None);
     let mut out = BatchCriticResult {
         processed: drafts.len(),

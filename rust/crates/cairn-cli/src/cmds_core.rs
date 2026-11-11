@@ -1351,6 +1351,9 @@ fn update(args: crate::cmds_core::UpdateArgs) -> ExitCode {
     }
 
     // Memory decay: archive stale raw/tribal memories after the reindex.
+    if args.no_decay {
+        return ExitCode::SUCCESS;
+    }
     let bundle = cairn_query::tools_km::Bundle::new(&knowledge);
     match Connection::open(&db) {
         Ok(reap_conn) => match cairn_query::tools_km::decay(&bundle, 7, 90, Some(&reap_conn)) {
@@ -3858,6 +3861,9 @@ pub struct UpdateArgs {
     /// Knowledge bundle path (for the post-update memory staleness scan).
     #[arg(long = "knowledge")]
     pub knowledge: Option<String>,
+    /// Skip the post-update memory decay pass.
+    #[arg(long = "no-decay")]
+    pub no_decay: bool,
 }
 
 #[derive(clap::Args)]

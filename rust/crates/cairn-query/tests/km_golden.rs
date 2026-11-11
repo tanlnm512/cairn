@@ -899,3 +899,81 @@ fn knowledge_search_rejects_out_of_namespace_delete() {
         "compass doc untouched"
     );
 }
+
+#[test]
+fn demoted_memory_keeps_its_refs_and_recall_under_the_new_id() {
+    let fx = fixture("idmove");
+    fx.seed_graph();
+    let msg = km::record_memory(
+        &fx.conn,
+        &fx.bundle,
+        "pattern",
+        "id move probe",
+        "body citing `src/main.py`",
+        "",
+        0.7,
+        None,
+        "",
+    )
+    .expect("record");
+    let path = msg
+        .split("-> ")
+        .nth(1)
+        .and_then(|rest| rest.split(" (score").next())
+        .expect("path")
+        .to_string();
+    // Credit a recall against the original id.
+    km::record_references_batch(
+        &fx.conn,
+        &[(path.clone(), "src/main.py".to_string())],
+        "session-a",
+    );
+    // Demote to raw: the id changes, refs must follow.
+    let new_path = km::demote_memory(&fx.bundle, &path, "raw", Some(&fx.conn))
+        .expect("demote")
+        .expect("moved");
+    assert_ne!(new_path, path);
+    let recall = km::recall_memory(&fx.conn, &fx.bundle, "id move probe", "", false, None, None, None)
+        .expect("recall");
+    assert!(
+        recall.contains("1 memories matching") && recall.contains("id move probe"),
+        "recall must find the memory under its new id: {recall}"
+    );
+    let refs: i64 = fx
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM memory_refs WHERE memory_path = ?",
+            [&new_path],
+            |r| r.get(0),
+        )
+        .expect("refs count");
+    assert_eq!(refs, 1, "memory_refs must follow the id change");
+}
+
+#[test]
+fn recently_recalled_tribal_memory_is_not_archived() {
+    let fx = fixture("recalldecay");
+    fx.seed_graph();
+    fx.seed_memory(
+        "memory/tribal/old-but-used",
+        MEMORY_FRONTMATTER,
+        "old tribal memory body citing `src/main.py`",
+    );
+    // Creation timestamp is old (frontmatter generated-at 2026-10-01), but a
+    // recall happened now: decay must keep it.
+    km::record_references_batch(
+        &fx.conn,
+        &[(
+            "memory/tribal/old-but-used".to_string(),
+            "src/main.py".to_string(),
+        )],
+        "session-now",
+    );
+    let (expired, archived) = km::decay(&fx.bundle, 7, 90, Some(&fx.conn)).expect("decay");
+    assert_eq!(expired, 0);
+    assert_eq!(archived, 0, "a recalled tribal memory must stay");
+    assert!(fx
+        .bundle
+        .read_concept("memory/tribal/old-but-used")
+        .is_ok());
+}
