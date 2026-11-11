@@ -138,3 +138,64 @@ fn guard_replaces_a_collision_dump_with_the_dataflow_fallback() {
 
     let _ = std::fs::remove_dir_all(&home);
 }
+
+#[test]
+fn callers_and_impact_share_the_query_layer_row_path() {
+    let home = std::env::temp_dir().join(format!("cairn-impact-parity-{}", std::process::id()));
+    let ws = home.join("ws");
+    let repo = ws.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).expect("scratch repo");
+    std::fs::write(
+        repo.join("mod.py"),
+        "class Gate:\n    def open(self):\n        return 1\n\n\ndef caller():\n    return Gate().open()\n",
+    )
+    .expect("fixture");
+    let db = home.join("store.kg");
+    let db = db.to_str().expect("utf8 path");
+    let (built, out) = cairn(
+        &home,
+        None,
+        &["build", "--workspace", ws.to_str().expect("utf8"), "--db", db],
+    );
+    assert!(built, "{out}");
+
+    // The qualified name resolves through the shared definition ladder: the
+    // CLI exits 0 and returns the same rows as the bare name.
+    let (bare_ok, bare) = cairn(
+        &home,
+        None,
+        &["callers", "open", "--db", db, "--no-refresh", "--json"],
+    );
+    assert!(bare_ok, "{bare}");
+    let (qualified_ok, qualified) = cairn(
+        &home,
+        None,
+        &["callers", "Gate.open", "--db", db, "--no-refresh", "--json"],
+    );
+    assert!(qualified_ok, "qualified name must resolve: {qualified}");
+    let strip = |v: Value| -> String {
+        serde_json::to_string(&v.as_array().map(|rows| {
+            rows.iter()
+                .map(|r| r.get("caller_id").cloned().unwrap_or(Value::Null))
+                .collect::<Vec<_>>()
+        }))
+        .unwrap_or_default()
+    };
+    assert_eq!(
+        strip(parse_json(&qualified)),
+        strip(parse_json(&bare)),
+        "qualified callers must equal bare callers"
+    );
+
+    // The CLI impact carries the cross-repo section shape the MCP path renders.
+    let (ok, out) = cairn(
+        &home,
+        None,
+        &["impact", "open", "--db", db, "--no-refresh", "--json"],
+    );
+    assert!(ok, "{out}");
+    let parsed = parse_json(&out);
+    assert!(parsed.get("impacted").is_some(), "{out}");
+
+    let _ = std::fs::remove_dir_all(&home);
+}

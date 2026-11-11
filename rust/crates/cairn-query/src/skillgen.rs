@@ -524,6 +524,15 @@ pub struct GateResult {
 
 /// Verify the exact `render_skill` bytes against the graph.
 pub fn verify_draft(conn: &Connection, rendered: &str) -> GateResult {
+    // The gate is "every reference verifies": a draft with no references
+    // passes vacuously — the ref-less 0.5 graph-verification floor scores
+    // trust, it does not gate.
+    if extract_file_refs(rendered).is_empty() && extract_symbol_refs(rendered).is_empty() {
+        return GateResult {
+            ok: true,
+            failing_refs: Vec::new(),
+        };
+    }
     let concept = Concept {
         type_: "skill-draft".to_string(),
         concept_id: "skillgen:draft".to_string(),

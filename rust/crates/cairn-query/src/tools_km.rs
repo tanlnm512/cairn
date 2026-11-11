@@ -5644,37 +5644,7 @@ struct SymbolRow {
     repo: String,
 }
 
-fn is_fts_prefix_pattern(pattern: &str) -> bool {
-    let p = pattern.trim();
-    let Some(stripped) = p.strip_suffix('*') else {
-        return false;
-    };
-    if stripped.contains('*') || p.contains('_') {
-        return false;
-    }
-    let token = stripped.trim();
-    !token.is_empty() && !token.contains([' ', '"', ':', '(', ')'])
-}
-
-fn pattern_to_fts(pattern: &str) -> Option<String> {
-    static STAR_RE: OnceLock<Regex> = OnceLock::new();
-    static SPLIT_RE: OnceLock<Regex> = OnceLock::new();
-    let p = pattern.trim();
-    if p.is_empty() {
-        return None;
-    }
-    if is_fts_prefix_pattern(p) {
-        return Some(format!("{}*", p[..p.len() - 1].trim()));
-    }
-    let star_re = STAR_RE.get_or_init(|| Regex::new(r"[*%]").expect("star regex"));
-    let split_re = SPLIT_RE.get_or_init(|| Regex::new(r"[^A-Za-z0-9]+").expect("split regex"));
-    let cleaned = star_re.replace_all(p, " ").to_string();
-    let tokens: Vec<&str> = split_re.split(&cleaned).filter(|t| !t.is_empty()).collect();
-    if tokens.is_empty() {
-        return None;
-    }
-    Some(format!("\"{}\"*", tokens.join(" ")))
-}
+use crate::tools_search::{is_fts_prefix_pattern, pattern_to_fts};
 
 fn like_symbol_rows(
     conn: &Connection,

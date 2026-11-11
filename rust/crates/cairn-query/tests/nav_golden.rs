@@ -92,3 +92,37 @@ fn nav_tools_are_golden_equal() {
         assert_eq!(actual, expected, "{tool} diverges from the golden fixture");
     }
 }
+
+#[test]
+fn qualified_names_resolve_through_the_definition_ladder() {
+    let root = repo_root();
+    let (conn, _temp) = nav_store_from(&root.join("rust/golden/nav/nav-store.kg"));
+    // The bare name and the repo-qualified name return the same caller set.
+    let bare = tools_nav::callers_text(&conn, "renderStatus", false, 200, "").expect("bare");
+    let qualified =
+        tools_nav::callers_text(&conn, "status.renderStatus", false, 200, "").expect("qualified");
+    let body =
+        |text: &str| sorted_lines(&text.lines().skip(1).collect::<Vec<_>>().join("\n"));
+    assert_eq!(
+        body(&qualified),
+        body(&bare),
+        "qualified form must match the bare form\nbare:\n{bare}\nqualified:\n{qualified}"
+    );
+    let impact_bare =
+        tools_nav::impact_analysis_text(&conn, "worstState", 2, false, 100, "", tools_nav::DEFAULT_REPO_NAMESPACES)
+            .expect("impact bare");
+    let impact_qualified =
+        tools_nav::impact_analysis_text(&conn, "statusModel.worstState", 2, false, 100, "", tools_nav::DEFAULT_REPO_NAMESPACES)
+            .expect("impact qualified");
+    assert!(
+        impact_qualified.contains("total impacted symbols"),
+        "qualified impact must resolve: {impact_qualified}"
+    );
+    let impact_body =
+        |text: &str| sorted_lines(&text.lines().skip(1).collect::<Vec<_>>().join("\n"));
+    assert_eq!(
+        impact_body(&impact_qualified),
+        impact_body(&impact_bare),
+        "qualified impact must match the bare form"
+    );
+}

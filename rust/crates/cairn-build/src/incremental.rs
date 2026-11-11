@@ -697,7 +697,8 @@ fn changed_via_stat(workspace: &str, repo_path: &Path, conn: &Connection) -> Vec
 /// Freshness-probe debounce window: back-to-back reads within it skip the walk.
 pub const PROBE_DEBOUNCE_SECS: f64 = 2.0;
 
-/// True when the last probe stamp `<db>.probe` is fresher than the debounce window.
+/// True when the last probe stamp `<db>.probe` is fresher than the debounce
+/// window AND newer than the store file — a replaced store never debounces.
 pub fn probe_recent(db: &Path) -> bool {
     let stamp = probe_stamp_path(db);
     let Ok(meta) = std::fs::metadata(&stamp) else {
@@ -706,6 +707,11 @@ pub fn probe_recent(db: &Path) -> bool {
     let Ok(modified) = meta.modified() else {
         return false;
     };
+    if let Ok(db_modified) = std::fs::metadata(db).and_then(|m| m.modified())
+        && db_modified > modified
+    {
+        return false;
+    }
     modified
         .elapsed()
         .map(|e| e.as_secs_f64() < PROBE_DEBOUNCE_SECS)

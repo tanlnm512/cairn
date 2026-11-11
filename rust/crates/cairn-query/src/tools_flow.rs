@@ -721,7 +721,7 @@ pub fn visualize_graph_text(
         "module" => get_module_graph(conn, module, false)?,
         "repo" => get_repo_graph(conn, repo)?,
         "deps" => {
-            let namespaces = resolve_namespaces(workspace, None);
+            let namespaces = resolve_namespaces(workspace, crate::graph::repo_namespaces_env_raw().as_deref());
             get_deps_graph(conn, &namespaces)?
         }
         _ => {
@@ -747,7 +747,7 @@ pub fn cross_repo_deps_text(
     limit: i64,
 ) -> Result<String, rusqlite::Error> {
     let limit = clamp(limit, 1, 1000);
-    let namespaces = resolve_namespaces(workspace, None);
+    let namespaces = resolve_namespaces(workspace, crate::graph::repo_namespaces_env_raw().as_deref());
     let result = cross_repo_deps(conn, repo, &namespaces)?;
     let mut out: Vec<String> = Vec::new();
     out.push(format!("=== {repo} depends on ==="));

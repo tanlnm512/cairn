@@ -2,7 +2,7 @@
 
 use rusqlite::Connection;
 
-pub use cross_repo::{RepoDep, cross_repo_deps, resolve_namespaces};
+pub use cross_repo::{RepoDep, cross_repo_deps, resolve_namespaces, repo_namespaces_env_raw};
 pub use impact::{
     CLOSURE_MAX_DEPTH, ImpactEntry, ImpactResult, impact_analysis, impact_analysis_seeded,
 };
@@ -235,44 +235,7 @@ mod lexical {
 
     use super::{SymbolRow, escape_like};
 
-    /// True iff `pattern` is a pure single-trailing-wildcard token (`"Api*"`).
-    pub fn is_fts_prefix_pattern(pattern: &str) -> bool {
-        let p = pattern.trim();
-        let Some(stripped) = p.strip_suffix('*') else {
-            return false;
-        };
-        if stripped.contains('*') || p.contains('_') {
-            return false;
-        }
-        let token = stripped.trim();
-        !token.is_empty() && !token.contains([' ', '"', ':', '(', ')'])
-    }
-
-    /// Convert a user pattern into an FTS5 MATCH query; `None` selects the LIKE path.
-    pub fn pattern_to_fts(pattern: &str) -> Option<String> {
-        let p = pattern.trim();
-        if p.is_empty() {
-            return None;
-        }
-        if is_fts_prefix_pattern(p) {
-            return Some(format!(
-                "{}*",
-                p.strip_suffix('*').expect("suffix checked").trim()
-            ));
-        }
-        let cleaned: String = p
-            .chars()
-            .map(|c| if c == '*' || c == '%' { ' ' } else { c })
-            .collect();
-        let tokens: Vec<&str> = cleaned
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .filter(|t| !t.is_empty())
-            .collect();
-        if tokens.is_empty() {
-            return None;
-        }
-        Some(format!("\"{}\"*", tokens.join(" ")))
-    }
+    pub use crate::tools_search::{is_fts_prefix_pattern, pattern_to_fts};
 
     fn select_tail(kind: Option<&str>) -> &'static str {
         if kind.is_some() {
@@ -1838,6 +1801,19 @@ mod cross_repo {
         .iter()
         .map(|(ns, owner)| (ns.to_string(), owner.to_string()))
         .collect()
+    }
+
+    /// The validated `CAIRN_REPO_NAMESPACES` override, None when unset or
+    /// not a JSON object of non-empty string pairs.
+    pub fn repo_namespaces_env_raw() -> Option<String> {
+        let raw = std::env::var("CAIRN_REPO_NAMESPACES").ok()?;
+        let parsed = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+        let usable = parsed.as_object().is_some_and(|o| {
+            o.iter().any(|(k, v)| {
+                !k.trim().is_empty() && v.as_str().is_some_and(|s| !s.trim().is_empty())
+            })
+        });
+        if usable { Some(raw) } else { None }
     }
 
     /// Resolved namespace map: env override, then cairn.json, then defaults.

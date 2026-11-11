@@ -1382,7 +1382,7 @@ fn find_def(args: crate::cmds_core::DefArgs) -> ExitCode {
     let Ok(conn) = fresh_conn(&db, refresh) else {
         return command_error(&format!("cannot open {db}"));
     };
-    let rows = match cli_rows::find_definition_rows(&conn, &args.symbol, 50) {
+    let rows = match cairn_query::tools_nav::find_definition(&conn, &args.symbol, 50) {
         Ok(rows) => rows,
         Err(e) => return command_error(&e.to_string()),
     };
@@ -1391,27 +1391,27 @@ fn find_def(args: crate::cmds_core::DefArgs) -> ExitCode {
         return ExitCode::FAILURE;
     }
     if args.as_json {
-        println!(
-            "{}",
-            json_compat::dumps(&Value::Array(rows.into_iter().map(Value::Object).collect()))
-        );
+        let mapped: Vec<Value> = rows.iter().map(def_row_json).collect();
+        println!("{}", json_compat::dumps(&Value::Array(mapped)));
         return ExitCode::SUCCESS;
     }
     for row in &rows {
         let modifiers = row
-            .get("modifiers")
-            .and_then(Value::as_str)
+            .modifiers
+            .as_deref()
             .and_then(mods_list)
             .unwrap_or_default();
         println!(
             "{}:{}  {} {}{}",
-            str_of(row.get("file_path")),
-            str_of(row.get("line_start")),
-            str_of(row.get("kind")),
-            row.get("qualified_name")
-                .and_then(Value::as_str)
-                .or_else(|| row.get("name").and_then(Value::as_str))
-                .unwrap_or_default(),
+            row.file_path,
+            match row.line_start {
+                Some(n) => n.to_string(),
+                None => "None".to_string(),
+            },
+            row.kind,
+            row.qualified_name
+                .clone()
+                .unwrap_or_else(|| row.name.clone()),
             if modifiers.is_empty() {
                 String::new()
             } else {
@@ -1420,6 +1420,33 @@ fn find_def(args: crate::cmds_core::DefArgs) -> ExitCode {
         );
     }
     ExitCode::SUCCESS
+}
+
+fn opt_i64(v: Option<i64>) -> Value {
+    v.map_or(Value::Null, Value::from)
+}
+
+fn opt_str(v: Option<&str>) -> Value {
+    v.map_or(Value::Null, Value::from)
+}
+
+/// The full symbol row a `def --json` line emits, in table-column order.
+fn def_row_json(d: &cairn_query::tools_nav::DefRow) -> Value {
+    let mut m = Map::new();
+    m.insert("id".into(), Value::from(d.id.clone()));
+    m.insert("file_id".into(), Value::from(d.file_id.clone()));
+    m.insert("name".into(), Value::from(d.name.clone()));
+    m.insert("qualified_name".into(), opt_str(d.qualified_name.as_deref()));
+    m.insert("kind".into(), Value::from(d.kind.clone()));
+    m.insert("line_start".into(), opt_i64(d.line_start));
+    m.insert("line_end".into(), opt_i64(d.line_end));
+    m.insert("column_start".into(), opt_i64(d.column_start));
+    m.insert("column_end".into(), opt_i64(d.column_end));
+    m.insert("docstring".into(), opt_str(d.docstring.as_deref()));
+    m.insert("modifiers".into(), opt_str(d.modifiers.as_deref()));
+    m.insert("file_path".into(), Value::from(d.file_path.clone()));
+    m.insert("repo".into(), Value::from(d.repo.clone()));
+    Value::Object(m)
 }
 
 fn refresh_flag(refresh: bool, no_refresh: bool) -> Option<bool> {
@@ -1463,32 +1490,61 @@ fn callers(args: crate::cmds_core::CallersArgs) -> ExitCode {
     let Ok(conn) = fresh_conn(&db, refresh) else {
         return command_error(&format!("cannot open {db}"));
     };
-    let rows = match cli_rows::get_callers_rows(&conn, &args.symbol, 200, args.fuzzy, None, None) {
-        Ok(rows) => rows,
-        Err(e) => return command_error(&e.to_string()),
-    };
-    if rows.is_empty() {
+    let data =
+        match cairn_query::tools_nav::callers_data(&conn, &args.symbol, args.fuzzy, 200, "") {
+            Ok(data) => data,
+            Err(e) => return command_error(&e.to_string()),
+        };
+    if data.rows.is_empty() {
         eprintln!("No callers found for '{}'.", args.symbol);
         return ExitCode::FAILURE;
     }
+    neighbor_notes(&data);
     if args.as_json {
-        println!(
-            "{}",
-            json_compat::dumps(&Value::Array(rows.into_iter().map(Value::Object).collect()))
-        );
+        let mapped: Vec<Value> = data
+            .rows
+            .iter()
+            .map(|r| {
+                let mut m = Map::new();
+                m.insert("edge_line".into(), opt_i64(r.edge_line));
+                m.insert("edge_column".into(), opt_i64(r.edge_column));
+                m.insert("edge_kind".into(), Value::from(r.edge_kind.clone()));
+                m.insert("caller_name".into(), Value::from(r.caller_name.clone()));
+                m.insert("caller_kind".into(), Value::from(r.caller_kind.clone()));
+                m.insert("caller_id".into(), Value::from(r.caller_id.clone()));
+                m.insert("file_path".into(), Value::from(r.file_path.clone()));
+                m.insert("repo".into(), Value::from(r.repo.clone()));
+                m.insert("resolution".into(), opt_str(r.resolution.as_deref()));
+                Value::Object(m)
+            })
+            .collect();
+        println!("{}", json_compat::dumps(&Value::Array(mapped)));
         return ExitCode::SUCCESS;
     }
-    for row in &rows {
+    for row in &data.rows {
+        let line = row.edge_line.map(|n| n.to_string()).unwrap_or_default();
         println!(
             "{}:{}  {} {}  ({})",
-            str_of(row.get("file_path")),
-            str_of(row.get("edge_line")),
-            str_of(row.get("caller_kind")),
-            str_of(row.get("caller_name")),
-            str_of(row.get("repo")),
+            row.file_path, line, row.caller_kind, row.caller_name, row.repo,
         );
     }
     ExitCode::SUCCESS
+}
+
+/// Stderr notices shared by the neighbor commands: staleness, the fuzzy
+/// fallback, and the result cap.
+fn neighbor_notes(data: &cairn_query::tools_nav::NeighborData<impl Sized>) {
+    if !data.stale_banner.is_empty() {
+        eprintln!("{}", data.stale_banner);
+    }
+    if data.used_fallback {
+        eprintln!(
+            "0 precise callers; showing fuzzy name-match candidates (verify each against the code)."
+        );
+    }
+    if data.hit_limit {
+        eprintln!("Results capped at the limit; narrow the query or raise it for more.");
+    }
 }
 
 /// search handler.
@@ -1530,33 +1586,57 @@ fn callees(args: crate::cmds_core::CalleesArgs) -> ExitCode {
     let Ok(conn) = fresh_conn(&db, refresh) else {
         return command_error(&format!("cannot open {db}"));
     };
-    let rows = match cli_rows::get_callees_rows(&conn, &args.symbol, 200, args.fuzzy, None, None) {
-        Ok(rows) => rows,
-        Err(e) => return command_error(&e.to_string()),
-    };
-    if rows.is_empty() {
+    let data =
+        match cairn_query::tools_nav::callees_data(&conn, &args.symbol, args.fuzzy, 200, "") {
+            Ok(data) => data,
+            Err(e) => return command_error(&e.to_string()),
+        };
+    if data.rows.is_empty() {
         eprintln!("No callees found for '{}'.", args.symbol);
         return ExitCode::FAILURE;
     }
+    if !data.stale_banner.is_empty() {
+        eprintln!("{}", data.stale_banner);
+    }
+    if data.hit_limit {
+        eprintln!("Results capped at the limit; narrow the query or raise it for more.");
+    }
     if args.as_json {
-        println!(
-            "{}",
-            json_compat::dumps(&Value::Array(rows.into_iter().map(Value::Object).collect()))
-        );
+        let mapped: Vec<Value> = data
+            .rows
+            .iter()
+            .map(|r| {
+                let mut m = Map::new();
+                m.insert("edge_line".into(), opt_i64(r.edge_line));
+                m.insert("edge_column".into(), opt_i64(r.edge_column));
+                m.insert("edge_kind".into(), Value::from(r.edge_kind.clone()));
+                m.insert(
+                    "callee_name".into(),
+                    opt_str(r.name.as_deref()),
+                );
+                m.insert("callee_kind".into(), Value::from(r.kind.clone()));
+                m.insert(
+                    "resolved".into(),
+                    opt_str(r.target_id.as_deref()),
+                );
+                m.insert("resolution".into(), opt_str(r.resolution.as_deref()));
+                m.insert("file_path".into(), Value::from(r.file_path.clone()));
+                m.insert("repo".into(), Value::from(r.repo.clone()));
+                Value::Object(m)
+            })
+            .collect();
+        println!("{}", json_compat::dumps(&Value::Array(mapped)));
         return ExitCode::SUCCESS;
     }
-    for row in &rows {
-        let resolved = if row.get("resolved").map(|v| !v.is_null()).unwrap_or(false) {
-            ""
-        } else {
-            "  (unresolved)"
-        };
+    for row in &data.rows {
+        let resolved = if row.resolved { "" } else { "  (unresolved)" };
+        let line = row.edge_line.map(|n| n.to_string()).unwrap_or_default();
         println!(
             "{:<10} {:<35} {}:{}{}",
-            str_of(row.get("callee_kind")),
-            str_of(row.get("callee_name")),
-            str_of(row.get("file_path")),
-            str_of(row.get("edge_line")),
+            row.kind,
+            row.name.clone().unwrap_or_else(|| "None".to_string()),
+            row.file_path,
+            line,
             resolved,
         );
     }
@@ -1575,10 +1655,30 @@ fn impact(args: crate::cmds_core::ImpactArgs) -> ExitCode {
     let Ok(conn) = fresh_conn(&db, refresh) else {
         return command_error(&format!("cannot open {db}"));
     };
-    let result =
-        match cairn_query::graph::impact_analysis(&conn, &args.symbol, args.depth, args.fuzzy, 500)
-        {
-            Ok(result) => result,
+    let result = match cairn_query::tools_nav::impact_analysis(
+        &conn,
+        &args.symbol,
+        args.depth,
+        args.fuzzy,
+        500,
+        false,
+        None,
+    ) {
+        Ok(result) => result,
+        Err(e) => return command_error(&e.to_string()),
+    };
+    let store = store_paths::resolve_store(None);
+    let namespaces = cairn_query::graph::resolve_namespaces(
+        &store.workspace,
+        cairn_query::graph::repo_namespaces_env_raw().as_deref(),
+    );
+    let ns_refs: Vec<(&str, &str)> = namespaces
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let dependents =
+        match cairn_query::tools_nav::cross_repo_xref(&conn, &args.symbol, &ns_refs) {
+            Ok(d) => d,
             Err(e) => return command_error(&e.to_string()),
         };
     let impacted: Vec<Value> = result
@@ -1617,6 +1717,18 @@ fn impact(args: crate::cmds_core::ImpactArgs) -> ExitCode {
         object.insert("cycles".into(), Value::Array(cycles));
         object.insert("total".into(), Value::from(total as i64));
         object.insert("truncated".into(), Value::from(result.truncated));
+        if !dependents.is_empty() {
+            let cross: Vec<Value> = dependents
+                .iter()
+                .map(|d| {
+                    let mut m = Map::new();
+                    m.insert("repo".into(), Value::from(d.repo.clone()));
+                    m.insert("count".into(), Value::from(d.count));
+                    Value::Object(m)
+                })
+                .collect();
+            object.insert("cross_repo".into(), Value::Array(cross));
+        }
         if args.guard {
             let mut guard = Map::new();
             guard.insert("collision".into(), Value::from(collision));
@@ -1665,6 +1777,18 @@ fn impact(args: crate::cmds_core::ImpactArgs) -> ExitCode {
         return ExitCode::FAILURE;
     }
     println!("Total impacted: {}", fmt_int(total as i64));
+    if !dependents.is_empty() {
+        let consumers: Vec<String> = dependents
+            .iter()
+            .take(5)
+            .map(|d| format!("{} (x{})", d.repo, d.count))
+            .collect();
+        println!(
+            "Cross-repo: {} repo(s) depend — {}",
+            dependents.len(),
+            consumers.join(", ")
+        );
+    }
     if result.truncated {
         eprintln!("Truncated: hit the symbol cap; narrow the query for full coverage.");
     }
@@ -1672,7 +1796,7 @@ fn impact(args: crate::cmds_core::ImpactArgs) -> ExitCode {
     depths.sort();
     depths.dedup();
     for d in depths {
-        let group: Vec<&cairn_query::graph::ImpactEntry> =
+        let group: Vec<&cairn_query::tools_nav::ImpactEntry> =
             result.impacted.iter().filter(|e| e.depth == d).collect();
         println!("\nDepth {d} ({}):", group.len());
         for entry in group.iter().take(20) {

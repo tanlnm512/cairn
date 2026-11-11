@@ -47,11 +47,11 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 |---|---|
 | `cairn def <symbol>` | find a definition |
 | `cairn import-scip <file>` | import an external SCIP index as an edges-only overlay |
-| `cairn callers <symbol>` | who calls this (precise by default; `--fuzzy` adds name-matched sites) |
-| `cairn callees <symbol>` | what this calls |
+| `cairn callers <symbol>` | who calls this — bare and qualified names resolve through the shared definition ladder (exact > qualified > substring); an empty precise result retries fuzzy automatically, exits 0 when any candidate is found and FAILURE only when nothing matches (a stderr note marks the fuzzy fallback and the result cap) |
+| `cairn callees <symbol>` | what this calls (same ladder resolution as `callers`) |
 | `cairn search <query>` | symbol search (FTS5, `*` wildcards) |
 | `cairn semantic <query>` | hybrid semantic search (`--limit`, `--threshold`, `--include-callers`, `--json`) |
-| `cairn impact <symbol>` | what breaks if changed (within-repo; `--guard` flags a cycle-carrying result above `--threshold` (default 100) as a name collision and prints the dataflow-index fallback instead, see [below](#cairn-impact---guard)) |
+| `cairn impact <symbol>` | what breaks if changed — same traversal and cross-repo dependents section as the MCP tool (`cross_repo` in `--json`, honoring `CAIRN_REPO_NAMESPACES`); `--guard` flags a cycle-carrying result above `--threshold` (default 100) as a name collision and prints the dataflow-index fallback instead, see [below](#cairn-impact---guard)) |
 | `cairn blast` | reverse-dependency radius of a git diff |
 | `cairn map` | deterministic repository orientation map |
 | `cairn communities` | Louvain subsystem clusters over the symbol graph (see [below](#cairn-communities)) |
