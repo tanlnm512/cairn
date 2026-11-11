@@ -266,7 +266,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cairn-build"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "cairn-parse",
  "cairn-query",
@@ -284,7 +284,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-cli"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "axum",
  "cairn-build",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-daemon"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "axum",
  "cairn-query",
@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-parse"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "cairn-tree-sitter-dart",
  "serde_json",
@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-query"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "cairn-store",
  "fastembed",
@@ -362,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "cairn-store"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "rusqlite",
  "serde_json",
@@ -3931,7 +3931,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xtask"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "cairn-build",
  "cairn-query",
