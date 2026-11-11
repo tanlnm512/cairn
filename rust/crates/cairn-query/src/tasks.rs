@@ -426,7 +426,6 @@ pub fn claim_task(
     let Some(marker) = claim_marker_path(bundle, task_id) else {
         return Ok(None);
     };
-    let mut stale_collision = false;
     match create_marker_exclusive(&marker) {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -434,7 +433,6 @@ pub fn claim_task(
             if !try_remove_stale_marker(&marker) {
                 return Ok(None);
             }
-            stale_collision = true;
             if create_marker_exclusive(&marker).is_err() {
                 return Ok(None);
             }
@@ -446,8 +444,10 @@ pub fn claim_task(
         // completion cannot interleave
         let _lock = bundle.lock()?;
         let task = read(bundle, task_id)?;
-        let reclaimable = stale_collision
-            && task.as_ref().is_some_and(|t| t.status == "in-progress")
+        // An in-progress task is reclaimable when its claim went stale —
+        // a leaked marker (stale_collision) or no marker at all (a critic
+        // failure once removed markers pre-terminal).
+        let reclaimable = task.as_ref().is_some_and(|t| t.status == "in-progress")
             && task.as_ref().is_some_and(claim_is_stale);
         match task {
             Some(mut task) if task.status == "pending" || reclaimable => {
@@ -513,7 +513,8 @@ impl CompleteOutcome {
 }
 
 /// Persist a terminal status iff the task is still in-progress; false when
-/// another writer finished it first.
+/// another writer finished it first. The claim marker is removed only here,
+/// after the transition commits.
 fn finish_terminal(bundle: &Bundle, task: &Task, status: &str) -> Result<bool, ToolError> {
     let _lock = bundle.lock()?;
     match read(bundle, &task.id)? {
@@ -523,6 +524,9 @@ fn finish_terminal(bundle: &Bundle, task: &Task, status: &str) -> Result<bool, T
             finished.completed_at = iso_utc_now();
             let mut concept = task_to_concept(&finished);
             bundle.write_concept(&mut concept)?;
+            if let Some(marker) = claim_marker_path(bundle, &task.id) {
+                let _ = std::fs::remove_file(&marker);
+            }
             Ok(true)
         }
         _ => Ok(false),
@@ -807,11 +811,9 @@ pub fn complete_task(
         extensions: Vec::new(),
     };
     bundle.write_concept(&mut result_concept)?;
-    // the claim marker goes now: from here the task is finished or left
-    // in-progress and re-completable when the critic itself fails
-    if let Some(marker) = claim_marker_path(bundle, task_id) {
-        let _ = std::fs::remove_file(&marker);
-    }
+    // the claim marker survives until the terminal transition: a critic
+    // failure leaves the task in-progress with its marker, claimable again
+    // once stale
     let Some(conn) = conn else {
         if !finish_terminal(bundle, &task, "done")? {
             return Ok(CompleteOutcome::refused(task_id, vec![RACE_LOST.into()]));
@@ -902,6 +904,11 @@ fn complete_with_critic(
     bundle.write_concept(&mut result_concept)?;
     if !critic_result.passed {
         if task.attempt < MAX_REVISE_CYCLES {
+            // Terminal transition first (the CAS): a lost race must not leave
+            // an orphaned revise child behind.
+            if !finish_terminal(bundle, task, "done")? {
+                return Ok(CompleteOutcome::refused(task_id, vec![RACE_LOST.into()]));
+            }
             let revise_kind = if let Some(base) = task.task_kind.strip_suffix("-synthesize") {
                 format!("{base}-revise")
             } else {
@@ -920,9 +927,6 @@ fn complete_with_critic(
                 revise_facts,
                 task.attempt,
             )?;
-            if !finish_terminal(bundle, task, "done")? {
-                return Ok(CompleteOutcome::refused(task_id, vec![RACE_LOST.into()]));
-            }
             return Ok(CompleteOutcome {
                 task_id: task_id.to_string(),
                 promoted: false,
@@ -1147,7 +1151,12 @@ pub struct DropOutcome {
 }
 
 /// Mark a pending or in-progress task dropped (terminal, never re-claimable).
-pub fn drop_task(bundle: &Bundle, task_id: &str) -> Result<DropOutcome, ToolError> {
+pub fn drop_task(
+    bundle: &Bundle,
+    task_id: &str,
+    by: Option<&str>,
+    force: bool,
+) -> Result<DropOutcome, ToolError> {
     let _lock = bundle.lock()?;
     let Some(mut task) = read(bundle, task_id)? else {
         return Ok(DropOutcome {
@@ -1163,6 +1172,22 @@ pub fn drop_task(bundle: &Bundle, task_id: &str) -> Result<DropOutcome, ToolErro
             errors: vec![format!(
                 "task is {}; only pending or in-progress tasks can be dropped",
                 task.status
+            )],
+        });
+    }
+    // An in-progress task belongs to its claimant; only they (or --force)
+    // may drop it.
+    if !force
+        && task.status == "in-progress"
+        && !task.assigned_to.is_empty()
+        && by.is_some_and(|b| b != task.assigned_to)
+    {
+        return Ok(DropOutcome {
+            task_id: task_id.to_string(),
+            dropped: false,
+            errors: vec![format!(
+                "task is claimed by '{}'; only the claimant or --force can drop it",
+                task.assigned_to
             )],
         });
     }
@@ -1968,11 +1993,16 @@ mod tests {
     #[test]
     fn claim_sets_in_progress_and_marker_roundtrip() {
         let bundle = scratch_bundle("claim");
+        // A doc-link completion whose result proposes no edges is held
+        // pre-critic: the task stays in-progress with its claim marker.
         let task = create_task(
             &bundle,
-            "wiki-page",
+            "doc-link",
             "cairn/overview",
-            facts(&[("repo", ys("cairn"))]),
+            facts(&[(
+                "members",
+                Yaml::Array(vec![ys("knowledge/a"), ys("knowledge/b")]),
+            )]),
             0,
         )
         .expect("create");
@@ -2002,7 +2032,7 @@ mod tests {
                 .expect("claim")
                 .is_none()
         );
-        let outcome = drop_task(&bundle, "../outside").expect("drop");
+        let outcome = drop_task(&bundle, "../outside", None, true).expect("drop");
         assert!(!outcome.dropped);
         assert_eq!(outcome.errors, vec!["task not found"]);
     }
@@ -2036,6 +2066,86 @@ mod tests {
             stored.body
         );
         assert!(!stored.body.contains("AKIAABCDEFGHIJKLMNOP"));
+    }
+
+    #[test]
+    fn critic_failure_leaves_the_task_reclaimable() {
+        let bundle = scratch_bundle("reclaim");
+        // A wiki-page task with no conn makes the critic leg unwind: the task
+        // must stay in-progress with its marker, reclaimable once stale.
+        // A doc-link completion whose result proposes no edges is held
+        // pre-critic: the task stays in-progress with its claim marker.
+        let task = create_task(
+            &bundle,
+            "doc-link",
+            "cairn/overview",
+            facts(&[(
+                "members",
+                Yaml::Array(vec![ys("knowledge/a"), ys("knowledge/b")]),
+            )]),
+            0,
+        )
+        .expect("create");
+        claim_task(&bundle, &task.id, "agent")
+            .expect("claim")
+            .expect("claimed");
+        let conn = seeded_conn();
+        let outcome = complete_task(&bundle, &task.id, "not an edge line", Some(&conn), Some("agent"), None)
+            .expect("complete");
+        assert!(!outcome.refused && !outcome.dropped, "outcome: {outcome:?}");
+        let reread = get_task(&bundle, &task.id).expect("read").expect("found");
+        assert_eq!(reread.status, "in-progress");
+        // Fresh claim is refused; a stale claim is reclaimable with no marker.
+        assert!(
+            claim_task(&bundle, &task.id, "other")
+                .expect("claim")
+                .is_none()
+        );
+        // Age the claim past the stale window by rewriting claimed_at, and
+        // drop the marker (the legacy pre-fix state a reclaim must survive).
+        {
+            let _lock = bundle.lock().expect("lock");
+            let mut aged = reread.clone();
+            aged.claimed_at = "2020-01-01T00:00:00Z".to_string();
+            let mut concept = task_to_concept(&aged);
+            bundle.write_concept(&mut concept).expect("age");
+        }
+        if let Some(marker) = claim_marker_path(&bundle, &task.id) {
+            let _ = std::fs::remove_file(&marker);
+        }
+        let reclaimed = claim_task(&bundle, &task.id, "other")
+            .expect("reclaim")
+            .expect("reclaimed after staleness");
+        assert_eq!(reclaimed.assigned_to, "other");
+    }
+
+    #[test]
+    fn drop_by_a_non_owner_is_refused() {
+        let bundle = scratch_bundle("drop-owner");
+        let task = create_task(&bundle, "compass-synthesize", "m", facts(&[]), 0).expect("create");
+        claim_task(&bundle, &task.id, "owner")
+            .expect("claim")
+            .expect("claimed");
+        let refused = drop_task(&bundle, &task.id, Some("intruder"), false).expect("drop");
+        assert!(!refused.dropped, "{refused:?}");
+        assert!(
+            refused.errors.join(" ").contains("claimed by 'owner'"),
+            "{refused:?}"
+        );
+        // The claimant drops it; --force overrides for anyone.
+        assert!(drop_task(&bundle, &task.id, Some("owner"), false)
+            .expect("drop owner")
+            .dropped);
+        let task2 = create_task(&bundle, "compass-synthesize", "m2", facts(&[]), 0)
+            .expect("create2");
+        claim_task(&bundle, &task2.id, "owner")
+            .expect("claim2")
+            .expect("claimed2");
+        assert!(
+            drop_task(&bundle, &task2.id, Some("operator"), true)
+                .expect("force drop")
+                .dropped
+        );
     }
 
     #[test]
@@ -2285,7 +2395,7 @@ mod tests {
         claim_task(&bundle, &task.id, "")
             .expect("claim")
             .expect("ok");
-        let outcome = drop_task(&bundle, &task.id).expect("drop");
+        let outcome = drop_task(&bundle, &task.id, None, true).expect("drop");
         assert!(outcome.dropped);
         assert!(
             !bundle
@@ -2298,7 +2408,7 @@ mod tests {
                 .expect("reclaim")
                 .is_none()
         );
-        let again = drop_task(&bundle, &task.id).expect("drop2");
+        let again = drop_task(&bundle, &task.id, None, true).expect("drop2");
         assert!(!again.dropped);
         assert!(again.errors[0].starts_with("task is dropped"));
     }

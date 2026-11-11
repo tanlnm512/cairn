@@ -1171,8 +1171,22 @@ pub fn page_chains(bundle: &Bundle) -> HashMap<String, Vec<TaskRec>> {
 }
 
 /// The page's lifecycle state, derived at read time — never stored.
+/// A failed page is requeued at most this many times before it stays failed.
+pub const MAX_QUEUE_ATTEMPTS: i64 = 3;
+
 pub fn derived_state(bundle: &Bundle, repo: &str, page_id: &str, chain: &[TaskRec]) -> String {
+    // First maximal element wins on (created_at, attempt) ties.
+    let mut latest: Option<&TaskRec> = None;
+    for task in chain.iter().filter(|t| t.status == "done") {
+        if latest.is_none_or(|l| (&task.created_at, task.attempt) > (&l.created_at, l.attempt)) {
+            latest = Some(task);
+        }
+    }
+    let latest_failed = latest.is_some_and(|t| result_critic_status(bundle, &t.id) != "passed");
     if read_page_concept(bundle, repo, page_id).is_some() {
+        if latest_failed {
+            return "promoted (stale: last regeneration failed)".into();
+        }
         return "promoted".into();
     }
     if chain.iter().any(|t| t.status == "in-progress") {
@@ -1181,20 +1195,13 @@ pub fn derived_state(bundle: &Bundle, repo: &str, page_id: &str, chain: &[TaskRe
     if chain.iter().any(|t| t.status == "pending") {
         return "queued".into();
     }
+    // An exhausted chain (latest generation failed) reports failed even when
+    // older attempts were dropped.
+    if latest_failed {
+        return "failed".into();
+    }
     if chain.iter().any(|t| t.status == "dropped") {
         return "dropped".into();
-    }
-    // First maximal element wins on (created_at, attempt) ties.
-    let mut latest: Option<&TaskRec> = None;
-    for task in chain.iter().filter(|t| t.status == "done") {
-        if latest.is_none_or(|l| (&task.created_at, task.attempt) > (&l.created_at, l.attempt)) {
-            latest = Some(task);
-        }
-    }
-    if let Some(latest) = latest
-        && result_critic_status(bundle, &latest.id) != "passed"
-    {
-        return "failed".into();
     }
     "planned".into()
 }
@@ -1231,6 +1238,8 @@ pub struct RequeuedPage {
 pub struct RetryOutcome {
     pub no_pages: bool,
     pub requeued: Vec<RequeuedPage>,
+    /// Failed pages not requeued: their queue_attempts hit the cap.
+    pub capped: Vec<String>,
     pub write_failed: bool,
 }
 
@@ -1267,11 +1276,13 @@ pub fn retry_failed_pages(
         return Ok(RetryOutcome {
             no_pages: true,
             requeued: Vec::new(),
+            capped: Vec::new(),
             write_failed: false,
         });
     }
     let chains = page_chains(bundle);
     let mut requeued = Vec::new();
+    let mut capped = Vec::new();
     for (key, row) in &pages {
         let (page_repo, page_id) = split_page_key(key);
         if repo.is_some_and(|r| page_repo != r) {
@@ -1286,15 +1297,19 @@ pub fn retry_failed_pages(
         {
             continue;
         }
+        let attempts = row
+            .get("queue_attempts")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        if attempts >= MAX_QUEUE_ATTEMPTS {
+            capped.push(key.clone());
+            continue;
+        }
         let diagrams = row.get("diagrams").and_then(Value::as_bool) == Some(true);
         let facts = plan_facts_row(row, &page_repo, diagrams);
         let task_id = create_task(bundle, "wiki-page", key, &facts)
             .map_err(|e| PipelineError::Manifest(e.0))?;
-        let attempt = row
-            .get("queue_attempts")
-            .and_then(Value::as_i64)
-            .unwrap_or(0)
-            + 1;
+        let attempt = attempts + 1;
         requeued.push(RequeuedPage {
             task_id,
             key: key.clone(),
@@ -1305,6 +1320,7 @@ pub fn retry_failed_pages(
         return Ok(RetryOutcome {
             no_pages: false,
             requeued,
+            capped,
             write_failed: false,
         });
     }
@@ -1320,6 +1336,7 @@ pub fn retry_failed_pages(
     Ok(RetryOutcome {
         no_pages: false,
         requeued,
+        capped,
         write_failed,
     })
 }
@@ -1337,7 +1354,9 @@ pub fn queue_enrich_tasks(
     bundle: &Bundle,
     repo: Option<&str>,
     page_id: Option<&str>,
+    force: bool,
 ) -> Result<Vec<EnrichTask>, ToolError> {
+    let _lock = bundle.lock().map_err(|e| pipeline_tool_error(PipelineError::Manifest(e.0)))?;
     let manifest = load_manifest(bundle).map_err(pipeline_tool_error)?;
     let live_enrich: BTreeSet<String> = list_tasks(bundle)
         .into_iter()
@@ -1364,7 +1383,7 @@ pub fn queue_enrich_tasks(
         if page_id.is_some_and(|p| row_page != p) {
             continue;
         }
-        if live_enrich.contains(key) || live_writes.contains_key(key) {
+        if !force && (live_enrich.contains(key) || live_writes.contains_key(key)) {
             continue;
         }
         if read_page_concept(bundle, &row_repo, &row_page).is_none() {
@@ -1619,8 +1638,33 @@ mod tests {
         bundle.write_concept(&mut promoted).expect("promoted");
         assert_eq!(
             derived_state(&bundle, "cairn", "x", &chain),
-            "promoted",
-            "readable content beats the failed chain"
+            "promoted (stale: last regeneration failed)",
+            "content stays promoted but the failed regeneration is reported"
+        );
+        // An older dropped attempt does not mask a failed latest generation.
+        seed_task(&bundle, "t-dropped", "cairn/x", "dropped", None);
+        let chain: Vec<TaskRec> = list_tasks(&bundle);
+        assert_eq!(
+            derived_state(&bundle, "cairn", "x", &chain),
+            "promoted (stale: last regeneration failed)",
+            "the latest generation's verdict wins over an older drop"
+        );
+        let bundle2 = scratch_bundle("state2");
+        seed_task(&bundle2, "t-dropped", "cairn/y", "dropped", None);
+        let chain2: Vec<TaskRec> = list_tasks(&bundle2);
+        assert_eq!(
+            derived_state(&bundle2, "cairn", "y", &chain2),
+            "dropped",
+            "a dropped-only chain still reports dropped"
+        );
+        let bundle3 = scratch_bundle("state3");
+        seed_task(&bundle3, "t-dropped", "cairn/z", "dropped", None);
+        seed_task(&bundle3, "t-done-failed", "cairn/z", "done", Some("failed"));
+        let chain3: Vec<TaskRec> = list_tasks(&bundle3);
+        assert_eq!(
+            derived_state(&bundle3, "cairn", "z", &chain3),
+            "failed",
+            "exhausted chains report failed, not dropped"
         );
     }
 
@@ -1681,7 +1725,7 @@ mod tests {
                 "cairn/nocontent": manifest_row("nocontent", "t-none", 1),
             }),
         );
-        let queued = queue_enrich_tasks(&bundle, None, None).expect("enrich");
+        let queued = queue_enrich_tasks(&bundle, None, None, false).expect("enrich");
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].resource, "cairn/promoted");
         assert_eq!(queued[0].repo, "cairn");

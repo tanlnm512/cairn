@@ -240,7 +240,7 @@ Cairn never calls an LLM directly. To generate compass/wiki with LLM quality:
 `cairn wiki generate --llm` queues page-writing tasks (a catalog refinement
 task first with `--refine-catalog`); work them through the task queue:
 
-- `cairn task claim <id>` -> write the page -> `cairn task complete <id> --result-file <path>`;
+- `cairn task claim <id> --as <your-id>` -> write the page -> `cairn task complete <id> --as <your-id> --result-file <path>`;
   the result body must end with a `## Sources` footer -- the deterministic critic
   fact-checks it against the graph before the page is promoted.
 - `cairn wiki status` -- per-page state, derived at read time (planned / queued / in-progress / promoted / failed / dropped) with counts
