@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::golden_record::{repr_str, value_type_name};
 
-const MANDATORY_CHECKS: [&str; 10] = [
+const MANDATORY_CHECKS: [&str; 11] = [
     "PR title (conventional commits)",
     "pre-commit (all local gates)",
     "Quality ratchet (audit debt + comment style)",
@@ -25,6 +25,7 @@ const MANDATORY_CHECKS: [&str; 10] = [
     "test",
     "windows (clippy + test + release build)",
     "cargo-deny (advisories + licenses)",
+    "parity (self, yarl, attrs) + cli golden + G2 base",
 ];
 const GH_TIMEOUT: Duration = Duration::from_secs(30);
 
