@@ -2,7 +2,7 @@
  "schema": "cairn-rust-golden-cli/1",
  "capture": {
   "reference": "rust/target/release/cairn",
-  "captured_at": "2026-11-11T04:30:07.883066+00:00",
+  "captured_at": "2026-11-11T10:24:33.396361+00:00",
   "env_pins": {
    "CAIRN_EMBED_BACKEND": "hash",
    "CAIRN_RERANK": "0"
@@ -652,7 +652,7 @@
   {
    "label": "memory batch-critic",
    "exit": 0,
-   "stdout": "Processed 3 drafts: 0 -> tribal, 1 dropped, 2 remain drafts.\n",
+   "stdout": "Processed 3 drafts: 0 -> tribal, 2 dropped, 1 remain drafts.\n",
    "stderr": ""
   },
   {
