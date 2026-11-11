@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-11
+
 ### Added
 - Full builds carry the embeddings across the staged swap: vectors are matched by their stable identity (repo, file path, file hash, qualified name, line, model) onto the rebuilt symbols, so rebuilding an unchanged workspace no longer discards the whole embedding index and forces a full re-embed (this repo: 41,660 rows, ~2.5 min, preserved). `memory_embeddings` carries wholesale; vec0 ANN mirrors still rebuild on the next embed pass (they are rowid-bound). The D5 spike behind the identity choice is recorded in cairn memory: `(repo, path, qualified_name)` alone is not unique — 227 same-name symbol groups carry distinct bodies — but with `files.hash` and `line_start` the key matched 20,084/20,084 keys across a real rebuild.
 - `cairn update` (and `update --file`) re-embed changed symbols automatically when a non-hash embed backend is configured, so edited code no longer silently drops out of semantic search; with the hash backend the dropped rows are reported as an embed debt ("N symbol(s) awaiting embed — run `cairn embed`") in the update summary, and `cairn doctor` surfaces the same debt (recorded as an `embed_debt` event so a fully dropped index stays visible).

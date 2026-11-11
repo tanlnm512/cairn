@@ -762,6 +762,7 @@ mod tests {
                 "test",
                 "windows (clippy + test + release build)",
                 "cargo-deny (advisories + licenses)",
+                "parity (self, yarl, attrs) + cli golden + G2 base",
             ])
         );
     }
