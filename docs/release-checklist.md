@@ -135,7 +135,7 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix`/`refactor`/`perf`
      ```sh
      git checkout -b release/$version-sync
      git push -u origin release/$version-sync
-     gh pr create --title "release: sync main with $version" --body "..."
+     gh pr create --title "chore(release): sync main with $version" --body "..."
      # merge the PR, then locally:
      git checkout main && git pull --ff-only
      ```
