@@ -560,6 +560,21 @@ pub fn staleness_banner(conn: &Connection, file_paths: &[&str]) -> String {
     if paths.is_empty() {
         return String::new();
     }
+    // An interrupted full build leaves its repo marked 'building': surface it
+    // beside file drift so partial-store results are never silent.
+    let building: Vec<String> = conn
+        .prepare("SELECT DISTINCT repo_id FROM repo_build_state WHERE state = 'building'")
+        .and_then(|mut stmt| {
+            let mapped = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            mapped.collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap_or_default();
+    if !building.is_empty() {
+        return format!(
+            "⚠ Rebuild in progress for repo(s) {} — results may be partial until the build completes. ",
+            building.join(", ")
+        );
+    }
     let placeholders = vec!["?"; paths.len()].join(",");
     let sql = format!("SELECT path FROM pending_sync WHERE path IN ({placeholders})");
     let rows: Vec<String> = match conn.prepare(&sql) {

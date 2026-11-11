@@ -80,11 +80,11 @@
     "content": [
      {
       "type": "text",
-      "text": "Traced 3 step(s) from 'main' (1 branches, 0 terminals):\n- `main` (function)\n  - `fetch_user` (function)\n  - `save_user` (function)\n\nBranch points:\n  `main` -> `fetch_user`, `save_user`"
+      "text": "Ambiguous entry 'main': 2 same-named definitions — the first was traced. Candidates:\n  [corpus] app/main.py (function)\n  [corpus] app/main.py (module)\nTraced 3 step(s) from 'main' (1 branches, 0 terminals):\n- `main` (function)\n  - `fetch_user` (function)\n  - `save_user` (function)\n\nBranch points:\n  `main` -> `fetch_user`, `save_user`"
      }
     ],
     "structuredContent": {
-     "result": "Traced 3 step(s) from 'main' (1 branches, 0 terminals):\n- `main` (function)\n  - `fetch_user` (function)\n  - `save_user` (function)\n\nBranch points:\n  `main` -> `fetch_user`, `save_user`"
+     "result": "Ambiguous entry 'main': 2 same-named definitions — the first was traced. Candidates:\n  [corpus] app/main.py (function)\n  [corpus] app/main.py (module)\nTraced 3 step(s) from 'main' (1 branches, 0 terminals):\n- `main` (function)\n  - `fetch_user` (function)\n  - `save_user` (function)\n\nBranch points:\n  `main` -> `fetch_user`, `save_user`"
     }
    }
   },

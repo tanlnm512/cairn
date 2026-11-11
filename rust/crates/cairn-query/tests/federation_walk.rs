@@ -81,8 +81,11 @@ fn hit_lines(out: &str) -> Vec<&str> {
     out.lines().filter(|l| l.contains("  @ ")).collect()
 }
 
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn federated_search_walks_and_classifies_every_registered_store() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     // --- registry: two ok stores, one missing, one unindexed, one bad key ----
     let home = FedHome::new("registry");
     home.register("/wsgen/alpha", "aaaaaaaaaaaaaaaa");
@@ -164,4 +167,22 @@ fn federated_search_walks_and_classifies_every_registered_store() {
         out.contains("Query must not be empty"),
         "blank-query guidance: {out}"
     );
+}
+
+#[test]
+fn a_schema_mismatched_store_is_named_as_such() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = FedHome::new("schema-mismatch");
+    home.register("/wsgen/legacy", "dddddddddddddddd");
+    // An empty sqlite file opens but has no cairn tables: schema_mismatch.
+    let store = home.dir.join("dddddddddddddddd");
+    fs::create_dir_all(&store).expect("legacy dir");
+    let legacy = rusqlite::Connection::open(store.join(".kg")).expect("empty sqlite");
+    drop(legacy);
+    let out = federated_search_text("resolve_store", 50).expect("federated output");
+    assert!(
+        out.contains("schema_mismatch"),
+        "a table-less store reports schema_mismatch: {out}"
+    );
+    drop(home);
 }

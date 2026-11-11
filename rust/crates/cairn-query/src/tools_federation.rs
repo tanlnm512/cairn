@@ -100,7 +100,9 @@ pub fn federated_search_data(query: &str, limit: usize) -> Result<FederatedResul
         let store_hits = match search_store(&db, query, limit) {
             Ok(hits) => hits,
             Err(message) => {
-                let state = if message.contains("locked") || message.contains("busy") {
+                let state = if message.contains("no such table") || message.contains("schema") {
+                    "schema_mismatch"
+                } else if message.contains("locked") || message.contains("busy") {
                     "locked"
                 } else {
                     "error"

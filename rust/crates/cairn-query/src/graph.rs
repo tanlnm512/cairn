@@ -845,6 +845,8 @@ mod trace {
         pub cycles: Vec<(String, i64)>,
         pub total: usize,
         pub truncated: bool,
+        /// Same-name definitions found for the entry: (repo, path, kind).
+        pub ambiguous_entry: Vec<(String, String, String)>,
     }
 
     struct TraceState<'a> {
@@ -993,9 +995,20 @@ mod trace {
         max_depth: i64,
         entry_id: Option<&str>,
     ) -> Flow {
+        let candidates = find_definition(conn, entry, 50).unwrap_or_default();
+        let ambiguous_entry: Vec<(String, String, String)> = if entry_id.is_none()
+            && candidates.len() > 1
+        {
+            candidates
+                .iter()
+                .map(|r| (r.repo.clone(), r.file_path.clone(), r.kind.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let entry_row: Vec<_> = match entry_id {
             Some(id) => find_definition_by_id(conn, id).into_iter().collect(),
-            None => find_definition(conn, entry, 1).unwrap_or_default(),
+            None => candidates.into_iter().take(1).collect(),
         };
         let entry_file = entry_row
             .first()
@@ -1079,6 +1092,7 @@ mod trace {
             modules,
             cycles: state.cycles,
             truncated: state.truncated,
+            ambiguous_entry,
         }
     }
 }

@@ -564,6 +564,16 @@ pub fn trace_flow_text(
         return Ok(format!("No outgoing calls traced from '{entry}'."));
     }
     let mut out: Vec<String> = Vec::new();
+    if !flow.ambiguous_entry.is_empty() {
+        out.push(format!(
+            "Ambiguous entry '{}': {} same-named definitions — the first was traced. Candidates:",
+            entry,
+            flow.ambiguous_entry.len()
+        ));
+        for (repo, path, kind) in flow.ambiguous_entry.iter().take(8) {
+            out.push(format!("  [{repo}] {path} ({kind})"));
+        }
+    }
     out.push(format!(
         "Traced {} step(s) from '{}' ({} branches, {} terminals):",
         flow.total,
