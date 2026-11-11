@@ -2,7 +2,7 @@
 
 use rusqlite::Connection;
 
-pub use cross_repo::{RepoDep, cross_repo_deps, resolve_namespaces, repo_namespaces_env_raw};
+pub use cross_repo::{RepoDep, cross_repo_deps, repo_namespaces_env_raw, resolve_namespaces};
 pub use impact::{
     CLOSURE_MAX_DEPTH, ImpactEntry, ImpactResult, closure_ready, impact_analysis,
     impact_analysis_seeded,
@@ -996,16 +996,15 @@ mod trace {
         entry_id: Option<&str>,
     ) -> Flow {
         let candidates = find_definition(conn, entry, 50).unwrap_or_default();
-        let ambiguous_entry: Vec<(String, String, String)> = if entry_id.is_none()
-            && candidates.len() > 1
-        {
-            candidates
-                .iter()
-                .map(|r| (r.repo.clone(), r.file_path.clone(), r.kind.clone()))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let ambiguous_entry: Vec<(String, String, String)> =
+            if entry_id.is_none() && candidates.len() > 1 {
+                candidates
+                    .iter()
+                    .map(|r| (r.repo.clone(), r.file_path.clone(), r.kind.clone()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
         let entry_row: Vec<_> = match entry_id {
             Some(id) => find_definition_by_id(conn, id).into_iter().collect(),
             None => candidates.into_iter().take(1).collect(),

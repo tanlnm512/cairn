@@ -217,7 +217,6 @@ pub fn get_callers(
     kind: Option<&str>,
     ids: &[String],
 ) -> rusqlite::Result<Vec<CallerRow>> {
-    let target_clause: String;
     let mut sbind: Vec<String> = Vec::new();
     let ids_clause = |sbind: &mut Vec<String>| -> String {
         if ids.is_empty() {
@@ -227,7 +226,7 @@ pub fn get_callers(
             format!("e.target_id IN ({})", vec!["?"; ids.len()].join(", "))
         }
     };
-    if fuzzy {
+    let target_clause = if fuzzy {
         sbind.push(name.to_string());
         let tail = if ids.is_empty() {
             String::new()
@@ -235,10 +234,10 @@ pub fn get_callers(
             let c = ids_clause(&mut sbind);
             format!(" OR {c}")
         };
-        target_clause = format!("(e.target_name = ?{tail})");
+        format!("(e.target_name = ?{tail})")
     } else {
-        target_clause = ids_clause(&mut sbind);
-    }
+        ids_clause(&mut sbind)
+    };
     let kind_clause = if kind.is_some() { "AND e.kind = ?" } else { "" };
     if let Some(k) = kind {
         sbind.push(k.to_string());
@@ -858,8 +857,8 @@ impl Dfs<'_> {
                     .map(|rows| rows.into_iter().map(|d| d.id).collect())
                     .unwrap_or_default(),
             };
-            let rows = get_callers(self.conn, name, self.fuzzy, 200, None, &ids)
-                .unwrap_or_default();
+            let rows =
+                get_callers(self.conn, name, self.fuzzy, 200, None, &ids).unwrap_or_default();
             self.callers_memo.insert(key.clone(), rows);
         }
         self.callers_memo.get(&key).cloned().unwrap_or_default()
@@ -959,7 +958,12 @@ pub fn impact_analysis(
         let mut any = false;
         for id in &ids {
             let Ok(fast) = crate::graph::impact_analysis_seeded(
-                conn, name, id, max_depth, limit as usize, false,
+                conn,
+                name,
+                id,
+                max_depth,
+                limit as usize,
+                false,
             ) else {
                 continue;
             };

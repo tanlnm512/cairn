@@ -6537,7 +6537,11 @@ pub fn record_memory(
         confidence,
         None,
         stance,
-        if supersedes.is_empty() { None } else { Some(supersedes) },
+        if supersedes.is_empty() {
+            None
+        } else {
+            Some(supersedes)
+        },
     )?;
     let mut msg = format!(
         "Recorded {type_} '{title}' -> {} (score={}, tier={})",

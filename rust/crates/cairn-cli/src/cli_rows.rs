@@ -65,14 +65,11 @@ fn query_rows(
 const SYMBOL_STAR: &str = "SELECT s.*, f.path AS file_path, f.repo_id AS repo \
      FROM symbols s JOIN files f ON s.file_id = f.id";
 
-
 /// One row by symbol id (`find_definition_by_id`); at most one row.
 pub fn find_definition_by_id_row(conn: &Connection, sym_id: &str) -> Option<PyRow> {
     let sql = format!("{SYMBOL_STAR} WHERE s.id = ? LIMIT 1");
     query_rows(conn, &sql, &[&sym_id]).ok()?.into_iter().next()
 }
-
-
 
 /// `bm25`-ranked FTS rows; LIKE rows carry no `rank` key.
 pub fn search_symbol_rows(

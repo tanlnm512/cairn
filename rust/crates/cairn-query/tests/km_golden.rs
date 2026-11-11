@@ -933,8 +933,17 @@ fn demoted_memory_keeps_its_refs_and_recall_under_the_new_id() {
         .expect("demote")
         .expect("moved");
     assert_ne!(new_path, path);
-    let recall = km::recall_memory(&fx.conn, &fx.bundle, "id move probe", "", false, None, None, None)
-        .expect("recall");
+    let recall = km::recall_memory(
+        &fx.conn,
+        &fx.bundle,
+        "id move probe",
+        "",
+        false,
+        None,
+        None,
+        None,
+    )
+    .expect("recall");
     assert!(
         recall.contains("1 memories matching") && recall.contains("id move probe"),
         "recall must find the memory under its new id: {recall}"
@@ -972,8 +981,5 @@ fn recently_recalled_tribal_memory_is_not_archived() {
     let (expired, archived) = km::decay(&fx.bundle, 7, 90, Some(&fx.conn)).expect("decay");
     assert_eq!(expired, 0);
     assert_eq!(archived, 0, "a recalled tribal memory must stay");
-    assert!(fx
-        .bundle
-        .read_concept("memory/tribal/old-but-used")
-        .is_ok());
+    assert!(fx.bundle.read_concept("memory/tribal/old-but-used").is_ok());
 }

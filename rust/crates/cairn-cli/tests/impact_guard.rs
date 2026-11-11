@@ -155,7 +155,13 @@ fn callers_and_impact_share_the_query_layer_row_path() {
     let (built, out) = cairn(
         &home,
         None,
-        &["build", "--workspace", ws.to_str().expect("utf8"), "--db", db],
+        &[
+            "build",
+            "--workspace",
+            ws.to_str().expect("utf8"),
+            "--db",
+            db,
+        ],
     );
     assert!(built, "{out}");
 

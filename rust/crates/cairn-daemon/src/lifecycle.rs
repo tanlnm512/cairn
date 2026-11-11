@@ -1002,11 +1002,7 @@ fn ensure_running_daemonize(
 
 /// Refuse a keyless start on a non-loopback IP bind before any plist write;
 /// the server's bind guard would otherwise exit under KeepAlive and crash-loop.
-pub fn keyless_remote_bind_refused(
-    host: &str,
-    port: u16,
-    api_key: Option<&str>,
-) -> Option<String> {
+pub fn keyless_remote_bind_refused(host: &str, port: u16, api_key: Option<&str>) -> Option<String> {
     if api_key.is_some() {
         return None;
     }

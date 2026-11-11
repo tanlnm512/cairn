@@ -1300,10 +1300,7 @@ fn update(args: crate::cmds_core::UpdateArgs) -> ExitCode {
                     Ok(output) => output,
                     Err(e) => {
                         // A git launch failure is not an unresolvable ref.
-                        display::error(&format!(
-                            "git failed in {}: {e}",
-                            repo_path.display()
-                        ));
+                        display::error(&format!("git failed in {}: {e}", repo_path.display()));
                         return ExitCode::FAILURE;
                     }
                 };
@@ -1449,7 +1446,10 @@ fn def_row_json(d: &cairn_query::tools_nav::DefRow) -> Value {
     m.insert("id".into(), Value::from(d.id.clone()));
     m.insert("file_id".into(), Value::from(d.file_id.clone()));
     m.insert("name".into(), Value::from(d.name.clone()));
-    m.insert("qualified_name".into(), opt_str(d.qualified_name.as_deref()));
+    m.insert(
+        "qualified_name".into(),
+        opt_str(d.qualified_name.as_deref()),
+    );
     m.insert("kind".into(), Value::from(d.kind.clone()));
     m.insert("line_start".into(), opt_i64(d.line_start));
     m.insert("line_end".into(), opt_i64(d.line_end));
@@ -1503,11 +1503,11 @@ fn callers(args: crate::cmds_core::CallersArgs) -> ExitCode {
     let Ok(conn) = fresh_conn(&db, refresh) else {
         return command_error(&format!("cannot open {db}"));
     };
-    let data =
-        match cairn_query::tools_nav::callers_data(&conn, &args.symbol, args.fuzzy, 200, "") {
-            Ok(data) => data,
-            Err(e) => return command_error(&e.to_string()),
-        };
+    let data = match cairn_query::tools_nav::callers_data(&conn, &args.symbol, args.fuzzy, 200, "")
+    {
+        Ok(data) => data,
+        Err(e) => return command_error(&e.to_string()),
+    };
     if data.rows.is_empty() {
         eprintln!("No callers found for '{}'.", args.symbol);
         return ExitCode::FAILURE;
@@ -1599,11 +1599,11 @@ fn callees(args: crate::cmds_core::CalleesArgs) -> ExitCode {
     let Ok(conn) = fresh_conn(&db, refresh) else {
         return command_error(&format!("cannot open {db}"));
     };
-    let data =
-        match cairn_query::tools_nav::callees_data(&conn, &args.symbol, args.fuzzy, 200, "") {
-            Ok(data) => data,
-            Err(e) => return command_error(&e.to_string()),
-        };
+    let data = match cairn_query::tools_nav::callees_data(&conn, &args.symbol, args.fuzzy, 200, "")
+    {
+        Ok(data) => data,
+        Err(e) => return command_error(&e.to_string()),
+    };
     if data.rows.is_empty() {
         eprintln!("No callees found for '{}'.", args.symbol);
         return ExitCode::FAILURE;
@@ -1623,15 +1623,9 @@ fn callees(args: crate::cmds_core::CalleesArgs) -> ExitCode {
                 m.insert("edge_line".into(), opt_i64(r.edge_line));
                 m.insert("edge_column".into(), opt_i64(r.edge_column));
                 m.insert("edge_kind".into(), Value::from(r.edge_kind.clone()));
-                m.insert(
-                    "callee_name".into(),
-                    opt_str(r.name.as_deref()),
-                );
+                m.insert("callee_name".into(), opt_str(r.name.as_deref()));
                 m.insert("callee_kind".into(), Value::from(r.kind.clone()));
-                m.insert(
-                    "resolved".into(),
-                    opt_str(r.target_id.as_deref()),
-                );
+                m.insert("resolved".into(), opt_str(r.target_id.as_deref()));
                 m.insert("resolution".into(), opt_str(r.resolution.as_deref()));
                 m.insert("file_path".into(), Value::from(r.file_path.clone()));
                 m.insert("repo".into(), Value::from(r.repo.clone()));
@@ -1689,11 +1683,10 @@ fn impact(args: crate::cmds_core::ImpactArgs) -> ExitCode {
         .iter()
         .map(|(a, b)| (a.as_str(), b.as_str()))
         .collect();
-    let dependents =
-        match cairn_query::tools_nav::cross_repo_xref(&conn, &args.symbol, &ns_refs) {
-            Ok(d) => d,
-            Err(e) => return command_error(&e.to_string()),
-        };
+    let dependents = match cairn_query::tools_nav::cross_repo_xref(&conn, &args.symbol, &ns_refs) {
+        Ok(d) => d,
+        Err(e) => return command_error(&e.to_string()),
+    };
     let impacted: Vec<Value> = result
         .impacted
         .iter()
@@ -2550,10 +2543,7 @@ fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
     let mut kv_pairs: Vec<(&str, String)> = vec![
         ("embedded", fmt_int(summary.embedded as i64)),
         ("skipped", fmt_int(summary.skipped as i64)),
-        (
-            "cut by --limit",
-            fmt_int(summary.limit_cut as i64),
-        ),
+        ("cut by --limit", fmt_int(summary.limit_cut as i64)),
         ("reaped", fmt_int(summary.reaped as i64)),
         ("failed batches", fmt_int(summary.failed_batches as i64)),
         ("model", summary.model.clone()),

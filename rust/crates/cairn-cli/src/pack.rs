@@ -208,7 +208,7 @@ fn hop_ids(conn: &Connection, seed: &PackSymbol) -> Vec<String> {
                     false,
                     remaining,
                     Some(kind),
-                    &[seed.symbol_id.clone()],
+                    std::slice::from_ref(&seed.symbol_id),
                 )
                 .unwrap_or_default()
                 .into_iter()
@@ -221,7 +221,7 @@ fn hop_ids(conn: &Connection, seed: &PackSymbol) -> Vec<String> {
                     false,
                     remaining,
                     Some(kind),
-                    &[seed.symbol_id.clone()],
+                    std::slice::from_ref(&seed.symbol_id),
                 )
                 .unwrap_or_default()
                 .into_iter()
@@ -230,7 +230,7 @@ fn hop_ids(conn: &Connection, seed: &PackSymbol) -> Vec<String> {
             };
             filled += neighbors.len();
             for neighbor in neighbors {
-                if !neighbor.is_empty() && !ids.iter().any(|id| *id == neighbor) {
+                if !neighbor.is_empty() && !ids.contains(&neighbor) {
                     ids.push(neighbor);
                 }
             }

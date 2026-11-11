@@ -37,10 +37,8 @@ impl HealthzState {
         self
     }
 
-    /// The bounded health payload for one requesting peer; an unreachable
-    /// store degrades to status "unhealthy". The full store path goes only to
-    /// authenticated requesters; everyone else sees the `store_id` hash the
-    /// reuse guard compares.
+    /// Health payload for one peer: the full store path only for the
+    /// authenticated; everyone else sees the `store_id` identity hash.
     pub fn payload(&self, peer: IpAddr, authed: bool) -> Value {
         let (store_reachable, degradations) = match probe_store(&self.db_path) {
             Ok(()) => (true, degradation_count()),

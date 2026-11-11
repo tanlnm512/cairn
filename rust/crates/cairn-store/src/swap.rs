@@ -240,16 +240,18 @@ pub fn copy_telemetry_tables(dest: &Connection, old_db: &Path) {
     let _ = dest.execute("DETACH DATABASE srcdb", []);
 }
 
-/// Carry embeddings from `db` into `staged` by their stable identity —
-/// (repo, file path, file hash, qualified name, line, model) — remapping
-/// symbol ids onto the rebuilt symbols; `memory_embeddings` is doc-keyed and
-/// carries wholesale. vec0 mirrors are rowid-bound and stay to the embed pass.
+/// Carry embeddings `db` -> `staged` by stable identity (repo, path, file
+/// hash, qualified name, line, model), remapping symbol ids;
+/// `memory_embeddings` carries wholesale; vec0 mirrors rebuild on embed.
 pub fn carry_embeddings(dest: &Connection, old_db: &Path) {
     if !old_db.exists() {
         return;
     }
     if dest
-        .execute("ATTACH DATABASE ? AS srcdb", [old_db.to_string_lossy().as_ref()])
+        .execute(
+            "ATTACH DATABASE ? AS srcdb",
+            [old_db.to_string_lossy().as_ref()],
+        )
         .is_err()
     {
         return;

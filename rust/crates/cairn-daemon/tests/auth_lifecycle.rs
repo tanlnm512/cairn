@@ -110,7 +110,9 @@ fn plist_template_execs_the_named_binary() {
     assert_eq!(plist.stdout_path, plist.stderr_path);
 
     // Read-only row: the flag plus CAIRN_READ_ONLY, optional env omitted.
-    let plist = render_plist("cairn", 9876, "0.0.0.0", None, None, None, true, None, false);
+    let plist = render_plist(
+        "cairn", 9876, "0.0.0.0", None, None, None, true, None, false,
+    );
     assert!(plist.program_arguments.contains(&"--read-only".to_string()));
     let env: HashSet<(String, String)> = plist.environment_variables.iter().cloned().collect();
     assert!(env.contains(&("CAIRN_READ_ONLY".to_string(), "1".to_string())));
@@ -335,7 +337,9 @@ fn healthz_payload_carries_the_reuse_guard_fields() {
     assert_eq!(payload["impl"], "rust");
     // The reuse guard's identity + version handshake fields.
     assert!(
-        payload["store_id"].as_str().is_some_and(|s| s.starts_with("StoreId(")),
+        payload["store_id"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("StoreId(")),
         "store_id must be a stable identity: {payload}"
     );
     assert_eq!(payload["version"], env!("CARGO_PKG_VERSION"));

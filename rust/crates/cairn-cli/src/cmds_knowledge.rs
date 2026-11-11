@@ -1340,7 +1340,8 @@ fn task_claim(task_id: &str, assigned_to: &str, knowledge: Option<&str>) -> Exit
     match tasks::claim_task(&bundle, task_id, assigned_to) {
         Ok(Some(_)) => {
             println!("Claimed {task_id}. Write your result, then:");
-            let mut hint = format!("  cairn task complete {task_id} --as <your-id> --result-file <path>");
+            let mut hint =
+                format!("  cairn task complete {task_id} --as <your-id> --result-file <path>");
             if !assigned_to.is_empty() {
                 hint.push_str(&format!(" --as {assigned_to}"));
             }
@@ -2892,7 +2893,9 @@ fn settle_polish(outcome: skillgen::PolishOutcome, target: &Path) {
                 outcome.task_id
             );
             println!("  cairn task list --kind skill-polish --status pending");
-            println!("  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>");
+            println!(
+                "  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>"
+            );
             println!("Rerun 'cairn skill generate --polish' after completion to apply the result.");
         }
         "pending" => {
@@ -5214,7 +5217,9 @@ fn wiki_generate(
         summary.push_str(&format!("{skipped_total} page(s) already up to date. "));
         println!("{summary}Any agent with the cairn skill can process them:");
         println!("  cairn task list --kind wiki-page --status pending");
-        println!("  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>");
+        println!(
+            "  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>"
+        );
         return ExitCode::SUCCESS;
     }
     let mut total = 0usize;
@@ -5371,9 +5376,7 @@ fn wiki_retry(repo: Option<&str>, knowledge: Option<&str>) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     for key in &outcome.capped {
-        println!(
-            "Not retried (queue_attempts cap reached): {key} — stays failed"
-        );
+        println!("Not retried (queue_attempts cap reached): {key} — stays failed");
     }
     if outcome.requeued.is_empty() {
         println!("Nothing to retry: no failed wiki pages.");
@@ -5397,7 +5400,9 @@ fn wiki_retry(repo: Option<&str>, knowledge: Option<&str>) -> ExitCode {
         outcome.requeued.len()
     );
     println!("  cairn task list --kind wiki-page --status pending");
-    println!("  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>");
+    println!(
+        "  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>"
+    );
     ExitCode::SUCCESS
 }
 
@@ -5518,7 +5523,9 @@ fn wiki_enrich(
         queued.len()
     );
     println!("  cairn task list --kind wiki-page-enrich --status pending");
-    println!("  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>");
+    println!(
+        "  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>"
+    );
     ExitCode::SUCCESS
 }
 

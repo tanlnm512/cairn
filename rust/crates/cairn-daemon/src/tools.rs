@@ -742,21 +742,22 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
                 return Err(ToolFailure(msg));
             }
             km::knowledge_add(
-            &ctx.bundle(),
-            arg_str(args, "title")
-                .ok_or_else(|| ToolFailure("knowledge_add requires a string title".into()))?,
-            arg_str(args, "body")
-                .ok_or_else(|| ToolFailure("knowledge_add requires a string body".into()))?,
-            arg_str(args, "doc_type")
-                .ok_or_else(|| ToolFailure("knowledge_add requires a string doc_type".into()))?,
-            arg_str_or(args, "tags", ""),
-            arg_str_or(args, "affects_modules", ""),
-            arg_str_or(args, "affects_repos", ""),
-            arg_str_or(args, "resource", ""),
-            arg_str_or(args, "epic_link", ""),
-            ctx.read_only,
-        )
-        .map_err(|e| ToolFailure(e.0))
+                &ctx.bundle(),
+                arg_str(args, "title")
+                    .ok_or_else(|| ToolFailure("knowledge_add requires a string title".into()))?,
+                arg_str(args, "body")
+                    .ok_or_else(|| ToolFailure("knowledge_add requires a string body".into()))?,
+                arg_str(args, "doc_type").ok_or_else(|| {
+                    ToolFailure("knowledge_add requires a string doc_type".into())
+                })?,
+                arg_str_or(args, "tags", ""),
+                arg_str_or(args, "affects_modules", ""),
+                arg_str_or(args, "affects_repos", ""),
+                arg_str_or(args, "resource", ""),
+                arg_str_or(args, "epic_link", ""),
+                ctx.read_only,
+            )
+            .map_err(|e| ToolFailure(e.0))
         }
         "knowledge_search" => {
             let conn = ctx.read_conn()?;

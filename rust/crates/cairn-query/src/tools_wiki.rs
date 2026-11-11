@@ -1356,7 +1356,9 @@ pub fn queue_enrich_tasks(
     page_id: Option<&str>,
     force: bool,
 ) -> Result<Vec<EnrichTask>, ToolError> {
-    let _lock = bundle.lock().map_err(|e| pipeline_tool_error(PipelineError::Manifest(e.0)))?;
+    let _lock = bundle
+        .lock()
+        .map_err(|e| pipeline_tool_error(PipelineError::Manifest(e.0)))?;
     let manifest = load_manifest(bundle).map_err(pipeline_tool_error)?;
     let live_enrich: BTreeSet<String> = list_tasks(bundle)
         .into_iter()

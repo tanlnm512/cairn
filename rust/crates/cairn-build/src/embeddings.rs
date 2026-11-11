@@ -531,10 +531,9 @@ pub fn embed_all(
     })
 }
 
-/// After an incremental reindex, re-embed the affected symbols when a
-/// non-hash backend is configured; otherwise (or when the embed fails) count
-/// the symbols still lacking a current-model row — the embed debt. `dropped`
-/// names the models whose rows the reindex deleted.
+/// Re-embed reindexed symbols under a real backend; else return the debt
+/// count (rows still missing for the current model; `dropped` = the
+/// reindex-deleted model stamps).
 pub fn reembed_updated_symbols(
     conn: &Connection,
     workspace: &str,

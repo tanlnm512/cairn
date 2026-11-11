@@ -755,7 +755,7 @@ pub fn complete_task(
         ));
     }
     // Task results derive from user session content: scrub before persist
-    let result = strip_private_data(&result.to_string());
+    let result = strip_private_data(result);
     if task.task_kind.starts_with("wiki-page") && task.fact_str("repo").is_empty() {
         return Ok(CompleteOutcome::held(
             task_id,
@@ -2071,10 +2071,8 @@ mod tests {
     #[test]
     fn critic_failure_leaves_the_task_reclaimable() {
         let bundle = scratch_bundle("reclaim");
-        // A wiki-page task with no conn makes the critic leg unwind: the task
-        // must stay in-progress with its marker, reclaimable once stale.
-        // A doc-link completion whose result proposes no edges is held
-        // pre-critic: the task stays in-progress with its claim marker.
+        // A doc-link completion proposing no edges is held pre-critic: the
+        // task stays in-progress with its marker.
         let task = create_task(
             &bundle,
             "doc-link",
@@ -2090,8 +2088,15 @@ mod tests {
             .expect("claim")
             .expect("claimed");
         let conn = seeded_conn();
-        let outcome = complete_task(&bundle, &task.id, "not an edge line", Some(&conn), Some("agent"), None)
-            .expect("complete");
+        let outcome = complete_task(
+            &bundle,
+            &task.id,
+            "not an edge line",
+            Some(&conn),
+            Some("agent"),
+            None,
+        )
+        .expect("complete");
         assert!(!outcome.refused && !outcome.dropped, "outcome: {outcome:?}");
         let reread = get_task(&bundle, &task.id).expect("read").expect("found");
         assert_eq!(reread.status, "in-progress");
@@ -2133,11 +2138,13 @@ mod tests {
             "{refused:?}"
         );
         // The claimant drops it; --force overrides for anyone.
-        assert!(drop_task(&bundle, &task.id, Some("owner"), false)
-            .expect("drop owner")
-            .dropped);
-        let task2 = create_task(&bundle, "compass-synthesize", "m2", facts(&[]), 0)
-            .expect("create2");
+        assert!(
+            drop_task(&bundle, &task.id, Some("owner"), false)
+                .expect("drop owner")
+                .dropped
+        );
+        let task2 =
+            create_task(&bundle, "compass-synthesize", "m2", facts(&[]), 0).expect("create2");
         claim_task(&bundle, &task2.id, "owner")
             .expect("claim2")
             .expect("claimed2");

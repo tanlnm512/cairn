@@ -118,8 +118,16 @@ fn embed_reproduces_the_embed_golden() {
 
     {
         let (conn, pin) = StorePin::open(&db).expect("open pinned store");
-        let summary =
-            embed_all(&conn, corpus.to_str().expect("ws"), 64, None, true, true, &pin).expect("embed");
+        let summary = embed_all(
+            &conn,
+            corpus.to_str().expect("ws"),
+            64,
+            None,
+            true,
+            true,
+            &pin,
+        )
+        .expect("embed");
         assert_eq!(summary.model, model);
         assert_eq!(
             summary.embedded,
@@ -304,7 +312,16 @@ fn embed_symbols_resyncs_the_vec0_row_in_place() {
     let (dir, db, corpus) = stage("resync");
 
     let (conn, pin) = StorePin::open(&db).expect("open pinned store");
-    embed_all(&conn, corpus.to_str().expect("ws"), 64, None, true, true, &pin).expect("embed");
+    embed_all(
+        &conn,
+        corpus.to_str().expect("ws"),
+        64,
+        None,
+        true,
+        true,
+        &pin,
+    )
+    .expect("embed");
     vec0::rebuild_index(&conn, &model, VecSource::Embeddings).expect("rebuild");
     let before: i64 = vec0::index_row_count(&conn, &model)
         .expect("count")
@@ -448,7 +465,16 @@ fn update_reembeds_or_reports_the_embed_debt() {
     let (dir, db, corpus) = stage("reembed");
     {
         let (conn, pin) = StorePin::open(&db).expect("open pinned store");
-        embed_all(&conn, corpus.to_str().expect("ws"), 64, None, true, true, &pin).expect("embed");
+        embed_all(
+            &conn,
+            corpus.to_str().expect("ws"),
+            64,
+            None,
+            true,
+            true,
+            &pin,
+        )
+        .expect("embed");
     }
     let model = current_model().expect("model");
 
@@ -505,8 +531,7 @@ fn full_build_carries_embeddings_across_the_swap() {
     let (dir, db, corpus) = stage("carry");
     let ws = corpus.to_str().expect("ws").to_string();
     let dbp = db.to_str().expect("db").to_string();
-    cairn_build::builder::build_graph_with(&ws, &dbp, None, None, |_, _| Ok(()))
-        .expect("build 1");
+    cairn_build::builder::build_graph_with(&ws, &dbp, None, None, |_, _| Ok(())).expect("build 1");
     {
         let (conn, pin) = StorePin::open(&db).expect("open pinned store");
         embed_all(&conn, &ws, 64, None, true, true, &pin).expect("embed");
@@ -523,8 +548,7 @@ fn full_build_carries_embeddings_across_the_swap() {
     assert!(n > 0, "fixture must embed");
     drop(conn);
 
-    cairn_build::builder::build_graph_with(&ws, &dbp, None, None, |_, _| Ok(()))
-        .expect("build 2");
+    cairn_build::builder::build_graph_with(&ws, &dbp, None, None, |_, _| Ok(())).expect("build 2");
 
     // The rebuilt store carries every row: count unchanged, nothing re-embedded.
     let (conn, pin) = StorePin::open(&db).expect("open pinned store");
@@ -537,7 +561,10 @@ fn full_build_carries_embeddings_across_the_swap() {
         .expect("count after rebuild");
     assert_eq!(n2, n, "unchanged workspace: the rebuild re-embeds nothing");
     let summary = embed_all(&conn, &ws, 64, None, true, true, &pin).expect("re-embed pass");
-    assert_eq!(summary.embedded, 0, "no row should be stale after the carry");
+    assert_eq!(
+        summary.embedded, 0,
+        "no row should be stale after the carry"
+    );
     drop(conn);
     let _ = fs::remove_dir_all(&dir);
 }

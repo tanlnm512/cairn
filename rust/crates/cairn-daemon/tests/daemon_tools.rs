@@ -76,9 +76,16 @@ async fn keyless_daemon_serves_tools_and_healthz() {
     let payload: Value = serde_json::from_str(&health.body).expect("healthz json");
     assert_eq!(payload["status"], "ok");
     assert_eq!(payload["db"], "nav-store.kg");
-    assert!(!payload["db"].as_str().unwrap_or("").contains(&served_db[..served_db.len() - "nav-store.kg".len()]));
     assert!(
-        payload["store_id"].as_str().is_some_and(|s| s.starts_with("StoreId(")),
+        !payload["db"]
+            .as_str()
+            .unwrap_or("")
+            .contains(&served_db[..served_db.len() - "nav-store.kg".len()])
+    );
+    assert!(
+        payload["store_id"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("StoreId(")),
         "store_id identity: {payload}"
     );
     assert_eq!(payload["version"], env!("CARGO_PKG_VERSION"));

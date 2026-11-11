@@ -179,19 +179,18 @@ fn a_repo_with_no_commits_still_scans_untracked_files() {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    let root =
-        std::env::temp_dir().join(format!("cairn-detect-nocommit-{}-{nanos}", std::process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "cairn-detect-nocommit-{}-{nanos}",
+        std::process::id()
+    ));
     let repo = root.join("gitrepo");
     fs::create_dir_all(&repo).expect("repo dir");
     git(&repo, &["init", "-q"]);
     fs::write(repo.join("brand_new.py"), "def fresh():\n    return 1\n").expect("untracked");
     let db = root.join("store.kg").to_string_lossy().into_owned();
     build_graph(repo.to_str().expect("ws"), &db, None, Some(1)).expect("build");
-    std::fs::write(
-        repo.join("brand_new.py"),
-        "def fresh():\n    return 2\n",
-    )
-    .expect("edit untracked");
+    std::fs::write(repo.join("brand_new.py"), "def fresh():\n    return 2\n")
+        .expect("edit untracked");
     let summary = incremental_update(repo.to_str().expect("ws"), &db, None, None).expect("update");
     assert!(
         summary.errors.iter().any(|e| e.contains("git diff HEAD")),
