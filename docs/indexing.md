@@ -118,6 +118,12 @@ contention, or repair disabled) never stamps, so the next read retries.
   summary and `cairn doctor` show "N symbol(s) awaiting embed — run
   `cairn embed`" (the debt is recorded as an `embed_debt` event so a fully
   dropped index stays visible).
+- **What survives a full build**: the staged swap carries the telemetry
+  tables and the embeddings. Vectors are matched by their stable identity
+  (repo, file path, file hash, qualified name, line, model) onto the rebuilt
+  symbols — an unchanged workspace rebuilds with its whole embedding index
+  intact and re-embeds nothing; `memory_embeddings` carries wholesale; the
+  vec0 ANN mirrors are rowid-bound and rebuild on the next embed pass.
   re-resolves edges in *other* files that pointed at deleted or renamed
   symbols — unique to the incremental path — and cross-repo `imports` edges
   nulled by the delete leg are re-materialized.

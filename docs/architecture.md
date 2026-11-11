@@ -117,7 +117,10 @@ The `.kg` SQLite database (`rust/crates/cairn-store/src/schema.rs`) holds:
 - One writer at a time: builds, incremental writers and `sync` repair take
   the `build_lock` (flock, non-blocking); `cairn build --staging` writes to
   `<db>.tmp` and atomically swaps it in under that lock, carrying the
-  telemetry tables across.
+  telemetry tables and the embeddings across (vectors survive a rebuild by
+  their stable identity — repo, file path, file hash, qualified name, line,
+  model; `memory_embeddings` is doc-keyed and carries wholesale; vec0 ANN
+  mirrors are rowid-bound and rebuild on the next embed pass).
 - Freshness: CLI read commands refresh drifted files before answering and
   defer with a stale-graph banner while a build holds the lock; `cairn
   update` (git-diff driven, also run by the git and agent hooks) is the

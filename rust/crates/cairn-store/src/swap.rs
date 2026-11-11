@@ -240,11 +240,55 @@ pub fn copy_telemetry_tables(dest: &Connection, old_db: &Path) {
     let _ = dest.execute("DETACH DATABASE srcdb", []);
 }
 
+/// Carry embeddings from `db` into `staged` by their stable identity —
+/// (repo, file path, file hash, qualified name, line, model) — remapping
+/// symbol ids onto the rebuilt symbols; `memory_embeddings` is doc-keyed and
+/// carries wholesale. vec0 mirrors are rowid-bound and stay to the embed pass.
+pub fn carry_embeddings(dest: &Connection, old_db: &Path) {
+    if !old_db.exists() {
+        return;
+    }
+    if dest
+        .execute("ATTACH DATABASE ? AS srcdb", [old_db.to_string_lossy().as_ref()])
+        .is_err()
+    {
+        return;
+    }
+    for sql in [
+        // Base vectors: match per unchanged file (hash equal), pairing
+        // same-named symbols by qualified name (NULL-safe) and line.
+        "INSERT INTO main.embeddings (symbol_id, model, dim, vec, chunk, embedded_at, content_hash) \
+         SELECT ns.id, o.model, o.dim, o.vec, o.chunk, o.embedded_at, o.content_hash \
+         FROM srcdb.embeddings o \
+         JOIN srcdb.symbols os ON os.id = o.symbol_id \
+         JOIN srcdb.files of2 ON of2.id = os.file_id \
+         JOIN main.files nf ON nf.repo_id = of2.repo_id AND nf.path = of2.path AND nf.hash = of2.hash \
+         JOIN main.symbols ns ON ns.file_id = nf.id \
+          AND ns.qualified_name IS os.qualified_name AND ns.name = os.name \
+          AND ns.kind = os.kind AND ns.line_start = os.line_start",
+        "INSERT INTO main.embeddings_mv (symbol_id, model, vector_kind, dim, vec, chunk, content_hash, embedded_at) \
+         SELECT ns.id, o.model, o.vector_kind, o.dim, o.vec, o.chunk, o.content_hash, o.embedded_at \
+         FROM srcdb.embeddings_mv o \
+         JOIN srcdb.symbols os ON os.id = o.symbol_id \
+         JOIN srcdb.files of2 ON of2.id = os.file_id \
+         JOIN main.files nf ON nf.repo_id = of2.repo_id AND nf.path = of2.path AND nf.hash = of2.hash \
+         JOIN main.symbols ns ON ns.file_id = nf.id \
+          AND ns.qualified_name IS os.qualified_name AND ns.name = os.name \
+          AND ns.kind = os.kind AND ns.line_start = os.line_start",
+        "INSERT INTO main.memory_embeddings (doc_id, chunk_index, model, dim, vec, chunk, embedded_at) \
+         SELECT doc_id, chunk_index, model, dim, vec, chunk, embedded_at FROM srcdb.memory_embeddings",
+    ] {
+        let _ = dest.execute(sql, []);
+    }
+    let _ = dest.execute("DETACH DATABASE srcdb", []);
+}
+
 /// Carry telemetry from `db` into `staged`, then swap `staged` over `db`; caller holds the lock.
 pub fn install_staged(staged: &Path, db: &Path) -> Result<(), String> {
     {
         let conn = Connection::open(staged).map_err(|e| e.to_string())?;
         copy_telemetry_tables(&conn, db);
+        carry_embeddings(&conn, db);
     }
     swap_db_file(staged, db)
 }

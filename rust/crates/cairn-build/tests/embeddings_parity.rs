@@ -496,3 +496,45 @@ fn update_reembeds_or_reports_the_embed_debt() {
     drop(conn);
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn full_build_carries_embeddings_across_the_swap() {
+    let (dir, db, corpus) = stage("carry");
+    let ws = corpus.to_str().expect("ws").to_string();
+    let dbp = db.to_str().expect("db").to_string();
+    cairn_build::builder::build_graph_with(&ws, &dbp, None, None, |_, _| Ok(()))
+        .expect("build 1");
+    {
+        let (conn, pin) = StorePin::open(&db).expect("open pinned store");
+        embed_all(&conn, &ws, 64, None, true, true, &pin).expect("embed");
+    }
+    let model = current_model().expect("model");
+    let conn = Connection::open(&db).expect("conn");
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM embeddings WHERE model = ?",
+            [&model],
+            |r| r.get(0),
+        )
+        .expect("count after embed");
+    assert!(n > 0, "fixture must embed");
+    drop(conn);
+
+    cairn_build::builder::build_graph_with(&ws, &dbp, None, None, |_, _| Ok(()))
+        .expect("build 2");
+
+    // The rebuilt store carries every row: count unchanged, nothing re-embedded.
+    let (conn, pin) = StorePin::open(&db).expect("open pinned store");
+    let n2: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM embeddings WHERE model = ?",
+            [&model],
+            |r| r.get(0),
+        )
+        .expect("count after rebuild");
+    assert_eq!(n2, n, "unchanged workspace: the rebuild re-embeds nothing");
+    let summary = embed_all(&conn, &ws, 64, None, true, true, &pin).expect("re-embed pass");
+    assert_eq!(summary.embedded, 0, "no row should be stale after the carry");
+    drop(conn);
+    let _ = fs::remove_dir_all(&dir);
+}
