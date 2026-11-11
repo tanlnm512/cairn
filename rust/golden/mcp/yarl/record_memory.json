@@ -60,11 +60,11 @@
   "content": [
    {
     "type": "text",
-    "text": "Recorded pattern 'golden mcp capture parity probe' -> memory/tribal/golden-mcp-capture-parity-probe-<ID6> (score=0.578, tier=tribal)"
+    "text": "Recorded pattern 'golden mcp capture parity probe' -> memory/drafts/golden-mcp-capture-parity-probe-<ID6> (score=0.415, tier=drafts)"
    }
   ],
   "structuredContent": {
-   "result": "Recorded pattern 'golden mcp capture parity probe' -> memory/tribal/golden-mcp-capture-parity-probe-<ID6> (score=0.578, tier=tribal)"
+   "result": "Recorded pattern 'golden mcp capture parity probe' -> memory/drafts/golden-mcp-capture-parity-probe-<ID6> (score=0.415, tier=drafts)"
   }
  },
  "replay_store": "rust/golden/stores/yarl/store.kg",
