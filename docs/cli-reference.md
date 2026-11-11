@@ -21,7 +21,7 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 |---|---|
 | `cairn init [--with-hooks] [--no-build]` | register the workspace and run a first build; `--with-hooks` also installs the cairn git hooks (see [hooks](#cairn-hooks)) |
 | `cairn build [--staging] [--with-closure] [--repo R]` | full workspace rebuild (see [indexing.md](indexing.md)); `--staging` builds into a temp DB and atomic-swaps it under the build lock |
-| `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)) |
+| `cairn update [--file <path>] [--diff-ref A..B]` | incremental reindex (git-diff driven; see [below](#cairn-update---diff-ref)); both forms take the store's build lock — a concurrent build/update makes the command refuse with "Cannot acquire build lock" instead of racing the swap — and re-embed changed symbols when a non-hash backend is configured, else print "N symbol(s) awaiting embed — run `cairn embed`"; `--no-decay` skips the post-update memory decay pass, which otherwise archives stale raw/tribal memories (tribal staleness runs from the last recall, not creation) |
 | `cairn stats` | graph statistics |
 | `cairn checkpoint` | checkpoint the WAL into the main file |
 | `cairn config` | show effective configuration (`--json` emits `cairn_home`/`workspace`/`db`/`knowledge` as one JSON document — read-only, registers nothing; `--db` prints only the DB path; `--mcp-config` prints the agent registration snippet; `--list` lists registered workspaces) |
@@ -47,11 +47,11 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 |---|---|
 | `cairn def <symbol>` | find a definition |
 | `cairn import-scip <file>` | import an external SCIP index as an edges-only overlay |
-| `cairn callers <symbol>` | who calls this (precise by default; `--fuzzy` adds name-matched sites) |
-| `cairn callees <symbol>` | what this calls |
+| `cairn callers <symbol>` | who calls this — bare and qualified names resolve through the shared definition ladder (exact > qualified > substring); an empty precise result retries fuzzy automatically, exits 0 when any candidate is found and FAILURE only when nothing matches (a stderr note marks the fuzzy fallback and the result cap) |
+| `cairn callees <symbol>` | what this calls (same ladder resolution as `callers`) |
 | `cairn search <query>` | symbol search (FTS5, `*` wildcards) |
 | `cairn semantic <query>` | hybrid semantic search (`--limit`, `--threshold`, `--include-callers`, `--json`) |
-| `cairn impact <symbol>` | what breaks if changed (within-repo; `--guard` flags a cycle-carrying result above `--threshold` (default 100) as a name collision and prints the dataflow-index fallback instead, see [below](#cairn-impact---guard)) |
+| `cairn impact <symbol>` | what breaks if changed — same traversal and cross-repo dependents section as the MCP tool (`cross_repo` in `--json`, honoring `CAIRN_REPO_NAMESPACES`); `--guard` flags a cycle-carrying result above `--threshold` (default 100) as a name collision and prints the dataflow-index fallback instead, see [below](#cairn-impact---guard)) |
 | `cairn blast` | reverse-dependency radius of a git diff |
 | `cairn map` | deterministic repository orientation map |
 | `cairn communities` | Louvain subsystem clusters over the symbol graph (see [below](#cairn-communities)) |
@@ -141,7 +141,7 @@ JSON modes, exit codes) are pinned by the frozen CLI goldens under
 
 | Command | Purpose |
 |---|---|
-| `cairn embed` | compute/refresh symbol embeddings with the configured backend (`--batch-size`, `--limit`, `--no-reap`, `--build-index` rebuilds the vec0 ANN index, `--no-multivector` stores one vector per symbol, `--download-model` pre-warms the native bge-m3 weights and exits — `local-embed` feature builds only, erroring with the feature hint otherwise) |
+| `cairn embed` | compute/refresh symbol embeddings with the configured backend (`--batch-size`, `--limit`, `--no-reap`, `--build-index` rebuilds the vec0 ANN index, `--no-multivector` stores one vector per symbol, `--download-model` pre-warms the native bge-m3 weights and exits — `local-embed` feature builds only, erroring with the feature hint otherwise); each write batch re-takes the store's build lock, refusing on contention instead of racing a build |
 
 The backend is `CAIRN_EMBED_BACKEND`: `local` (the default) resolves to the
 dep-free `hash-256-v1` embedder and `cairn embed` warns that the vectors are
@@ -207,8 +207,8 @@ contested).
 
 | Command | Purpose |
 |---|---|
-| `cairn serve run|start|stop|status|restart` | MCP daemon (Streamable HTTP `:9876`, read-write by default; `--read-only` opens the store read-only so write tools fail instead of landing; `run` is the foreground daemon). `start`/`stop`/`restart` manage the macOS launchd LaunchAgent, or the daemonized background daemon elsewhere; `start` embeds `CAIRN_HOME`/`CAIRN_WORKSPACE`/`CAIRN_DB`/`CAIRN_KNOWLEDGE` into the plist when a custom home is in effect. Stdio/SSE-specific options, including any `--transport` value, exit non-zero with a message naming the HTTP replacement (see [deployment.md](deployment.md)). |
-| `cairn connect` | ensure the MCP daemon is running — start exactly one instance on first dial, reuse a healthy one — and print its URL |
+| `cairn serve run|start|stop|status|restart` | MCP daemon (Streamable HTTP `:9876`, read-write by default; `--read-only` opens the store read-only so write tools fail instead of landing; `run` is the foreground daemon). `start`/`stop`/`restart` manage the macOS launchd LaunchAgent, or the daemonized background daemon elsewhere; `start` embeds `CAIRN_HOME`/`CAIRN_WORKSPACE`/`CAIRN_DB`/`CAIRN_KNOWLEDGE` into the plist when a custom home is in effect. `serve run --allow-writes` (and `serve start --allow-writes`) enables the write tools on a keyless daemon; keyed daemons always allow writes; `connect` starts its daemon write-enabled. Stdio/SSE-specific options, including any `--transport` value, exit non-zero with a message naming the HTTP replacement (see [deployment.md](deployment.md)). |
+| `cairn connect` | ensure the MCP daemon is running — start exactly one instance on first dial, reuse a healthy one — and print its URL; resolves the API key (explicit > env > init-persisted) and refuses a keyless non-loopback `--host` before writing any launch configuration |
 | `cairn dashboard [--db] [--port]` | loopback dashboard `:8765` (read-only views + Settings) |
 | `cairn install-agents` / `uninstall-agents` | wire cairn into AI clients (claude, droid, zcode, cursor, opencode, kilo, omp, agy). Every registration is a URL+key entry dialing the shared daemon, embedding the `CAIRN_MCP_API_KEY` generated at `cairn init`; each written registration is verified against the daemon's `/healthz` — the report shows per-client `verify: PASS/FAIL`. claude-desktop is detected and reported unsupported (no URL MCP surface; nothing written). `--client` overrides detection, `--scope workspace|global` picks the config location, `--git-hooks` also installs the git hooks, `--yes` skips the prompt, and `--dry-run` writes nothing. Generated hook commands call `cairn hooks run <entrypoint>` and embed a custom `CAIRN_HOME` assignment. |
 
@@ -224,7 +224,7 @@ contested).
 | `cairn wiki search <query>` | search the wiki (promoted articles + deterministic summaries) |
 | `cairn wiki export --dir DIR [--force]` | write every promoted page as `DIR/{repo}/{page_id}.md` (OKF frontmatter preserved) and report the exported count; a non-empty target directory is refused unless `--force` is passed |
 | `cairn wiki enrich [<page-id>] [--repo R] [--all]` | queue one `wiki-page-enrich` task per promoted page — either a single `page-id` or `--all` (never both), optionally scoped with `--repo`; the task's facts carry page identity and fresh seeds (never the body); the critic-passing completion reads the promoted body at completion time, appends the new sections, and merges the new `## Sources` entries into the frontmatter. Requires an already-promoted page |
-| `cairn task list|show|claim|complete|drop` | LLM synthesis task queue; `list` filters by `--status`, `--kind`, or `--kind-prefix PREFIX` (e.g. `--kind-prefix wiki-page` lists every chain hop), `drop` abandons a pending or in-progress task — terminal: done tasks are refused and a dropped task is never claimable again (dropping an in-progress task releases its claim marker so the resource can be re-queued) |
+| `cairn task list|show|claim|complete|drop` | LLM synthesis task queue; `list` filters by `--status`, `--kind`, or `--kind-prefix PREFIX` (e.g. `--kind-prefix wiki-page` lists every chain hop); `complete`/`drop` default `--as` to host:pid and enforce claim ownership; `drop` abandons a pending or in-progress task (`--force` overrides another agent's claim) — terminal: done tasks are refused and a dropped task is never claimable again; a stalled completion leaves the task in-progress with its claim, reclaimable after the stale window (1h) even when the claim marker is gone |
 | `cairn dataflow build\|lookup` | precomputed impact index; `build` caps public symbols per run — `--max-symbols`, else `CAIRN_DATAFLOW_MAX_SYMBOLS`, else 2000 — and warns on stderr when truncating (partial index) |
 
 ## Health & ops

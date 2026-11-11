@@ -329,6 +329,33 @@ fn check_ann(conn: &Connection) -> CheckResult {
         &[&model],
         0,
     );
+    // An update that dropped embedding rows reports the debt as an event; a
+    // fully dropped index would otherwise look like "never embedded".
+    let debt = cairn_build::incremental::recorded_embed_debt(conn) as i64;
+    if debt > 0 {
+        let missing = if emb_n > 0 {
+            query_i64(
+                conn,
+                "SELECT COUNT(*) FROM symbols s WHERE NOT EXISTS \
+                 (SELECT 1 FROM embeddings e WHERE e.symbol_id = s.id AND e.model = ?1)",
+                &[&model],
+                debt,
+            )
+        } else {
+            debt
+        };
+        if missing > 0 {
+            return result(
+                "ann",
+                WARN,
+                format!(
+                    "{missing} symbol(s) awaiting embed for model '{model}' -- \
+                     dropped by an update; invisible to semantic queries"
+                ),
+                Some("run `cairn embed`".to_string()),
+            );
+        }
+    }
     if emb_n <= 0 {
         return result(
             "ann",

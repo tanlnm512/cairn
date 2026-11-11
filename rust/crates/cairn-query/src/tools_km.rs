@@ -1375,6 +1375,7 @@ pub fn store_memory(
     old_id: Option<&str>,
     conn: Option<&Connection>,
 ) -> Result<String, ToolError> {
+    let _lock = bundle.lock()?;
     let old_rel = old_id.map(|o| rel_cid(bundle, o));
     let keep_id = old_rel
         .as_ref()
@@ -1444,6 +1445,20 @@ pub fn store_memory(
                 rusqlite::params![old_id],
             )
             .map_err(|e| ToolError(e.to_string()))?;
+            // Refs and embeddings follow the memory to its new id.
+            for (sql, new) in [
+                (
+                    "UPDATE memory_refs SET memory_path = ? WHERE memory_path = ?",
+                    concept.concept_id.as_str(),
+                ),
+                (
+                    "UPDATE memory_embeddings SET doc_id = ? WHERE doc_id = ?",
+                    concept.concept_id.as_str(),
+                ),
+            ] {
+                conn.execute(sql, rusqlite::params![new, old_id])
+                    .map_err(|e| ToolError(e.to_string()))?;
+            }
         }
     }
     Ok(concept.concept_id.clone())
@@ -1549,6 +1564,7 @@ pub fn demote_memory(
     target_tier: &str,
     conn: Option<&Connection>,
 ) -> Result<Option<String>, ToolError> {
+    let _lock = bundle.lock()?;
     let Some(mut concept) = get_memory(bundle, memory_path)? else {
         return Ok(None);
     };
@@ -1577,6 +1593,7 @@ pub fn promote_memory(
     memory_path: &str,
     conn: Option<&Connection>,
 ) -> Result<Option<String>, ToolError> {
+    let _lock = bundle.lock()?;
     let mut concept = match get_memory(bundle, memory_path)? {
         Some(c) => c,
         None => return Ok(None),
@@ -1651,6 +1668,17 @@ fn append_promotion(concept: &mut Concept, action: &str, score: f64) {
     }
 }
 
+/// The most recent memory_refs row's referenced_at for one memory path.
+fn last_recalled(conn: &Connection, memory_path: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT MAX(referenced_at) FROM memory_refs WHERE memory_path = ?",
+        rusqlite::params![memory_path],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+}
+
 fn age_days(ts: &str) -> f64 {
     let Some(secs) = parse_memory_timestamp(ts) else {
         return 0.0;
@@ -1669,6 +1697,7 @@ pub fn decay(
     tribal_max_stale: i64,
     conn: Option<&Connection>,
 ) -> Result<(usize, usize), ToolError> {
+    let _lock = bundle.lock()?;
     let mut expired = 0;
     let mut archived = 0;
     for concept in list_memories(bundle, Some("raw"), None) {
@@ -1684,8 +1713,12 @@ pub fn decay(
         }
     }
     for concept in list_memories(bundle, Some("tribal"), None) {
-        let stale = concept
-            .timestamp
+        // A memory that is still recalled stays: staleness runs from the last
+        // recall, falling back to the creation timestamp when never recalled.
+        let last_seen = conn
+            .and_then(|conn| last_recalled(conn, &rel_cid(bundle, &concept.concept_id)))
+            .or_else(|| concept.timestamp.clone());
+        let stale = last_seen
             .as_deref()
             .is_some_and(|ts| age_days(ts) > tribal_max_stale as f64);
         if stale {
@@ -1939,6 +1972,7 @@ pub struct BatchCriticResult {
 
 /// Run the deterministic critic over queued drafts; promote, drop, or keep.
 pub fn batch_critic(conn: &Connection, bundle: &Bundle) -> Result<BatchCriticResult, ToolError> {
+    let _lock = bundle.lock()?;
     let drafts = list_memories(bundle, Some("drafts"), None);
     let mut out = BatchCriticResult {
         processed: drafts.len(),
@@ -2127,7 +2161,8 @@ pub fn graph_verification(concept: &Concept, conn: &Connection) -> Result<f64, r
     let symbol_refs = extract_symbol_refs(body);
     let total = file_refs.len() + symbol_refs.len();
     if total == 0 {
-        return Ok(1.0);
+        // An unverifiable body is mid-trust, not fully verified.
+        return Ok(0.5);
     }
     let mut verified = 0;
     for r in &file_refs {
@@ -2271,12 +2306,15 @@ pub fn score_memory(
 }
 
 /// Apply the weighted formula to an already-computed signals dict.
+/// Weights sum to 1.0: a ref-less memory at default confidence and critic
+/// score lands in drafts (< 0.5), not tribal.
 pub fn compute_score(signals: &HashMap<String, f64>) -> f64 {
-    0.357 * signals["graph_verification"]
-        + 0.286 * signals["cross_session_refs_signal"]
-        + 0.214 * signals["agent_confidence"]
-        + 0.0715 * signals["freshness"]
-        + 0.0715 * signals.get("reinforcement").copied().unwrap_or(0.0)
+    0.30 * signals["graph_verification"]
+        + 0.25 * signals["cross_session_refs_signal"]
+        + 0.20 * signals["agent_confidence"]
+        + 0.15 * signals.get("critic_score").copied().unwrap_or(0.5)
+        + 0.05 * signals["freshness"]
+        + 0.05 * signals.get("reinforcement").copied().unwrap_or(0.0)
 }
 
 fn apply_score(concept: &mut Concept, signals: &HashMap<String, f64>) {
@@ -2656,12 +2694,16 @@ fn is_session_bookkeeping(title: &str, body: &str) -> bool {
     b.progress_count.is_match(title)
 }
 
+/// Supersession lookup: an explicit `supersedes` id (validated same-type,
+/// latest) is the only supersede trigger; an exact title match without one is
+/// reported as a possible duplicate and never supersedes.
 fn find_supersession_candidate(
     conn: &Connection,
     bundle: &Bundle,
     type_: &str,
     title: &str,
-) -> Result<Option<String>, ToolError> {
+    supersedes: Option<&str>,
+) -> Result<(Option<String>, Option<String>), ToolError> {
     let mut candidates: Vec<Concept> = Vec::new();
     for cid in bundle.list_concepts(Some("memory/")) {
         let Ok(c) = bundle.read_concept(&cid) else {
@@ -2675,20 +2717,35 @@ fn find_supersession_candidate(
         }
         candidates.push(c);
     }
-    if candidates.is_empty() {
-        return Ok(None);
+    if let Some(explicit) = supersedes
+        && !explicit.trim().is_empty()
+    {
+        let wanted = rel_cid(bundle, explicit);
+        if let Some(c) = candidates
+            .iter()
+            .find(|c| rel_cid(bundle, &c.concept_id) == wanted)
+        {
+            let _ = conn;
+            return Ok((Some(c.concept_id.clone()), None));
+        }
+        return Err(ToolError(format!(
+            "supersedes id '{explicit}' is not a latest {type_} memory"
+        )));
     }
-    // Tier 1: exact title match (case-insensitive).
+    if candidates.is_empty() {
+        let _ = conn;
+        return Ok((None, None));
+    }
     let title_lower = title.trim().to_lowercase();
     if !title_lower.is_empty() {
         for c in &candidates {
             if c.title.as_deref().unwrap_or("").trim().to_lowercase() == title_lower {
-                return Ok(Some(c.concept_id.clone()));
+                return Ok((None, Some(c.concept_id.clone())));
             }
         }
     }
     let _ = conn;
-    Ok(None)
+    Ok((None, None))
 }
 
 fn mark_superseded(bundle: &Bundle, old_id: &str, new_id: &str) -> Result<(), ToolError> {
@@ -2704,7 +2761,8 @@ fn mark_superseded(bundle: &Bundle, old_id: &str, new_id: &str) -> Result<(), To
     bundle.write_concept(&mut old)
 }
 
-/// Create, score, redact, and store a memory, superseding a close latest match.
+/// Create, score, redact, and store a memory; supersede only an explicit
+/// `supersedes` id, reporting a same-title latest memory as a possible duplicate.
 #[allow(clippy::too_many_arguments)]
 pub fn capture_memory(
     conn: &Connection,
@@ -2716,11 +2774,13 @@ pub fn capture_memory(
     confidence: f64,
     session_origin: Option<&str>,
     stance: Option<&str>,
+    supersedes: Option<&str>,
 ) -> Result<CaptureResult, ToolError> {
     let body = strip_private_data(body);
     let title = strip_private_data(title);
     let _lock = bundle.lock()?;
-    let superseded_id = find_supersession_candidate(conn, bundle, type_, &title)?;
+    let (superseded_id, possible_duplicate) =
+        find_supersession_candidate(conn, bundle, type_, &title, supersedes)?;
 
     let mut supersedes_chain: Vec<String> = Vec::new();
     if let Some(old_id) = &superseded_id
@@ -2778,15 +2838,18 @@ pub fn capture_memory(
         tier,
         score: signals["score"],
         superseded: superseded_id,
+        possible_duplicate,
     })
 }
 
-/// Capture outcome: stored path, tier, score, and the superseded id if any.
+/// Capture outcome: stored path, tier, score, the superseded id if any, and a
+/// same-title latest memory that was deliberately not superseded.
 pub struct CaptureResult {
     pub path: String,
     pub tier: String,
     pub score: f64,
     pub superseded: Option<String>,
+    pub possible_duplicate: Option<String>,
 }
 
 // --- knowledge store ----------------------------------
@@ -5615,37 +5678,7 @@ struct SymbolRow {
     repo: String,
 }
 
-fn is_fts_prefix_pattern(pattern: &str) -> bool {
-    let p = pattern.trim();
-    let Some(stripped) = p.strip_suffix('*') else {
-        return false;
-    };
-    if stripped.contains('*') || p.contains('_') {
-        return false;
-    }
-    let token = stripped.trim();
-    !token.is_empty() && !token.contains([' ', '"', ':', '(', ')'])
-}
-
-fn pattern_to_fts(pattern: &str) -> Option<String> {
-    static STAR_RE: OnceLock<Regex> = OnceLock::new();
-    static SPLIT_RE: OnceLock<Regex> = OnceLock::new();
-    let p = pattern.trim();
-    if p.is_empty() {
-        return None;
-    }
-    if is_fts_prefix_pattern(p) {
-        return Some(format!("{}*", p[..p.len() - 1].trim()));
-    }
-    let star_re = STAR_RE.get_or_init(|| Regex::new(r"[*%]").expect("star regex"));
-    let split_re = SPLIT_RE.get_or_init(|| Regex::new(r"[^A-Za-z0-9]+").expect("split regex"));
-    let cleaned = star_re.replace_all(p, " ").to_string();
-    let tokens: Vec<&str> = split_re.split(&cleaned).filter(|t| !t.is_empty()).collect();
-    if tokens.is_empty() {
-        return None;
-    }
-    Some(format!("\"{}\"*", tokens.join(" ")))
-}
+use crate::tools_search::{is_fts_prefix_pattern, pattern_to_fts};
 
 fn like_symbol_rows(
     conn: &Connection,
@@ -6488,6 +6521,7 @@ pub fn record_memory(
     resource: &str,
     confidence: f64,
     stance: Option<&str>,
+    supersedes: &str,
 ) -> Result<String, ToolError> {
     let result = capture_memory(
         conn,
@@ -6503,6 +6537,11 @@ pub fn record_memory(
         confidence,
         None,
         stance,
+        if supersedes.is_empty() {
+            None
+        } else {
+            Some(supersedes)
+        },
     )?;
     let mut msg = format!(
         "Recorded {type_} '{title}' -> {} (score={}, tier={})",
@@ -6512,6 +6551,11 @@ pub fn record_memory(
     );
     if let Some(superseded) = &result.superseded {
         msg.push_str(&format!(" [superseded {superseded}]"));
+    }
+    if let Some(dup) = &result.possible_duplicate {
+        msg.push_str(&format!(
+            " [possible_duplicate {dup}: pass supersedes to replace it]"
+        ));
     }
     Ok(msg)
 }

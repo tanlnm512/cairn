@@ -2,9 +2,10 @@
 
 use rusqlite::Connection;
 
-pub use cross_repo::{RepoDep, cross_repo_deps, resolve_namespaces};
+pub use cross_repo::{RepoDep, cross_repo_deps, repo_namespaces_env_raw, resolve_namespaces};
 pub use impact::{
-    CLOSURE_MAX_DEPTH, ImpactEntry, ImpactResult, impact_analysis, impact_analysis_seeded,
+    CLOSURE_MAX_DEPTH, ImpactEntry, ImpactResult, closure_ready, impact_analysis,
+    impact_analysis_seeded,
 };
 pub use lexical::{is_fts_prefix_pattern, lexical_search_symbols, pattern_to_fts};
 pub use taint::{
@@ -235,44 +236,7 @@ mod lexical {
 
     use super::{SymbolRow, escape_like};
 
-    /// True iff `pattern` is a pure single-trailing-wildcard token (`"Api*"`).
-    pub fn is_fts_prefix_pattern(pattern: &str) -> bool {
-        let p = pattern.trim();
-        let Some(stripped) = p.strip_suffix('*') else {
-            return false;
-        };
-        if stripped.contains('*') || p.contains('_') {
-            return false;
-        }
-        let token = stripped.trim();
-        !token.is_empty() && !token.contains([' ', '"', ':', '(', ')'])
-    }
-
-    /// Convert a user pattern into an FTS5 MATCH query; `None` selects the LIKE path.
-    pub fn pattern_to_fts(pattern: &str) -> Option<String> {
-        let p = pattern.trim();
-        if p.is_empty() {
-            return None;
-        }
-        if is_fts_prefix_pattern(p) {
-            return Some(format!(
-                "{}*",
-                p.strip_suffix('*').expect("suffix checked").trim()
-            ));
-        }
-        let cleaned: String = p
-            .chars()
-            .map(|c| if c == '*' || c == '%' { ' ' } else { c })
-            .collect();
-        let tokens: Vec<&str> = cleaned
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .filter(|t| !t.is_empty())
-            .collect();
-        if tokens.is_empty() {
-            return None;
-        }
-        Some(format!("\"{}\"*", tokens.join(" ")))
-    }
+    pub use crate::tools_search::{is_fts_prefix_pattern, pattern_to_fts};
 
     fn select_tail(kind: Option<&str>) -> &'static str {
         if kind.is_some() {
@@ -419,11 +383,28 @@ pub(crate) mod impact {
         pub truncated: bool,
     }
 
+    /// True when a fresh closure table can serve precise traversals.
+    pub fn closure_ready(conn: &Connection) -> bool {
+        closure_available(conn)
+    }
+
     pub(crate) fn closure_available(conn: &Connection) -> bool {
-        conn.query_row("SELECT 1 FROM transitive_edges LIMIT 1", [], |r| {
-            r.get::<_, i64>(0)
-        })
-        .is_ok()
+        // Rows must exist AND be fresh: an incremental reindex after the last
+        // closure build invalidates the table (stale marker = '1').
+        let fresh = conn
+            .query_row(
+                "SELECT value FROM closure_state WHERE key = 'stale'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .map(|v| v == "0")
+            .unwrap_or(false);
+        fresh
+            && conn
+                .query_row("SELECT 1 FROM transitive_edges LIMIT 1", [], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .is_ok()
     }
 
     fn closure_has_seed_cycle(conn: &Connection, seed_ids: &[String]) -> bool {
@@ -864,6 +845,8 @@ mod trace {
         pub cycles: Vec<(String, i64)>,
         pub total: usize,
         pub truncated: bool,
+        /// Same-name definitions found for the entry: (repo, path, kind).
+        pub ambiguous_entry: Vec<(String, String, String)>,
     }
 
     struct TraceState<'a> {
@@ -1012,9 +995,19 @@ mod trace {
         max_depth: i64,
         entry_id: Option<&str>,
     ) -> Flow {
+        let candidates = find_definition(conn, entry, 50).unwrap_or_default();
+        let ambiguous_entry: Vec<(String, String, String)> =
+            if entry_id.is_none() && candidates.len() > 1 {
+                candidates
+                    .iter()
+                    .map(|r| (r.repo.clone(), r.file_path.clone(), r.kind.clone()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
         let entry_row: Vec<_> = match entry_id {
             Some(id) => find_definition_by_id(conn, id).into_iter().collect(),
-            None => find_definition(conn, entry, 1).unwrap_or_default(),
+            None => candidates.into_iter().take(1).collect(),
         };
         let entry_file = entry_row
             .first()
@@ -1098,6 +1091,7 @@ mod trace {
             modules,
             cycles: state.cycles,
             truncated: state.truncated,
+            ambiguous_entry,
         }
     }
 }
@@ -1838,6 +1832,19 @@ mod cross_repo {
         .iter()
         .map(|(ns, owner)| (ns.to_string(), owner.to_string()))
         .collect()
+    }
+
+    /// The validated `CAIRN_REPO_NAMESPACES` override, None when unset or
+    /// not a JSON object of non-empty string pairs.
+    pub fn repo_namespaces_env_raw() -> Option<String> {
+        let raw = std::env::var("CAIRN_REPO_NAMESPACES").ok()?;
+        let parsed = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+        let usable = parsed.as_object().is_some_and(|o| {
+            o.iter().any(|(k, v)| {
+                !k.trim().is_empty() && v.as_str().is_some_and(|s| !s.trim().is_empty())
+            })
+        });
+        if usable { Some(raw) } else { None }
     }
 
     /// Resolved namespace map: env override, then cairn.json, then defaults.
@@ -2959,5 +2966,31 @@ mod tests {
             assert_eq!(dfs.impacted.len(), 1, "seed {seed}");
             assert_eq!(dfs.impacted[0].symbol, "caller");
         }
+    }
+
+    #[test]
+    fn default_depth_rides_the_closure_fast_path() {
+        let conn = store();
+        conn.execute(
+            "INSERT INTO transitive_edges (source_id, target_name, target_id, distance) \
+             VALUES ('s-caller', 'invoke', 's-invoke-a', 1)",
+            [],
+        )
+        .expect("closure row");
+        // The MCP default depth is 3 (< CLOSURE_MAX_DEPTH): both entry points
+        // must agree with the DFS result at that depth.
+        let dfs = crate::graph::impact_analysis(&conn, "invoke", 3, false, 100).expect("impact");
+        assert!(
+            dfs.impacted.iter().any(|e| e.symbol == "caller"),
+            "closure path must surface the caller: {:?}",
+            dfs.impacted
+        );
+        let nav = crate::tools_nav::impact_analysis(&conn, "invoke", 3, false, 100, false, None)
+            .expect("nav impact");
+        assert!(
+            nav.impacted.iter().any(|e| e.symbol == "caller"),
+            "nav layer must ride the same fast path: {} entries",
+            nav.impacted.len()
+        );
     }
 }

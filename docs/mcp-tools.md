@@ -43,7 +43,7 @@ agent session loads it.
 | `search_symbols` | FTS5 name search (wildcards, substrings, camelCase) |
 | `repo_map` | deterministic repository orientation with counts, hubs, hotspots, and dropped counts |
 | `file_api` | body-free symbol records for one indexed file; `signature` is null when unavailable |
-| `cross_repo_deps` | cross-repo consumers of a repo's API |
+| `cross_repo_deps` | cross-repo consumers of a repo's API (namespaces resolve from `CAIRN_REPO_NAMESPACES`, then `cairn.json`, then the default table — same ladder as the CLI `deps` path) |
 | `visualize_graph` | Mermaid/DOT/JSON rendering of a subgraph |
 | `path` | shortest structural path between two symbols over the live graph (same hop chain the `cairn path` CLI prints) |
 
@@ -67,7 +67,7 @@ agent session loads it.
 
 | Tool | Purpose |
 |---|---|
-| `record_memory` | capture decision / pattern / mistake / workaround (redacted + scored) |
+| `record_memory` | capture decision / pattern / mistake / workaround (redacted + scored; optional `supersedes` concept id replaces a latest same-type memory — a same-title match alone only reports `possible_duplicate`). Write tool: needs an API key or `serve --allow-writes` |
 | `recall_memory` | symbol/title-keyed hybrid recall |
 
 Lifecycle verbs are CLI-only: `cairn memory <verb>` where verb is

@@ -78,7 +78,23 @@ Entry: `cairn-build` `builder.rs::build_graph`, run under the store's
 ## Incremental update (`cairn update`)
 
 Entry: `cairn-build` `incremental.rs::incremental_update`, which takes the
-build lock before opening its connection.
+build lock before opening its connection. `cairn update --file` opens the
+store the same way (`cairn-store` `swap.rs::open_locked`): while any build or
+update holds the lock it refuses with the "Cannot acquire build lock" error
+instead of racing the swap. `cairn embed` opens a pinned store and re-takes
+the lock per batch, so a long embedding run interleaves with builds rather
+than blocking them for its whole duration.
+
+## Freshness probe (read-path drift detection)
+
+Every CLI read opens the store through `incremental.rs::detect_changed`
+(via the CLI's refresh probe) before querying: indexed files are compared by
+stat (size + mtime, 0.5 s tolerance) and only stat-drifted candidates are
+content-hashed; the new-file walk (`scanner.rs::iter_files_walk`) walks paths
+without reading or hashing file bytes. Back-to-back reads within a short
+fixed window (`PROBE_DEBOUNCE_SECS`) skip the walk entirely via the
+`<db>.probe` stamp — a probe that found but could not repair drift (lock
+contention, or repair disabled) never stamps, so the next read retries.
 
 - **Change detection**, per repo: `--diff-ref A..B` uses exactly
   `git diff -z --name-only A..B`; otherwise `git diff -z --name-only HEAD`
@@ -92,6 +108,22 @@ build lock before opening its connection.
   ANN vec0 entries, imports, symbols, rationale), re-parse and re-insert if
   the file still exists.
 - **After**: the resolver re-runs per repo; `repair_incoming_edges`
+  re-resolves edges in *other* files that pointed at deleted or renamed
+  symbols — unique to the incremental path — and cross-repo `imports` edges
+  nulled by the delete leg are re-materialized.
+- **Embeddings after `update`**: the reindex deletes the changed files'
+  embedding rows. When a non-hash embed backend is configured, `update`
+  (and `update --file`) re-embeds the affected symbols immediately; with the
+  hash backend the dropped rows are reported as an embed debt — the update
+  summary and `cairn doctor` show "N symbol(s) awaiting embed — run
+  `cairn embed`" (the debt is recorded as an `embed_debt` event so a fully
+  dropped index stays visible).
+- **What survives a full build**: the staged swap carries the telemetry
+  tables and the embeddings. Vectors are matched by their stable identity
+  (repo, file path, file hash, qualified name, line, model) onto the rebuilt
+  symbols — an unchanged workspace rebuilds with its whole embedding index
+  intact and re-embeds nothing; `memory_embeddings` carries wholesale; the
+  vec0 ANN mirrors are rowid-bound and rebuild on the next embed pass.
   re-resolves edges in *other* files that pointed at deleted or renamed
   symbols — unique to the incremental path — and cross-repo `imports` edges
   nulled by the delete leg are re-materialized.

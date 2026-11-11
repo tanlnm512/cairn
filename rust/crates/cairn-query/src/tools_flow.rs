@@ -564,6 +564,16 @@ pub fn trace_flow_text(
         return Ok(format!("No outgoing calls traced from '{entry}'."));
     }
     let mut out: Vec<String> = Vec::new();
+    if !flow.ambiguous_entry.is_empty() {
+        out.push(format!(
+            "Ambiguous entry '{}': {} same-named definitions — the first was traced. Candidates:",
+            entry,
+            flow.ambiguous_entry.len()
+        ));
+        for (repo, path, kind) in flow.ambiguous_entry.iter().take(8) {
+            out.push(format!("  [{repo}] {path} ({kind})"));
+        }
+    }
     out.push(format!(
         "Traced {} step(s) from '{}' ({} branches, {} terminals):",
         flow.total,
@@ -721,7 +731,10 @@ pub fn visualize_graph_text(
         "module" => get_module_graph(conn, module, false)?,
         "repo" => get_repo_graph(conn, repo)?,
         "deps" => {
-            let namespaces = resolve_namespaces(workspace, None);
+            let namespaces = resolve_namespaces(
+                workspace,
+                crate::graph::repo_namespaces_env_raw().as_deref(),
+            );
             get_deps_graph(conn, &namespaces)?
         }
         _ => {
@@ -747,7 +760,10 @@ pub fn cross_repo_deps_text(
     limit: i64,
 ) -> Result<String, rusqlite::Error> {
     let limit = clamp(limit, 1, 1000);
-    let namespaces = resolve_namespaces(workspace, None);
+    let namespaces = resolve_namespaces(
+        workspace,
+        crate::graph::repo_namespaces_env_raw().as_deref(),
+    );
     let result = cross_repo_deps(conn, repo, &namespaces)?;
     let mut out: Vec<String> = Vec::new();
     out.push(format!("=== {repo} depends on ==="));

@@ -35,6 +35,8 @@ pub struct DaemonConfig {
     pub read_only: bool,
     /// Pre-resolved bearer key (explicit > env); None serves keyless loopback.
     pub api_key: Option<String>,
+    /// Explicit opt-in for write tools on a keyless daemon (D3).
+    pub allow_writes: bool,
 }
 
 impl DaemonConfig {
@@ -51,6 +53,7 @@ impl DaemonConfig {
             knowledge_path: knowledge,
             read_only: false,
             api_key: auth::resolve_api_key(None),
+            allow_writes: false,
         }
     }
 }
@@ -107,29 +110,42 @@ impl ServerHandler for CairnServer {
             Ok(text) => {
                 let (text, truncated) = truncate_result(&tool_name, text);
                 let resp_chars = text.chars().count();
-                self.ctx.record_tool_metrics(tools::ToolCallMetrics {
-                    tool: &tool_name,
-                    duration_ms,
-                    status: "ok",
-                    error: None,
-                    req_chars,
-                    resp_chars,
-                    args_summary: &args_summary,
-                    truncated,
-                });
+                let ctx = self.ctx.clone();
+                let tool = tool_name.clone();
+                let summary = args_summary.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    ctx.record_tool_metrics(tools::ToolCallMetrics {
+                        tool: &tool,
+                        duration_ms,
+                        status: "ok",
+                        error: None,
+                        req_chars,
+                        resp_chars,
+                        args_summary: &summary,
+                        truncated,
+                    })
+                })
+                .await;
                 text
             }
             Err(failure) => {
-                self.ctx.record_tool_metrics(tools::ToolCallMetrics {
-                    tool: &tool_name,
-                    duration_ms,
-                    status: "error",
-                    error: Some(&failure.0),
-                    req_chars,
-                    resp_chars: 0,
-                    args_summary: &args_summary,
-                    truncated: None,
-                });
+                let ctx = self.ctx.clone();
+                let tool = tool_name.clone();
+                let summary = args_summary.clone();
+                let error = failure.0.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    ctx.record_tool_metrics(tools::ToolCallMetrics {
+                        tool: &tool,
+                        duration_ms,
+                        status: "error",
+                        error: Some(&error),
+                        req_chars,
+                        resp_chars: 0,
+                        args_summary: &summary,
+                        truncated: None,
+                    })
+                })
+                .await;
                 let mut result = CallToolResult::error(vec![ContentBlock::text(failure.0.clone())]);
                 result.structured_content = Some(json!({ "result": failure.0 }));
                 return Ok(result.into());
@@ -230,11 +246,12 @@ pub async fn serve_config(
         &config.workspace,
         &config.knowledge_path,
         config.read_only,
+    )
+    .with_write_gate(config.api_key.is_some(), config.allow_writes);
+    let healthz_state = Arc::new(
+        healthz::HealthzState::new(config.db_path.to_string_lossy(), config.read_only)
+            .with_api_key(config.api_key.clone()),
     );
-    let healthz_state = Arc::new(healthz::HealthzState::new(
-        config.db_path.to_string_lossy(),
-        config.read_only,
-    ));
     let service: StreamableHttpService<CairnServer, LocalSessionManager> =
         StreamableHttpService::new(
             move || Ok(CairnServer { ctx: ctx.clone() }),

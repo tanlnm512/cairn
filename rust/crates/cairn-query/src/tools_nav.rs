@@ -56,10 +56,16 @@ fn escape_like(value: &str) -> String {
 /// One `find_definition` result row.
 pub struct DefRow {
     pub id: String,
+    pub file_id: String,
     pub kind: String,
     pub name: String,
     pub qualified_name: Option<String>,
     pub line_start: Option<i64>,
+    pub line_end: Option<i64>,
+    pub column_start: Option<i64>,
+    pub column_end: Option<i64>,
+    pub docstring: Option<String>,
+    pub modifiers: Option<String>,
     pub file_path: String,
     pub repo: String,
 }
@@ -70,8 +76,11 @@ fn def_rows(
     bind: &[&dyn ToSql],
 ) -> rusqlite::Result<Vec<DefRow>> {
     let sql = format!(
-        "SELECT s.id AS id, s.kind AS kind, s.name AS name, \
+        "SELECT s.id AS id, s.file_id AS file_id, s.kind AS kind, s.name AS name, \
          s.qualified_name AS qualified_name, s.line_start AS line_start, \
+         s.line_end AS line_end, s.column_start AS column_start, \
+         s.column_end AS column_end, s.docstring AS docstring, \
+         s.modifiers AS modifiers, \
          f.path AS file_path, f.repo_id AS repo \
          FROM symbols s JOIN files f ON s.file_id = f.id {where_clause}"
     );
@@ -79,10 +88,16 @@ fn def_rows(
     let rows = stmt.query_map(bind, |row| {
         Ok(DefRow {
             id: row.get("id")?,
+            file_id: row.get("file_id")?,
             kind: row.get("kind")?,
             name: row.get("name")?,
             qualified_name: row.get("qualified_name")?,
             line_start: row.get("line_start")?,
+            line_end: row.get("line_end")?,
+            column_start: row.get("column_start")?,
+            column_end: row.get("column_end")?,
+            docstring: row.get("docstring")?,
+            modifiers: row.get("modifiers")?,
             file_path: row.get("file_path")?,
             repo: row.get("repo")?,
         })
@@ -173,6 +188,7 @@ pub struct CallerRow {
     pub file_path: String,
     pub repo: String,
     pub edge_line: Option<i64>,
+    pub edge_column: Option<i64>,
     pub edge_kind: String,
     pub resolution: Option<String>,
 }
@@ -182,45 +198,46 @@ pub struct CalleeRow {
     pub name: Option<String>,
     pub kind: String,
     pub resolved: bool,
+    pub target_id: Option<String>,
     pub file_path: String,
     pub repo: String,
     pub edge_line: Option<i64>,
+    pub edge_column: Option<i64>,
     pub edge_kind: String,
     pub resolution: Option<String>,
 }
 
-/// Edges whose target is the symbol named `name` (precise = resolved ids only).
+/// Edges whose target is one of `ids` (precise); the fuzzy leg adds a
+/// `target_name` match. `ids` comes from the definition ladder upstream.
 pub fn get_callers(
     conn: &Connection,
     name: &str,
     fuzzy: bool,
     limit: i64,
     kind: Option<&str>,
-    symbol_id: Option<&str>,
+    ids: &[String],
 ) -> rusqlite::Result<Vec<CallerRow>> {
-    let target_clause;
     let mut sbind: Vec<String> = Vec::new();
-    match (fuzzy, symbol_id) {
-        (true, None) => {
-            target_clause = "(e.target_name = ? OR e.target_id IN \
-             (SELECT id FROM symbols WHERE name = ?))";
-            sbind.push(name.to_string());
-            sbind.push(name.to_string());
+    let ids_clause = |sbind: &mut Vec<String>| -> String {
+        if ids.is_empty() {
+            "0".to_string()
+        } else {
+            sbind.extend(ids.iter().cloned());
+            format!("e.target_id IN ({})", vec!["?"; ids.len()].join(", "))
         }
-        (true, Some(id)) => {
-            target_clause = "(e.target_name = ? OR e.target_id = ?)";
-            sbind.push(name.to_string());
-            sbind.push(id.to_string());
-        }
-        (false, Some(id)) => {
-            target_clause = "e.target_id = ?";
-            sbind.push(id.to_string());
-        }
-        (false, None) => {
-            target_clause = "e.target_id IN (SELECT id FROM symbols WHERE name = ?)";
-            sbind.push(name.to_string());
-        }
-    }
+    };
+    let target_clause = if fuzzy {
+        sbind.push(name.to_string());
+        let tail = if ids.is_empty() {
+            String::new()
+        } else {
+            let c = ids_clause(&mut sbind);
+            format!(" OR {c}")
+        };
+        format!("(e.target_name = ?{tail})")
+    } else {
+        ids_clause(&mut sbind)
+    };
     let kind_clause = if kind.is_some() { "AND e.kind = ?" } else { "" };
     if let Some(k) = kind {
         sbind.push(k.to_string());
@@ -248,6 +265,7 @@ pub fn get_callers(
             file_path: row.get("file_path")?,
             repo: row.get("repo")?,
             edge_line: row.get("edge_line")?,
+            edge_column: row.get("edge_column")?,
             edge_kind: row.get("edge_kind")?,
             resolution: row.get("resolution")?,
         })
@@ -255,31 +273,31 @@ pub fn get_callers(
     rows.collect()
 }
 
-/// Edges whose source is the symbol named `name` (fuzzy adds unresolved).
+/// Edges whose source is one of `ids`, else the symbols named `name` when
+/// `ids` is empty (fuzzy adds unresolved targets).
 pub fn get_callees(
     conn: &Connection,
     name: &str,
     fuzzy: bool,
     limit: i64,
     kind: Option<&str>,
-    symbol_id: Option<&str>,
+    ids: &[String],
 ) -> rusqlite::Result<Vec<CalleeRow>> {
-    let source_clause = if symbol_id.is_some() {
-        "s.id = ?"
+    let source_clause: String;
+    let mut sbind: Vec<String> = Vec::new();
+    if ids.is_empty() {
+        source_clause = "s.name = ?".to_string();
+        sbind.push(name.to_string());
     } else {
-        "s.name = ?"
-    };
+        source_clause = format!("s.id IN ({})", vec!["?"; ids.len()].join(", "));
+        sbind.extend(ids.iter().cloned());
+    }
     let target_clause = if fuzzy {
         ""
     } else {
         "AND e.target_id IS NOT NULL"
     };
     let kind_clause = if kind.is_some() { "AND e.kind = ?" } else { "" };
-    let mut sbind: Vec<String> = Vec::new();
-    match symbol_id {
-        Some(id) => sbind.push(id.to_string()),
-        None => sbind.push(name.to_string()),
-    };
     if let Some(k) = kind {
         sbind.push(k.to_string());
     }
@@ -304,9 +322,11 @@ pub fn get_callees(
             name: row.get("callee_name")?,
             kind: row.get("callee_kind")?,
             resolved: row.get::<_, Option<String>>("target_id")?.is_some(),
+            target_id: row.get("target_id")?,
             file_path: row.get("file_path")?,
             repo: row.get("repo")?,
             edge_line: row.get("edge_line")?,
+            edge_column: row.get("edge_column")?,
             edge_kind: row.get("edge_kind")?,
             resolution: row.get("resolution")?,
         })
@@ -319,6 +339,7 @@ pub struct NeighborData<T> {
     pub symbol: String,
     pub rows: Vec<T>,
     pub used_fallback: bool,
+    pub explicit_fuzzy: bool,
     pub hit_limit: bool,
     pub stale_banner: String,
 }
@@ -333,14 +354,20 @@ fn neighbor_rows<T, F, P>(
     freshness_banner: &str,
 ) -> rusqlite::Result<NeighborData<T>>
 where
-    F: Fn(&Connection, &str, bool, i64) -> rusqlite::Result<Vec<T>>,
+    F: Fn(&Connection, &[String], bool, i64) -> rusqlite::Result<Vec<T>>,
     P: Fn(&T) -> &str,
 {
     let limit = clamp(limit, 1, 1000);
-    let mut rows = query(conn, name, fuzzy, limit)?;
+    // Seed the lookup through find_definition's ladder (exact name, then
+    // qualified name, then substring) so qualified names resolve here too.
+    let ids: Vec<String> = find_definition(conn, name, 200)?
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    let mut rows = query(conn, &ids, fuzzy, limit)?;
     let mut used_fallback = false;
     if rows.is_empty() && !fuzzy {
-        rows = query(conn, name, true, limit)?;
+        rows = query(conn, &ids, true, limit)?;
         used_fallback = true;
     }
     let banner = if !freshness_banner.is_empty() {
@@ -358,6 +385,7 @@ where
         symbol: name.to_string(),
         rows,
         used_fallback,
+        explicit_fuzzy: fuzzy,
         hit_limit,
         stale_banner: banner,
     })
@@ -376,7 +404,7 @@ pub fn callers_data(
         name,
         fuzzy,
         limit,
-        |conn, n, fuzzy, limit| get_callers(conn, n, fuzzy, limit, None, None),
+        |conn, ids, fuzzy, limit| get_callers(conn, name, fuzzy, limit, None, ids),
         |r| r.file_path.as_str(),
         freshness_banner,
     )
@@ -395,7 +423,7 @@ pub fn callees_data(
         name,
         fuzzy,
         limit,
-        |conn, n, fuzzy, limit| get_callees(conn, n, fuzzy, limit, None, None),
+        |conn, ids, fuzzy, limit| get_callees(conn, name, fuzzy, limit, None, ids),
         |r| r.file_path.as_str(),
         freshness_banner,
     )
@@ -405,8 +433,13 @@ pub fn callees_data(
 pub fn render_callers(data: &NeighborData<CallerRow>) -> String {
     if data.rows.is_empty() {
         return format!(
-            "No callers found for '{}' (checked precise and fuzzy).",
-            data.symbol
+            "No callers found for '{}' ({}).",
+            data.symbol,
+            if data.explicit_fuzzy {
+                "fuzzy only"
+            } else {
+                "checked precise and fuzzy"
+            }
         );
     }
     let mut out = if data.used_fallback {
@@ -441,8 +474,13 @@ pub fn render_callees(data: &NeighborData<CalleeRow>) -> String {
     if data.rows.is_empty() {
         return prepend_banner(
             &format!(
-                "No callees found for '{}' (checked precise and fuzzy).",
-                data.symbol
+                "No callees found for '{}' ({}).",
+                data.symbol,
+                if data.explicit_fuzzy {
+                    "fuzzy only"
+                } else {
+                    "checked precise and fuzzy"
+                }
             ),
             &data.stale_banner,
         );
@@ -520,6 +558,21 @@ pub fn staleness_banner(conn: &Connection, file_paths: &[&str]) -> String {
         .collect();
     if paths.is_empty() {
         return String::new();
+    }
+    // An interrupted full build leaves its repo marked 'building': surface it
+    // beside file drift so partial-store results are never silent.
+    let building: Vec<String> = conn
+        .prepare("SELECT DISTINCT repo_id FROM repo_build_state WHERE state = 'building'")
+        .and_then(|mut stmt| {
+            let mapped = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            mapped.collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap_or_default();
+    if !building.is_empty() {
+        return format!(
+            "⚠ Rebuild in progress for repo(s) {} — results may be partial until the build completes. ",
+            building.join(", ")
+        );
     }
     let placeholders = vec!["?"; paths.len()].join(",");
     let sql = format!("SELECT path FROM pending_sync WHERE path IN ({placeholders})");
@@ -796,15 +849,16 @@ impl Dfs<'_> {
             _ => name.to_string(),
         };
         if !self.callers_memo.contains_key(&key) {
-            let rows = get_callers(
-                self.conn,
-                name,
-                self.fuzzy,
-                200,
-                None,
-                sym_id.filter(|_| self.seed_id.is_some()),
-            )
-            .unwrap_or_default();
+            // Hop with the resolved id when seeded; otherwise resolve the
+            // name through the definition ladder (exact > qualified > substring).
+            let ids: Vec<String> = match sym_id.filter(|_| self.seed_id.is_some()) {
+                Some(id) => vec![id.to_string()],
+                None => find_definition(self.conn, name, 200)
+                    .map(|rows| rows.into_iter().map(|d| d.id).collect())
+                    .unwrap_or_default(),
+            };
+            let rows =
+                get_callers(self.conn, name, self.fuzzy, 200, None, &ids).unwrap_or_default();
             self.callers_memo.insert(key.clone(), rows);
         }
         self.callers_memo.get(&key).cloned().unwrap_or_default()
@@ -872,6 +926,8 @@ impl Dfs<'_> {
 }
 
 /// Recursive caller traversal with cycle detection (precise by default).
+/// Precise structural traversals under the closure depth take the
+/// precomputed `transitive_edges` fast path; everything else walks the DFS.
 pub fn impact_analysis(
     conn: &Connection,
     name: &str,
@@ -883,6 +939,53 @@ pub fn impact_analysis(
 ) -> rusqlite::Result<ImpactResult> {
     let max_depth = max_depth.min(MAX_TRAVERSAL_DEPTH);
     let limit = clamp(limit, 1, 1000);
+    if !fuzzy
+        && !include_service_edges
+        && seed_id.is_none()
+        && max_depth < crate::graph::CLOSURE_MAX_DEPTH
+        && crate::graph::closure_ready(conn)
+    {
+        // One seeded traversal per ladder-resolved definition over the fresh
+        // closure table (its DFS fallback resolves hops differently, so the
+        // closure must actually be ready before this path is taken).
+        let ids: Vec<String> = find_definition(conn, name, 200)?
+            .into_iter()
+            .map(|d| d.id)
+            .collect();
+        let mut impacted: Vec<ImpactEntry> = Vec::new();
+        let mut cycles: Vec<(String, i64)> = Vec::new();
+        let mut truncated = false;
+        let mut any = false;
+        for id in &ids {
+            let Ok(fast) = crate::graph::impact_analysis_seeded(
+                conn,
+                name,
+                id,
+                max_depth,
+                limit as usize,
+                false,
+            ) else {
+                continue;
+            };
+            any = true;
+            impacted.extend(fast.impacted.into_iter().map(|e| ImpactEntry {
+                symbol: e.symbol,
+                file: e.file,
+                repo: e.repo,
+                depth: e.depth,
+            }));
+            cycles.extend(fast.cycles);
+            truncated |= fast.truncated;
+        }
+        if any {
+            return Ok(ImpactResult {
+                total: impacted.len(),
+                impacted,
+                cycles,
+                truncated,
+            });
+        }
+    }
     let allowed = if include_service_edges {
         None
     } else {

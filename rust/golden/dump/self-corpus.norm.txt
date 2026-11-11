@@ -1,6 +1,8 @@
 # cairn-canonical-dump 1
 [table agent_symbols]
 # columns: agent_id	symbol	memory_id	kind	ts
+[table closure_state]
+# columns: key	value
 [table communities]
 # columns: id	label	size
 [table edges]
@@ -15974,6 +15976,7 @@
 corpus	corpus	.	python	\N	<TS>
 [table schema_meta]
 # columns: key	value
+closure_state.table	applied
 edges.call_arity	applied
 edges.receiver_type	applied
 edges.ref_name	applied

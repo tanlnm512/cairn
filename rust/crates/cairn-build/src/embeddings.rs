@@ -38,6 +38,14 @@ struct EmbedEnv {
 
 /// Resolve the effective backend once: transport, availability, and stamp.
 fn resolve_embed_env() -> Result<EmbedEnv, String> {
+    let name = tools_search::backend_name();
+    let known = ["local", "hash", "native", "server", "omlx", "ollama"];
+    if !known.contains(&name.as_str()) {
+        return Err(format!(
+            "unknown CAIRN_EMBED_BACKEND '{name}': expected one of {}",
+            known.join(", ")
+        ));
+    }
     let env = semantic_env(None);
     match env.backend {
         EffectiveBackend::Hash => Ok(EmbedEnv {
@@ -417,6 +425,8 @@ pub struct EmbedSummary {
     pub embedded: usize,
     pub attempted: usize,
     pub failed_batches: usize,
+    /// Stale rows not embedded because --limit cut them.
+    pub limit_cut: usize,
     pub skipped: usize,
     pub total: usize,
     pub reaped: usize,
@@ -425,7 +435,8 @@ pub struct EmbedSummary {
     pub ann_synced: usize,
 }
 
-/// Embed stale symbols and refresh multivector, orphan, and term-df state.
+/// Embed stale symbols and refresh multivector, orphan, and term-df state;
+/// every write re-takes the build lock via `pin`, so the caller must not hold it.
 pub fn embed_all(
     conn: &Connection,
     workspace: &str,
@@ -433,6 +444,7 @@ pub fn embed_all(
     limit: Option<usize>,
     reap_orphans: bool,
     multivector: bool,
+    pin: &cairn_store::swap::StorePin,
 ) -> Result<EmbedSummary, String> {
     if batch_size == 0 {
         return Err("batch_size must be >= 1".to_string());
@@ -441,17 +453,31 @@ pub fn embed_all(
     let (all_rows, stale_rows, signatures) =
         select_stale_symbols(conn, &env.model, None, workspace).map_err(|e| e.to_string())?;
 
+    let stale_total = stale_rows.len();
     let mut stale_rows = stale_rows;
-    if let Some(limit) = limit {
+    let mut limit_cut = 0usize;
+    if let Some(limit) = limit
+        && stale_rows.len() > limit
+    {
+        limit_cut = stale_rows.len() - limit;
         stale_rows.truncate(limit);
     }
 
     let total = stale_rows.len();
     let now = now_iso();
     let mut embedded = 0usize;
+    let mut failed_batches = 0usize;
     for batch in stale_rows.chunks(batch_size) {
         let texts: Vec<String> = batch.iter().map(|s| s.chunk.clone()).collect();
-        let (blobs, _dim) = embed_texts(&env, &texts)?;
+        let (blobs, _dim) = match embed_texts(&env, &texts) {
+            Ok(ok) => ok,
+            // A failed batch is counted and skipped; committed batches stay.
+            Err(_) => {
+                failed_batches += 1;
+                continue;
+            }
+        };
+        let _guard = pin.write_lock()?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for (stale, blob) in batch.iter().zip(&blobs) {
             let dim = (blob.len() / 4) as i64;
@@ -471,6 +497,7 @@ pub fn embed_all(
     }
 
     let reaped = if reap_orphans {
+        let _guard = pin.write_lock()?;
         reap_orphaned_embeddings(conn).map_err(|e| e.to_string())?
     } else {
         0
@@ -478,26 +505,79 @@ pub fn embed_all(
 
     let mv_embedded = if multivector {
         Some(
-            embed_mv_kinds(conn, &env, &all_rows, &signatures, batch_size, limit)
+            embed_mv_kinds(conn, &env, &all_rows, &signatures, batch_size, limit, pin)
                 .map_err(|e| e.to_string())?,
         )
     } else {
         None
     };
 
-    rebuild_term_df(conn).map_err(|e| e.to_string())?;
+    if embedded > 0 || reaped > 0 || mv_embedded.is_some_and(|n| n > 0) {
+        let _guard = pin.write_lock()?;
+        rebuild_term_df(conn).map_err(|e| e.to_string())?;
+    }
 
     Ok(EmbedSummary {
         model: env.model,
         embedded,
         attempted: total,
-        failed_batches: 0,
-        skipped: all_rows.len() - total,
+        failed_batches,
+        limit_cut,
+        skipped: all_rows.len() - stale_total,
         total: all_rows.len(),
         reaped,
         mv_embedded,
         ann_synced: 0,
     })
+}
+
+/// Re-embed reindexed symbols under a real backend; else return the debt
+/// count (rows still missing for the current model; `dropped` = the
+/// reindex-deleted model stamps).
+pub fn reembed_updated_symbols(
+    conn: &Connection,
+    workspace: &str,
+    symbol_ids: &[String],
+    dropped_models: &[String],
+) -> usize {
+    if symbol_ids.is_empty() {
+        return 0;
+    }
+    let Ok(env) = resolve_embed_env() else {
+        return 0;
+    };
+    if !matches!(env.transport, Transport::Hash)
+        && embed_symbols(conn, workspace, symbol_ids, true).is_ok()
+    {
+        return 0;
+    }
+    let owed = dropped_models.iter().any(|m| m == &env.model)
+        || conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM embeddings WHERE model = ?)",
+                [&env.model],
+                |r| r.get::<_, bool>(0),
+            )
+            .unwrap_or(false);
+    if !owed {
+        return 0;
+    }
+    let placeholders = vec!["?"; symbol_ids.len()].join(", ");
+    let sql = format!(
+        "SELECT COUNT(*) FROM symbols s WHERE s.id IN ({placeholders}) \
+         AND NOT EXISTS (SELECT 1 FROM embeddings e \
+                         WHERE e.symbol_id = s.id AND e.model = ?)"
+    );
+    let params: Vec<&str> = symbol_ids
+        .iter()
+        .map(|s| s.as_str())
+        .chain(std::iter::once(env.model.as_str()))
+        .collect();
+    conn.query_row(&sql, rusqlite::params_from_iter(params), |r| {
+        r.get::<_, i64>(0)
+    })
+    .map(|n| n as usize)
+    .unwrap_or(0)
 }
 
 /// Embed selected symbols and synchronously sync their vec0 rows.
@@ -519,6 +599,7 @@ pub fn embed_symbols(
             embedded: 0,
             attempted: 0,
             failed_batches: 0,
+            limit_cut: 0,
             skipped: 0,
             total: 0,
             reaped: 0,
@@ -535,6 +616,7 @@ pub fn embed_symbols(
             embedded: 0,
             attempted: 0,
             failed_batches: 0,
+            limit_cut: 0,
             skipped: rows.len(),
             total: rows.len(),
             reaped: 0,
@@ -589,6 +671,7 @@ pub fn embed_symbols(
         embedded: stale_rows.len(),
         attempted: stale_rows.len(),
         failed_batches: 0,
+        limit_cut: 0,
         skipped: rows.len() - stale_rows.len(),
         total: rows.len(),
         reaped: 0,
@@ -597,7 +680,8 @@ pub fn embed_symbols(
     })
 }
 
-/// Refresh stale multi-vector rows and delete vanished docstring rows.
+/// Refresh stale multi-vector rows and delete vanished docstring rows; every
+/// write re-takes the build lock via `pin`.
 fn embed_mv_kinds(
     conn: &Connection,
     env: &EmbedEnv,
@@ -605,6 +689,7 @@ fn embed_mv_kinds(
     signatures: &HashMap<String, String>,
     batch_size: usize,
     limit: Option<usize>,
+    pin: &cairn_store::swap::StorePin,
 ) -> Result<usize, String> {
     let mut existing: HashMap<(String, String), String> = HashMap::new();
     {
@@ -652,6 +737,7 @@ fn embed_mv_kinds(
     }
 
     if !emptied_docstring.is_empty() {
+        let _guard = pin.write_lock()?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for sid in &emptied_docstring {
             tx.execute(
@@ -673,6 +759,7 @@ fn embed_mv_kinds(
     for batch in stale.chunks(batch_size) {
         let texts: Vec<String> = batch.iter().map(|(_, _, t, _)| t.clone()).collect();
         let (blobs, _dim) = embed_texts(env, &texts)?;
+        let _guard = pin.write_lock()?;
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         for ((sid, kind, text, chash), blob) in batch.iter().zip(&blobs) {
             let dim = (blob.len() / 4) as i64;

@@ -17,6 +17,7 @@ pub const IMPL_MARKER: &str = "rust";
 pub struct HealthzState {
     db_path: String,
     read_only: bool,
+    api_key: Option<String>,
     started: Instant,
 }
 
@@ -25,35 +26,57 @@ impl HealthzState {
         Self {
             db_path: db_path.into(),
             read_only,
+            api_key: None,
             started: Instant::now(),
         }
     }
 
-    /// The bounded health payload for one requesting peer; an unreachable
-    /// store degrades to status "unhealthy".
-    pub fn payload(&self, peer: IpAddr) -> Value {
+    /// The bearer key whose presentation unlocks the full store path.
+    pub fn with_api_key(mut self, key: Option<String>) -> Self {
+        self.api_key = key;
+        self
+    }
+
+    /// Health payload for one peer: the full store path only for the
+    /// authenticated; everyone else sees the `store_id` identity hash.
+    pub fn payload(&self, peer: IpAddr, authed: bool) -> Value {
         let (store_reachable, degradations) = match probe_store(&self.db_path) {
             Ok(()) => (true, degradation_count()),
             Err(_) => (false, 0),
+        };
+        let db = if authed {
+            self.db_path.clone()
+        } else {
+            // Unauthenticated peers see the file name only — loopback
+            // included; the reuse guard compares store_id instead.
+            db_field(&self.db_path, peer)
         };
         json!({
             "status": if store_reachable { "ok" } else { "unhealthy" },
             "store_reachable": store_reachable,
             "read_only": self.read_only,
             "degradations": degradations,
-            "db": db_field(&self.db_path, peer),
+            "db": db,
+            "store_id": store_id_hex(&self.db_path),
             "uptime_seconds": self.started.elapsed().as_secs_f64(),
             "impl": IMPL_MARKER,
+            "version": env!("CARGO_PKG_VERSION"),
         })
     }
 }
 
-/// The store path for loopback peers (the reuse guard compares it); the file
-/// name alone for any other unauthenticated requester.
-fn db_field(db_path: &str, peer: IpAddr) -> String {
-    if peer.is_loopback() {
-        return db_path.to_string();
+/// Short stable hash of the store file identity (the keyless reuse guard's
+/// comparison key); "unknown" when the file cannot be stat'ed.
+fn store_id_hex(db_path: &str) -> String {
+    match cairn_store::swap::store_id(std::path::Path::new(db_path)) {
+        Some(id) => format!("{id:?}"),
+        None => "unknown".to_string(),
     }
+}
+
+/// The store file name alone — the unauthenticated view; the reuse guard
+/// compares the `store_id` identity hash, never this string.
+fn db_field(db_path: &str, _peer: IpAddr) -> String {
     std::path::Path::new(db_path)
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -103,9 +126,15 @@ fn json_response(status: StatusCode, body: Vec<u8>) -> Response {
 pub async fn respond(
     State(state): State<Arc<HealthzState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
+    let provided = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    let expected = state.api_key.as_deref().unwrap_or("");
+    let authed = !expected.is_empty() && crate::auth::bearer_key_ok(provided, expected);
     json_response(
         StatusCode::OK,
-        state.payload(peer.ip()).to_string().into_bytes(),
+        state.payload(peer.ip(), authed).to_string().into_bytes(),
     )
 }

@@ -7,28 +7,10 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 
+use cairn_store::swap::{StoreId, store_id};
+
 /// Idle connections parked per flavor before extras are dropped.
 const MAX_IDLE: usize = 8;
-
-/// Store identity: (dev, inode) on Unix; (len, mtime_ns) elsewhere.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct StoreId(u64, u64);
-
-fn store_id(path: &Path) -> Option<StoreId> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let meta = std::fs::metadata(path).ok()?;
-        Some(StoreId(meta.dev(), meta.ino()))
-    }
-    #[cfg(not(unix))]
-    {
-        use std::time::UNIX_EPOCH;
-        let meta = std::fs::metadata(path).ok()?;
-        let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
-        Some(StoreId(meta.len(), mtime.as_nanos() as u64))
-    }
-}
 
 /// A parked connection and the store identity it was opened against.
 struct Parked {

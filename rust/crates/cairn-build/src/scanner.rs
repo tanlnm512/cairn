@@ -487,6 +487,23 @@ pub fn iter_files_and_skips(
     repo_id: &str,
     repo_path: &Path,
 ) -> Result<(Vec<FileInfo>, Vec<SkipInfo>), String> {
+    iter_files_inner(repo_id, repo_path, true)
+}
+
+/// Walk-only variant: same file set and skip classification, `FileInfo.hash`
+/// stays empty — no file bytes are read. Freshness probes compare paths only.
+pub fn iter_files_walk(
+    repo_id: &str,
+    repo_path: &Path,
+) -> Result<(Vec<FileInfo>, Vec<SkipInfo>), String> {
+    iter_files_inner(repo_id, repo_path, false)
+}
+
+fn iter_files_inner(
+    repo_id: &str,
+    repo_path: &Path,
+    with_hash: bool,
+) -> Result<(Vec<FileInfo>, Vec<SkipInfo>), String> {
     let specs = load_gitignores(repo_path);
     let config = load_config(repo_path)?;
     let exclude_spec = if config.exclude.is_empty() {
@@ -551,18 +568,22 @@ pub fn iter_files_and_skips(
             }
             // classify_file stat'd the file moments earlier; a read failure
             // in between is the same transient class, not a failed build.
-            let hash = match file_sha256(&path) {
-                Ok(hash) => hash,
-                Err(_) => {
-                    skips.push(SkipInfo {
-                        repo: repo_id.to_string(),
-                        path: path.to_string_lossy().into_owned(),
-                        rel_path: rel,
-                        reason: REASON_STAT_ERROR.to_string(),
-                        size_bytes: None,
-                    });
-                    continue;
+            let hash = if with_hash {
+                match file_sha256(&path) {
+                    Ok(hash) => hash,
+                    Err(_) => {
+                        skips.push(SkipInfo {
+                            repo: repo_id.to_string(),
+                            path: path.to_string_lossy().into_owned(),
+                            rel_path: rel,
+                            reason: REASON_STAT_ERROR.to_string(),
+                            size_bytes: None,
+                        });
+                        continue;
+                    }
                 }
+            } else {
+                String::new()
             };
             files.push(FileInfo {
                 repo: repo_id.to_string(),

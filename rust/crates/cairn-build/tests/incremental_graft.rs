@@ -82,7 +82,15 @@ fn col(header: &[String], name: &str) -> Option<usize> {
 /// Port of the g2 gate's dump-time normalization: content-keyed ids, blanked
 /// stamps, dropped telemetry tables, re-sorted rows.
 fn normalize_dump(lines: &[String]) -> NormTables {
-    const DROP_TABLES: &[&str] = &["build_runs", "events", "tool_metrics", "dataflow"];
+    const DROP_TABLES: &[&str] = &[
+        "build_runs",
+        "events",
+        "tool_metrics",
+        "dataflow",
+        // Lifecycle metadata, not graph content: a graft marks the closure
+        // stale over surviving rows; a rebuild has neither rows nor marker.
+        "closure_state",
+    ];
     const TS: &str = "<TS>";
 
     // Parse into (table, columns, rows) sections.

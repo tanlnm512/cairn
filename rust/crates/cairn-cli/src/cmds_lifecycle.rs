@@ -154,14 +154,9 @@ pub fn run_sync(args: SyncArgs) -> ExitCode {
             .to_string_lossy()
             .into_owned()
     });
-    let lock = match cairn_store::swap::build_lock(Path::new(&db)) {
-        Ok(lock) => lock,
+    let (lock, mut conn) = match cairn_store::swap::open_locked(Path::new(&db)) {
+        Ok(opened) => opened,
         Err(e) => return crate::cmds_core::command_error(&e),
-    };
-    // The connection must be opened under the lock: one opened earlier keeps
-    // writing to the replaced file across a full-build swap.
-    let Ok(mut conn) = cairn_store::schema::open_initialized(Path::new(&db)) else {
-        return crate::cmds_core::command_error(&format!("cannot open {db}"));
     };
     let changed = cairn_build::incremental::detect_changed(&conn, &workspace);
     if changed.is_empty() {

@@ -152,7 +152,7 @@ fn set_config_values_at(home: &std::path::Path, values: &[(String, String)]) -> 
 }
 
 /// Host header names the loopback bind (localhost, 127/8, ::1)?
-fn host_is_loopbind(host: &str) -> bool {
+pub(crate) fn host_is_loopbind(host: &str) -> bool {
     let mut name = host.trim();
     if name.starts_with('[') {
         name = name.trim_start_matches('[').split(']').next().unwrap_or("");

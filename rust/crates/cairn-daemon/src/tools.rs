@@ -23,12 +23,32 @@ pub struct ToolCtx {
     pub workspace: PathBuf,
     pub knowledge_path: PathBuf,
     pub read_only: bool,
+    /// Write tools allowed: a key is configured or --allow-writes was passed.
+    writes_allowed: bool,
     /// `mcp-<pid>-<date>` when writable; None gates recall's read-through refs write.
     pub session_id: Option<String>,
     conns: Arc<ConnPool>,
 }
 
 impl ToolCtx {
+    /// Set the write gate: keyed daemons always allow writes; a keyless
+    /// daemon needs the explicit --allow-writes opt-in.
+    pub fn with_write_gate(mut self, keyed: bool, allow_writes: bool) -> Self {
+        self.writes_allowed = keyed || allow_writes;
+        self
+    }
+
+    fn refuse_writes(&self) -> Option<String> {
+        if !self.writes_allowed {
+            return Some(
+                "write tools require an API key or `serve --allow-writes`; this daemon is \
+                 keyless and read-gated"
+                    .to_string(),
+            );
+        }
+        None
+    }
+
     pub fn new(db_path: &Path, workspace: &Path, knowledge_path: &Path, read_only: bool) -> Self {
         let session_id = if read_only {
             None
@@ -44,6 +64,7 @@ impl ToolCtx {
             workspace: workspace.to_path_buf(),
             knowledge_path: knowledge_path.to_path_buf(),
             read_only,
+            writes_allowed: false,
             session_id,
             conns: Arc::new(ConnPool::new(db_path, read_only)),
         }
@@ -255,7 +276,7 @@ pub fn catalog() -> Vec<Tool> {
             "Recursive caller impact up to depth (precise by default; fuzzy adds unresolved edges; cached reads precomputed dataflow).",
             serde_json::json!({
                 "name": prop("name", "string", "Symbol to analyze blast radius for."),
-                "depth": prop_default("depth", "integer", "Traversal depth (1-10).", serde_json::json!(5)),
+                "depth": prop_default("depth", "integer", "Traversal depth (1-10; the default 3 rides the transitive-closure fast path).", serde_json::json!(3)),
                 "fuzzy": prop_default("fuzzy", "boolean", "Traverse unresolved name-match edges too.", Value::Bool(false)),
                 "limit": prop_default("limit", "integer", "Maximum impacted rows (1-1000).", serde_json::json!(500)),
             }),
@@ -354,6 +375,7 @@ pub fn catalog() -> Vec<Tool> {
                 "body": prop("body", "string", "The learning; Why:/How to apply: lines for decisions/mistakes/workarounds."),
                 "resource": prop_default("resource", "string", "Optional resource path or URL.", Value::String(String::new())),
                 "confidence": prop_default("confidence", "number", "0.0-1.0.", serde_json::json!(0.7)),
+                "supersedes": prop_default("supersedes", "string", "Concept id of the latest memory this one replaces; a same-title match alone never supersedes.", Value::String(String::new())),
             }),
             &["type", "title", "body"],
             false,
@@ -589,7 +611,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
                 &conn,
                 arg_str(args, "name")
                     .ok_or_else(|| ToolFailure("impact_analysis requires a string name".into()))?,
-                arg_i64_or(args, "depth", 5),
+                arg_i64_or(args, "depth", 3),
                 arg_bool_or(args, "fuzzy", false),
                 arg_i64_or(args, "limit", 500),
                 "",
@@ -693,6 +715,9 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.0))
         }
         "record_memory" => {
+            if let Some(msg) = ctx.refuse_writes() {
+                return Err(ToolFailure(msg));
+            }
             let conn = ctx.conn()?;
             km::record_memory(
                 &conn,
@@ -708,25 +733,32 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
                     .and_then(Value::as_f64)
                     .unwrap_or(0.7),
                 arg_str(args, "stance"),
+                arg_str_or(args, "supersedes", ""),
             )
             .map_err(|e| ToolFailure(e.0))
         }
-        "knowledge_add" => km::knowledge_add(
-            &ctx.bundle(),
-            arg_str(args, "title")
-                .ok_or_else(|| ToolFailure("knowledge_add requires a string title".into()))?,
-            arg_str(args, "body")
-                .ok_or_else(|| ToolFailure("knowledge_add requires a string body".into()))?,
-            arg_str(args, "doc_type")
-                .ok_or_else(|| ToolFailure("knowledge_add requires a string doc_type".into()))?,
-            arg_str_or(args, "tags", ""),
-            arg_str_or(args, "affects_modules", ""),
-            arg_str_or(args, "affects_repos", ""),
-            arg_str_or(args, "resource", ""),
-            arg_str_or(args, "epic_link", ""),
-            ctx.read_only,
-        )
-        .map_err(|e| ToolFailure(e.0)),
+        "knowledge_add" => {
+            if let Some(msg) = ctx.refuse_writes() {
+                return Err(ToolFailure(msg));
+            }
+            km::knowledge_add(
+                &ctx.bundle(),
+                arg_str(args, "title")
+                    .ok_or_else(|| ToolFailure("knowledge_add requires a string title".into()))?,
+                arg_str(args, "body")
+                    .ok_or_else(|| ToolFailure("knowledge_add requires a string body".into()))?,
+                arg_str(args, "doc_type").ok_or_else(|| {
+                    ToolFailure("knowledge_add requires a string doc_type".into())
+                })?,
+                arg_str_or(args, "tags", ""),
+                arg_str_or(args, "affects_modules", ""),
+                arg_str_or(args, "affects_repos", ""),
+                arg_str_or(args, "resource", ""),
+                arg_str_or(args, "epic_link", ""),
+                ctx.read_only,
+            )
+            .map_err(|e| ToolFailure(e.0))
+        }
         "knowledge_search" => {
             let conn = ctx.read_conn()?;
             km::knowledge_search(
@@ -740,6 +772,9 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.0))
         }
         "knowledge_delete" => {
+            if let Some(msg) = ctx.refuse_writes() {
+                return Err(ToolFailure(msg));
+            }
             let conn = ctx.conn()?;
             km::knowledge_delete(
                 &conn,
@@ -813,6 +848,9 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
         )
         .map_err(ToolFailure),
         "wiki_generate" => {
+            if let Some(msg) = ctx.refuse_writes() {
+                return Err(ToolFailure(msg));
+            }
             let conn = ctx.read_conn()?;
             wiki::wiki_generate_text(
                 &conn,

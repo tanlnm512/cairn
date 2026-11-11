@@ -194,40 +194,44 @@ fn seed_symbols(conn: &Connection, task: &str, model: &str, limit: usize) -> Vec
 /// Precise 1-hop call-edge neighbor ids for one seed, deduped, cap per direction.
 fn hop_ids(conn: &Connection, seed: &PackSymbol) -> Vec<String> {
     let mut ids: Vec<String> = Vec::new();
-    for (fetch_callees, field) in [(false, "caller_id"), (true, "resolved")] {
+    for fetch_callees in [false, true] {
         let mut filled = 0usize;
         for kind in CALL_EDGE_KINDS {
             if filled >= EXPAND_LIMIT {
                 break;
             }
             let remaining = (EXPAND_LIMIT - filled) as i64;
-            let rows = if fetch_callees {
-                cli_rows::get_callees_rows(
+            let neighbors: Vec<String> = if fetch_callees {
+                cairn_query::tools_nav::get_callees(
                     conn,
                     &seed.name,
-                    remaining,
                     false,
+                    remaining,
                     Some(kind),
-                    Some(&seed.symbol_id),
+                    std::slice::from_ref(&seed.symbol_id),
                 )
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|r| r.target_id)
+                .collect()
             } else {
-                cli_rows::get_callers_rows(
+                cairn_query::tools_nav::get_callers(
                     conn,
                     &seed.name,
-                    remaining,
                     false,
+                    remaining,
                     Some(kind),
-                    Some(&seed.symbol_id),
+                    std::slice::from_ref(&seed.symbol_id),
                 )
+                .unwrap_or_default()
+                .into_iter()
+                .map(|r| r.caller_id)
+                .collect()
             };
-            let Ok(rows) = rows else { continue };
-            filled += rows.len();
-            for row in rows {
-                let Some(neighbor) = row.get(field).and_then(Value::as_str) else {
-                    continue;
-                };
-                if !neighbor.is_empty() && !ids.iter().any(|id| id == neighbor) {
-                    ids.push(neighbor.to_string());
+            filled += neighbors.len();
+            for neighbor in neighbors {
+                if !neighbor.is_empty() && !ids.contains(&neighbor) {
+                    ids.push(neighbor);
                 }
             }
         }

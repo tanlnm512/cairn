@@ -79,6 +79,7 @@ fn plist_template_execs_the_named_binary() {
         Some("/store/.knowledge"),
         false,
         Some("k"),
+        false,
     );
     assert_eq!(plist.label, "dev.cairn.mcp");
     assert_eq!(plist.program_arguments[0], "/opt/cairn/bin/cairn");
@@ -109,7 +110,9 @@ fn plist_template_execs_the_named_binary() {
     assert_eq!(plist.stdout_path, plist.stderr_path);
 
     // Read-only row: the flag plus CAIRN_READ_ONLY, optional env omitted.
-    let plist = render_plist("cairn", 9876, "0.0.0.0", None, None, None, true, None);
+    let plist = render_plist(
+        "cairn", 9876, "0.0.0.0", None, None, None, true, None, false,
+    );
     assert!(plist.program_arguments.contains(&"--read-only".to_string()));
     let env: HashSet<(String, String)> = plist.environment_variables.iter().cloned().collect();
     assert!(env.contains(&("CAIRN_READ_ONLY".to_string(), "1".to_string())));
@@ -128,6 +131,7 @@ fn plist_xml_is_launchd_loadable() {
         None,
         false,
         None,
+        false,
     );
     let dir = tempfile_dir("plist");
     let path = dir.join(format!("{}.plist", lifecycle::LABEL));
@@ -324,12 +328,25 @@ fn healthz_payload_carries_the_reuse_guard_fields() {
 
     let state = HealthzState::new(db_path.to_string_lossy(), false);
     let payload: Value =
-        serde_json::from_str(&state.payload(loopback).to_string()).expect("json payload");
+        serde_json::from_str(&state.payload(loopback, false).to_string()).expect("json payload");
     assert_eq!(payload["status"], "ok", "payload {payload}");
     assert_eq!(payload["store_reachable"], true);
     assert_eq!(payload["read_only"], false);
-    assert_eq!(payload["db"], db_path.to_string_lossy().as_ref() as &str);
+    // Unauthenticated loopback sees the file name, never the store directory.
+    assert_eq!(payload["db"], "store.kg");
     assert_eq!(payload["impl"], "rust");
+    // The reuse guard's identity + version handshake fields.
+    assert!(
+        payload["store_id"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("StoreId(")),
+        "store_id must be a stable identity: {payload}"
+    );
+    assert_eq!(payload["version"], env!("CARGO_PKG_VERSION"));
+    // An authenticated requester sees the full path.
+    let authed: Value =
+        serde_json::from_str(&state.payload(loopback, true).to_string()).expect("authed payload");
+    assert_eq!(authed["db"], db_path.to_string_lossy().as_ref() as &str);
     assert!(
         payload["uptime_seconds"].as_f64().is_some_and(|s| s >= 0.0),
         "uptime_seconds must be a non-negative number: {payload}"
@@ -342,7 +359,7 @@ fn healthz_payload_carries_the_reuse_guard_fields() {
     // Non-loopback peers learn the served store's file name, never its path.
     let remote: std::net::IpAddr = "192.0.2.9".parse().expect("remote ip");
     let payload: Value =
-        serde_json::from_str(&state.payload(remote).to_string()).expect("json payload");
+        serde_json::from_str(&state.payload(remote, false).to_string()).expect("json payload");
     assert_eq!(payload["db"], "store.kg");
     assert!(
         !payload["db"]
@@ -355,7 +372,7 @@ fn healthz_payload_carries_the_reuse_guard_fields() {
     // An unreachable served store degrades to unhealthy with the db path intact.
     let missing = HealthzState::new(dir.join("missing.kg").to_string_lossy(), true);
     let payload: Value =
-        serde_json::from_str(&missing.payload(loopback).to_string()).expect("json payload");
+        serde_json::from_str(&missing.payload(loopback, false).to_string()).expect("json payload");
     assert_eq!(payload["status"], "unhealthy");
     assert_eq!(payload["store_reachable"], false);
     assert_eq!(payload["read_only"], true);
@@ -464,6 +481,7 @@ fn plist_program_arguments_round_trips_the_written_plist() {
         None,
         false,
         None,
+        false,
     );
     let dir = tempfile_dir("plistargs");
     let path = dir.join("probe.plist");

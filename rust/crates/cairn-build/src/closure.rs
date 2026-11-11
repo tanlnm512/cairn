@@ -36,6 +36,12 @@ pub fn build_transitive_closure(
     let tx = conn.transaction().map_err(str_err)?;
     tx.execute("DELETE FROM transitive_edges", [])
         .map_err(str_err)?;
+    tx.execute(
+        "INSERT INTO closure_state (key, value) VALUES ('stale', '0') \
+         ON CONFLICT(key) DO UPDATE SET value = '0'",
+        [],
+    )
+    .map_err(str_err)?;
     tx.commit().map_err(str_err)?;
 
     let graph = load_graph(conn)?;

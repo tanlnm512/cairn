@@ -1829,6 +1829,26 @@ async fn editor_status(State(state): State<AppState>, uri: Uri) -> Response {
 
 // --- router ---
 
+/// Host-allowlist middleware: a DNS-rebinding page resolves to the loopback
+/// bind but carries a foreign Host header — reject it on every route.
+async fn host_allowlist(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let host = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok());
+    // A rebinding page always carries a foreign Host; a client that sends
+    // none (HTTP/1.0-style probes) is not the attack shape.
+    if host.is_none_or(settings::host_is_loopbind) {
+        next.run(req).await
+    } else {
+        (
+            axum::http::StatusCode::FORBIDDEN,
+            "Forbidden: unallowed Host header",
+        )
+            .into_response()
+    }
+}
+
 /// The dashboard router (same route surface as the Starlette app).
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -1865,6 +1885,7 @@ pub fn router(state: AppState) -> Router {
         .route("/database", get(database))
         .route("/settings", get(settings_page))
         .route("/settings/save", post(settings_save))
+        .layer(axum::middleware::from_fn(host_allowlist))
         .route("/settings/parity-check", post(settings_parity_check))
         .route("/editor/symbol", get(editor_symbol))
         .route("/editor/file", get(editor_file))

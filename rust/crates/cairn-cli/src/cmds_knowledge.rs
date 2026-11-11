@@ -788,6 +788,12 @@ pub enum TaskGroup {
     /// Drop a claimed task.
     Drop {
         task_id: String,
+        /// Dropper identity; must match the claimant (or use --force).
+        #[arg(long = "as", default_value = "")]
+        by: String,
+        /// Drop another agent's claimed task.
+        #[arg(long)]
+        force: bool,
         #[arg(long)]
         knowledge: Option<String>,
     },
@@ -1250,7 +1256,12 @@ fn run_task(group: TaskGroup) -> ExitCode {
             db.as_deref(),
             knowledge.as_deref(),
         ),
-        TaskGroup::Drop { task_id, knowledge } => task_drop(&task_id, knowledge.as_deref()),
+        TaskGroup::Drop {
+            task_id,
+            by,
+            force,
+            knowledge,
+        } => task_drop(&task_id, &by, force, knowledge.as_deref()),
     }
 }
 
@@ -1329,7 +1340,8 @@ fn task_claim(task_id: &str, assigned_to: &str, knowledge: Option<&str>) -> Exit
     match tasks::claim_task(&bundle, task_id, assigned_to) {
         Ok(Some(_)) => {
             println!("Claimed {task_id}. Write your result, then:");
-            let mut hint = format!("  cairn task complete {task_id} --result-file <path>");
+            let mut hint =
+                format!("  cairn task complete {task_id} --as <your-id> --result-file <path>");
             if !assigned_to.is_empty() {
                 hint.push_str(&format!(" --as {assigned_to}"));
             }
@@ -1344,6 +1356,19 @@ fn task_claim(task_id: &str, assigned_to: &str, knowledge: Option<&str>) -> Exit
     }
 }
 
+/// The default task identity: host:pid of the invoking agent.
+fn default_task_identity() -> String {
+    let host = std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_default();
+    let host = if host.is_empty() {
+        "localhost".to_string()
+    } else {
+        host
+    };
+    format!("{host}:{}", std::process::id())
+}
+
 fn task_complete(
     task_id: &str,
     result: Option<&str>,
@@ -1352,6 +1377,12 @@ fn task_complete(
     db: Option<&str>,
     knowledge: Option<&str>,
 ) -> ExitCode {
+    let claimer = if claimer.is_empty() {
+        default_task_identity()
+    } else {
+        claimer.to_string()
+    };
+    let claimer = claimer.as_str();
     let bundle = task_bundle(knowledge);
     let result = if let Some(path) = result_file {
         match std::fs::read_to_string(path) {
@@ -1431,9 +1462,14 @@ fn task_complete(
     ExitCode::SUCCESS
 }
 
-fn task_drop(task_id: &str, knowledge: Option<&str>) -> ExitCode {
+fn task_drop(task_id: &str, by: &str, force: bool, knowledge: Option<&str>) -> ExitCode {
     let bundle = task_bundle(knowledge);
-    let outcome = match tasks::drop_task(&bundle, task_id) {
+    let by = if by.is_empty() {
+        default_task_identity()
+    } else {
+        by.to_string()
+    };
+    let outcome = match tasks::drop_task(&bundle, task_id, Some(by.as_str()), force) {
         Ok(outcome) => outcome,
         Err(e) => return cli_err(&e.0),
     };
@@ -2857,7 +2893,9 @@ fn settle_polish(outcome: skillgen::PolishOutcome, target: &Path) {
                 outcome.task_id
             );
             println!("  cairn task list --kind skill-polish --status pending");
-            println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
+            println!(
+                "  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>"
+            );
             println!("Rerun 'cairn skill generate --polish' after completion to apply the result.");
         }
         "pending" => {
@@ -3262,6 +3300,7 @@ fn memory_record(
         confidence,
         None,
         stance,
+        None,
     ) {
         Ok(result) => result,
         Err(e) => return cli_err(&e.0),
@@ -3272,6 +3311,9 @@ fn memory_record(
         float_text(result.score),
         result.tier
     );
+    if let Some(dup) = &result.possible_duplicate {
+        println!("possible duplicate: {dup} (pass --supersedes to replace it)");
+    }
     ExitCode::SUCCESS
 }
 
@@ -3979,6 +4021,7 @@ fn memory_capture(
             None,
             confidence,
             Some(session_id),
+            None,
             None,
         ) {
             Ok(result) => {
@@ -5174,7 +5217,9 @@ fn wiki_generate(
         summary.push_str(&format!("{skipped_total} page(s) already up to date. "));
         println!("{summary}Any agent with the cairn skill can process them:");
         println!("  cairn task list --kind wiki-page --status pending");
-        println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
+        println!(
+            "  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>"
+        );
         return ExitCode::SUCCESS;
     }
     let mut total = 0usize;
@@ -5330,6 +5375,9 @@ fn wiki_retry(repo: Option<&str>, knowledge: Option<&str>) -> ExitCode {
         println!("No wiki pages planned; run 'cairn wiki generate --llm' first.");
         return ExitCode::SUCCESS;
     }
+    for key in &outcome.capped {
+        println!("Not retried (queue_attempts cap reached): {key} — stays failed");
+    }
     if outcome.requeued.is_empty() {
         println!("Nothing to retry: no failed wiki pages.");
         return ExitCode::SUCCESS;
@@ -5352,7 +5400,9 @@ fn wiki_retry(repo: Option<&str>, knowledge: Option<&str>) -> ExitCode {
         outcome.requeued.len()
     );
     println!("  cairn task list --kind wiki-page --status pending");
-    println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
+    println!(
+        "  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>"
+    );
     ExitCode::SUCCESS
 }
 
@@ -5446,7 +5496,7 @@ fn wiki_enrich(
     if let Err(PipelineError::Manifest(msg)) = tools_wiki::load_manifest(&bundle) {
         return manifest_error_exit(&msg);
     }
-    let queued = match tools_wiki::queue_enrich_tasks(&bundle, repo, page_id) {
+    let queued = match tools_wiki::queue_enrich_tasks(&bundle, repo, page_id, false) {
         Ok(queued) => queued,
         Err(e) => return cli_err(&e.0),
     };
@@ -5473,7 +5523,9 @@ fn wiki_enrich(
         queued.len()
     );
     println!("  cairn task list --kind wiki-page-enrich --status pending");
-    println!("  cairn task claim <id> && cairn task complete <id> --result-file <path>");
+    println!(
+        "  cairn task claim <id> --as <your-id> && cairn task complete <id> --as <your-id> --result-file <path>"
+    );
     ExitCode::SUCCESS
 }
 

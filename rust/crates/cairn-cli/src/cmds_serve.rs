@@ -16,6 +16,7 @@ pub struct ServeForegroundArgs {
     pub read_only: Option<bool>,
     pub host: Option<String>,
     pub api_key: Option<String>,
+    pub allow_writes: bool,
     pub stateless: bool,
 }
 
@@ -23,6 +24,8 @@ pub struct ServeStartArgs {
     pub port: u16,
     pub host: String,
     pub api_key: Option<String>,
+    /// Allow write tools on a keyless daemon.
+    pub allow_writes: bool,
 }
 
 pub struct ServeStatusArgs {
@@ -113,6 +116,7 @@ pub fn run_foreground(args: ServeForegroundArgs) -> ExitCode {
         knowledge_path: store.knowledge,
         read_only: args.read_only.unwrap_or(false),
         api_key: cairn_daemon::auth::resolve_api_key(args.api_key.as_deref()),
+        allow_writes: args.allow_writes,
     };
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
@@ -124,8 +128,27 @@ pub fn run_foreground(args: ServeForegroundArgs) -> ExitCode {
     let served = runtime.block_on(async move {
         match serve_config(config, bind).await {
             Ok((_addr, handle)) => {
+                // Drain on stop signals: in-flight calls and bundle writes
+                // finish before exit. SIGTERM is the launchctl-unload signal
+                // (Unix); Windows serves stop via ctrl_c.
+                #[cfg(unix)]
+                {
+                    let sigterm = async {
+                        let mut sig = tokio::signal::unix::signal(
+                            tokio::signal::unix::SignalKind::terminate(),
+                        )
+                        .expect("SIGTERM handler");
+                        sig.recv().await;
+                    };
+                    tokio::select! {
+                        _ = tokio::signal::ctrl_c() => {}
+                        _ = sigterm => {}
+                    }
+                }
+                #[cfg(not(unix))]
                 let _ = tokio::signal::ctrl_c().await;
                 handle.stop();
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 true
             }
             Err(e) => {
@@ -149,6 +172,7 @@ pub fn run_start(args: ServeStartArgs) -> ExitCode {
         args.port,
         &args.host,
         api_key.as_deref(),
+        args.allow_writes,
         &lc::StoreBinding {
             workspace: store.workspace,
             db: store.db,
@@ -349,16 +373,39 @@ pub fn run_restart(args: ServeRestartArgs) -> ExitCode {
     // A failed stop must not leave the daemon down: start reuses a healthy
     // daemon or cycles a wedged one.
     let _ = run_stop();
-    run_start(ServeStartArgs {
+    run_start(restart_start_args(port, host))
+}
+
+/// Restart's start inputs: the resolved bind plus the client key
+/// (explicit > env > init-persisted) so a keyed daemon stays keyed.
+fn restart_start_args(port: u16, host: String) -> ServeStartArgs {
+    ServeStartArgs {
         port,
         host,
-        api_key: None,
-    })
+        api_key: cairn_daemon::auth::client_key(),
+        allow_writes: true,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restart_carries_the_client_key() {
+        // The env leg decides the row: a real init-persisted key under the
+        // ambient home must not make the keyless assertion flaky.
+        unsafe {
+            std::env::set_var("CAIRN_MCP_API_KEY", "restart-env-key");
+        }
+        let args = restart_start_args(9876, "127.0.0.1".to_string());
+        assert_eq!(args.port, 9876);
+        assert_eq!(args.host, "127.0.0.1");
+        assert_eq!(args.api_key.as_deref(), Some("restart-env-key"));
+        unsafe {
+            std::env::remove_var("CAIRN_MCP_API_KEY");
+        }
+    }
 
     fn inputs<'a>(
         loaded: bool,

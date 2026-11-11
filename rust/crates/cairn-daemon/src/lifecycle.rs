@@ -150,6 +150,7 @@ pub fn render_plist(
     knowledge_path: Option<&str>,
     read_only: bool,
     api_key: Option<&str>,
+    allow_writes: bool,
 ) -> LaunchdPlist {
     let mut env: Vec<(String, String)> = vec![(
         "PATH".to_string(),
@@ -186,6 +187,9 @@ pub fn render_plist(
     if read_only {
         args.push("--read-only".to_string());
         env.push(("CAIRN_READ_ONLY".to_string(), "1".to_string()));
+    }
+    if allow_writes {
+        args.push("--allow-writes".to_string());
     }
     let log = log_path().to_string_lossy().into_owned();
     LaunchdPlist {
@@ -895,6 +899,7 @@ fn spawn_daemonized(
     host: &str,
     store: &StoreBinding,
     api_key: Option<&str>,
+    allow_writes: bool,
 ) -> std::io::Result<u32> {
     let log_path = daemon_log_path();
     if let Some(parent) = log_path.parent() {
@@ -916,6 +921,9 @@ fn spawn_daemonized(
     if let Some(key) = api_key {
         cmd.env("CAIRN_MCP_API_KEY", key);
     }
+    if allow_writes {
+        cmd.arg("--allow-writes");
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;
@@ -935,6 +943,7 @@ fn ensure_running_launchd(
     port: u16,
     host: &str,
     api_key: Option<&str>,
+    allow_writes: bool,
     store: &StoreBinding,
 ) -> Result<(Option<u32>, String, bool), String> {
     if is_loaded() {
@@ -958,10 +967,13 @@ fn ensure_running_launchd(
         Some(&store.knowledge.to_string_lossy()),
         false,
         api_key,
+        allow_writes,
     );
     write_plist_file(&plist_path(), &plist).map_err(|e| e.to_string())?;
     load()?;
     if !wait_for_healthz(port, host) {
+        // KeepAlive would respawn a daemon that cannot serve: unload before erroring.
+        let _ = unload();
         return Err("daemon loaded but healthz not responding".to_string());
     }
     Ok((running_pid(), mcp_url(port, host), true))
@@ -971,6 +983,7 @@ fn ensure_running_daemonize(
     port: u16,
     host: &str,
     api_key: Option<&str>,
+    allow_writes: bool,
     store: &StoreBinding,
 ) -> Result<(Option<u32>, String, bool), String> {
     if healthz_responds(port, host) {
@@ -978,7 +991,7 @@ fn ensure_running_daemonize(
     }
     cycle_wedged_daemon(port, host, &store.db);
     sweep_strays(&store.db, true);
-    let pid = spawn_daemonized(&cg_bin(), port, host, store, api_key)
+    let pid = spawn_daemonized(&cg_bin(), port, host, store, api_key, allow_writes)
         .map_err(|e| format!("failed to start the daemon: {e}"))?;
     write_pidfile(pid);
     if !wait_for_healthz(port, host) {
@@ -987,22 +1000,43 @@ fn ensure_running_daemonize(
     Ok((Some(pid), mcp_url(port, host), true))
 }
 
+/// Refuse a keyless start on a non-loopback IP bind before any plist write;
+/// the server's bind guard would otherwise exit under KeepAlive and crash-loop.
+pub fn keyless_remote_bind_refused(host: &str, port: u16, api_key: Option<&str>) -> Option<String> {
+    if api_key.is_some() {
+        return None;
+    }
+    let Ok(bind) = format!("{host}:{port}").parse::<std::net::SocketAddr>() else {
+        return None;
+    };
+    if bind.ip().is_loopback() {
+        return None;
+    }
+    Some(format!(
+        "refusing to start a keyless daemon on non-loopback host '{host}': pass --api-key or set CAIRN_MCP_API_KEY"
+    ))
+}
+
 /// Bring up the shared HTTP daemon; Ok carries (pid, mcp_url, started).
 pub fn ensure_daemon_running(
     port: u16,
     host: &str,
     api_key: Option<&str>,
+    allow_writes: bool,
     store: &StoreBinding,
 ) -> Result<(Option<u32>, String, bool), String> {
+    if let Some(message) = keyless_remote_bind_refused(host, port, api_key) {
+        return Err(message);
+    }
     let _lock = lockfile_guard(
         &daemon_home().join("mcp-daemon.lock"),
         START_LOCK_TIMEOUT,
         Duration::from_millis(50),
     )?;
     if is_macos() {
-        ensure_running_launchd(port, host, api_key, store)
+        ensure_running_launchd(port, host, api_key, allow_writes, store)
     } else {
-        ensure_running_daemonize(port, host, api_key, store)
+        ensure_running_daemonize(port, host, api_key, allow_writes, store)
     }
 }
 
@@ -1059,5 +1093,23 @@ mod tests {
         } else {
             assert!(!is_cairn_binary_name(std::ffi::OsStr::new("cairn.exe")));
         }
+    }
+
+    #[test]
+    fn keyless_remote_bind_refusal_matrix() {
+        // Keyless + non-loopback IP bind: refused before any plist write.
+        let refused = keyless_remote_bind_refused("0.0.0.0", 9876, None);
+        let message = refused.expect("keyless non-loopback bind must be refused");
+        assert!(message.contains("non-loopback host '0.0.0.0'"), "{message}");
+        assert!(
+            keyless_remote_bind_refused("192.0.2.9", 9876, None).is_some(),
+            "any non-loopback IP is refused keyless"
+        );
+        // A key unlocks any bind; loopback stays keyless; hostnames defer to
+        // the server's own bind parse.
+        assert!(keyless_remote_bind_refused("0.0.0.0", 9876, Some("k")).is_none());
+        assert!(keyless_remote_bind_refused("127.0.0.1", 9876, None).is_none());
+        assert!(keyless_remote_bind_refused("::1", 9876, None).is_none());
+        assert!(keyless_remote_bind_refused("localhost", 9876, None).is_none());
     }
 }

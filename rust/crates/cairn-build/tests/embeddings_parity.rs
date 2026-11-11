@@ -5,9 +5,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use cairn_build::embeddings::{current_model, embed_all, embed_symbols};
+use cairn_build::incremental::{incremental_update, recorded_embed_debt};
 use cairn_query::tools_search::{self, floats_to_blob, hash_vec};
-use cairn_store::schema::open_initialized;
+use cairn_store::swap::StorePin;
 use cairn_store::vec0::{self, VecSource};
+use rusqlite::Connection;
 use serde_json::Value;
 
 fn golden_dir() -> PathBuf {
@@ -115,9 +117,17 @@ fn embed_reproduces_the_embed_golden() {
     let (dir, db, corpus) = stage("full");
 
     {
-        let conn = open_initialized(&db).expect("open store");
-        let summary =
-            embed_all(&conn, corpus.to_str().expect("ws"), 64, None, true, true).expect("embed");
+        let (conn, pin) = StorePin::open(&db).expect("open pinned store");
+        let summary = embed_all(
+            &conn,
+            corpus.to_str().expect("ws"),
+            64,
+            None,
+            true,
+            true,
+            &pin,
+        )
+        .expect("embed");
         assert_eq!(summary.model, model);
         assert_eq!(
             summary.embedded,
@@ -259,7 +269,7 @@ fn embed_limit_bounds_base_and_mv_passes() {
     let golden = load_golden();
     let total = golden["summary"]["total"].as_u64().unwrap() as usize;
     let (dir, db, corpus) = stage("limit");
-    let conn = open_initialized(&db).expect("open store");
+    let (conn, pin) = StorePin::open(&db).expect("open pinned store");
     let summary = embed_all(
         &conn,
         corpus.to_str().expect("ws"),
@@ -267,11 +277,16 @@ fn embed_limit_bounds_base_and_mv_passes() {
         Some(2),
         false,
         true,
+        &pin,
     )
     .expect("embed");
     assert_eq!(summary.embedded, 2);
     assert_eq!(summary.attempted, 2);
-    assert_eq!(summary.skipped, total - 2);
+    // skipped counts only the genuinely up-to-date rows; limit-cut rows are
+    // reported as their own counter.
+    assert_eq!(summary.limit_cut, total - 2);
+    assert_eq!(summary.skipped, 0);
+    assert_eq!(summary.total, total);
     assert_eq!(summary.reaped, 0, "reap skipped with reap_orphans=false");
     assert_eq!(summary.mv_embedded, Some(2));
     drop(conn);
@@ -296,8 +311,17 @@ fn embed_symbols_resyncs_the_vec0_row_in_place() {
         .to_string();
     let (dir, db, corpus) = stage("resync");
 
-    let conn = open_initialized(&db).expect("open store");
-    embed_all(&conn, corpus.to_str().expect("ws"), 64, None, true, true).expect("embed");
+    let (conn, pin) = StorePin::open(&db).expect("open pinned store");
+    embed_all(
+        &conn,
+        corpus.to_str().expect("ws"),
+        64,
+        None,
+        true,
+        true,
+        &pin,
+    )
+    .expect("embed");
     vec0::rebuild_index(&conn, &model, VecSource::Embeddings).expect("rebuild");
     let before: i64 = vec0::index_row_count(&conn, &model)
         .expect("count")
@@ -365,8 +389,7 @@ fn embed_symbols_resyncs_the_vec0_row_in_place() {
 /// builds reject the name on both legs.
 #[test]
 fn native_config_stamps_both_legs_identically() {
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = ENV_LOCK
+    let _guard = FILE_ENV_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let keys = ["CAIRN_EMBED_BACKEND", "FASTEMBED_CACHE_DIR", "HF_HOME"];
@@ -435,4 +458,130 @@ fn native_config_stamps_both_legs_identically() {
         }
     }
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn update_reembeds_or_reports_the_embed_debt() {
+    let (dir, db, corpus) = stage("reembed");
+    {
+        let (conn, pin) = StorePin::open(&db).expect("open pinned store");
+        embed_all(
+            &conn,
+            corpus.to_str().expect("ws"),
+            64,
+            None,
+            true,
+            true,
+            &pin,
+        )
+        .expect("embed");
+    }
+    let model = current_model().expect("model");
+
+    // Edit one source file's content so the drift detector reindexes it.
+    let alpha = corpus.join("alpha.py");
+    let mut text = fs::read_to_string(&alpha).expect("read alpha");
+    text.push_str("\n\ndef reembed_probe():\n    return 42\n");
+    fs::write(&alpha, text).expect("edit alpha");
+
+    let summary = incremental_update(
+        corpus.to_str().expect("ws"),
+        db.to_str().expect("db"),
+        None,
+        None,
+    )
+    .expect("update");
+    assert!(summary.files_reindexed > 0, "errors: {:?}", summary.errors);
+
+    // Hash backend: the dropped rows are not silently recreated — the debt is
+    // counted in the summary and recorded for doctor.
+    assert!(
+        summary.symbols_awaiting_embed > 0,
+        "dropped rows must be reported: {summary:?}"
+    );
+    let conn = Connection::open(&db).expect("reopen");
+    let alpha_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM embeddings e JOIN symbols s ON s.id = e.symbol_id \
+             JOIN files f ON f.id = s.file_id WHERE f.path = 'alpha.py' AND e.model = ?",
+            [&model],
+            |r| r.get(0),
+        )
+        .expect("count alpha rows");
+    assert_eq!(alpha_rows, 0, "the reindexed file's rows are gone");
+    let any_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM embeddings WHERE model = ?",
+            [&model],
+            |r| r.get(0),
+        )
+        .expect("count rows");
+    assert!(any_rows > 0, "untouched files keep their rows");
+    assert_eq!(
+        recorded_embed_debt(&conn),
+        summary.symbols_awaiting_embed,
+        "the debt event must carry the summary count"
+    );
+    drop(conn);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn full_build_carries_embeddings_across_the_swap() {
+    let (dir, db, corpus) = stage("carry");
+    let ws = corpus.to_str().expect("ws").to_string();
+    let dbp = db.to_str().expect("db").to_string();
+    cairn_build::builder::build_graph_with(&ws, &dbp, None, None, |_, _| Ok(())).expect("build 1");
+    {
+        let (conn, pin) = StorePin::open(&db).expect("open pinned store");
+        embed_all(&conn, &ws, 64, None, true, true, &pin).expect("embed");
+    }
+    let model = current_model().expect("model");
+    let conn = Connection::open(&db).expect("conn");
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM embeddings WHERE model = ?",
+            [&model],
+            |r| r.get(0),
+        )
+        .expect("count after embed");
+    assert!(n > 0, "fixture must embed");
+    drop(conn);
+
+    cairn_build::builder::build_graph_with(&ws, &dbp, None, None, |_, _| Ok(())).expect("build 2");
+
+    // The rebuilt store carries every row: count unchanged, nothing re-embedded.
+    let (conn, pin) = StorePin::open(&db).expect("open pinned store");
+    let n2: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM embeddings WHERE model = ?",
+            [&model],
+            |r| r.get(0),
+        )
+        .expect("count after rebuild");
+    assert_eq!(n2, n, "unchanged workspace: the rebuild re-embeds nothing");
+    let summary = embed_all(&conn, &ws, 64, None, true, true, &pin).expect("re-embed pass");
+    assert_eq!(
+        summary.embedded, 0,
+        "no row should be stale after the carry"
+    );
+    drop(conn);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+static FILE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn unknown_backend_names_error_instead_of_degrading() {
+    let _guard = FILE_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let saved = std::env::var("CAIRN_EMBED_BACKEND").ok();
+    unsafe { std::env::set_var("CAIRN_EMBED_BACKEND", "hysh") };
+    let err = current_model().expect_err("unknown name must error");
+    assert!(err.contains("unknown CAIRN_EMBED_BACKEND 'hysh'"), "{err}");
+    unsafe {
+        match saved {
+            Some(previous) => std::env::set_var("CAIRN_EMBED_BACKEND", previous),
+            None => std::env::remove_var("CAIRN_EMBED_BACKEND"),
+        }
+    }
 }

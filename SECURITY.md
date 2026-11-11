@@ -32,10 +32,21 @@ code** via tree-sitter. The following are in scope:
 - Parser denial-of-service: malformed/pathological source files causing memory
   exhaustion, infinite loops, or crashes during indexing.
 - `cairn serve` / MCP transport issues: unauthenticated endpoints, request
-  amplification, or crashes triggered by malicious tool input.
+  amplification, or crashes triggered by malicious tool input. Keyless
+  serving is confined to loopback binds: a non-loopback bind requires an API
+  key, enforced both at the bind and before any daemon start writes its
+  launch configuration. Write tools (`record_memory`, `knowledge_add`,
+  `knowledge_delete`, `wiki_generate`) additionally require a key or an
+  explicit `serve --allow-writes` — keyless loopback serves reads only.
+  The dashboard rejects any request whose Host header is not loopback (DNS
+  rebinding), and `/healthz` discloses the store directory only to
+  authenticated requesters (everyone else sees the file name and a `store_id`
+  identity hash).
 - Path traversal or arbitrary file read/write outside the indexed workspace.
 - Injection via `.knowledge/` markdown or graph data being rendered/executed
-  unsafely.
+  unsafely. Task-queue results (wiki/compass/catalog/memory) and their facts
+  are scrubbed of secret-shaped substrings before storage, so injected
+  credentials never reach `ask_compass` or the knowledge bundle.
 
 The Rust dependency tree (tree-sitter grammars, sqlite-vec, crypto and HTTP
 crates) is vendored/pinned and gated by cargo-deny. Treat

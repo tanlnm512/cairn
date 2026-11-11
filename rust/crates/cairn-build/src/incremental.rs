@@ -17,6 +17,10 @@ pub struct ReindexResult {
     pub reindexed: usize,
     pub deleted: usize,
     pub errors: Vec<String>,
+    /// Ids of the symbols inserted by the reindexed files (post-commit).
+    pub reindexed_symbol_ids: Vec<String>,
+    /// Model stamps of the embedding rows the delete legs removed.
+    pub dropped_embedding_models: Vec<String>,
 }
 
 /// Summary of one `incremental_update` pass.
@@ -26,6 +30,9 @@ pub struct UpdateSummary {
     pub files_reindexed: usize,
     pub files_deleted: usize,
     pub errors: Vec<String>,
+    /// Symbols whose embeddings the reindex dropped and that still lack a
+    /// current-model row (0 when a real backend re-embedded them).
+    pub symbols_awaiting_embed: usize,
 }
 
 /// Reindex absolute paths (edit, create, or delete) and repair the graph.
@@ -257,8 +264,19 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
                 }
                 let committed = tx.commit();
                 changed_target_names.extend(changed_names);
-                if let Err(e) = committed {
-                    result.errors.push(format!("{abs_path}: {e}"));
+                match committed {
+                    Ok(()) => {
+                        if let Some(new_fid) = &new_file_id
+                            && let Ok(mut stmt) =
+                                conn.prepare("SELECT id FROM symbols WHERE file_id = ?")
+                        {
+                            let rows = stmt.query_map([new_fid], |r| r.get::<_, String>(0));
+                            if let Ok(rows) = rows {
+                                result.reindexed_symbol_ids.extend(rows.flatten());
+                            }
+                        }
+                    }
+                    Err(e) => result.errors.push(format!("{abs_path}: {e}")),
                 }
             }
             Err(e) => {
@@ -318,8 +336,39 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
             result.errors.push(format!("vec0/{model}: {e}"));
         }
     }
+    result.dropped_embedding_models = doomed_vec_rows
+        .iter()
+        .map(|(model, _)| model.clone())
+        .collect();
+    if result.reindexed > 0 || result.deleted > 0 {
+        let _ = conn.execute(
+            "INSERT INTO closure_state (key, value) VALUES ('stale', '1') \
+             ON CONFLICT(key) DO UPDATE SET value = '1'",
+            [],
+        );
+    }
 
     result
+}
+
+/// Best-effort embed-debt event so doctor can report a fully dropped index.
+pub fn record_embed_debt(conn: &Connection, count: usize) {
+    let _ = conn.execute(
+        "INSERT INTO events (ts, name, session_id, attrs) VALUES (?, 'embed_debt', '', ?)",
+        params![crate::timefmt::now_iso(), count.to_string()],
+    );
+}
+
+/// The latest recorded embed-debt count; 0 when none or unreadable.
+pub fn recorded_embed_debt(conn: &Connection) -> usize {
+    conn.query_row(
+        "SELECT attrs FROM events WHERE name = 'embed_debt' ORDER BY id DESC LIMIT 1",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|s| s.trim().parse().ok())
+    .unwrap_or(0)
 }
 
 /// (model, rowid) of a file's embedding rows ahead of their delete.
@@ -456,32 +505,44 @@ pub fn incremental_update(
             .map(|r| r.repo_id)
             .collect(),
     };
-    // The connection must be opened under the lock: one opened earlier keeps
-    // writing to the replaced file across a full-build swap.
-    let _lock = cairn_store::swap::build_lock(Path::new(db_path))?;
-    let mut conn = cairn_store::schema::open_initialized(Path::new(db_path))
-        .map_err(|e| format!("open store {db_path}: {e}"))?;
+    let (_lock, mut conn) = cairn_store::swap::open_locked(Path::new(db_path))?;
     let mut all_paths: Vec<String> = Vec::new();
     let mut detect_errors: Vec<String> = Vec::new();
     for r in &repos {
         let repo_path = scanner::resolve_repo_path(workspace, r)?;
         match changed_source_files(workspace, &repo_path, Some(&conn), diff_ref) {
-            Ok(changed) => all_paths.extend(
-                changed
-                    .into_iter()
-                    .map(|rel| repo_path.join(rel).to_string_lossy().into_owned()),
-            ),
+            Ok(changed) => {
+                for warning in &changed.warnings {
+                    detect_errors.push(format!("detect/{r}: {warning}"));
+                }
+                all_paths.extend(
+                    changed
+                        .paths
+                        .into_iter()
+                        .map(|rel| repo_path.join(rel).to_string_lossy().into_owned()),
+                );
+            }
             Err(e) => detect_errors.push(format!("detect/{r}: {e}")),
         }
     }
 
     let result = reindex_paths(&mut conn, workspace, &all_paths);
     detect_errors.extend(result.errors);
+    let symbols_awaiting_embed = crate::embeddings::reembed_updated_symbols(
+        &conn,
+        workspace,
+        &result.reindexed_symbol_ids,
+        &result.dropped_embedding_models,
+    );
+    if symbols_awaiting_embed > 0 {
+        record_embed_debt(&conn, symbols_awaiting_embed);
+    }
     Ok(UpdateSummary {
         repos_scanned: repos.len(),
         files_reindexed: result.reindexed,
         files_deleted: result.deleted,
         errors: detect_errors,
+        symbols_awaiting_embed,
     })
 }
 
@@ -492,27 +553,44 @@ pub(crate) fn changed_source_files(
     repo_path: &Path,
     conn: Option<&Connection>,
     diff_ref: Option<&str>,
-) -> Result<Vec<String>, String> {
+) -> Result<ChangedFiles, String> {
     if let Some(diff_ref) = diff_ref {
         let paths = git_paths(&["diff", "-z", "--name-only", diff_ref], repo_path)?;
-        return Ok(filter_source_paths(paths));
+        return Ok(with_warnings(filter_source_paths(paths), Vec::new()));
     }
 
     let mut paths: Vec<String> = Vec::new();
-    let listed = git_paths(&["diff", "-z", "--name-only", "HEAD"], repo_path).and_then(|diff| {
-        paths.extend(diff);
-        git_paths(
-            &["ls-files", "-z", "--others", "--exclude-standard"],
-            repo_path,
-        )
-    });
-    if let Ok(untracked) = listed {
-        paths.extend(untracked);
+    let mut warnings: Vec<String> = Vec::new();
+    // Each git leg degrades independently: a repo with no commits fails
+    // `diff HEAD` but its untracked files still scan.
+    match git_paths(&["diff", "-z", "--name-only", "HEAD"], repo_path) {
+        Ok(diff) => paths.extend(diff),
+        Err(e) => warnings.push(format!("git diff HEAD: {e}")),
+    }
+    match git_paths(
+        &["ls-files", "-z", "--others", "--exclude-standard"],
+        repo_path,
+    ) {
+        Ok(untracked) => paths.extend(untracked),
+        Err(e) => warnings.push(format!("git ls-files --others: {e}")),
     }
     if let Some(conn) = conn {
         paths.extend(changed_via_stat(workspace, repo_path, conn));
     }
-    Ok(filter_source_paths(paths))
+    let filtered = filter_source_paths(paths);
+    warnings.retain(|w| !w.is_empty());
+    Ok(with_warnings(filtered, warnings))
+}
+
+/// Paths plus detection warnings (empty when every leg ran clean).
+#[derive(Debug, Clone, Default)]
+pub struct ChangedFiles {
+    pub paths: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+fn with_warnings(paths: Vec<String>, warnings: Vec<String>) -> ChangedFiles {
+    ChangedFiles { paths, warnings }
 }
 
 fn filter_source_paths(paths: Vec<String>) -> Vec<String> {
@@ -636,7 +714,7 @@ fn changed_via_stat(workspace: &str, repo_path: &Path, conn: &Connection) -> Vec
     }
 
     // New source files not yet in the table.
-    if let Ok((files, _)) = scanner::iter_files_and_skips(&repo_name, repo_path) {
+    if let Ok((files, _)) = scanner::iter_files_walk(&repo_name, repo_path) {
         for f in files {
             if !existing_rel.contains(&f.rel_path) {
                 changed.push(f.rel_path);
@@ -644,6 +722,41 @@ fn changed_via_stat(workspace: &str, repo_path: &Path, conn: &Connection) -> Vec
         }
     }
     changed
+}
+
+/// Freshness-probe debounce window: back-to-back reads within it skip the walk.
+pub const PROBE_DEBOUNCE_SECS: f64 = 2.0;
+
+/// True when the last probe stamp `<db>.probe` is fresher than the debounce
+/// window AND newer than the store file — a replaced store never debounces.
+pub fn probe_recent(db: &Path) -> bool {
+    let stamp = probe_stamp_path(db);
+    let Ok(meta) = std::fs::metadata(&stamp) else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        return false;
+    };
+    if let Ok(db_modified) = std::fs::metadata(db).and_then(|m| m.modified())
+        && db_modified > modified
+    {
+        return false;
+    }
+    modified
+        .elapsed()
+        .map(|e| e.as_secs_f64() < PROBE_DEBOUNCE_SECS)
+        .unwrap_or(true)
+}
+
+/// Best-effort refresh of the probe stamp; a failed write only disables debounce.
+pub fn mark_probe(db: &Path) {
+    let _ = std::fs::write(probe_stamp_path(db), b"");
+}
+
+fn probe_stamp_path(db: &Path) -> PathBuf {
+    let mut raw = db.as_os_str().to_os_string();
+    raw.push(".probe");
+    PathBuf::from(raw)
 }
 
 /// Files-table-vs-disk drift across every repo (the freshness probe).
@@ -678,7 +791,7 @@ pub fn detect_changed(conn: &Connection, workspace: &str) -> Vec<String> {
 
         // New source files not yet in the DB; compare on both stored forms.
         let existing: HashSet<&str> = file_rows.iter().map(|r| r.path.as_str()).collect();
-        if let Ok((files, _)) = scanner::iter_files_and_skips(repo_name, &record.path) {
+        if let Ok((files, _)) = scanner::iter_files_walk(repo_name, &record.path) {
             for f in files {
                 if !existing.contains(f.rel_path.as_str()) && !existing.contains(f.path.as_str()) {
                     changed.push(f.path);
