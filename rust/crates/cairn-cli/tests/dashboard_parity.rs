@@ -684,3 +684,41 @@ async fn settings_save_surfaces_the_config_parse_reason() {
         "the malformed file is never overwritten"
     );
 }
+
+#[tokio::test]
+async fn foreign_host_headers_are_rejected_on_every_route() {
+    let serving = Serving::new("hostguard");
+    // A loopback Host passes; a DNS-rebinding Host is 403 on GET and POST.
+    for uri in ["/", "/graph", "/settings"] {
+        let ok = serving
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("host", "127.0.0.1:8765")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("loopback response");
+        assert_ne!(ok.status(), StatusCode::FORBIDDEN, "{uri} must pass");
+        let rebinding = serving
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("host", "evil.example.com:8765")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("rebinding response");
+        assert_eq!(
+            rebinding.status(),
+            StatusCode::FORBIDDEN,
+            "{uri} must reject a foreign Host"
+        );
+    }
+}

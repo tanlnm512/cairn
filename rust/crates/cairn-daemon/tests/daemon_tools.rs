@@ -69,12 +69,19 @@ async fn keyless_daemon_serves_tools_and_healthz() {
         .expect("serve");
 
     let served_db = db.to_string_lossy().into_owned();
-    // Healthz parity: the reuse guard's `db` field names the served store.
+    // Healthz parity: unauthenticated peers see the store file name and the
+    // store_id identity (never the directory); the version names the binary.
     let health = http_request(addr, "GET", "/healthz", &[], None).expect("healthz");
     assert_eq!(health.status(), 200);
     let payload: Value = serde_json::from_str(&health.body).expect("healthz json");
     assert_eq!(payload["status"], "ok");
-    assert_eq!(payload["db"], served_db);
+    assert_eq!(payload["db"], "nav-store.kg");
+    assert!(!payload["db"].as_str().unwrap_or("").contains(&served_db[..served_db.len() - "nav-store.kg".len()]));
+    assert!(
+        payload["store_id"].as_str().is_some_and(|s| s.starts_with("StoreId(")),
+        "store_id identity: {payload}"
+    );
+    assert_eq!(payload["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(payload["impl"], "rust");
     assert!(payload["uptime_seconds"].is_number());
 
@@ -144,6 +151,7 @@ async fn bearer_gate_admits_healthz_and_keyed_clients_only() {
     let temp = seeded_store("auth-gate");
     let db = temp.0.join("nav-store.kg");
     let config = DaemonConfig {
+        allow_writes: true,
         db_path: db.clone(),
         workspace: repo_root(),
         knowledge_path: temp.0.join(".knowledge"),

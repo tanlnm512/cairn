@@ -273,6 +273,9 @@ pub enum ServeGroup {
         /// Bearer API key required by the HTTP daemon on non-loopback binds.
         #[arg(long = "api-key")]
         api_key: Option<String>,
+        /// Allow the write tools on a keyless daemon.
+        #[arg(long = "allow-writes")]
+        allow_writes: bool,
     },
     /// Stop the daemon.
     Stop,
@@ -418,6 +421,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
                     read_only: read_only_state,
                     host: Some(host),
                     api_key,
+                    allow_writes: false,
                     stateless,
                 }),
                 Some(ServeGroup::Run {
@@ -446,6 +450,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
                         },
                         host: Some(host),
                         api_key,
+                        allow_writes: false,
                         stateless: false,
                     })
                 }
@@ -453,10 +458,12 @@ pub fn run(command: SystemCommand) -> ExitCode {
                     port,
                     host,
                     api_key,
+                    allow_writes,
                 }) => cmds_serve::run_start(cmds_serve::ServeStartArgs {
                     port,
                     host,
                     api_key,
+                    allow_writes,
                 }),
                 Some(ServeGroup::Stop) => cmds_serve::run_stop(),
                 Some(ServeGroup::Status { port, host }) => {

@@ -64,6 +64,15 @@ next start.
 Operators who need Host-header protection on a network bind should bind a
 specific host or front a reverse proxy.
 
+## Version handshake and single store
+
+`/healthz` carries the serving binary's `version` and a `store_id` identity
+hash of the store file. `cairn connect` reuses a healthy daemon only when the
+store identity matches its own and the version is current — a daemon running
+an old binary is stopped and replaced on the next connect. One daemon serves
+exactly one store: a daemon bound to a foreign workspace's store is refused,
+never adopted.
+
 ## Health probe
 
 `GET /healthz` requires no auth and returns HTTP 200 with a bounded JSON

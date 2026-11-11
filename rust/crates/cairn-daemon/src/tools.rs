@@ -23,12 +23,32 @@ pub struct ToolCtx {
     pub workspace: PathBuf,
     pub knowledge_path: PathBuf,
     pub read_only: bool,
+    /// Write tools allowed: a key is configured or --allow-writes was passed.
+    writes_allowed: bool,
     /// `mcp-<pid>-<date>` when writable; None gates recall's read-through refs write.
     pub session_id: Option<String>,
     conns: Arc<ConnPool>,
 }
 
 impl ToolCtx {
+    /// Set the write gate: keyed daemons always allow writes; a keyless
+    /// daemon needs the explicit --allow-writes opt-in.
+    pub fn with_write_gate(mut self, keyed: bool, allow_writes: bool) -> Self {
+        self.writes_allowed = keyed || allow_writes;
+        self
+    }
+
+    fn refuse_writes(&self) -> Option<String> {
+        if !self.writes_allowed {
+            return Some(
+                "write tools require an API key or `serve --allow-writes`; this daemon is \
+                 keyless and read-gated"
+                    .to_string(),
+            );
+        }
+        None
+    }
+
     pub fn new(db_path: &Path, workspace: &Path, knowledge_path: &Path, read_only: bool) -> Self {
         let session_id = if read_only {
             None
@@ -44,6 +64,7 @@ impl ToolCtx {
             workspace: workspace.to_path_buf(),
             knowledge_path: knowledge_path.to_path_buf(),
             read_only,
+            writes_allowed: false,
             session_id,
             conns: Arc::new(ConnPool::new(db_path, read_only)),
         }
@@ -694,6 +715,9 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.0))
         }
         "record_memory" => {
+            if let Some(msg) = ctx.refuse_writes() {
+                return Err(ToolFailure(msg));
+            }
             let conn = ctx.conn()?;
             km::record_memory(
                 &conn,
@@ -713,7 +737,11 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             )
             .map_err(|e| ToolFailure(e.0))
         }
-        "knowledge_add" => km::knowledge_add(
+        "knowledge_add" => {
+            if let Some(msg) = ctx.refuse_writes() {
+                return Err(ToolFailure(msg));
+            }
+            km::knowledge_add(
             &ctx.bundle(),
             arg_str(args, "title")
                 .ok_or_else(|| ToolFailure("knowledge_add requires a string title".into()))?,
@@ -728,7 +756,8 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             arg_str_or(args, "epic_link", ""),
             ctx.read_only,
         )
-        .map_err(|e| ToolFailure(e.0)),
+        .map_err(|e| ToolFailure(e.0))
+        }
         "knowledge_search" => {
             let conn = ctx.read_conn()?;
             km::knowledge_search(
@@ -742,6 +771,9 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.0))
         }
         "knowledge_delete" => {
+            if let Some(msg) = ctx.refuse_writes() {
+                return Err(ToolFailure(msg));
+            }
             let conn = ctx.conn()?;
             km::knowledge_delete(
                 &conn,
@@ -815,6 +847,9 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
         )
         .map_err(ToolFailure),
         "wiki_generate" => {
+            if let Some(msg) = ctx.refuse_writes() {
+                return Err(ToolFailure(msg));
+            }
             let conn = ctx.read_conn()?;
             wiki::wiki_generate_text(
                 &conn,

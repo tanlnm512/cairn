@@ -150,6 +150,7 @@ pub fn render_plist(
     knowledge_path: Option<&str>,
     read_only: bool,
     api_key: Option<&str>,
+    allow_writes: bool,
 ) -> LaunchdPlist {
     let mut env: Vec<(String, String)> = vec![(
         "PATH".to_string(),
@@ -186,6 +187,9 @@ pub fn render_plist(
     if read_only {
         args.push("--read-only".to_string());
         env.push(("CAIRN_READ_ONLY".to_string(), "1".to_string()));
+    }
+    if allow_writes {
+        args.push("--allow-writes".to_string());
     }
     let log = log_path().to_string_lossy().into_owned();
     LaunchdPlist {
@@ -895,6 +899,7 @@ fn spawn_daemonized(
     host: &str,
     store: &StoreBinding,
     api_key: Option<&str>,
+    allow_writes: bool,
 ) -> std::io::Result<u32> {
     let log_path = daemon_log_path();
     if let Some(parent) = log_path.parent() {
@@ -916,6 +921,9 @@ fn spawn_daemonized(
     if let Some(key) = api_key {
         cmd.env("CAIRN_MCP_API_KEY", key);
     }
+    if allow_writes {
+        cmd.arg("--allow-writes");
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;
@@ -935,6 +943,7 @@ fn ensure_running_launchd(
     port: u16,
     host: &str,
     api_key: Option<&str>,
+    allow_writes: bool,
     store: &StoreBinding,
 ) -> Result<(Option<u32>, String, bool), String> {
     if is_loaded() {
@@ -958,6 +967,7 @@ fn ensure_running_launchd(
         Some(&store.knowledge.to_string_lossy()),
         false,
         api_key,
+        allow_writes,
     );
     write_plist_file(&plist_path(), &plist).map_err(|e| e.to_string())?;
     load()?;
@@ -973,6 +983,7 @@ fn ensure_running_daemonize(
     port: u16,
     host: &str,
     api_key: Option<&str>,
+    allow_writes: bool,
     store: &StoreBinding,
 ) -> Result<(Option<u32>, String, bool), String> {
     if healthz_responds(port, host) {
@@ -980,7 +991,7 @@ fn ensure_running_daemonize(
     }
     cycle_wedged_daemon(port, host, &store.db);
     sweep_strays(&store.db, true);
-    let pid = spawn_daemonized(&cg_bin(), port, host, store, api_key)
+    let pid = spawn_daemonized(&cg_bin(), port, host, store, api_key, allow_writes)
         .map_err(|e| format!("failed to start the daemon: {e}"))?;
     write_pidfile(pid);
     if !wait_for_healthz(port, host) {
@@ -1015,6 +1026,7 @@ pub fn ensure_daemon_running(
     port: u16,
     host: &str,
     api_key: Option<&str>,
+    allow_writes: bool,
     store: &StoreBinding,
 ) -> Result<(Option<u32>, String, bool), String> {
     if let Some(message) = keyless_remote_bind_refused(host, port, api_key) {
@@ -1026,9 +1038,9 @@ pub fn ensure_daemon_running(
         Duration::from_millis(50),
     )?;
     if is_macos() {
-        ensure_running_launchd(port, host, api_key, store)
+        ensure_running_launchd(port, host, api_key, allow_writes, store)
     } else {
-        ensure_running_daemonize(port, host, api_key, store)
+        ensure_running_daemonize(port, host, api_key, allow_writes, store)
     }
 }
 

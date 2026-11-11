@@ -35,6 +35,8 @@ pub struct DaemonConfig {
     pub read_only: bool,
     /// Pre-resolved bearer key (explicit > env); None serves keyless loopback.
     pub api_key: Option<String>,
+    /// Explicit opt-in for write tools on a keyless daemon (D3).
+    pub allow_writes: bool,
 }
 
 impl DaemonConfig {
@@ -51,6 +53,7 @@ impl DaemonConfig {
             knowledge_path: knowledge,
             read_only: false,
             api_key: auth::resolve_api_key(None),
+            allow_writes: false,
         }
     }
 }
@@ -230,11 +233,12 @@ pub async fn serve_config(
         &config.workspace,
         &config.knowledge_path,
         config.read_only,
+    )
+    .with_write_gate(config.api_key.is_some(), config.allow_writes);
+    let healthz_state = Arc::new(
+        healthz::HealthzState::new(config.db_path.to_string_lossy(), config.read_only)
+            .with_api_key(config.api_key.clone()),
     );
-    let healthz_state = Arc::new(healthz::HealthzState::new(
-        config.db_path.to_string_lossy(),
-        config.read_only,
-    ));
     let service: StreamableHttpService<CairnServer, LocalSessionManager> =
         StreamableHttpService::new(
             move || Ok(CairnServer { ctx: ctx.clone() }),

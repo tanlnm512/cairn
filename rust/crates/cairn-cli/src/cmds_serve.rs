@@ -16,6 +16,7 @@ pub struct ServeForegroundArgs {
     pub read_only: Option<bool>,
     pub host: Option<String>,
     pub api_key: Option<String>,
+    pub allow_writes: bool,
     pub stateless: bool,
 }
 
@@ -23,6 +24,8 @@ pub struct ServeStartArgs {
     pub port: u16,
     pub host: String,
     pub api_key: Option<String>,
+    /// Allow write tools on a keyless daemon.
+    pub allow_writes: bool,
 }
 
 pub struct ServeStatusArgs {
@@ -113,6 +116,7 @@ pub fn run_foreground(args: ServeForegroundArgs) -> ExitCode {
         knowledge_path: store.knowledge,
         read_only: args.read_only.unwrap_or(false),
         api_key: cairn_daemon::auth::resolve_api_key(args.api_key.as_deref()),
+        allow_writes: args.allow_writes,
     };
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
@@ -149,6 +153,7 @@ pub fn run_start(args: ServeStartArgs) -> ExitCode {
         args.port,
         &args.host,
         api_key.as_deref(),
+        args.allow_writes,
         &lc::StoreBinding {
             workspace: store.workspace,
             db: store.db,
@@ -359,6 +364,7 @@ fn restart_start_args(port: u16, host: String) -> ServeStartArgs {
         port,
         host,
         api_key: cairn_daemon::auth::client_key(),
+        allow_writes: true,
     }
 }
 

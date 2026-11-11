@@ -74,7 +74,7 @@ pub fn remove_sidecars(db: &Path) {
 }
 
 /// Store file identity: (dev, inode) on Unix; (len, mtime_ns) elsewhere.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct StoreId(u64, u64);
 
 /// The identity of the store file at `path`; None when it cannot be read.
