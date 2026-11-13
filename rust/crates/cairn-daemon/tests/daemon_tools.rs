@@ -55,6 +55,13 @@ fn catalog_registers_the_ported_surface() {
             "{}: properties object missing",
             tool.name
         );
+        assert!(
+            tool.output_schema
+                .as_ref()
+                .is_some_and(|s| s.get("required").is_some()),
+            "{}: result envelope output schema missing",
+            tool.name
+        );
     }
 }
 
@@ -218,6 +225,38 @@ async fn bearer_gate_admits_healthz_and_keyed_clients_only() {
     let tools = client.list_tools();
     assert_eq!(tools.len(), EXPECTED_TOOLS.len());
 
+    handle.stop();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn keyless_daemon_refuses_every_write_tool() {
+    let temp = seeded_store("write-gate");
+    let mut config = DaemonConfig::for_store(temp.0.join("nav-store.kg"));
+    config.api_key = None;
+    config.allow_writes = false;
+    let (addr, handle) = server::serve_config(config, "127.0.0.1:0".parse().unwrap())
+        .await
+        .expect("serve");
+
+    let mut client = McpClient::connect(addr).expect("connect");
+    client.initialize();
+    for tool in [
+        "record_memory",
+        "knowledge_add",
+        "knowledge_delete",
+        "knowledge_status",
+        "generate_flow",
+        "wiki_generate",
+    ] {
+        let message = client.call_tool(tool, json!({}));
+        let result = &message["result"];
+        assert_eq!(result["isError"], true, "{tool} must be refused: {result}");
+        let text = result["content"][0]["text"].as_str().expect("text content");
+        assert!(
+            text.contains("allow-writes"),
+            "{tool} must name the write gate: {text}"
+        );
+    }
     handle.stop();
 }
 

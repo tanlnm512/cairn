@@ -157,14 +157,21 @@ impl ServerHandler for CairnServer {
     }
 }
 
-/// Hard cap on one tool result, cut at the last newline with a fixed notice
-/// (the `@instrument` decorator's central truncation contract).
-/// Returns the (possibly truncated) text and `(from_chars, to_chars)` when cut.
+/// Hard cap on one tool result: cut at the last newline under the cap with a
+/// fixed notice. Returns the (possibly truncated) text and `(from_chars, to_chars)` when cut.
 fn truncate_result(name: &str, result: String) -> (String, Option<(usize, usize)>) {
-    let cap: usize = std::env::var("CAIRN_MAX_RESULT_CHARS")
+    truncate_result_at(name, result, result_char_cap())
+}
+
+/// CAIRN_MAX_RESULT_CHARS override of the 60k-per-result cap.
+fn result_char_cap() -> usize {
+    std::env::var("CAIRN_MAX_RESULT_CHARS")
         .ok()
         .and_then(|raw| raw.trim().parse().ok())
-        .unwrap_or(60_000);
+        .unwrap_or(60_000)
+}
+
+fn truncate_result_at(name: &str, result: String, cap: usize) -> (String, Option<(usize, usize)>) {
     let char_count = result.chars().count();
     if char_count <= cap {
         return (result, None);
@@ -295,4 +302,43 @@ pub async fn serve(store_path: PathBuf) -> io::Result<(SocketAddr, ServeHandle)>
         "127.0.0.1:0".parse().expect("bind addr"),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_result_passthrough_under_the_cap() {
+        let body = "a".repeat(10);
+        let (text, cut) = truncate_result_at("t", body.clone(), 10);
+        assert_eq!(text, body);
+        assert_eq!(cut, None);
+    }
+
+    #[test]
+    fn truncate_result_cuts_at_the_last_newline_and_reports_sizes() {
+        let body = format!("{}\nfinal-line", "line\n".repeat(10));
+        let body_chars = body.chars().count();
+        let (text, cut) = truncate_result_at("get_callers", body, 20);
+        let (from, to) = cut.expect("over-cap body reports sizes");
+        assert!(text.contains("line\n"));
+        assert!(text.contains("[TRUNCATED: 'get_callers'"));
+        assert!(
+            !text.contains("final-line"),
+            "tail beyond the cap is dropped"
+        );
+        assert_eq!(to, text.chars().count());
+        assert_eq!(from, body_chars);
+    }
+
+    #[test]
+    fn truncate_result_without_a_newline_keeps_the_cap_prefix() {
+        let body = "x".repeat(50);
+        let (text, cut) = truncate_result_at("t", body, 10);
+        let (_, to) = cut.expect("sizes reported");
+        assert!(text.starts_with(&"x".repeat(10)));
+        assert!(text.contains("\n\n[TRUNCATED:"));
+        assert_eq!(to, text.chars().count());
+    }
 }

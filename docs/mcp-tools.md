@@ -17,16 +17,20 @@ agent session loads it.
   start|stop|status|restart` manage it, `run` for the foreground daemon).
   Read-write by default; `--read-only` opens the store read-only so the
   write tools fail instead of landing. Bearer-key auth gates every path but
-  `GET /healthz` on non-loopback binds (see [deployment.md](deployment.md)).
+  `GET /healthz` (a key is mandatory on non-loopback binds; see
+  [deployment.md](deployment.md)).
 - Every tool call is instrumented into `tool_metrics` (duration, status,
   payload sizes) — this is what `/history` and `/tokens` on the dashboard show.
-- Each call opens its own SQLite connection — read-only for the pure read
-  tools, writable for the ones that may land rows (`explore`'s memory credit,
-  `recall_memory`'s read-through refs, `record_memory`, `knowledge_delete`,
-  `generate_flow`). `knowledge_add` and `knowledge_status` write the OKF
-  bundle directly (no SQLite connection) and are refused in read-only mode;
+- Calls run over pooled SQLite connections — the read-only flavor for the
+  pure read tools, the writable flavor for the ones that may land rows
+  (`explore`'s memory credit, `recall_memory`'s read-through refs,
+  `record_memory`, `knowledge_delete`, `generate_flow`). `knowledge_add` and
+  `knowledge_status` write the OKF bundle directly (no SQLite connection);
   `wiki_generate` reads over a read-only connection and writes pages to the
-  bundle.
+  bundle. Every mutating tool (`record_memory`, `knowledge_add`,
+  `knowledge_delete`, `knowledge_status`, `generate_flow`, `wiki_generate`)
+  is refused in read-only mode and, on a keyless daemon, needs an API key or
+  `serve --allow-writes`.
 
 ## The 26 tools by layer
 
@@ -61,7 +65,7 @@ agent session loads it.
 | `get_compass` | 25–35 line navigation guide for a module |
 | `search_knowledge` | search OKF documents (`type_filter="Wiki"` for architecture docs) |
 | `trace_flow` | execution-order trace through the graph |
-| `generate_flow` | write a flow compass (the one non-read-only tool here) |
+| `generate_flow` | write a flow compass (+ optional workflow doc). Write tool: needs an API key or `serve --allow-writes` |
 
 **L4 — Memory** (`tools_km.rs`, 2):
 
@@ -77,12 +81,12 @@ Lifecycle verbs are CLI-only: `cairn memory <verb>` where verb is
 
 | Tool | Purpose |
 |---|---|
-| `knowledge_add` | add a document concept |
+| `knowledge_add` | add a document concept. Write tool: needs an API key or `serve --allow-writes` |
 | `knowledge_search` | semantic search over knowledge docs |
-| `knowledge_delete` | remove a document (destructive) |
-| `knowledge_status` | set/query document status |
+| `knowledge_delete` | remove a document (destructive). Write tool: needs an API key or `serve --allow-writes` |
+| `knowledge_status` | set/query document status. Write tool: needs an API key or `serve --allow-writes` |
 | `trace_workflow` | workflow-definition execution trace |
-| `wiki_generate` | plan a repo's wiki and queue its page-writing tasks (`repo`, `pages`, `refine_catalog`, `diagrams`, `force`) |
+| `wiki_generate` | plan a repo's wiki and queue its page-writing tasks (`repo`, `pages`, `refine_catalog`, `diagrams`, `force`). Write tool: needs an API key or `serve --allow-writes` |
 
 ## Wiki generation
 
