@@ -203,6 +203,9 @@ pub enum SystemCommand {
         /// Bearer API key required by the HTTP daemon on non-loopback binds.
         #[arg(long = "api-key")]
         api_key: Option<String>,
+        /// Allow the write tools on a keyless daemon.
+        #[arg(long = "allow-writes")]
+        allow_writes: bool,
         /// Run the HTTP daemon without session affinity.
         #[arg(long)]
         stateless: bool,
@@ -258,6 +261,9 @@ pub enum ServeGroup {
         /// Bearer API key required by the HTTP daemon on non-loopback binds.
         #[arg(long = "api-key")]
         api_key: Option<String>,
+        /// Allow the write tools on a keyless daemon.
+        #[arg(long = "allow-writes")]
+        allow_writes: bool,
         /// Run the HTTP daemon without session affinity.
         #[arg(long)]
         stateless: bool,
@@ -401,6 +407,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
             transport,
             host,
             api_key,
+            allow_writes,
             stateless,
             command,
         } => {
@@ -421,7 +428,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
                     read_only: read_only_state,
                     host: Some(host),
                     api_key,
-                    allow_writes: false,
+                    allow_writes,
                     stateless,
                 }),
                 Some(ServeGroup::Run {
@@ -432,6 +439,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
                     transport,
                     host,
                     api_key,
+                    allow_writes,
                     stateless,
                 }) => {
                     if transport.is_some() {
@@ -450,7 +458,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
                         },
                         host: Some(host),
                         api_key,
-                        allow_writes: false,
+                        allow_writes,
                         stateless: false,
                     })
                 }
@@ -529,12 +537,43 @@ fn run_hooks_uninstall(workspace: Option<String>) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use clap::{Command, Subcommand};
+    use clap::{Command, Parser, Subcommand};
 
     use super::*;
 
     fn tree<T: Subcommand>() -> Command {
         T::augment_subcommands(Command::new("cairn"))
+    }
+
+    #[test]
+    fn serve_run_parses_the_lifecycle_daemon_argv() {
+        for (read_only, allow_writes) in [(false, true), (true, false)] {
+            let plist = cairn_daemon::lifecycle::render_plist(
+                "cairn",
+                9876,
+                "127.0.0.1",
+                None,
+                None,
+                None,
+                read_only,
+                None,
+                allow_writes,
+            );
+            let cli = crate::cli::Cli::try_parse_from(plist.program_arguments.clone())
+                .expect("lifecycle-composed serve argv must parse");
+            let crate::cli::Command::System(SystemCommand::Serve {
+                command:
+                    Some(ServeGroup::Run {
+                        allow_writes: parsed,
+                        ..
+                    }),
+                ..
+            }) = cli.command
+            else {
+                panic!("expected serve run");
+            };
+            assert_eq!(parsed, allow_writes);
+        }
     }
 
     #[test]

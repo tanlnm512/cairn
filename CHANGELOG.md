@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `cairn serve run` (and bare `cairn serve`) accept `--allow-writes` again: the write-gating change taught `serve start` and the daemon lifecycle the flag but left `serve run`'s parser without it, so every `cairn connect` / `serve start --allow-writes` wrote a launchd plist whose daemon exited at arg-parse ("unexpected argument '--allow-writes'") and crash-looped under KeepAlive. The lifecycle-composed argv is now pinned by parsing it through the real CLI parser in tests.
 - The MCP write gate now covers every mutating tool: `knowledge_status` and `generate_flow` slipped past the keyless-daemon refusal (a keyless daemon without `serve --allow-writes` refused `record_memory` while still executing the other two's OKF-bundle writes — status transitions and flow/workflow docs). All six write tools are refused identically, pinned by a daemon test that sweeps them on a keyless daemon.
 - MCP tool-schema hygiene: `get_callers`/`get_callees` no longer advertise a nonexistent `structured` argument, `record_memory` declares its optional `stance` (`preferred|tentative|contested`) in the schema, and every tool now declares the `{"result": string}` output schema its structured content already carries. The per-result truncation cap is unit-pinned (under-cap passthrough, last-newline cut, no-newline cut).
 
