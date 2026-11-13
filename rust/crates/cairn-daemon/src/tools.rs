@@ -187,12 +187,25 @@ fn text_tool(
         );
     }
     let mut tool = Tool::new(name.to_string(), description.to_string(), schema);
+    tool.output_schema = Some(Arc::new(result_output_schema()));
     let mut annotations = ToolAnnotations::default();
     annotations.read_only_hint = Some(read_only);
     annotations.destructive_hint = Some(destructive);
     annotations.idempotent_hint = Some(idempotent);
     tool.annotations = Some(annotations);
     tool
+}
+
+/// The `{"result": string}` envelope every tool returns as structured content.
+fn result_output_schema() -> serde_json::Map<String, Value> {
+    let Value::Object(schema) = serde_json::json!({
+        "type": "object",
+        "properties": { "result": { "type": "string" } },
+        "required": ["result"],
+    }) else {
+        unreachable!("output schema is an object literal");
+    };
+    schema
 }
 
 fn prop(name: &str, type_: &str, description: &str) -> Value {
@@ -247,7 +260,7 @@ pub fn catalog() -> Vec<Tool> {
         ),
         text_tool(
             "get_callers",
-            "Who calls this symbol? Precise by default, auto-retrying fuzzy when precise is empty; structured=True returns typed rows.",
+            "Who calls this symbol? Precise by default, auto-retrying fuzzy when precise is empty.",
             serde_json::json!({
                 "name": prop("name", "string", "Symbol name."),
                 "fuzzy": prop_default("fuzzy", "boolean", "Include unresolved name-match candidates.", Value::Bool(false)),
@@ -260,7 +273,7 @@ pub fn catalog() -> Vec<Tool> {
         ),
         text_tool(
             "get_callees",
-            "What does this function/symbol call? Precise by default, fuzzy adds unresolved edges; structured=True returns typed rows.",
+            "What does this function/symbol call? Precise by default, fuzzy adds unresolved edges.",
             serde_json::json!({
                 "name": prop("name", "string", "Symbol name."),
                 "fuzzy": prop_default("fuzzy", "boolean", "Include unresolved name-match candidates.", Value::Bool(false)),
@@ -375,6 +388,7 @@ pub fn catalog() -> Vec<Tool> {
                 "body": prop("body", "string", "The learning; Why:/How to apply: lines for decisions/mistakes/workarounds."),
                 "resource": prop_default("resource", "string", "Optional resource path or URL.", Value::String(String::new())),
                 "confidence": prop_default("confidence", "number", "0.0-1.0.", serde_json::json!(0.7)),
+                "stance": { "type": "string", "description": "Optional stance: preferred | tentative | contested.", "nullable": true },
                 "supersedes": prop_default("supersedes", "string", "Concept id of the latest memory this one replaces; a same-title match alone never supersedes.", Value::String(String::new())),
             }),
             &["type", "title", "body"],
@@ -786,16 +800,22 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             )
             .map_err(|e| ToolFailure(e.0))
         }
-        "knowledge_status" => km::knowledge_status(
-            &ctx.bundle(),
-            arg_str(args, "doc_id")
-                .ok_or_else(|| ToolFailure("knowledge_status requires a string doc_id".into()))?,
-            arg_str(args, "new_status").ok_or_else(|| {
-                ToolFailure("knowledge_status requires a string new_status".into())
-            })?,
-            ctx.read_only,
-        )
-        .map_err(|e| ToolFailure(e.0)),
+        "knowledge_status" => {
+            if let Some(msg) = ctx.refuse_writes() {
+                return Err(ToolFailure(msg));
+            }
+            km::knowledge_status(
+                &ctx.bundle(),
+                arg_str(args, "doc_id").ok_or_else(|| {
+                    ToolFailure("knowledge_status requires a string doc_id".into())
+                })?,
+                arg_str(args, "new_status").ok_or_else(|| {
+                    ToolFailure("knowledge_status requires a string new_status".into())
+                })?,
+                ctx.read_only,
+            )
+            .map_err(|e| ToolFailure(e.0))
+        }
         "trace_workflow" => km::trace_workflow_tool(
             &ctx.bundle(),
             arg_str(args, "ref")
@@ -829,6 +849,9 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             .map_err(|e| ToolFailure(e.0))
         }
         "generate_flow" => {
+            if let Some(msg) = ctx.refuse_writes() {
+                return Err(ToolFailure(msg));
+            }
             let conn = ctx.conn()?;
             km::generate_flow_tool(
                 &ctx.bundle(),
