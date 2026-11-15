@@ -145,9 +145,14 @@ pub fn mcp_config_json() -> Value {
     json!({ "mcpServers": { "cairn": url_entry("url") } })
 }
 
-/// ZCode MCP entry nested under mcp.servers.<name>.
+/// ZCode MCP entry nested under mcp.servers.<name>, pinned to the legacy protocol era.
 pub fn zcode_mcp_config_json() -> Value {
-    json!({ "mcp": { "servers": { "cairn": url_entry("url") } } })
+    let mut entry = url_entry("url");
+    if let Some(obj) = entry.as_object_mut() {
+        // Constraint: zcode's 2026-07-28-era codec cannot send its own pool ping probe.
+        obj.insert("protocolVersion".into(), Value::String("legacy".into()));
+    }
+    json!({ "mcp": { "servers": { "cairn": entry } } })
 }
 
 /// AGY MCP entry (serverUrl surface) pointing at the daemon URL.
@@ -773,7 +778,8 @@ pub fn already_installed(
         };
         if !new.contains_key("command") {
             return cur.get("url") == new.get("url")
-                && headers_equal(cur.get("headers"), new.get("headers"));
+                && headers_equal(cur.get("headers"), new.get("headers"))
+                && cur.get("protocolVersion") == new.get("protocolVersion");
         }
         if joined_command(cur).trim() != joined_command(new).trim() {
             return false;
@@ -3121,6 +3127,10 @@ mod tests {
             merged["mcp"]["servers"]["cairn"]["url"],
             daemon_mcp_url_for_test()
         );
+        assert_eq!(
+            merged["mcp"]["servers"]["cairn"]["protocolVersion"],
+            json!("legacy")
+        );
         assert!(merged["mcp"]["servers"]["user"]["command"] == json!("u"));
         // The stale top-level cairn-stamped mcpServers entry is dropped; user servers stay.
         assert!(merged.get("mcpServers").is_none());
@@ -3128,6 +3138,28 @@ mod tests {
 
     fn daemon_mcp_url_for_test() -> Value {
         Value::String(daemon_mcp_url())
+    }
+
+    #[test]
+    fn zcode_already_installed_treats_pin_drift_as_not_installed() {
+        let _env = crate::test_env::EnvScope::new("agent-install");
+        let new = zcode_mcp_config_json().as_object().expect("obj").clone();
+        let unpinned = json!({
+            "mcp": {"servers": {"cairn": {"type": "http", "url": daemon_mcp_url()}}},
+        });
+        let pinned = json!({
+            "mcp": {"servers": {"cairn": {"type": "http", "url": daemon_mcp_url(), "protocolVersion": "legacy"}}},
+        });
+        assert!(!already_installed(
+            unpinned.as_object().expect("obj"),
+            &new,
+            "zcode"
+        ));
+        assert!(already_installed(
+            pinned.as_object().expect("obj"),
+            &new,
+            "zcode"
+        ));
     }
 
     #[test]
