@@ -80,6 +80,10 @@ fn fixture(tag: &str) -> Fixture {
                    ('explore', 'sess2', {now}.0 - 600.0, 40.0, 'ok', 1200, 3000, '{{}}', 'cli');
         INSERT INTO build_runs (kind, started_at, duration_s)
             VALUES ('full', '2026-10-01T00:00:00Z', 3.2);
+        INSERT INTO events (ts, name, session_id, attrs)
+            VALUES ('{now}.0', 'empty_result', 'sess1', '{{"tool": "semantic_search", "query_kind": "semantic_search"}}'),
+                   ('{now}.0', 'truncate_result', 'sess1', '{{"tool": "explore", "from_chars": 90000, "to_chars": 40000}}'),
+                   ('{now}.0', 'semantic_backend', 'sess1', '{{"tool": "semantic_search", "backend": "hash"}}');
         INSERT INTO communities (id, label, size) VALUES (1, 'core', 2);
         INSERT INTO symbol_communities (community_id, symbol_id, structural_degree)
             VALUES (1, 's1', 3), (1, 's3', 1);
@@ -268,8 +272,14 @@ async fn core_routes_serve_the_shell() {
     let (status, body, _) = server.get("/health").await;
     assert_eq!(status, StatusCode::OK, "health");
     assert!(
-        body.contains("tool_metrics"),
-        "health shows retention knobs"
+        body.contains("tool_metrics") && body.contains("Retrieval quality"),
+        "health shows retention knobs and retrieval quality: {body}"
+    );
+    assert!(
+        body.contains("1 empty")
+            && body.contains("1 truncated")
+            && body.contains("empty rate 100.0%"),
+        "health quality counters missing: {body}"
     );
 
     let (status, _, _) = server.get("/definitely-not-a-route").await;
@@ -398,9 +408,28 @@ async fn history_tokens_chains_routes_parity() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Estimation mode: heuristic"), "{body}");
 
-    let (status, body, _) = server.get("/tokens.csv").await;
+    let (status, body, _) = server.get("/tokens?source=mcp").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.starts_with("tool_name,"), "{body}");
+    assert!(
+        body.contains("search_symbols") && !body.contains(">explore<"),
+        "source=mcp filter: {body}"
+    );
+
+    let (status, body, _) = server.get("/tokens?source=cli").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains("explore") && !body.contains(">search_symbols<"),
+        "source=cli filter: {body}"
+    );
+
+    let (status, body, _) = server.get("/tokens.csv?source=mcp").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.starts_with("tool_name,")
+            && body.contains("search_symbols")
+            && !body.contains("explore"),
+        "tokens.csv source=mcp filter: {body}"
+    );
 
     let (status, body, _) = server.get("/chains").await;
     assert_eq!(status, StatusCode::OK);

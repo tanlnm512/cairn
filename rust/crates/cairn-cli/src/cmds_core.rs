@@ -102,11 +102,32 @@ pub enum DataflowCommand {
     Lookup(DataflowLookupArgs),
 }
 
+static CLI_RESP_CHARS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Accumulate stdout characters emitted by the active CLI command.
+pub(crate) fn add_cli_resp_chars(n: usize) {
+    CLI_RESP_CHARS.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+macro_rules! println {
+    () => {{
+        add_cli_resp_chars(1);
+        std::println!();
+    }};
+    ($($arg:tt)*) => {{
+        let line = format!($($arg)*);
+        add_cli_resp_chars(line.chars().count() + 1);
+        std::println!("{line}");
+    }};
+}
+
 /// Run a core command and record CLI telemetry for query subcommands.
 pub fn run(command: CoreCommand) -> ExitCode {
     let metric = cli_metric_meta(&command);
+    CLI_RESP_CHARS.store(0, std::sync::atomic::Ordering::Relaxed);
     let started = Instant::now();
     let code = dispatch_core(command);
+    let resp_chars = CLI_RESP_CHARS.swap(0, std::sync::atomic::Ordering::Relaxed);
     if let Some((db, tool_name, args_summary)) = metric {
         let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
         let status = if code == ExitCode::SUCCESS {
@@ -114,7 +135,14 @@ pub fn run(command: CoreCommand) -> ExitCode {
         } else {
             "error"
         };
-        record_cli_metric(&db, tool_name, &args_summary, duration_ms, status);
+        record_cli_metric(
+            &db,
+            tool_name,
+            &args_summary,
+            duration_ms,
+            status,
+            resp_chars,
+        );
     }
     code
 }
@@ -200,6 +228,7 @@ fn record_cli_metric(
     args_summary: &str,
     duration_ms: f64,
     status: &str,
+    resp_chars: usize,
 ) {
     let telemetry_off =
         std::env::var("CAIRN_TELEMETRY").is_ok_and(|v| v.trim().eq_ignore_ascii_case("off"));
@@ -226,7 +255,7 @@ fn record_cli_metric(
         "INSERT INTO tool_metrics \
          (tool_name, session_id, invoked_at, duration_ms, status, error_message, \
           req_chars, resp_chars, args_summary, source) \
-         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, 0, ?7, 'cli')",
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, 'cli')",
         rusqlite::params![
             tool_name,
             session_id,
@@ -234,6 +263,7 @@ fn record_cli_metric(
             duration_ms,
             status,
             req_chars,
+            resp_chars as i64,
             args_summary
         ],
     );
@@ -294,24 +324,25 @@ mod cli_metrics_tests {
 
         {
             let _env = EnvRestore::set("CAIRN_TELEMETRY", None);
-            record_cli_metric(db.to_str().unwrap(), "def", "foo", 12.5, "ok");
+            record_cli_metric(db.to_str().unwrap(), "def", "foo", 12.5, "ok", 48);
         }
 
         let ro = cairn_store::conn::open_read_only(&db).expect("reopen ro");
-        let (source, tool, count): (String, String, i64) = ro
+        let (source, tool, resp_chars, count): (String, String, i64, i64) = ro
             .query_row(
-                "SELECT source, tool_name, COUNT(*) FROM tool_metrics GROUP BY source, tool_name",
+                "SELECT source, tool_name, resp_chars, COUNT(*) FROM tool_metrics GROUP BY source, tool_name",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .expect("query row");
         assert_eq!(source, "cli");
         assert_eq!(tool, "def");
+        assert_eq!(resp_chars, 48);
         assert_eq!(count, 1);
 
         {
             let _env = EnvRestore::set("CAIRN_TELEMETRY", Some("off"));
-            record_cli_metric(db.to_str().unwrap(), "callers", "bar", 3.0, "ok");
+            record_cli_metric(db.to_str().unwrap(), "callers", "bar", 3.0, "ok", 10);
         }
         let total: i64 = ro
             .query_row("SELECT COUNT(*) FROM tool_metrics", [], |r| r.get(0))
@@ -319,7 +350,7 @@ mod cli_metrics_tests {
         assert_eq!(total, 1, "CAIRN_TELEMETRY=off must suppress writes");
 
         let missing = dir.join("missing.db");
-        record_cli_metric(missing.to_str().unwrap(), "def", "x", 1.0, "ok");
+        record_cli_metric(missing.to_str().unwrap(), "def", "x", 1.0, "ok", 5);
         assert!(!missing.exists(), "missing DB must not be created");
         let _ = std::fs::remove_dir_all(&dir);
     }

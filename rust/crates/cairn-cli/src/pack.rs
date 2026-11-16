@@ -736,9 +736,13 @@ pub fn run(args: PackArgs) -> ExitCode {
             dropped_map.insert(cls.clone(), Value::from(*count as i64));
         }
         object.insert("dropped".into(), Value::Object(dropped_map));
-        println!("{}", json_compat::dumps(&Value::Object(object)));
+        let json_out = json_compat::dumps(&Value::Object(object));
+        crate::cmds_core::add_cli_resp_chars(json_out.chars().count() + 1);
+        println!("{json_out}");
         return ExitCode::SUCCESS;
     }
-    print!("{}", render_pack(&result));
+    let rendered = render_pack(&result);
+    crate::cmds_core::add_cli_resp_chars(rendered.chars().count());
+    print!("{rendered}");
     ExitCode::SUCCESS
 }

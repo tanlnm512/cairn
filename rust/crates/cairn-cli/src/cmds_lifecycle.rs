@@ -548,7 +548,7 @@ fn attr_value(raw: &str, key: &str) -> Option<String> {
     }
 }
 
-fn gather_quality(conn: &Connection) -> Value {
+pub(crate) fn gather_quality(conn: &Connection) -> Value {
     let empty_by_kind = attr_counts(conn, "empty_result", "query_kind");
     let empty_semantic = empty_by_kind
         .get("semantic_search")

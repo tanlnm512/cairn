@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_filters.html" as forms with context %}
 {% block title %}Tokens — Cairn Dashboard{% endblock %}
 {% block content %}
 <section class="panel">
@@ -7,6 +8,9 @@
     Estimated context tokens per tool, ranked by total — the most
     context-expensive tool first.
   </p>
+  {{ forms.form_open('/tokens', {'window': window}, hx={'target': '#refresh-region', 'trigger': 'input changed delay:300ms'}, form_id='tokens-filters') }}
+  {{ forms.field('text', 'source', 'Source', source) }}
+  {{ forms.form_close() }}
   {% include "tokens_region.html" %}
 </section>
 {% endblock %}

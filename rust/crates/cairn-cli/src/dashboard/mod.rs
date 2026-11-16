@@ -813,6 +813,7 @@ fn history_export_rows(state: &AppState, params: &Params) -> Result<ExportRows, 
 }
 
 fn tokens_export_rows(state: &AppState, params: &Params) -> Result<ExportRows, Box<Response>> {
+    let source = params.str_or("source").trim().to_string();
     let (window, since) = data::resolve_window(params.get("window"), now_secs());
     let Ok(selection) = resolve_selection(state, Some(params), None) else {
         return Err(Box::new(selection_missing_response(
@@ -824,17 +825,21 @@ fn tokens_export_rows(state: &AppState, params: &Params) -> Result<ExportRows, B
             selection.db.as_deref().unwrap_or(""),
         )));
     };
-    let rows = data::get_tool_tokens(&conn, since)["entries"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let rows =
+        data::get_tool_tokens_filtered(&conn, since, non_empty(&source).as_deref())["entries"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
     drop(conn);
     Ok((
         rows,
-        vec![(
-            "window".into(),
-            if window == "all" { None } else { Some(window) },
-        )],
+        vec![
+            ("source".into(), non_empty(&source)),
+            (
+                "window".into(),
+                if window == "all" { None } else { Some(window) },
+            ),
+        ],
     ))
 }
 
@@ -955,6 +960,7 @@ async fn history_json(State(state): State<AppState>, uri: Uri) -> Response {
 
 async fn tokens(State(state): State<AppState>, uri: Uri, headers: HeaderMap) -> Response {
     let params = Params::parse(uri.query().unwrap_or(""));
+    let source = params.str_or("source").trim().to_string();
     let (window, since) = data::resolve_window(params.get("window"), now_secs());
     let Ok(selection) = resolve_selection(&state, Some(&params), None) else {
         return selection_missing_response(params.str_or("store").as_str());
@@ -962,7 +968,7 @@ async fn tokens(State(state): State<AppState>, uri: Uri, headers: HeaderMap) -> 
     let Ok(conn) = open_selected(&selection) else {
         return selection_missing_response(selection.db.as_deref().unwrap_or(""));
     };
-    let tools = data::get_tool_tokens(&conn, since);
+    let tools = data::get_tool_tokens_filtered(&conn, since, non_empty(&source).as_deref());
     drop(conn);
     let context = json!({
         "tools": tools["entries"],
@@ -971,6 +977,7 @@ async fn tokens(State(state): State<AppState>, uri: Uri, headers: HeaderMap) -> 
             "calibrated": tools["calibrated"],
             "chars_per_token": tools["chars_per_token"],
         },
+        "source": source,
         "window": window,
         "store_key": selection.store_key,
     });
