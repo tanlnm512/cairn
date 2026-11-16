@@ -117,8 +117,8 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix`/`refactor`/`perf`
    cargo xtask bump
    ```
    This moves the Cargo workspace version (`Cargo.toml`
-   `[workspace.package]`) and the workspace entries in `Cargo.lock`
-   together, commits as
+   `[workspace.package]`), the workspace entries in `Cargo.lock`, and the PyPI
+   manifest (`pyproject.toml` `[project]`) together, commits as
    `bump: version A → B`, and tags `vB`; it refuses a dirty tree.
    Tag only from a tree whose workspace version already equals `vB` —
    `release-rust.yml` derives the release from the tag name.
@@ -148,16 +148,21 @@ optional `(scope)`. Keep doing that. `feat` → MINOR, `fix`/`refactor`/`perf`
    ```sh
    git push origin v$version
    ```
-   `.github/workflows/release.yml` cuts the GitHub Release from the
-   `[X.Y.Z]` CHANGELOG section; `release-rust.yml` (below) builds and
-   attaches the binary tarballs.
+   `.github/workflows/release.yml` builds and publishes the `cairn-intel` bin
+   wheels + sdist to PyPI (via Trusted Publishing) and cuts the GitHub Release
+   from the `[X.Y.Z]` CHANGELOG section; `release-rust.yml` builds and attaches
+   the binary tarballs.
    Watch it:
    `gh run watch $(gh run list --workflow=release.yml -L1 -q '.[0].databaseId')`.
 
 ### Notes
-- **Rust distribution channel** (`.github/workflows/release-rust.yml`, same
-  `v*` tag): tarballs + checksums attach to the GitHub Release, which is what
-  `cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli` downloads.
+- **PyPI distribution channel** (`.github/workflows/release.yml`, `v*` tag):
+  `PyO3/maturin-action` builds `bindings = "bin"` wheels (`cairn-intel`) and an
+  sdist, then publishes to PyPI via OIDC Trusted Publishing (`pypi` environment).
+- **Binary tarball & binstall channel** (`.github/workflows/release-rust.yml`,
+  same `v*` tag): tarballs + checksums attach to the GitHub Release, which is
+  what `scripts/install.sh --release` and
+  `cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli` download.
   There is no crates.io publish: the `cairn-cli` name there belongs to an
   unrelated project.
 - **Manual CHANGELOG section for a release**: `awk` extracts a version's

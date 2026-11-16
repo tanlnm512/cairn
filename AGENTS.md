@@ -252,9 +252,9 @@ graph/compass/memory; `search_knowledge(query, type_filter="Wiki")` queries page
 
 ## CLI Fallback (if MCP tools are unavailable)
 
-Every install channel runs the same `cairn` engine binary — `cargo binstall`,
-`cargo install`, or a release tarball. It serves this fallback against the
-workspace store directly:
+Every install channel runs the same `cairn` engine binary — PyPI (`cairn-intel`),
+the release installer (`scripts/install.sh`), `cargo binstall`, `cargo install`,
+or a release tarball. It serves this fallback against the workspace store directly:
 
 - `cairn def <symbol>` -- find definition
 - `cairn callers <symbol>` / `cairn callees <symbol>` -- who calls this / what it calls

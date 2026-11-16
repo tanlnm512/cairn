@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.2] - 2026-11-16
+
+### Added
+- Standalone release installer (`scripts/install.sh`) supporting `curl -LsSf https://raw.githubusercontent.com/tanlnm512/cairn/main/scripts/install.sh | sh`, `--release`, and `--version`: resolves the GitHub Release tarball for the host OS/architecture, verifies its `.sha256` checksum, and installs `cairn` into `~/.local/bin` (while keeping `--source` / direct local checkout runs on `cargo install --locked`).
+- PyPI bin-wheel distribution (`cairn-intel`) via `pyproject.toml` (`[tool.maturin] bindings = "bin"`), `scripts/wheel-smoke.sh`, and `.github/workflows/release.yml` (`wheels`, `sdist`, and Trusted Publishing `publish-pypi` jobs, plus a `build-wheel` canary in `ci.yml` and version sync in `cargo xtask bump`).
+
 ## [0.25.1] - 2026-11-16
 
 ### Added

@@ -45,29 +45,35 @@ path.
 
 **1. Install the CLI**
 
-Every channel ships the same engine binary. Both commands need a Rust
-toolchain ([rustup.rs](https://rustup.rs)); `cargo binstall` also needs
-[cargo-binstall](https://github.com/cargo-bins/cargo-binstall):
+Every channel ships the same static `cairn` binary:
+
+**Prebuilt installer (no Python or Rust required):**
 
 ```bash
-# prebuilt installer for cargo-binstall
-curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-# or: cargo install cargo-binstall
+curl -LsSf https://raw.githubusercontent.com/tanlnm512/cairn/main/scripts/install.sh | sh
 ```
 
-Then install cairn:
+**PyPI (`uv` / `pipx` / `pip`):**
+
+```bash
+uv tool install cairn-intel    # or: pipx install cairn-intel
+```
+
+**Cargo (requires a [Rust toolchain](https://rustup.rs)):**
 
 ```bash
 cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli  # prebuilt binary
 cargo install --git https://github.com/tanlnm512/cairn cairn-cli   # build from source
 ```
 
-Always pass `--git`: the `cairn-cli` crate on crates.io is an unrelated
-project. Release tarballs (aarch64 / x86_64 on macOS and Linux, musl-static on
-Linux) are on the [releases page](https://github.com/tanlnm512/cairn/releases),
-and `cargo install --path rust/crates/cairn-cli` builds from a clone. Release
-tags populate the tarballs that `cargo binstall` downloads; `docx` and PDF
-conversion run natively in the engine. Upgrade by re-running the same command.
+Always pass `--git` with Cargo: the `cairn-cli` crate on crates.io is an
+unrelated project. Release tarballs (`aarch64` / `x86_64` on macOS and Linux
+musl-static, `x86_64` on Windows) are on the
+[releases page](https://github.com/tanlnm512/cairn/releases), and
+`./scripts/install.sh` (or `cargo install --path rust/crates/cairn-cli`) builds
+from a local checkout. `docx` and PDF conversion run natively in the engine.
+Upgrade by re-running your install command (`uv tool upgrade cairn-intel`,
+`pipx upgrade cairn-intel`, or re-running the installer).
 
 **2. Wire up your agent(s)**
 
