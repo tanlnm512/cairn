@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "cairn-intel"
-version = "0.25.2"
+version = "0.25.3"
 description = "Local codebase intelligence system: structural graph + compass + wiki + agent memory"
 readme = "README.md"
 license = "MIT"
