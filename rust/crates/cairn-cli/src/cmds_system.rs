@@ -178,6 +178,12 @@ pub enum SystemCommand {
     },
     /// Print the installed cairn version.
     Version,
+    /// Detect how this binary was installed and upgrade it to the latest release.
+    Upgrade {
+        /// Only print the installed and latest versions.
+        #[arg(long)]
+        check: bool,
+    },
     /// Hook management: git hooks, and the agent hook entrypoints.
     Hooks {
         #[command(subcommand)]
@@ -378,6 +384,9 @@ pub fn run(command: SystemCommand) -> ExitCode {
             yes,
         }),
         SystemCommand::Version => cmds_lifecycle::run_version(),
+        SystemCommand::Upgrade { check } => {
+            cmds_lifecycle::run_upgrade(cmds_lifecycle::UpgradeArgs { check })
+        }
         SystemCommand::Connect { port, host, impl_ } => {
             cmds_connect::run(cmds_connect::ConnectArgs { port, host, impl_ })
         }

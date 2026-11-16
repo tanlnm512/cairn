@@ -107,6 +107,7 @@ const SECTIONS: &[(&str, &[&str])] = &[
             "install-agents",
             "uninstall-agents",
             "uninstall",
+            "upgrade",
             "version",
         ],
     ),
