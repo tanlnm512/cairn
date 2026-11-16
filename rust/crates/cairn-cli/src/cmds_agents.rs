@@ -1,14 +1,15 @@
 //! `install-agents` / `uninstall-agents` CLI flow.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, IsTerminal, Write as _};
 use std::path::Path;
 use std::process::ExitCode;
 
 use cairn_daemon::lifecycle as lc;
 
-use crate::agent_install;
+use crate::agent_install::{self, Detection};
 use crate::display;
+use crate::picker::{self, PickOneOutcome, PickOutcome, PickerItem};
 
 pub struct InstallAgentsArgs {
     pub clients: Vec<String>,
@@ -22,7 +23,7 @@ pub struct InstallAgentsArgs {
 
 pub struct UninstallAgentsArgs {
     pub clients: Vec<String>,
-    pub scope: String,
+    pub scope: Option<String>,
     pub workspace: Option<String>,
 }
 
@@ -34,15 +35,22 @@ fn client_choices() -> Vec<String> {
         .collect()
 }
 
-/// Install-agents: wire cairn into AI coding clients; prompts unless --client/--yes.
-pub fn run_install(args: InstallAgentsArgs) -> ExitCode {
-    for client in &args.clients {
+fn validate_clients(clients: &[String]) -> bool {
+    for client in clients {
         if !client_choices().contains(client) {
             display::error(&format!(
                 "Invalid value \"{client}\" for \"--client <CLIENTS>\": invalid selection"
             ));
-            return ExitCode::FAILURE;
+            return false;
         }
+    }
+    true
+}
+
+/// Install-agents: wire cairn into AI coding clients; prompts unless --client/--yes.
+pub fn run_install(args: InstallAgentsArgs) -> ExitCode {
+    if !validate_clients(&args.clients) {
+        return ExitCode::FAILURE;
     }
     let ws = crate::store_paths::resolve_workspace(args.workspace.as_deref().map(Path::new));
     let detections = agent_install::detect_clients(&ws);
@@ -64,15 +72,13 @@ pub fn run_install(args: InstallAgentsArgs) -> ExitCode {
     }
     println!();
 
+    let interactive = !args.yes && std::io::stdin().is_terminal();
     let mut scope = args.scope.clone();
     let target_clients: Option<Vec<String>> = if !args.clients.is_empty() {
         Some(args.clients.clone())
     } else {
-        let detected: Vec<&str> = detections
-            .iter()
-            .filter(|d| d.detected)
-            .map(|d| d.client)
-            .collect();
+        let detected_rows: Vec<&Detection> = detections.iter().filter(|d| d.detected).collect();
+        let detected: Vec<&str> = detected_rows.iter().map(|d| d.client).collect();
         let not_yet: Vec<String> = detected
             .iter()
             .filter(|c| !installed_map.get(**c).copied().unwrap_or(false))
@@ -83,19 +89,19 @@ pub fn run_install(args: InstallAgentsArgs) -> ExitCode {
             println!("No clients detected. Use --client <name> or --client all to force.");
             return ExitCode::SUCCESS;
         }
-        if not_yet.is_empty() {
-            println!("All detected clients already have cairn installed.");
-            println!("Use --force to overwrite, or --client <name> to target a specific one.");
-            return ExitCode::SUCCESS;
-        }
-        if args.yes || !std::io::stdin().is_terminal() {
+        if !interactive {
+            if not_yet.is_empty() {
+                println!("All detected clients already have cairn installed.");
+                println!("Use --force to overwrite, or --client <name> to target a specific one.");
+                return ExitCode::SUCCESS;
+            }
             println!(
                 "Installing for: {} (detected, not yet installed)",
                 not_yet.join(", ")
             );
             Some(not_yet)
         } else {
-            match prompt_clients(&detected, &not_yet) {
+            match prompt_clients(&detected_rows, &installed_map, &not_yet) {
                 PromptOutcome::Selected(list) => Some(list),
                 PromptOutcome::Empty => {
                     println!("Nothing selected. Use --client <name> to target a specific client.");
@@ -109,29 +115,39 @@ pub fn run_install(args: InstallAgentsArgs) -> ExitCode {
         }
     };
 
-    // Interactive scope prompt only when --scope wasn't passed.
-    if target_clients.is_some()
-        && args.clients.is_empty()
-        && scope.is_none()
-        && std::io::stdin().is_terminal()
-        && !args.yes
-    {
+    if target_clients.is_some() && args.clients.is_empty() && scope.is_none() && interactive {
         match prompt_scope() {
             Some(s) => scope = Some(s),
             None => {
-                println!("\nAborted.");
+                println!("Aborted.");
                 return ExitCode::SUCCESS;
             }
         }
     }
     let scope = scope.unwrap_or_else(|| "workspace".to_string());
 
-    let include_git = args.git_hooks;
+    let mut force = args.force;
+    let mut include_git = args.git_hooks;
+    if let Some(targets) = &target_clients
+        && args.clients.is_empty()
+        && interactive
+        && !args.force
+        && !args.git_hooks
+    {
+        let any_installed = targets
+            .iter()
+            .any(|c| installed_map.get(c).copied().unwrap_or(false));
+        if !prompt_install_options(&mut force, &mut include_git, any_installed) {
+            println!("Aborted.");
+            return ExitCode::SUCCESS;
+        }
+    }
+
     println!("Scope: {scope}");
     let Ok(report) = agent_install::install(
         &ws,
         target_clients.as_deref(),
-        args.force,
+        force,
         args.dry_run,
         include_git,
         &scope,
@@ -196,8 +212,19 @@ pub fn run_install(args: InstallAgentsArgs) -> ExitCode {
     }
 
     if let Some(cross) = &report.cross_tool {
-        println!("=== cross-tool (.agents/) ===");
+        let loc = if scope == "global" {
+            "~/.agents/"
+        } else {
+            ".agents/"
+        };
+        println!("=== cross-tool ({loc}) ===");
         println!("  wrote: {}", cross.written.len());
+        if !cross.skipped.is_empty() {
+            println!(
+                "  skipped: {} (use --force to overwrite)",
+                cross.skipped.len()
+            );
+        }
     }
     if !report.git_hooks_installed.is_empty() {
         println!();
@@ -219,34 +246,63 @@ enum PromptOutcome {
     Aborted,
 }
 
-fn prompt_clients(detected: &[&str], not_yet: &[String]) -> PromptOutcome {
-    let items: Vec<crate::picker::PickerItem> = detected
+fn prompt_clients(
+    detected: &[&Detection],
+    installed_map: &BTreeMap<String, bool>,
+    not_yet: &[String],
+) -> PromptOutcome {
+    let default_all = not_yet.is_empty();
+    let items: Vec<PickerItem> = detected
         .iter()
-        .map(|client| crate::picker::PickerItem {
-            label: client.to_string(),
-            preselected: not_yet.iter().any(|c| c == client),
+        .map(|d| {
+            let inst = if installed_map.get(d.client).copied().unwrap_or(false) {
+                "installed"
+            } else {
+                "not installed"
+            };
+            let preselected = default_all || not_yet.iter().any(|c| c == d.client);
+            PickerItem::new(
+                d.client,
+                format!("{} · cairn: {inst}", d.reason),
+                preselected,
+            )
         })
         .collect();
-    let hint = "(click/space toggle · a all · numbers work too · enter confirm · esc abort)";
-    match crate::picker::pick("Select clients to install cairn for:", &items, hint) {
-        Some(crate::picker::PickOutcome::Confirmed(indexes)) => {
-            let picked: Vec<String> = indexes.iter().map(|i| detected[*i].to_string()).collect();
+    let hint = "(↑/↓ move · space/click toggle · a all · 1-9 toggle · enter confirm · esc abort)";
+    match picker::pick("Select clients to install cairn for:", &items, hint) {
+        Some(PickOutcome::Confirmed(indexes)) => {
+            let picked: Vec<String> = indexes
+                .iter()
+                .map(|i| detected[*i].client.to_string())
+                .collect();
             if picked.is_empty() {
                 return PromptOutcome::Empty;
             }
             println!("Selected: {}", picked.join(", "));
             PromptOutcome::Selected(picked)
         }
-        Some(crate::picker::PickOutcome::Aborted) => PromptOutcome::Aborted,
-        None => prompt_clients_line(detected, not_yet),
+        Some(PickOutcome::Aborted) => PromptOutcome::Aborted,
+        None => {
+            let names: Vec<&str> = detected.iter().map(|d| d.client).collect();
+            let fallback_defaults = if default_all {
+                names.iter().map(|c| c.to_string()).collect::<Vec<_>>()
+            } else {
+                not_yet.to_vec()
+            };
+            prompt_clients_line(
+                "Select clients to install cairn for:",
+                &names,
+                &fallback_defaults,
+            )
+        }
     }
 }
 
 /// Line-based fallback for terminals without interactive rendering.
-fn prompt_clients_line(detected: &[&str], not_yet: &[String]) -> PromptOutcome {
-    println!("Select clients to install cairn for:");
+fn prompt_clients_line(header: &str, detected: &[&str], preselected: &[String]) -> PromptOutcome {
+    println!("{header}");
     for (index, client) in detected.iter().enumerate() {
-        let mark = if not_yet.contains(&client.to_string()) {
+        let mark = if preselected.contains(&client.to_string()) {
             "●"
         } else {
             "○"
@@ -284,23 +340,154 @@ fn prompt_clients_line(detected: &[&str], not_yet: &[String]) -> PromptOutcome {
 }
 
 fn prompt_scope() -> Option<String> {
+    let items = [
+        PickerItem::new(
+            "workspace",
+            "write to ./.agents/, ./.claude/, ./.cursor/ etc. (per-project)",
+            true,
+        ),
+        PickerItem::new(
+            "global",
+            "write to ~/.agents/, ~/.claude/, ~/.cursor/ etc. (all projects inherit)",
+            false,
+        ),
+    ];
+    let hint = "(↑/↓ move · 1-2 or enter confirm · esc abort)";
+    match picker::pick_one("Select config scope:", &items, 0, hint) {
+        Some(PickOneOutcome::Selected(idx)) => Some(items[idx].label.clone()),
+        Some(PickOneOutcome::Aborted) => None,
+        None => prompt_scope_line(),
+    }
+}
+
+fn prompt_scope_line() -> Option<String> {
     println!();
     println!("Config scope:");
-    println!("  workspace  — write to ./.claude/, ./.cursor/ etc. (per-project)");
-    println!("  global     — write to ~/.claude/, ~/.cursor/ etc. (all projects inherit)");
+    println!("  1. workspace  — write to ./.agents/, ./.claude/, ./.cursor/ etc. (per-project)");
+    println!(
+        "  2. global     — write to ~/.agents/, ~/.claude/, ~/.cursor/ etc. (all projects inherit)"
+    );
     loop {
         print!("Scope [workspace]: ");
         let _ = std::io::stdout().flush();
         let line = read_line()?;
         match line.trim() {
-            "" => return Some("workspace".to_string()),
-            "workspace" => return Some("workspace".to_string()),
-            "global" => return Some("global".to_string()),
-            _ => println!(
-                "Error: '{0}' is not one of 'workspace', 'global'.",
-                line.trim()
-            ),
+            "" | "1" | "workspace" => return Some("workspace".to_string()),
+            "2" | "global" => return Some("global".to_string()),
+            other => println!("Error: '{other}' is not one of 'workspace', 'global'."),
         }
+    }
+}
+
+fn prompt_install_options(force: &mut bool, git_hooks: &mut bool, any_installed: bool) -> bool {
+    let items = [
+        PickerItem::new(
+            "Overwrite existing cairn files (--force)",
+            "refresh existing configs, skills, and hooks",
+            any_installed,
+        ),
+        PickerItem::new(
+            "Install git hooks",
+            "post-commit + post-checkout incremental graph updates",
+            false,
+        ),
+    ];
+    let hint = "(↑/↓ move · space/click toggle · a all · 1-2 toggle · enter confirm · esc abort)";
+    match picker::pick("Install options:", &items, hint) {
+        Some(PickOutcome::Confirmed(indexes)) => {
+            *force = indexes.contains(&0);
+            *git_hooks = indexes.contains(&1);
+            let mut chosen = Vec::new();
+            if *force {
+                chosen.push("force");
+            }
+            if *git_hooks {
+                chosen.push("git-hooks");
+            }
+            if !chosen.is_empty() {
+                println!("Options: {}", chosen.join(", "));
+            }
+            true
+        }
+        Some(PickOutcome::Aborted) => false,
+        None => {
+            if any_installed {
+                *force = true;
+            }
+            true
+        }
+    }
+}
+
+fn prompt_uninstall_clients(
+    detected: &[&Detection],
+    installed_map: &BTreeMap<String, bool>,
+) -> PromptOutcome {
+    let items: Vec<PickerItem> = detected
+        .iter()
+        .map(|d| {
+            let installed = installed_map.get(d.client).copied().unwrap_or(false);
+            let inst = if installed {
+                "installed"
+            } else {
+                "not installed"
+            };
+            PickerItem::new(d.client, format!("{} · cairn: {inst}", d.reason), installed)
+        })
+        .collect();
+    let hint = "(↑/↓ move · space/click toggle · a all · 1-9 toggle · enter confirm · esc abort)";
+    match picker::pick("Select clients to uninstall cairn from:", &items, hint) {
+        Some(PickOutcome::Confirmed(indexes)) => {
+            let picked: Vec<String> = indexes
+                .iter()
+                .map(|i| detected[*i].client.to_string())
+                .collect();
+            if picked.is_empty() {
+                return PromptOutcome::Empty;
+            }
+            println!("Selected: {}", picked.join(", "));
+            PromptOutcome::Selected(picked)
+        }
+        Some(PickOutcome::Aborted) => PromptOutcome::Aborted,
+        None => {
+            let names: Vec<&str> = detected.iter().map(|d| d.client).collect();
+            let preselected: Vec<String> = names
+                .iter()
+                .filter(|c| installed_map.get(**c).copied().unwrap_or(false))
+                .map(|c| c.to_string())
+                .collect();
+            prompt_clients_line(
+                "Select clients to uninstall cairn from:",
+                &names,
+                &preselected,
+            )
+        }
+    }
+}
+
+fn prompt_uninstall_scope() -> Option<String> {
+    let items = [
+        PickerItem::new(
+            "workspace",
+            "remove from ./.agents/, ./.claude/, ./.cursor/ etc.",
+            true,
+        ),
+        PickerItem::new(
+            "global",
+            "remove from ~/.agents/, ~/.claude/, ~/.cursor/ etc.",
+            false,
+        ),
+        PickerItem::new(
+            "all",
+            "remove from both workspace and global configs",
+            false,
+        ),
+    ];
+    let hint = "(↑/↓ move · 1-3 or enter confirm · esc abort)";
+    match picker::pick_one("Select uninstall scope:", &items, 0, hint) {
+        Some(PickOneOutcome::Selected(idx)) => Some(items[idx].label.clone()),
+        Some(PickOneOutcome::Aborted) => None,
+        None => Some("workspace".to_string()),
     }
 }
 
@@ -314,24 +501,61 @@ fn read_line() -> Option<String> {
 
 /// Uninstall-agents: remove cairn entries from AI client configs, idempotently.
 pub fn run_uninstall(args: UninstallAgentsArgs) -> ExitCode {
-    for client in &args.clients {
-        if !client_choices().contains(client) {
-            display::error(&format!(
-                "Invalid value \"{client}\" for \"--client <CLIENTS>\": invalid selection"
-            ));
-            return ExitCode::FAILURE;
-        }
+    if !validate_clients(&args.clients) {
+        return ExitCode::FAILURE;
+    }
+    if let Some(scope) = &args.scope
+        && !["workspace", "global", "all"].contains(&scope.as_str())
+    {
+        display::error(&format!(
+            "Invalid value \"{scope}\" for \"--scope <SCOPE>\": expected workspace, global, or all"
+        ));
+        return ExitCode::FAILURE;
     }
     let ws = crate::store_paths::resolve_workspace(args.workspace.as_deref().map(Path::new));
-    let Ok(report) = agent_install::uninstall(
-        &ws,
-        if args.clients.is_empty() {
+    let interactive = args.clients.is_empty() && std::io::stdin().is_terminal();
+    let target_clients: Option<Vec<String>> = if !args.clients.is_empty() {
+        Some(args.clients.clone())
+    } else if interactive {
+        let detections = agent_install::detect_clients(&ws);
+        let installed_map = agent_install::check_installed(&ws);
+        let detected_rows: Vec<&Detection> = detections
+            .iter()
+            .filter(|d| d.detected || installed_map.get(d.client).copied().unwrap_or(false))
+            .collect();
+        if detected_rows.is_empty() {
             None
         } else {
-            Some(&args.clients)
-        },
-        &args.scope,
-    ) else {
+            match prompt_uninstall_clients(&detected_rows, &installed_map) {
+                PromptOutcome::Selected(list) => Some(list),
+                PromptOutcome::Empty => {
+                    println!("Nothing selected.");
+                    return ExitCode::SUCCESS;
+                }
+                PromptOutcome::Aborted => {
+                    println!("Aborted.");
+                    return ExitCode::SUCCESS;
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    let scope = if let Some(scope) = args.scope.clone() {
+        scope
+    } else if interactive {
+        let Some(chosen) = prompt_uninstall_scope() else {
+            println!("Aborted.");
+            return ExitCode::SUCCESS;
+        };
+        println!("Scope: {chosen}");
+        chosen
+    } else {
+        "workspace".to_string()
+    };
+
+    let Ok(report) = agent_install::uninstall(&ws, target_clients.as_deref(), &scope) else {
         return ExitCode::FAILURE;
     };
 
@@ -359,12 +583,20 @@ pub fn run_uninstall(args: UninstallAgentsArgs) -> ExitCode {
     }
 
     if let Some(cross) = &report.cross_tool {
-        println!("=== cross-tool (.agents/) ===");
+        let loc = match scope.as_str() {
+            "global" => "~/.agents/",
+            "all" => ".agents/ + ~/.agents/",
+            _ => ".agents/",
+        };
+        println!("=== cross-tool ({loc}) ===");
         for p in &cross.written {
             println!("  {p}");
         }
         for p in &cross.skipped {
             println!("  skipped: {p}");
+        }
+        for note in &cross.notes {
+            println!("  note: {note}");
         }
     }
 

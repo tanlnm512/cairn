@@ -134,8 +134,8 @@ pub enum SystemCommand {
         #[arg(long = "client")]
         clients: Vec<String>,
         /// Which install scope to remove: 'workspace', 'global', or 'all'.
-        #[arg(long, default_value = "workspace")]
-        scope: String,
+        #[arg(long)]
+        scope: Option<String>,
         /// Workspace root (default: resolved).
         #[arg(long)]
         workspace: Option<String>,

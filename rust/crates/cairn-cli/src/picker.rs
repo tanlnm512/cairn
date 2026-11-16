@@ -1,35 +1,55 @@
-//! Interactive terminal multi-select: keyboard, number keys, and mouse clicks.
+//! Interactive inline terminal picker: single-select and multi-select via keys and mouse.
 
 use std::io::{self, IsTerminal, Write as _};
 
-use crossterm::cursor::{Hide, MoveTo, Show};
+use crossterm::cursor::{Hide, MoveToColumn, MoveUp, Show, position};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::style::Print;
-use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{execute, queue};
 
-/// One selectable row: display label and initial selection state.
+use crate::display::{DIM, INFO, LABEL, SUCCESS, paint};
+
+/// One selectable row: display label, optional dimmed detail, and initial state.
 pub struct PickerItem {
     pub label: String,
+    pub detail: String,
     pub preselected: bool,
 }
 
-/// Completed pick: confirmed selection indices (item order) or user abort.
+impl PickerItem {
+    /// Build a row with a label, detail description, and initial selection flag.
+    pub fn new(label: impl Into<String>, detail: impl Into<String>, preselected: bool) -> Self {
+        Self {
+            label: label.into(),
+            detail: detail.into(),
+            preselected,
+        }
+    }
+}
+
+/// Completed multi-select pick: confirmed indices (item order) or user abort.
 pub enum PickOutcome {
     Confirmed(Vec<usize>),
     Aborted,
 }
 
-/// Raw-mode + alternate-screen + mouse-capture scope; restores the terminal on drop.
+/// Completed single-select pick: chosen item index or user abort.
+pub enum PickOneOutcome {
+    Selected(usize),
+    Aborted,
+}
+
+/// Raw-mode + mouse-capture inline guard; restores the terminal on drop.
 struct RawGuard;
 
 impl RawGuard {
     fn enable() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
-        let mounted = execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, Hide);
+        let mounted = execute!(io::stdout(), EnableMouseCapture, Hide);
         if let Err(e) = mounted {
             let _ = terminal::disable_raw_mode();
             return Err(e);
@@ -40,22 +60,22 @@ impl RawGuard {
 
 impl Drop for RawGuard {
     fn drop(&mut self) {
-        let _ = execute!(
-            io::stdout(),
-            DisableMouseCapture,
-            Show,
-            LeaveAlternateScreen
-        );
+        let _ = execute!(io::stdout(), DisableMouseCapture, Show);
         let _ = terminal::disable_raw_mode();
     }
 }
 
-/// Static layout of one rendered picker: header at row 0, item i at row i+1.
+/// Static layout of one rendered picker block.
 struct View<'a> {
     header: &'a str,
     hint: &'a str,
     items: &'a [PickerItem],
     width: usize,
+}
+
+enum PickerMode {
+    Multi(Vec<bool>),
+    Single,
 }
 
 /// Whether the environment can render the interactive picker.
@@ -81,17 +101,91 @@ fn truncate(text: &str, width: usize) -> String {
     out
 }
 
-/// Interactive multi-select over `items`; None when the terminal cannot
-/// render it, so the caller falls back to its line-based prompt.
+/// Interactive inline multi-select over `items`; None when fallback is needed.
 pub fn pick(header: &str, items: &[PickerItem], hint: &str) -> Option<PickOutcome> {
+    let mode = PickerMode::Multi(items.iter().map(|i| i.preselected).collect());
+    run_picker(
+        header,
+        items,
+        hint,
+        0,
+        mode,
+        PickOutcome::Aborted,
+        |ev, mode, cursor, top_row| {
+            let PickerMode::Multi(selected) = mode else {
+                return None;
+            };
+            match ev {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    handle_key(key, items.len(), selected, cursor)
+                }
+                Event::Mouse(mouse) => {
+                    if let Some(row) = top_row
+                        && let Some(index) = handle_mouse(mouse, row, items.len(), cursor)
+                    {
+                        selected[index] = !selected[index];
+                    }
+                    None
+                }
+                _ => None,
+            }
+        },
+    )
+}
+
+/// Interactive inline single-select over `items`; None when fallback is needed.
+pub fn pick_one(
+    header: &str,
+    items: &[PickerItem],
+    default_idx: usize,
+    hint: &str,
+) -> Option<PickOneOutcome> {
+    let start = default_idx.min(items.len().saturating_sub(1));
+    run_picker(
+        header,
+        items,
+        hint,
+        start,
+        PickerMode::Single,
+        PickOneOutcome::Aborted,
+        |ev, _, cursor, top_row| match ev {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                handle_key_one(key, items.len(), cursor)
+            }
+            Event::Mouse(mouse) => {
+                let row = top_row?;
+                handle_mouse(mouse, row, items.len(), cursor).map(PickOneOutcome::Selected)
+            }
+            _ => None,
+        },
+    )
+}
+
+fn run_picker<T, F>(
+    header: &str,
+    items: &[PickerItem],
+    hint: &str,
+    start_idx: usize,
+    mut mode: PickerMode,
+    aborted: T,
+    mut on_event: F,
+) -> Option<T>
+where
+    F: FnMut(Event, &mut PickerMode, &mut usize, Option<u16>) -> Option<T>,
+{
     if !interactive_capable() || items.is_empty() {
         return None;
     }
     let (width, height) = terminal::size().ok()?;
-    if items.len() + 2 > height as usize {
+    let total_rows = items.len() + 2;
+    if total_rows > height as usize {
         return None;
     }
     let _raw = RawGuard::enable().ok()?;
+    let total_u16 = total_rows as u16;
+    let mut top_row = position()
+        .ok()
+        .map(|(_, row)| row.min(height.saturating_sub(total_u16)));
     let mut out = io::stdout();
     let mut view = View {
         header,
@@ -100,47 +194,62 @@ pub fn pick(header: &str, items: &[PickerItem], hint: &str) -> Option<PickOutcom
         width: width as usize,
     };
 
-    let mut selected: Vec<bool> = items.iter().map(|i| i.preselected).collect();
-    let mut cursor_idx = 0usize;
-    render(&mut out, &view, &selected, cursor_idx);
+    let mut cursor_idx = start_idx;
+    render(&mut out, &view, &mode, cursor_idx, false);
 
-    let outcome = loop {
-        let Ok(ev) = event::read() else {
-            break PickOutcome::Aborted;
-        };
-        match ev {
-            Event::Key(key) if key.kind == KeyEventKind::Press => {
-                if let Some(result) = handle_key(key, items.len(), &mut selected, &mut cursor_idx) {
-                    break result;
-                }
+    let mut result = aborted;
+    while let Ok(ev) = event::read() {
+        if let Event::Resize(cols, rows) = ev {
+            view.width = cols as usize;
+            if total_rows > rows as usize {
+                break;
             }
-            Event::Mouse(mouse) => {
-                if let Some(index) = handle_mouse(mouse, items.len(), &mut cursor_idx) {
-                    selected[index] = !selected[index];
-                }
+            if let Some(top) = top_row.as_mut() {
+                *top = (*top).min(rows.saturating_sub(total_u16));
             }
-            Event::Resize(cols, rows) => {
-                view.width = cols as usize;
-                if items.len() + 2 > rows as usize {
-                    break PickOutcome::Aborted;
-                }
-            }
-            _ => {}
+            render(&mut out, &view, &mode, cursor_idx, true);
+            continue;
         }
-        render(&mut out, &view, &selected, cursor_idx);
-    };
+        if let Some(outcome) = on_event(ev, &mut mode, &mut cursor_idx, top_row) {
+            result = outcome;
+            break;
+        }
+        render(&mut out, &view, &mode, cursor_idx, true);
+    }
 
+    clear_inline(&mut out, items.len());
     drop(_raw);
-    Some(outcome)
+    Some(result)
 }
 
-/// Apply one key press; Some(outcome) ends the interaction.
+fn step_cursor(key: &KeyEvent, count: usize, cursor_idx: &mut usize) -> bool {
+    let plain = key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT;
+    if !plain {
+        return false;
+    }
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            *cursor_idx = cursor_idx.checked_sub(1).unwrap_or(count - 1);
+            true
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            *cursor_idx = (*cursor_idx + 1) % count;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Apply one multi-select key press; Some(outcome) ends the interaction.
 fn handle_key(
     key: KeyEvent,
     count: usize,
     selected: &mut [bool],
     cursor_idx: &mut usize,
 ) -> Option<PickOutcome> {
+    if step_cursor(&key, count, cursor_idx) {
+        return None;
+    }
     let plain = key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT;
     match (key.code, key.modifiers) {
         (KeyCode::Enter, _) => {
@@ -154,14 +263,6 @@ fn handle_key(
         }
         (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
             Some(PickOutcome::Aborted)
-        }
-        (KeyCode::Up, _) | (KeyCode::Char('k'), _) if plain => {
-            *cursor_idx = cursor_idx.checked_sub(1).unwrap_or(count - 1);
-            None
-        }
-        (KeyCode::Down, _) | (KeyCode::Char('j'), _) if plain => {
-            *cursor_idx = (*cursor_idx + 1) % count;
-            None
         }
         (KeyCode::Char(' '), _) if plain => {
             selected[*cursor_idx] = !selected[*cursor_idx];
@@ -184,11 +285,42 @@ fn handle_key(
     }
 }
 
-/// Apply one mouse event; Some(index) toggles that item.
-fn handle_mouse(mouse: MouseEvent, count: usize, cursor_idx: &mut usize) -> Option<usize> {
+/// Apply one single-select key press; Some(outcome) ends the interaction.
+fn handle_key_one(key: KeyEvent, count: usize, cursor_idx: &mut usize) -> Option<PickOneOutcome> {
+    if step_cursor(&key, count, cursor_idx) {
+        return None;
+    }
+    let plain = key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT;
+    match (key.code, key.modifiers) {
+        (KeyCode::Enter, _) => Some(PickOneOutcome::Selected(*cursor_idx)),
+        (KeyCode::Char(' '), _) if plain => Some(PickOneOutcome::Selected(*cursor_idx)),
+        (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+            Some(PickOneOutcome::Aborted)
+        }
+        (KeyCode::Char(digit @ '1'..='9'), _) if plain => {
+            let index = digit.to_digit(10).unwrap_or(1) as usize - 1;
+            if index < count {
+                *cursor_idx = index;
+                Some(PickOneOutcome::Selected(index))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Apply one mouse event relative to `top_row`; Some(index) targets that row.
+fn handle_mouse(
+    mouse: MouseEvent,
+    top_row: u16,
+    count: usize,
+    cursor_idx: &mut usize,
+) -> Option<usize> {
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            let index = usize::from(mouse.row.checked_sub(1)?);
+            let rel = mouse.row.checked_sub(top_row)?;
+            let index = usize::from(rel.checked_sub(1)?);
             if index < count {
                 *cursor_idx = index;
                 Some(index)
@@ -208,24 +340,98 @@ fn handle_mouse(mouse: MouseEvent, count: usize, cursor_idx: &mut usize) -> Opti
     }
 }
 
-/// Redraw the block; every line is one terminal row.
-fn render(out: &mut io::Stdout, view: &View, selected: &[bool], cursor_idx: usize) {
-    let _ = queue!(
+fn format_row(
+    index: usize,
+    item: &PickerItem,
+    mode: &PickerMode,
+    cursor_idx: usize,
+    max_w: usize,
+) -> String {
+    let is_cur = index == cursor_idx;
+    let (mark_char, mark_style) = match mode {
+        PickerMode::Multi(selected) => {
+            if selected[index] {
+                ("●", SUCCESS)
+            } else {
+                ("○", DIM)
+            }
+        }
+        PickerMode::Single => {
+            if is_cur {
+                ("◉", SUCCESS)
+            } else {
+                ("◯", DIM)
+            }
+        }
+    };
+    let num_prefix = format!("{}. ", index + 1);
+    let fixed_chars = 5 + num_prefix.chars().count();
+    let avail = max_w.saturating_sub(fixed_chars);
+    let label_len = item.label.chars().count();
+    let (label_text, detail_text) = if avail == 0 {
+        (String::new(), String::new())
+    } else if item.detail.is_empty() || label_len >= avail {
+        (truncate(&item.label, avail), String::new())
+    } else if avail > label_len + 4 {
+        (
+            item.label.clone(),
+            truncate(&item.detail, avail - label_len - 4),
+        )
+    } else {
+        (item.label.clone(), String::new())
+    };
+    let pointer = if is_cur {
+        paint(INFO, "❯")
+    } else {
+        " ".into()
+    };
+    let mark = paint(mark_style, mark_char);
+    let main_part = format!("{num_prefix}{label_text}");
+    let main_styled = if is_cur {
+        paint(LABEL, &main_part)
+    } else {
+        main_part
+    };
+    let detail_styled = if detail_text.is_empty() {
+        String::new()
+    } else {
+        paint(DIM, &format!("  — {detail_text}"))
+    };
+    format!(" {pointer} {mark} {main_styled}{detail_styled}")
+}
+
+fn clear_inline(out: &mut io::Stdout, item_count: usize) {
+    let up = (item_count + 1) as u16;
+    let _ = execute!(
         out,
-        MoveTo(0, 0),
-        Clear(ClearType::All),
-        Print(format!("{}\r\n", truncate(view.header, view.width)))
+        MoveUp(up),
+        MoveToColumn(0),
+        Clear(ClearType::FromCursorDown)
     );
-    for (index, item) in view.items.iter().enumerate() {
-        let mark = if selected[index] { "●" } else { "○" };
-        let point = if index == cursor_idx { "❯" } else { " " };
-        let row = format!(" {point} {mark} {}. {}", index + 1, item.label);
-        let _ = queue!(out, Print(format!("{}\r\n", truncate(&row, view.width))));
+    let _ = out.flush();
+}
+
+/// Redraw the inline block in place without entering an alternate screen.
+fn render(out: &mut io::Stdout, view: &View, mode: &PickerMode, cursor_idx: usize, redraw: bool) {
+    let max_w = view.width.saturating_sub(1).max(1);
+    if redraw {
+        let up = (view.items.len() + 1) as u16;
+        let _ = queue!(out, MoveUp(up));
     }
     let _ = queue!(
         out,
-        Print(format!("{}\r\n", truncate(view.hint, view.width)))
+        MoveToColumn(0),
+        Clear(ClearType::FromCursorDown),
+        Print(format!(
+            "{}\r\n",
+            paint(LABEL, &truncate(view.header, max_w))
+        ))
     );
+    for (index, item) in view.items.iter().enumerate() {
+        let row = format_row(index, item, mode, cursor_idx, max_w);
+        let _ = queue!(out, Print(format!("{row}\r\n")));
+    }
+    let _ = queue!(out, Print(paint(DIM, &truncate(view.hint, max_w))));
     let _ = out.flush();
 }
 
@@ -246,19 +452,24 @@ mod tests {
     fn mouse_clicks_toggle_the_clicked_row_only() {
         let count = 6;
         let mut cursor = 0;
-        assert_eq!(handle_mouse(click(1), count, &mut cursor), Some(0));
-        assert_eq!(handle_mouse(click(3), count, &mut cursor), Some(2));
+        assert_eq!(handle_mouse(click(1), 0, count, &mut cursor), Some(0));
+        assert_eq!(handle_mouse(click(3), 0, count, &mut cursor), Some(2));
         assert_eq!(cursor, 2);
         assert_eq!(
-            handle_mouse(click(0), count, &mut cursor),
+            handle_mouse(click(0), 0, count, &mut cursor),
             None,
             "a click on the header row must not map to an item"
         );
         assert_eq!(
-            handle_mouse(click(9), count, &mut cursor),
+            handle_mouse(click(9), 0, count, &mut cursor),
             None,
             "a click below the list must not map to an item"
         );
+        // Inline picker offset below top_row=12: header=12, items=13..18, hint=19.
+        assert_eq!(handle_mouse(click(12), 12, count, &mut cursor), None);
+        assert_eq!(handle_mouse(click(13), 12, count, &mut cursor), Some(0));
+        assert_eq!(handle_mouse(click(18), 12, count, &mut cursor), Some(5));
+        assert_eq!(handle_mouse(click(19), 12, count, &mut cursor), None);
     }
 
     #[test]
@@ -294,6 +505,35 @@ mod tests {
                 &mut cursor
             ),
             Some(PickOutcome::Aborted)
+        ));
+    }
+
+    #[test]
+    fn single_select_keys_navigate_and_confirm() {
+        let mut cursor = 0;
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        assert!(handle_key_one(key(KeyCode::Down), 3, &mut cursor).is_none());
+        assert_eq!(cursor, 1);
+        assert!(handle_key_one(key(KeyCode::Up), 3, &mut cursor).is_none());
+        assert_eq!(cursor, 0);
+        assert!(handle_key_one(key(KeyCode::Up), 3, &mut cursor).is_none());
+        assert_eq!(cursor, 2);
+        assert!(matches!(
+            handle_key_one(key(KeyCode::Enter), 3, &mut cursor),
+            Some(PickOneOutcome::Selected(2))
+        ));
+        assert!(matches!(
+            handle_key_one(key(KeyCode::Char(' ')), 3, &mut cursor),
+            Some(PickOneOutcome::Selected(2))
+        ));
+        assert!(matches!(
+            handle_key_one(key(KeyCode::Char('1')), 3, &mut cursor),
+            Some(PickOneOutcome::Selected(0))
+        ));
+        assert!(handle_key_one(key(KeyCode::Char('9')), 3, &mut cursor).is_none());
+        assert!(matches!(
+            handle_key_one(key(KeyCode::Esc), 3, &mut cursor),
+            Some(PickOneOutcome::Aborted)
         ));
     }
 
