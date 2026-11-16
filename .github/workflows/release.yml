@@ -123,7 +123,7 @@ jobs:
           path: dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@aef6c9b6e301dc803e1bc9133e9ce67ae9b0906b # v1.14.3
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           attestations: true
           skip-existing: true
