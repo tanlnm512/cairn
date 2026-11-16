@@ -94,8 +94,11 @@ Verify your install:
 cairn --version
 ```
 
-Upgrade anytime with `uv tool upgrade cairn-intel`, `pipx upgrade cairn-intel`,
-or by re-running the standalone installer (`curl ... | sh`).
+Upgrade anytime with `cairn upgrade` — it detects how the running binary was
+installed (installer, uv, pipx, pip, or cargo) and runs the matching command.
+Manual fallbacks: `uv tool upgrade cairn-intel`, `pipx upgrade cairn-intel`,
+re-running the standalone installer (`curl ... | sh`), or
+`cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli`.
 
 ### 2. Wire up your AI agent(s)
 

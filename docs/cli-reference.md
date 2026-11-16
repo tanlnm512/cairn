@@ -239,6 +239,7 @@ contested).
 | `cairn viz [--export FILE]` | render graph diagrams (`--format mermaid|dot|json`, `--scope symbol|module|impact|repo|deps`); `--export` writes one self-contained HTML file |
 | `cairn hooks install|uninstall|run <entrypoint>` | manage the cairn git hooks — post-commit + post-checkout (see [below](#cairn-hooks)) — and run an agent hook entrypoint (`post_edit`, `session_end`, `post_tool_failure`, `session_start`) over the JSON payload on stdin |
 | `cairn version` | print the installed version |
+| `cairn upgrade [--check]` | detect the install channel from the installed files (installer manifest, uv/pipx/pip venv markers, cargo crates record) and run the matching upgrade command; `--check` only prints the installed and latest release versions |
 | `cairn sync` | re-index size/mtime-drifted files |
 
 ### `cairn hooks`

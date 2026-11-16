@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `cairn upgrade [--check]`: detects the install channel from the installed files — the installer's `.cairn-install.json` manifest, uv/pipx/pip venv markers, or cargo's crates record — and runs the matching upgrade command; warns with manual instructions for unrecognized installs. `scripts/install.sh` now writes the manifest beside the installed binary.
+
 ## [0.25.2] - 2026-11-16
 
 ### Added

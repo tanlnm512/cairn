@@ -1,5 +1,5 @@
-//! Lifecycle/ops commands (system status/sync/metrics/report, uninstall,
-//! version).
+//! Lifecycle/ops commands (system status/sync/metrics/report, upgrade,
+//! uninstall, version).
 
 use std::collections::BTreeMap;
 use std::io::{IsTerminal, Write as _};
@@ -25,6 +25,350 @@ use crate::store_paths;
 pub fn run_version() -> ExitCode {
     display::info(&format!("cairn {}", env!("CARGO_PKG_VERSION")));
     ExitCode::SUCCESS
+}
+
+// --- upgrade -----------------------------------------------------------------
+
+const UPGRADE_REPO_URL: &str = "https://github.com/tanlnm512/cairn";
+const INSTALLER_SCRIPT_URL: &str =
+    "https://raw.githubusercontent.com/tanlnm512/cairn/main/scripts/install.sh";
+const WHEEL_PACKAGE: &str = "cairn-intel";
+const INSTALL_MANIFEST: &str = ".cairn-install.json";
+
+pub struct UpgradeArgs {
+    pub check: bool,
+}
+
+/// Upgrade channel inferred from the installed files around the running binary.
+enum InstallChannel {
+    Installer {
+        mode: String,
+        pinned: bool,
+        install_dir: String,
+    },
+    UvTool,
+    Pipx,
+    Pip(PathBuf),
+    Cargo,
+    Unknown,
+}
+
+impl InstallChannel {
+    fn name(&self) -> &'static str {
+        match self {
+            InstallChannel::Installer { .. } => "installer",
+            InstallChannel::UvTool => "uv",
+            InstallChannel::Pipx => "pipx",
+            InstallChannel::Pip(_) => "pip",
+            InstallChannel::Cargo => "cargo",
+            InstallChannel::Unknown => "unknown",
+        }
+    }
+}
+
+pub fn run_upgrade(args: UpgradeArgs) -> ExitCode {
+    let current = env!("CARGO_PKG_VERSION");
+    let Some(latest) = latest_release() else {
+        if args.check {
+            display::info(&format!(
+                "cairn {current} (could not reach GitHub Releases)"
+            ));
+        } else {
+            display::warning("Cannot check for upgrades (GitHub Releases unreachable).");
+        }
+        return ExitCode::SUCCESS;
+    };
+    if args.check {
+        display::info(&format!("cairn {current} (latest: {latest})"));
+        return ExitCode::SUCCESS;
+    }
+    if is_up_to_date(current, &latest) {
+        display::success(&format!("cairn {current} (already up to date)"));
+        return ExitCode::SUCCESS;
+    }
+    if !is_plain_version(&latest) {
+        display::warning(&format!(
+            "GitHub returned an unexpected version string ({latest}); refusing to upgrade"
+        ));
+        return ExitCode::FAILURE;
+    }
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(_) => return upgrade_manual_hint(),
+    };
+    let resolved = std::fs::canonicalize(&exe).unwrap_or(exe);
+    let channel = detect_channel_at(&resolved, &cargo_home());
+    if let InstallChannel::Installer { mode, pinned, .. } = &channel {
+        if mode == "source" {
+            display::info(
+                "installed from a local checkout; upgrade there: ./scripts/install.sh --source",
+            );
+            return ExitCode::FAILURE;
+        }
+        if *pinned {
+            display::info(&format!(
+                "the installer pinned this install with --version; move it with \
+                 scripts/install.sh --version {latest}"
+            ));
+            return ExitCode::FAILURE;
+        }
+    }
+    display::info(&format!(
+        "Upgrading cairn {current} -> {latest} via {} ({})",
+        channel.name(),
+        resolved.display()
+    ));
+    if !run_channel_upgrade(&channel, &latest) {
+        return ExitCode::FAILURE;
+    }
+    display::success(&format!("Upgraded cairn -> {latest}"));
+    daemon_restart_hint();
+    ExitCode::SUCCESS
+}
+
+/// Classify the install channel from the installed files around EXE.
+fn detect_channel_at(exe: &Path, cargo_home: &Path) -> InstallChannel {
+    let exe = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
+    if let Some(dir) = exe.parent()
+        && let Ok(body) = std::fs::read_to_string(dir.join(INSTALL_MANIFEST))
+        && let Ok(manifest) = serde_json::from_str::<Value>(&body)
+    {
+        return InstallChannel::Installer {
+            mode: manifest["mode"].as_str().unwrap_or("release").into(),
+            pinned: manifest["pinned"].as_bool().unwrap_or(false),
+            install_dir: manifest["install_dir"].as_str().unwrap_or_default().into(),
+        };
+    }
+    if let Some(venv) = exe
+        .ancestors()
+        .skip(1)
+        .find(|p| p.join("pyvenv.cfg").is_file())
+    {
+        if venv.join("uv-receipt.json").is_file() {
+            return InstallChannel::UvTool;
+        }
+        if venv.join("pipx_metadata.json").is_file() {
+            return InstallChannel::Pipx;
+        }
+        return InstallChannel::Pip(venv_python(venv));
+    }
+    let cargo_bin = cargo_home.join("bin");
+    let cargo_bin = std::fs::canonicalize(&cargo_bin).unwrap_or(cargo_bin);
+    if exe.parent() == Some(cargo_bin.as_path()) && cargo_has_cairn_cli(cargo_home) {
+        return InstallChannel::Cargo;
+    }
+    InstallChannel::Unknown
+}
+
+/// The interpreter owning a venv install: one beside the venv bin dir, else PATH python3.
+fn venv_python(venv: &Path) -> PathBuf {
+    let (bin, names): (&str, &[&str]) = if cfg!(windows) {
+        ("Scripts", &["python.exe", "python3.exe"])
+    } else {
+        ("bin", &["python3", "python"])
+    };
+    names
+        .iter()
+        .map(|name| venv.join(bin).join(name))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| PathBuf::from("python3"))
+}
+
+/// Cargo root for this install: $CARGO_HOME, else ~/.cargo.
+fn cargo_home() -> PathBuf {
+    if let Ok(home) = std::env::var("CARGO_HOME") {
+        return PathBuf::from(home);
+    }
+    std::env::var("HOME")
+        .map(|home| PathBuf::from(home).join(".cargo"))
+        .unwrap_or_else(|_| PathBuf::from(".cargo"))
+}
+
+/// Whether the cargo install record lists cairn-cli.
+fn cargo_has_cairn_cli(cargo_home: &Path) -> bool {
+    [".crates.toml", ".crates2.json"].iter().any(|name| {
+        std::fs::read_to_string(cargo_home.join(name))
+            .map(|body| body.contains("cairn-cli"))
+            .unwrap_or(false)
+    })
+}
+
+/// Whether `cargo binstall` is installed (upgrades from release binaries instead of source).
+fn cargo_binstall_available() -> bool {
+    Command::new("cargo")
+        .args(["binstall", "--version"])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Run the channel's upgrade command; returns whether it succeeded.
+fn run_channel_upgrade(channel: &InstallChannel, latest: &str) -> bool {
+    let argv: Vec<String> = match channel {
+        InstallChannel::Installer { install_dir, .. } => {
+            return upgrade_via_installer(latest, install_dir);
+        }
+        InstallChannel::UvTool => vec![
+            "uv".into(),
+            "tool".into(),
+            "upgrade".into(),
+            WHEEL_PACKAGE.into(),
+        ],
+        InstallChannel::Pipx => vec!["pipx".into(), "upgrade".into(), WHEEL_PACKAGE.into()],
+        InstallChannel::Pip(python) => vec![
+            python.to_string_lossy().into_owned(),
+            "-m".into(),
+            "pip".into(),
+            "install".into(),
+            "--upgrade".into(),
+            WHEEL_PACKAGE.into(),
+        ],
+        InstallChannel::Cargo => {
+            if cargo_binstall_available() {
+                vec![
+                    "cargo".into(),
+                    "binstall".into(),
+                    "--git".into(),
+                    UPGRADE_REPO_URL.into(),
+                    "cairn-cli".into(),
+                    "--force".into(),
+                    "--version".into(),
+                    latest.into(),
+                ]
+            } else {
+                vec![
+                    "cargo".into(),
+                    "install".into(),
+                    "--git".into(),
+                    UPGRADE_REPO_URL.into(),
+                    "cairn-cli".into(),
+                    "--version".into(),
+                    latest.into(),
+                    "--locked".into(),
+                    "--force".into(),
+                ]
+            }
+        }
+        InstallChannel::Unknown => return false,
+    };
+    exec_upgrade(argv)
+}
+
+/// Re-run the standalone installer pinned to LATEST into the recorded dir.
+fn upgrade_via_installer(latest: &str, install_dir: &str) -> bool {
+    let workdir = std::env::temp_dir().join(format!("cairn-upgrade-{}", std::process::id()));
+    if std::fs::create_dir_all(&workdir).is_err() {
+        display::warning("cannot create a temp directory for the installer script");
+        return false;
+    }
+    let script = workdir.join("install.sh");
+    let ok = fetch_file(INSTALLER_SCRIPT_URL, &script)
+        && Command::new("sh")
+            .arg(&script)
+            .args(["--version", latest, "--install-dir", install_dir])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+    let _ = std::fs::remove_dir_all(&workdir);
+    ok
+}
+
+/// Download a URL via curl, falling back to wget; the binary ships no TLS stack.
+fn fetch_file(url: &str, out: &Path) -> bool {
+    let out = out.to_string_lossy().into_owned();
+    let mut cmd = Command::new("curl");
+    cmd.args(["-fsSL", url, "-o", &out]);
+    if cmd.status().map(|status| status.success()).unwrap_or(false) {
+        return true;
+    }
+    Command::new("wget")
+        .args(["-qO", &out, url])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Run the upgrade argv, surfacing one line of the failure output on faults.
+fn exec_upgrade(argv: Vec<String>) -> bool {
+    display::dim(&format!("Running: {}", argv.join(" ")));
+    match Command::new(&argv[0]).args(&argv[1..]).output() {
+        Ok(output) if output.status.success() => true,
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let last = stderr.lines().last().unwrap_or("non-zero exit");
+            display::warning(&format!("{} failed: {last}", argv[0]));
+            false
+        }
+        Err(e) => {
+            display::warning(&format!("failed to run {}: {e}", argv[0]));
+            false
+        }
+    }
+}
+
+/// Latest released version from the GitHub Releases API; the probe rides curl.
+fn latest_release() -> Option<String> {
+    let output = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--max-time",
+            "5",
+            "-H",
+            "Accept: application/vnd.github+json",
+            "https://api.github.com/repos/tanlnm512/cairn/releases/latest",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let body: Value = serde_json::from_slice(&output.stdout).ok()?;
+    let tag = body["tag_name"].as_str()?.trim().trim_start_matches('v');
+    (!tag.is_empty()).then(|| tag.to_string())
+}
+
+/// Whether a version string is plain dotted digits (guards argv into package managers).
+fn is_plain_version(version: &str) -> bool {
+    !version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '.')
+}
+
+fn is_up_to_date(current: &str, latest: &str) -> bool {
+    let parse = |v: &str| -> Vec<u64> {
+        v.trim_start_matches('v')
+            .split('.')
+            .map(|part| part.split(['-', '+']).next().unwrap_or(""))
+            .map(|part| part.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let (mut current, mut latest) = (parse(current), parse(latest));
+    let width = current.len().max(latest.len());
+    current.resize(width, 0);
+    latest.resize(width, 0);
+    current >= latest
+}
+
+/// Hint when the shared daemon still serves the pre-upgrade binary.
+fn daemon_restart_hint() {
+    let live = cairn_daemon::lifecycle::running_pid().is_some()
+        || cairn_daemon::lifecycle::pidfile_pid().is_some();
+    if live {
+        display::info("daemon is still running the old binary; restart it: cairn serve restart");
+    }
+}
+
+/// No recognized install channel; print the manual per-channel upgrade commands.
+fn upgrade_manual_hint() -> ExitCode {
+    display::warning("Cannot detect how this cairn was installed; upgrade manually with one of:");
+    display::dim(&format!(
+        "  uv tool upgrade {WHEEL_PACKAGE} | pipx upgrade {WHEEL_PACKAGE} | \
+         pip install --upgrade {WHEEL_PACKAGE}"
+    ));
+    display::dim(&format!("  curl -LsSf {INSTALLER_SCRIPT_URL} | sh"));
+    display::dim(&format!(
+        "  cargo binstall --git {UPGRADE_REPO_URL} cairn-cli | \
+         cargo install --git {UPGRADE_REPO_URL} cairn-cli"
+    ));
+    ExitCode::FAILURE
 }
 
 // --- status ------------------------------------------------------------------
@@ -2227,7 +2571,7 @@ fn prune_registry(reg_path: &Path, workspace: &Path) {
     }
 }
 
-fn remove_binary(_dry_run: bool) {
+fn remove_binary(dry_run: bool) {
     println!("➜ cairn binary");
     let Ok(exe) = std::env::current_exe() else {
         println!("  (cannot resolve the running binary)");
@@ -2236,6 +2580,15 @@ fn remove_binary(_dry_run: bool) {
     println!("  binary: {}", exe.display());
     println!("  remove it with the channel that owns it:");
     println!("    brew uninstall cairn | cargo uninstall cairn-cli | rm <binary>");
+    let manifest = exe.parent().map(|dir| dir.join(INSTALL_MANIFEST));
+    if let Some(manifest) = manifest.filter(|path| path.exists()) {
+        if dry_run {
+            println!("  would remove install manifest: {}", manifest.display());
+        } else {
+            let _ = std::fs::remove_file(&manifest);
+            println!("  removed install manifest: {}", manifest.display());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2520,5 +2873,89 @@ mod tests {
             .expect("count closure");
         assert!(rows > 0, "closure rebuild produced no rows");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn upgrade_version_compare_orders_and_prefixes() {
+        assert!(is_up_to_date("0.25.2", "0.25.2"));
+        assert!(!is_up_to_date("0.25.1", "0.25.2"));
+        assert!(is_up_to_date("0.26.0", "0.25.2"));
+        assert!(is_up_to_date("v0.25.2", "0.25.2"));
+        assert!(is_up_to_date("0.25.2-dev", "0.25.2"));
+        assert!(!is_up_to_date("0.9", "0.25.2"));
+    }
+
+    #[test]
+    fn upgrade_detects_installer_manifest() {
+        let dir = temp_dir("upgrade-installer");
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(
+            bin.join(INSTALL_MANIFEST),
+            r#"{"channel":"install.sh","mode":"release","version":"0.25.0","install_dir":"/opt/cairn/bin","pinned":false}"#,
+        )
+        .unwrap();
+        let channel = detect_channel_at(&bin.join("cairn"), Path::new("/nonexistent-cargo-home"));
+        assert_eq!(channel.name(), "installer");
+        assert!(matches!(
+            channel,
+            InstallChannel::Installer { ref install_dir, pinned: false, .. }
+                if install_dir == "/opt/cairn/bin"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upgrade_detects_uv_pipx_and_venv_markers() {
+        let dir = temp_dir("upgrade-venv");
+        for (name, marker) in [("uv", "uv-receipt.json"), ("pipx", "pipx_metadata.json")] {
+            let venv = dir.join(name);
+            let bin = venv.join("bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            std::fs::write(venv.join("pyvenv.cfg"), "").unwrap();
+            std::fs::write(venv.join(marker), "").unwrap();
+            let channel =
+                detect_channel_at(&bin.join("cairn"), Path::new("/nonexistent-cargo-home"));
+            assert_eq!(channel.name(), name);
+        }
+        let plain = dir.join("plain");
+        let (bin_name, py_name): (&str, &str) = if cfg!(windows) {
+            ("Scripts", "python.exe")
+        } else {
+            ("bin", "python3")
+        };
+        let bin = plain.join(bin_name);
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(plain.join("pyvenv.cfg"), "").unwrap();
+        std::fs::write(bin.join(py_name), "").unwrap();
+        let channel = detect_channel_at(&bin.join("cairn"), Path::new("/nonexistent-cargo-home"));
+        assert!(matches!(
+            channel,
+            InstallChannel::Pip(python) if python == plain.join(bin_name).join(py_name)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upgrade_detects_cargo_crates_record() {
+        let dir = temp_dir("upgrade-cargo");
+        let cargo_home = dir.join(".cargo");
+        let bin = cargo_home.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("cairn"), "").unwrap();
+        std::fs::write(cargo_home.join(".crates.toml"), "cairn-cli v0.25.0:\n").unwrap();
+        let channel = detect_channel_at(&bin.join("cairn"), &cargo_home);
+        assert_eq!(channel.name(), "cargo");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upgrade_unknown_when_no_install_markers() {
+        let dir = temp_dir("upgrade-unknown");
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let channel = detect_channel_at(&bin.join("cairn"), Path::new("/nonexistent-cargo-home"));
+        assert!(matches!(channel, InstallChannel::Unknown));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

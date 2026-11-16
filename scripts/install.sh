@@ -18,6 +18,7 @@ set -eu
 REPO="tanlnm512/cairn"
 MODE=""
 VERSION="${CAIRN_VERSION:-}"
+PINNED="false"
 INSTALL_DIR="${CAIRN_INSTALL_DIR:-}"
 
 if [ -t 1 ]; then
@@ -60,6 +61,7 @@ while [ "$#" -gt 0 ]; do
     --version)
       [ "$#" -ge 2 ] || fail "--version requires a value"
       VERSION="$2"
+      PINNED="true"
       MODE="release"
       shift
       ;;
@@ -100,6 +102,22 @@ if [ -z "$MODE" ]; then
   fi
 fi
 
+if [ -n "$VERSION" ]; then
+  PINNED="true"
+fi
+
+# Record how/where this binary was installed so `cairn upgrade` can pick the same channel.
+write_install_manifest() {
+  bin_path="$1"
+  mode="$2"
+  pinned="$3"
+  manifest_dir="$(dirname "$bin_path")"
+  ver="$("$bin_path" --version 2>/dev/null | sed 's/^cairn //')"
+  escaped_dir="$(printf '%s' "$manifest_dir" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  printf '{"channel":"install.sh","mode":"%s","version":"%s","install_dir":"%s","pinned":%s}\n' \
+    "$mode" "$ver" "$escaped_dir" "$pinned" > "$manifest_dir/.cairn-install.json"
+}
+
 print_next_steps() {
   bin_path="$1"
   bin_dir="$(dirname "$bin_path")"
@@ -124,6 +142,8 @@ print_next_steps() {
   printf '  Verify:\n'
   printf '    cairn --version\n'
   printf '    cairn stats                        # (after cairn init)\n\n'
+  printf '  Upgrade:\n'
+  printf '    cairn upgrade                      # auto-detects this install\n\n'
   printf '  Uninstall:\n'
   printf '    cairn uninstall                    # or ./scripts/uninstall.sh\n'
 }
@@ -161,6 +181,7 @@ if [ "$MODE" = "source" ]; then
   fi
   [ -x "$CAIRN_CMD" ] || fail "cairn binary not found at $CAIRN_CMD"
   ok "Installed cairn"
+  write_install_manifest "$CAIRN_CMD" "source" "false"
   print_next_steps "$CAIRN_CMD"
   exit 0
 fi
@@ -284,5 +305,6 @@ tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR/extract"
 chmod +x "$TMP_DIR/extract/$BIN_NAME"
 mv "$TMP_DIR/extract/$BIN_NAME" "$INSTALL_DIR/$BIN_NAME"
 ok "Installed cairn to $INSTALL_DIR/$BIN_NAME"
+write_install_manifest "$INSTALL_DIR/$BIN_NAME" "release" "$PINNED"
 
 print_next_steps "$INSTALL_DIR/$BIN_NAME"
