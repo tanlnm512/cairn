@@ -4,7 +4,7 @@
 //! stdout is reserved for machine-readable hook output (empty or JSON): the
 //! aggregators parse it, so every human-readable diagnostic goes to stderr.
 
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use std::process::{ExitCode, Stdio};
 use std::time::Duration;
 
@@ -21,20 +21,30 @@ const FAILURE_FIELD_CHARS: usize = 4000;
 
 /// Run one hook entrypoint over the JSON payload on stdin.
 pub fn run(entrypoint: &str) -> ExitCode {
+    if !matches!(
+        entrypoint,
+        "post_edit" | "session_end" | "post_tool_failure" | "session_start"
+    ) {
+        eprintln!("unknown hook: {entrypoint}");
+        return ExitCode::FAILURE;
+    }
+    if !store_initialized() {
+        return ExitCode::SUCCESS;
+    }
     match entrypoint {
         "post_edit" => post_edit(&read_stdin_payload()),
         "session_end" => session_end(&read_stdin_payload()),
         "post_tool_failure" => post_tool_failure(&read_stdin_payload()),
         "session_start" => session_start(),
-        other => {
-            eprintln!("unknown hook: {other}");
-            return ExitCode::FAILURE;
-        }
+        _ => unreachable!(),
     }
     ExitCode::SUCCESS
 }
 
 fn read_stdin_payload() -> Map<String, Value> {
+    if std::io::stdin().is_terminal() {
+        return Map::new();
+    }
     let mut raw = String::new();
     let _ = std::io::stdin().read_to_string(&mut raw);
     payload_from(&raw)
@@ -76,6 +86,10 @@ fn run_cairn(args: &[&str], timeout: Duration, stdin: Option<&str>) -> String {
     }
 }
 
+fn store_initialized() -> bool {
+    crate::store_paths::resolve_store(None).db.exists()
+}
+
 fn log_human(message: &str) {
     eprintln!("{}", message.trim_end_matches('\n'));
 }
@@ -83,6 +97,9 @@ fn log_human(message: &str) {
 // --- post_edit -----------------------------------------------------------------
 
 fn post_edit(data: &Map<String, Value>) {
+    if !store_initialized() {
+        return;
+    }
     let file_path = edited_file_path(data);
     let mut args = vec!["update"];
     if let Some(path) = file_path.as_deref() {
@@ -111,6 +128,9 @@ fn edited_file_path(data: &Map<String, Value>) -> Option<String> {
 // --- session_end ---------------------------------------------------------------
 
 fn session_end(data: &Map<String, Value>) {
+    if !store_initialized() {
+        return;
+    }
     let path = data
         .get("transcript_path")
         .and_then(Value::as_str)
@@ -196,6 +216,9 @@ fn transcript_messages(text: &str) -> Vec<Value> {
 // --- session_start -------------------------------------------------------------
 
 fn session_start() {
+    if !store_initialized() {
+        return;
+    }
     let out = run_cairn(
         &["memory", "digest", "--limit", "5"],
         Duration::from_secs(15),
@@ -230,6 +253,9 @@ fn digest_channel(out: &str) -> Channel {
 // --- post_tool_failure ---------------------------------------------------------
 
 fn post_tool_failure(data: &Map<String, Value>) {
+    if !store_initialized() {
+        return;
+    }
     let Some(args) = failure_record_args(data) else {
         return;
     };
@@ -455,5 +481,19 @@ mod tests {
     #[test]
     fn unknown_entrypoint_fails() {
         assert_eq!(run("no_such_hook"), ExitCode::FAILURE);
+    }
+
+    #[test]
+    fn uninitialized_store_hooks_exit_cleanly() {
+        let env = crate::test_env::EnvScope::new("hooks-uninit");
+        for ep in [
+            "post_edit",
+            "session_end",
+            "post_tool_failure",
+            "session_start",
+        ] {
+            assert_eq!(run(ep), ExitCode::SUCCESS, "{ep} must no-op cleanly");
+        }
+        assert!(!env.dir().join(".cairn").exists());
     }
 }

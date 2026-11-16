@@ -3958,7 +3958,10 @@ fn memory_capture(
     db: Option<&str>,
     knowledge: Option<&str>,
 ) -> ExitCode {
-    let Ok(conn) = open_db_writable(&db_path(db)) else {
+    let Ok(db_file) = require_db_dir(db) else {
+        return ExitCode::FAILURE;
+    };
+    let Ok(conn) = open_db_writable(&db_file) else {
         return ExitCode::FAILURE;
     };
     let bundle = memory_bundle(knowledge);

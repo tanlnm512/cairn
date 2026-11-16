@@ -468,6 +468,101 @@ fn looks_like_cairn_hook(cmd: &str) -> bool {
     cmd.contains(" hooks run ") && cmd.to_lowercase().contains("cairn")
 }
 
+/// Parse one shell word (single/double quotes and backslash escapes), returning
+/// the unquoted word and the remainder of the string.
+fn parse_shell_word(s: &str) -> (String, &str) {
+    let mut out = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut chars = s.char_indices();
+    while let Some((idx, ch)) = chars.next() {
+        if !in_single && !in_double && ch.is_ascii_whitespace() {
+            return (out, &s[idx..]);
+        }
+        if !in_double && ch == '\'' {
+            in_single = !in_single;
+        } else if !in_single && ch == '"' {
+            in_double = !in_double;
+        } else if !in_single && ch == '\\' {
+            if let Some((_, next)) = chars.next() {
+                out.push(next);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    (out, "")
+}
+
+/// Executable path or name invoked by a cairn hook command string.
+pub fn hook_command_binary(cmd: &str) -> Option<String> {
+    let (prefix, _) = cmd.split_once(" hooks run ")?;
+    let mut rest = prefix.trim_start();
+    if let Some(after_eq) = rest.strip_prefix("CAIRN_HOME=") {
+        let (_, tail) = parse_shell_word(after_eq);
+        rest = tail.trim_start();
+    }
+    if rest.is_empty() {
+        return None;
+    }
+    let (bin, _) = parse_shell_word(rest);
+    (!bin.is_empty()).then_some(bin)
+}
+
+/// True when the executable referenced by a cairn hook command exists on disk or PATH.
+pub fn hook_command_binary_exists(cmd: &str) -> bool {
+    let Some(bin) = hook_command_binary(cmd) else {
+        return false;
+    };
+    if bin.contains('/') || bin.contains('\\') {
+        Path::new(&bin).is_file()
+    } else {
+        which(&bin).is_some()
+    }
+}
+
+/// Distinct missing binary paths referenced by cairn hooks in `path`.
+pub fn broken_cairn_hooks(path: &Path) -> Vec<String> {
+    let Some(data) = load_json_or_none(path).filter(Value::is_object) else {
+        return Vec::new();
+    };
+    let Some(hooks) = data.get("hooks").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut broken = Vec::new();
+    for entries in hooks.values() {
+        let Some(entries) = entries.as_array() else {
+            continue;
+        };
+        for entry in entries {
+            let Some(obj) = entry.as_object() else {
+                continue;
+            };
+            for cmd in entry_commands(obj) {
+                if looks_like_cairn_hook(&cmd) && !hook_command_binary_exists(&cmd) {
+                    let bin = hook_command_binary(&cmd).unwrap_or(cmd);
+                    if !broken.contains(&bin) {
+                        broken.push(bin);
+                    }
+                }
+            }
+        }
+    }
+    broken
+}
+
+/// Merge fresh cairn hook commands for `client` (`claude` | `cursor`) into `existing`.
+pub fn repair_hooks_value(existing: &Value, client: &str) -> Option<Value> {
+    let obj = existing.as_object()?.clone();
+    let addition = match client {
+        "claude" => json!({ "hooks": claude_hooks_block() }),
+        "cursor" => cursor_hooks_json(),
+        _ => return None,
+    };
+    let merged = deep_merge(obj, addition.as_object()?.clone(), "hooks");
+    Some(Value::Object(merged))
+}
+
 fn hook_markers() -> Vec<&'static str> {
     HOOK_ENTRYPOINTS
         .iter()
@@ -536,6 +631,13 @@ fn entry_entrypoints(entry: &Map<String, Value>) -> Vec<&'static str> {
     found
 }
 
+fn entry_is_cairn_hook(entry: &Map<String, Value>) -> bool {
+    !entry_entrypoints(entry).is_empty()
+        || entry_commands(entry)
+            .iter()
+            .any(|cmd| looks_like_cairn_hook(cmd))
+}
+
 // --- file writers ------------------------------------------------------------------
 
 fn atomic_write_text(path: &Path, content: &str) -> std::io::Result<()> {
@@ -575,10 +677,102 @@ fn write_file(path: &Path, content: &str, force: bool, res: &mut InstallResult, 
     res.add(path, false);
 }
 
+/// Shared `.agents/` hub directory for `scope` (`global` -> `~/.agents`, else `<ws>/.agents`).
+pub fn agents_hub_dir(workspace: &Path, scope: &str) -> PathBuf {
+    if scope == "global" {
+        home_dir().join(".agents")
+    } else {
+        workspace.to_path_buf().join(".agents")
+    }
+}
+
 fn write_tree(dest_dir: &Path, force: bool, res: &mut InstallResult, dry_run: bool) {
     for (rel, content) in templates::skill_tree() {
         write_file(&dest_dir.join(rel), content, force, res, dry_run);
     }
+}
+
+fn create_dir_symlink(link_target: &Path, dest: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(link_target, dest)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(link_target, dest)
+    }
+}
+
+fn create_file_symlink(link_target: &Path, dest: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(link_target, dest)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(link_target, dest)
+    }
+}
+
+fn prepare_symlink_slot(dest: &Path, force: bool, res: &mut InstallResult, dry_run: bool) -> bool {
+    if let Ok(meta) = dest.symlink_metadata() {
+        if dest.exists() && !force {
+            res.add(dest, true);
+            return false;
+        }
+        if dry_run {
+            res.written.push(format!("would write {}", dest.display()));
+            return false;
+        }
+        if meta.file_type().is_symlink() || meta.is_file() {
+            let _ = std::fs::remove_file(dest);
+        } else if meta.is_dir() {
+            let mut scratch = InstallResult::new("");
+            rm_tree_if_cairn(dest, &mut scratch);
+        }
+    } else if dry_run {
+        res.written.push(format!("would write {}", dest.display()));
+        return false;
+    }
+    if let Some(parent) = dest.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    true
+}
+
+fn link_or_write_dir(
+    link_target: &Path,
+    dest_dir: &Path,
+    force: bool,
+    res: &mut InstallResult,
+    dry_run: bool,
+) {
+    if !prepare_symlink_slot(dest_dir, force, res, dry_run) {
+        return;
+    }
+    if !dest_dir.exists() && create_dir_symlink(link_target, dest_dir).is_ok() {
+        res.add(dest_dir, false);
+        return;
+    }
+    write_tree(dest_dir, force, res, dry_run);
+}
+
+fn link_or_write_file(
+    link_target: &Path,
+    dest_file: &Path,
+    fallback_content: &str,
+    force: bool,
+    res: &mut InstallResult,
+    dry_run: bool,
+) {
+    if !prepare_symlink_slot(dest_file, force, res, dry_run) {
+        return;
+    }
+    if !dest_file.exists() && create_file_symlink(link_target, dest_file).is_ok() {
+        res.add(dest_file, false);
+        return;
+    }
+    write_file(dest_file, fallback_content, force, res, dry_run);
 }
 
 pub(crate) fn copy_to_backup(path: &Path, backup: &Path) -> bool {
@@ -949,7 +1143,7 @@ fn deep_merge(
                     .unwrap_or_default();
                 cur.retain(|e| {
                     e.as_object()
-                        .map(|obj| entry_entrypoints(obj).is_empty())
+                        .map(|obj| !entry_is_cairn_hook(obj))
                         .unwrap_or(true)
                 });
                 cur.extend(entries.clone());
@@ -989,15 +1183,24 @@ fn rmdir_if_empty(path: &Path, res: &mut InstallResult) {
 }
 
 fn rm_tree_if_cairn(path: &Path, res: &mut InstallResult) {
-    if !path.is_dir() {
+    let Ok(meta) = path.symlink_metadata() else {
         return;
-    }
+    };
     if path.file_name().unwrap_or_default() != MARKER {
         res.notes.push(format!(
             "refused to remove {}/: not cairn-scoped (directory must be named \
              'cairn'). Remove manually if intended.",
             path.display()
         ));
+        return;
+    }
+    if meta.file_type().is_symlink() {
+        if std::fs::remove_file(path).is_ok() {
+            res.written.push(format!("removed {}/", path.display()));
+        }
+        return;
+    }
+    if !meta.is_dir() {
         return;
     }
     let mut kept = 0usize;
@@ -1071,11 +1274,27 @@ fn walk_dirs(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn rm_if_ours(path: &Path, expected: &str, res: &mut InstallResult) {
+fn rm_if_ours_any(path: &Path, expected: &[&str], res: &mut InstallResult) {
+    let Ok(meta) = path.symlink_metadata() else {
+        return;
+    };
+    if meta.file_type().is_symlink() {
+        let points_to_agents = std::fs::read_link(path)
+            .is_ok_and(|target| target.components().any(|c| c.as_os_str() == ".agents"));
+        let matches = std::fs::read_to_string(path)
+            .is_ok_and(|content| expected.iter().any(|exp| content == *exp));
+        if points_to_agents || matches {
+            if std::fs::remove_file(path).is_ok() {
+                res.written.push(format!("removed {}", path.display()));
+            }
+            return;
+        }
+    }
     if !path.exists() {
         return;
     }
-    let ours = std::fs::read_to_string(path).is_ok_and(|content| content == expected);
+    let ours = std::fs::read_to_string(path)
+        .is_ok_and(|content| expected.iter().any(|exp| content == *exp));
     if !ours {
         res.skipped.push(format!(
             "{} (differs from the current cairn template; left in place)",
@@ -1086,6 +1305,10 @@ fn rm_if_ours(path: &Path, expected: &str, res: &mut InstallResult) {
     if std::fs::remove_file(path).is_ok() {
         res.written.push(format!("removed {}", path.display()));
     }
+}
+
+fn rm_if_ours(path: &Path, expected: &str, res: &mut InstallResult) {
+    rm_if_ours_any(path, &[expected], res);
 }
 
 fn write_json(path: &Path, data: &Value) {
@@ -1489,16 +1712,22 @@ fn hooks_have_cairn(path: &Path) -> bool {
     let Some(hooks) = data.get("hooks").and_then(Value::as_object) else {
         return false;
     };
-    hooks.values().any(|entries| {
-        entries
-            .as_array()
-            .map(|list| {
-                list.iter()
-                    .filter_map(Value::as_object)
-                    .any(|obj| !entry_entrypoints(obj).is_empty())
-            })
-            .unwrap_or(false)
-    })
+    let mut found: Vec<&str> = Vec::new();
+    let mut commands: Vec<String> = Vec::new();
+    for entries in hooks.values() {
+        let Some(list) = entries.as_array() else {
+            continue;
+        };
+        for obj in list.iter().filter_map(Value::as_object) {
+            if entry_is_cairn_hook(obj) {
+                found.extend(entry_entrypoints(obj));
+                commands.extend(entry_commands(obj));
+            }
+        }
+    }
+    !commands.is_empty()
+        && HOOK_ENTRYPOINTS.iter().all(|ep| found.contains(ep))
+        && commands.iter().all(|cmd| hook_command_binary_exists(cmd))
 }
 
 /// Each client's current cairn installation state, keyed in CLIENTS order.
@@ -1510,6 +1739,12 @@ pub fn check_installed(workspace: &Path) -> BTreeMap<String, bool> {
         "claude".into(),
         json_has_cairn(&ws.join(".mcp.json"))
             || ws
+                .join(".claude")
+                .join("skills")
+                .join("cairn")
+                .join("SKILL.md")
+                .exists()
+            || home
                 .join(".claude")
                 .join("skills")
                 .join("cairn")
@@ -1535,6 +1770,12 @@ pub fn check_installed(workspace: &Path) -> BTreeMap<String, bool> {
             .join("cairn")
             .join("SKILL.md")
             .exists()
+            || home
+                .join(".factory")
+                .join("skills")
+                .join("cairn")
+                .join("SKILL.md")
+                .exists()
             || json_has_cairn(&ws.join(".factory").join("mcp.json"))
             || json_has_cairn(&home.join(".factory").join("mcp.json")),
     );
@@ -1616,6 +1857,114 @@ fn uninstall_bases(ws: &Path, scope: &str) -> Vec<PathBuf> {
     }
 }
 
+fn link_shared_assets(
+    base: &Path,
+    client_dir: &str,
+    agents_subdir: &str,
+    force: bool,
+    res: &mut InstallResult,
+    dry_run: bool,
+) {
+    let client_root = base.join(client_dir);
+    let agents_rel = Path::new("..").join("..").join(".agents");
+    link_or_write_dir(
+        &agents_rel.join("skills").join("cairn"),
+        &client_root.join("skills").join("cairn"),
+        force,
+        res,
+        dry_run,
+    );
+    for name in SLASH_COMMANDS {
+        let fname = format!("{name}.md");
+        link_or_write_file(
+            &agents_rel.join("commands").join(&fname),
+            &client_root.join("commands").join(&fname),
+            &claude_command_md(name),
+            force,
+            res,
+            dry_run,
+        );
+    }
+    for (agent, tmpl) in [
+        ("cairn-explorer.md", "cursor/cairn-explorer.json"),
+        ("knowledge-steward.md", "cursor/knowledge-steward.json"),
+    ] {
+        link_or_write_file(
+            &agents_rel.join("agents").join(agent),
+            &client_root.join(agents_subdir).join(agent),
+            &claude_agent_md(tmpl),
+            force,
+            res,
+            dry_run,
+        );
+    }
+}
+
+fn uninstall_shared_assets(
+    base: &Path,
+    client_dir: &str,
+    agents_subdir: &str,
+    res: &mut InstallResult,
+) {
+    let client_root = base.join(client_dir);
+    rm_tree_if_cairn(&client_root.join("skills").join("cairn"), res);
+    for name in SLASH_COMMANDS {
+        let raw = template(&format!("commands/{name}.md"));
+        let fm = claude_command_md(name);
+        rm_if_ours_any(
+            &client_root.join("commands").join(format!("{name}.md")),
+            &[&fm, &raw],
+            res,
+        );
+    }
+    for (agent, tmpl) in [
+        ("cairn-explorer.md", "cursor/cairn-explorer.json"),
+        ("knowledge-steward.md", "cursor/knowledge-steward.json"),
+    ] {
+        rm_if_ours(
+            &client_root.join(agents_subdir).join(agent),
+            &claude_agent_md(tmpl),
+            res,
+        );
+    }
+    rm_if_exists(&client_root.join(agents_subdir).join("cairn-agent.md"), res);
+    rmdir_if_empty(&client_root.join("commands"), res);
+    rmdir_if_empty(&client_root.join(agents_subdir), res);
+    rmdir_if_empty(&client_root.join("skills"), res);
+    rmdir_if_empty(&client_root, res);
+}
+
+fn repair_global_hooks_if_broken(
+    global_path: &Path,
+    merger: &Value,
+    res: &mut InstallResult,
+    dry_run: bool,
+) {
+    let broken = broken_cairn_hooks(global_path);
+    if broken.is_empty() {
+        return;
+    }
+    if dry_run {
+        res.notes.push(format!(
+            "[dry-run] Would repair broken cairn hook binary in {} (missing: {}).",
+            global_path.display(),
+            broken.join(", ")
+        ));
+        return;
+    }
+    let mut tmp = InstallResult::new(&res.client);
+    if merge_json_file(global_path, merger, true, &mut tmp, "hooks", false) {
+        res.written.extend(tmp.written);
+        res.notes.push(format!(
+            "Repaired broken cairn hook binary in {} (missing: {}).",
+            global_path.display(),
+            broken.join(", ")
+        ));
+    } else {
+        res.notes.extend(tmp.notes);
+    }
+}
+
 fn install_claude(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("claude");
     let base = if scope == "global" {
@@ -1687,47 +2036,11 @@ fn install_claude(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
         );
     }
 
-    write_tree(
-        &base.join(".claude").join("skills").join("cairn"),
-        force,
-        &mut res,
-        dry_run,
-    );
-    for name in SLASH_COMMANDS {
-        write_file(
-            &base
-                .join(".claude")
-                .join("commands")
-                .join(format!("{name}.md")),
-            &claude_command_md(name),
-            force,
-            &mut res,
-            dry_run,
-        );
-    }
-    write_file(
-        &base
-            .join(".claude")
-            .join("agents")
-            .join("cairn-explorer.md"),
-        &claude_agent_md("cursor/cairn-explorer.json"),
-        force,
-        &mut res,
-        dry_run,
-    );
-    write_file(
-        &base
-            .join(".claude")
-            .join("agents")
-            .join("knowledge-steward.md"),
-        &claude_agent_md("cursor/knowledge-steward.json"),
-        force,
-        &mut res,
-        dry_run,
-    );
+    link_shared_assets(&base, ".claude", "agents", force, &mut res, dry_run);
+    let hooks_merger = json!({ "hooks": claude_hooks_block() });
     if !merge_json_file(
         &base.join(".claude").join("settings.json"),
-        &json!({ "hooks": claude_hooks_block() }),
+        &hooks_merger,
         force,
         &mut res,
         "mcpServers",
@@ -1735,8 +2048,13 @@ fn install_claude(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
     ) {
         return res;
     }
-
     if scope == "workspace" {
+        repair_global_hooks_if_broken(
+            &home_dir().join(".claude").join("settings.json"),
+            &hooks_merger,
+            &mut res,
+            dry_run,
+        );
         let claude_md = workspace.join("CLAUDE.md");
         if !claude_md.exists() {
             write_file(&claude_md, &claude_instructions(), false, &mut res, dry_run);
@@ -1915,9 +2233,10 @@ fn install_cursor(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
         &mut res,
         dry_run,
     );
+    let hooks_merger = cursor_hooks_json();
     if !merge_json_file(
         &base.join(".cursor").join("hooks.json"),
-        &cursor_hooks_json(),
+        &hooks_merger,
         force,
         &mut res,
         "mcpServers",
@@ -1925,51 +2244,27 @@ fn install_cursor(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> 
     ) {
         return res;
     }
+    if scope == "workspace" {
+        repair_global_hooks_if_broken(
+            &home_dir().join(".cursor").join("hooks.json"),
+            &hooks_merger,
+            &mut res,
+            dry_run,
+        );
+    }
     res.notes
         .push("Restart Cursor (or reload the window) to load the new MCP server.".into());
     res
 }
 
-fn install_droid(workspace: &Path, force: bool, dry_run: bool, _scope: &str) -> InstallResult {
+fn install_droid(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("droid");
-    write_tree(
-        &workspace.join(".factory").join("skills").join("cairn"),
-        force,
-        &mut res,
-        dry_run,
-    );
-    for name in SLASH_COMMANDS {
-        write_file(
-            &workspace
-                .join(".factory")
-                .join("commands")
-                .join(format!("{name}.md")),
-            &template(&format!("commands/{name}.md")),
-            force,
-            &mut res,
-            dry_run,
-        );
-    }
-    write_file(
-        &workspace
-            .join(".factory")
-            .join("droids")
-            .join("cairn-explorer.md"),
-        &claude_agent_md("cursor/cairn-explorer.json"),
-        force,
-        &mut res,
-        dry_run,
-    );
-    write_file(
-        &workspace
-            .join(".factory")
-            .join("droids")
-            .join("knowledge-steward.md"),
-        &claude_agent_md("cursor/knowledge-steward.json"),
-        force,
-        &mut res,
-        dry_run,
-    );
+    let base = if scope == "global" {
+        home_dir()
+    } else {
+        workspace.to_path_buf()
+    };
+    link_shared_assets(&base, ".factory", "droids", force, &mut res, dry_run);
 
     if which("droid").is_some() {
         if dry_run {
@@ -2013,7 +2308,7 @@ fn install_droid(workspace: &Path, force: bool, dry_run: bool, _scope: &str) -> 
             }
             if !registered {
                 if !merge_json_file(
-                    &workspace.join(".factory").join("mcp.json"),
+                    &base.join(".factory").join("mcp.json"),
                     &mcp_config_json(),
                     force,
                     &mut res,
@@ -2031,7 +2326,7 @@ fn install_droid(workspace: &Path, force: bool, dry_run: bool, _scope: &str) -> 
         }
     } else {
         if !merge_json_file(
-            &workspace.join(".factory").join("mcp.json"),
+            &base.join(".factory").join("mcp.json"),
             &mcp_config_json(),
             force,
             &mut res,
@@ -2075,41 +2370,7 @@ fn install_zcode(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> I
         return res;
     }
 
-    write_tree(
-        &base.join(".zcode").join("skills").join("cairn"),
-        force,
-        &mut res,
-        dry_run,
-    );
-    for name in SLASH_COMMANDS {
-        write_file(
-            &base
-                .join(".zcode")
-                .join("commands")
-                .join(format!("{name}.md")),
-            &claude_command_md(name),
-            force,
-            &mut res,
-            dry_run,
-        );
-    }
-    write_file(
-        &base.join(".zcode").join("agents").join("cairn-explorer.md"),
-        &claude_agent_md("cursor/cairn-explorer.json"),
-        force,
-        &mut res,
-        dry_run,
-    );
-    write_file(
-        &base
-            .join(".zcode")
-            .join("agents")
-            .join("knowledge-steward.md"),
-        &claude_agent_md("cursor/knowledge-steward.json"),
-        force,
-        &mut res,
-        dry_run,
-    );
+    link_shared_assets(&base, ".zcode", "agents", force, &mut res, dry_run);
 
     let agents_md = workspace.join("AGENTS.md");
     if !agents_md.exists() {
@@ -2123,7 +2384,7 @@ fn install_zcode(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> I
     res
 }
 
-fn install_agy(_workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
+fn install_agy(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("agy");
     let cfg = agy_config_path();
     if !merge_json_file(
@@ -2136,6 +2397,15 @@ fn install_agy(_workspace: &Path, force: bool, dry_run: bool, scope: &str) -> In
     ) {
         return res;
     }
+    let hub_skill = agents_hub_dir(workspace, scope)
+        .join("skills")
+        .join("cairn");
+    let agy_skill = home_dir()
+        .join(".gemini")
+        .join("config")
+        .join("skills")
+        .join("cairn");
+    link_or_write_dir(&hub_skill, &agy_skill, force, &mut res, dry_run);
     res.notes
         .push(format!("Global MCP config: {}", cfg.display()));
     if scope == "workspace" {
@@ -2307,41 +2577,8 @@ fn mcp_remove_user_scope(res: &mut InstallResult) {
 fn uninstall_claude(ws: &Path, res: &mut InstallResult, scope: &str) {
     for base in uninstall_bases(ws, scope) {
         strip_mcp(&base.join(".mcp.json"), res);
-        rm_tree_if_cairn(&base.join(".claude").join("skills").join("cairn"), res);
-        for name in SLASH_COMMANDS {
-            rm_if_ours(
-                &base
-                    .join(".claude")
-                    .join("commands")
-                    .join(format!("{name}.md")),
-                &claude_command_md(name),
-                res,
-            );
-        }
-        rm_if_ours(
-            &base
-                .join(".claude")
-                .join("agents")
-                .join("cairn-explorer.md"),
-            &claude_agent_md("cursor/cairn-explorer.json"),
-            res,
-        );
-        rm_if_ours(
-            &base
-                .join(".claude")
-                .join("agents")
-                .join("knowledge-steward.md"),
-            &claude_agent_md("cursor/knowledge-steward.json"),
-            res,
-        );
-        rm_if_exists(
-            &base.join(".claude").join("agents").join("cairn-agent.md"),
-            res,
-        );
+        uninstall_shared_assets(&base, ".claude", "agents", res);
         strip_hooks(&base.join(".claude").join("settings.json"), res);
-        rmdir_if_empty(&base.join(".claude").join("commands"), res);
-        rmdir_if_empty(&base.join(".claude").join("agents"), res);
-        rmdir_if_empty(&base.join(".claude").join("skills"), res);
         rmdir_if_empty(&base.join(".claude"), res);
     }
     if scope == "workspace" || scope == "all" {
@@ -2415,34 +2652,11 @@ fn mcp_remove_droid(res: &mut InstallResult) {
     }
 }
 
-fn uninstall_droid(ws: &Path, res: &mut InstallResult, _scope: &str) {
-    rm_tree_if_cairn(&ws.join(".factory").join("skills").join("cairn"), res);
-    for name in SLASH_COMMANDS {
-        rm_if_ours(
-            &ws.join(".factory")
-                .join("commands")
-                .join(format!("{name}.md")),
-            &template(&format!("commands/{name}.md")),
-            res,
-        );
+fn uninstall_droid(ws: &Path, res: &mut InstallResult, scope: &str) {
+    for base in uninstall_bases(ws, scope) {
+        uninstall_shared_assets(&base, ".factory", "droids", res);
+        strip_mcp(&base.join(".factory").join("mcp.json"), res);
     }
-    rm_if_ours(
-        &ws.join(".factory").join("droids").join("cairn-explorer.md"),
-        &claude_agent_md("cursor/cairn-explorer.json"),
-        res,
-    );
-    rm_if_ours(
-        &ws.join(".factory")
-            .join("droids")
-            .join("knowledge-steward.md"),
-        &claude_agent_md("cursor/knowledge-steward.json"),
-        res,
-    );
-    rm_if_exists(
-        &ws.join(".factory").join("droids").join("cairn-agent.md"),
-        res,
-    );
-    strip_mcp(&ws.join(".factory").join("mcp.json"), res);
     mcp_remove_droid(res);
 }
 
@@ -2454,34 +2668,7 @@ fn uninstall_zcode(ws: &Path, res: &mut InstallResult, scope: &str) {
             false,
         );
         strip_mcp_zcode(&base.join(".zcode").join("config.json"), res, false);
-        rm_tree_if_cairn(&base.join(".zcode").join("skills").join("cairn"), res);
-        for name in SLASH_COMMANDS {
-            rm_if_ours(
-                &base
-                    .join(".zcode")
-                    .join("commands")
-                    .join(format!("{name}.md")),
-                &claude_command_md(name),
-                res,
-            );
-        }
-        rm_if_ours(
-            &base.join(".zcode").join("agents").join("cairn-explorer.md"),
-            &claude_agent_md("cursor/cairn-explorer.json"),
-            res,
-        );
-        rm_if_ours(
-            &base
-                .join(".zcode")
-                .join("agents")
-                .join("knowledge-steward.md"),
-            &claude_agent_md("cursor/knowledge-steward.json"),
-            res,
-        );
-        rmdir_if_empty(&base.join(".zcode").join("commands"), res);
-        rmdir_if_empty(&base.join(".zcode").join("agents"), res);
-        rmdir_if_empty(&base.join(".zcode").join("skills"), res);
-        rmdir_if_empty(&base.join(".zcode"), res);
+        uninstall_shared_assets(&base, ".zcode", "agents", res);
     }
     if scope == "workspace" || scope == "all" {
         rm_if_ours(&ws.join("AGENTS.md"), &agents_instructions(), res);
@@ -2490,6 +2677,16 @@ fn uninstall_zcode(ws: &Path, res: &mut InstallResult, scope: &str) {
 
 fn uninstall_agy(_ws: &Path, res: &mut InstallResult, _scope: &str) {
     strip_mcp(&agy_config_path(), res);
+    let agy_skill = home_dir()
+        .join(".gemini")
+        .join("config")
+        .join("skills")
+        .join("cairn");
+    rm_tree_if_cairn(&agy_skill, res);
+    rmdir_if_empty(
+        &home_dir().join(".gemini").join("config").join("skills"),
+        res,
+    );
 }
 
 fn uninstall_opencode(ws: &Path, res: &mut InstallResult, scope: &str) {
@@ -2538,41 +2735,28 @@ fn uninstall_omp(ws: &Path, res: &mut InstallResult, scope: &str) {
 
 // --- cross-tool + git hooks -----------------------------------------------------------
 
-fn install_cross_tool(workspace: &Path, force: bool, dry_run: bool) -> InstallResult {
+fn install_cross_tool(workspace: &Path, force: bool, dry_run: bool, scope: &str) -> InstallResult {
     let mut res = InstallResult::new("cross-tool");
-    write_tree(
-        &workspace.join(".agents").join("skills").join("cairn"),
-        force,
-        &mut res,
-        dry_run,
-    );
+    let hub = agents_hub_dir(workspace, scope);
+    write_tree(&hub.join("skills").join("cairn"), force, &mut res, dry_run);
     for name in SLASH_COMMANDS {
         write_file(
-            &workspace
-                .join(".agents")
-                .join("commands")
-                .join(format!("{name}.md")),
-            &template(&format!("commands/{name}.md")),
+            &hub.join("commands").join(format!("{name}.md")),
+            &claude_command_md(name),
             force,
             &mut res,
             dry_run,
         );
     }
     write_file(
-        &workspace
-            .join(".agents")
-            .join("agents")
-            .join("cairn-explorer.md"),
+        &hub.join("agents").join("cairn-explorer.md"),
         &claude_agent_md("cursor/cairn-explorer.json"),
         force,
         &mut res,
         dry_run,
     );
     write_file(
-        &workspace
-            .join(".agents")
-            .join("agents")
-            .join("knowledge-steward.md"),
+        &hub.join("agents").join("knowledge-steward.md"),
         &claude_agent_md("cursor/knowledge-steward.json"),
         force,
         &mut res,
@@ -2581,42 +2765,98 @@ fn install_cross_tool(workspace: &Path, force: bool, dry_run: bool) -> InstallRe
     res
 }
 
-fn uninstall_cross_tool(workspace: &Path) -> InstallResult {
+fn any_client_installed_in_base(base: &Path, is_home: bool) -> bool {
+    let common = base
+        .join(".claude")
+        .join("skills")
+        .join("cairn")
+        .join("SKILL.md")
+        .exists()
+        || hooks_have_cairn(&base.join(".claude").join("settings.json"))
+        || json_has_cairn(&base.join(".cursor").join("mcp.json"))
+        || base
+            .join(".cursor")
+            .join("rules")
+            .join("cairn.mdc")
+            .exists()
+        || hooks_have_cairn(&base.join(".cursor").join("hooks.json"))
+        || base
+            .join(".factory")
+            .join("skills")
+            .join("cairn")
+            .join("SKILL.md")
+            .exists()
+        || json_has_cairn(&base.join(".factory").join("mcp.json"))
+        || base
+            .join(".zcode")
+            .join("skills")
+            .join("cairn")
+            .join("SKILL.md")
+            .exists()
+        || json_has_cairn(&base.join(".zcode").join("config.json"));
+    if common {
+        return true;
+    }
+    if is_home {
+        json_has_cairn(&base.join(".claude.json"))
+            || json_has_cairn(&base.join(".zcode").join("cli").join("config.json"))
+            || json_has_cairn(&agy_config_path())
+            || base
+                .join(".gemini")
+                .join("config")
+                .join("skills")
+                .join("cairn")
+                .join("SKILL.md")
+                .exists()
+            || json_has_cairn(&base.join(".config").join("opencode").join("opencode.json"))
+            || json_has_cairn(&base.join(".config").join("kilo").join("kilo.json"))
+            || json_has_cairn(&base.join(".omp").join("agent").join("mcp.json"))
+    } else {
+        json_has_cairn(&base.join(".mcp.json"))
+            || json_has_cairn(&base.join("opencode.json"))
+            || json_has_cairn(&base.join("kilo.json"))
+            || json_has_cairn(&base.join(".omp").join("mcp.json"))
+    }
+}
+
+fn uninstall_cross_tool(workspace: &Path, scope: &str, force_all: bool) -> InstallResult {
     let mut res = InstallResult::new("cross-tool");
-    rm_tree_if_cairn(
-        &workspace.join(".agents").join("skills").join("cairn"),
-        &mut res,
-    );
-    for name in SLASH_COMMANDS {
+    let home = home_dir();
+    for base in uninstall_bases(workspace, scope) {
+        let is_home = base == home;
+        if !force_all && any_client_installed_in_base(&base, is_home) {
+            res.notes.push(format!(
+                "kept shared {}/ (still referenced by another installed client)",
+                base.join(".agents").display()
+            ));
+            continue;
+        }
+        let agents_dir = base.join(".agents");
+        rm_tree_if_cairn(&agents_dir.join("skills").join("cairn"), &mut res);
+        for name in SLASH_COMMANDS {
+            let raw = template(&format!("commands/{name}.md"));
+            let fm = claude_command_md(name);
+            rm_if_ours_any(
+                &agents_dir.join("commands").join(format!("{name}.md")),
+                &[&fm, &raw],
+                &mut res,
+            );
+        }
         rm_if_ours(
-            &workspace
-                .join(".agents")
-                .join("commands")
-                .join(format!("{name}.md")),
-            &template(&format!("commands/{name}.md")),
+            &agents_dir.join("agents").join("cairn-explorer.md"),
+            &claude_agent_md("cursor/cairn-explorer.json"),
             &mut res,
         );
+        rm_if_ours(
+            &agents_dir.join("agents").join("knowledge-steward.md"),
+            &claude_agent_md("cursor/knowledge-steward.json"),
+            &mut res,
+        );
+        rmdir_if_empty(&agents_dir.join("commands"), &mut res);
+        rmdir_if_empty(&agents_dir.join("agents"), &mut res);
+        rmdir_if_empty(&agents_dir.join("skills"), &mut res);
+        rmdir_if_empty(&agents_dir, &mut res);
     }
-    rm_if_ours(
-        &workspace
-            .join(".agents")
-            .join("agents")
-            .join("cairn-explorer.md"),
-        &claude_agent_md("cursor/cairn-explorer.json"),
-        &mut res,
-    );
-    rm_if_ours(
-        &workspace
-            .join(".agents")
-            .join("agents")
-            .join("knowledge-steward.md"),
-        &claude_agent_md("cursor/knowledge-steward.json"),
-        &mut res,
-    );
-    rmdir_if_empty(&workspace.join(".agents").join("commands"), &mut res);
-    rmdir_if_empty(&workspace.join(".agents").join("agents"), &mut res);
-    rmdir_if_empty(&workspace.join(".agents").join("skills"), &mut res);
-    rmdir_if_empty(&workspace.join(".agents"), &mut res);
     res
 }
 
@@ -2985,6 +3225,8 @@ pub fn install(
     let detections = detect_clients(workspace);
     let targets = resolve_targets(clients, &detections)?;
 
+    let cross = (!targets.is_empty()).then(|| install_cross_tool(workspace, force, dry_run, scope));
+
     let mut results: Vec<InstallResult> = Vec::new();
     for client in &targets {
         match installer_for(client) {
@@ -2996,8 +3238,6 @@ pub fn install(
         verify_results(&mut results);
         note_embedded_key(&mut results);
     }
-
-    let cross = (!targets.is_empty()).then(|| install_cross_tool(workspace, force, dry_run));
 
     let mut git_installed = Vec::new();
     let mut git_error = None;
@@ -3038,7 +3278,8 @@ pub fn uninstall(
         }
         results.push(res);
     }
-    let cross = (!targets.is_empty()).then(|| uninstall_cross_tool(workspace));
+    let force_all = clients.is_some_and(|list| list.iter().any(|c| c == "all"));
+    let cross = (!targets.is_empty()).then(|| uninstall_cross_tool(workspace, scope, force_all));
     Ok(InstallReport {
         detections,
         results,
@@ -3633,5 +3874,143 @@ mod tests {
         write_config(&path, &json!({"other": 1}));
         assert_eq!(registration_entry(&path), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shared_agents_hub_symlinks_workspace_and_global_clients() {
+        let (_home, ()) = with_fresh_home("agents-hub", |home| {
+            let dir = tmp_dir("hub-ws");
+            install(
+                &dir,
+                Some(&["claude".to_string(), "zcode".to_string()]),
+                false,
+                false,
+                false,
+                "workspace",
+            )
+            .expect("install ws");
+
+            assert!(dir.join(".agents/skills/cairn/SKILL.md").exists());
+            assert!(dir.join(".agents/commands/cairn.md").exists());
+            assert!(dir.join(".agents/agents/cairn-explorer.md").exists());
+
+            #[cfg(unix)]
+            {
+                assert!(
+                    dir.join(".claude/skills/cairn")
+                        .symlink_metadata()
+                        .expect("meta")
+                        .file_type()
+                        .is_symlink()
+                );
+                assert!(
+                    dir.join(".claude/commands/cairn.md")
+                        .symlink_metadata()
+                        .expect("meta")
+                        .file_type()
+                        .is_symlink()
+                );
+                assert!(
+                    dir.join(".zcode/skills/cairn")
+                        .symlink_metadata()
+                        .expect("meta")
+                        .file_type()
+                        .is_symlink()
+                );
+            }
+            assert!(dir.join(".claude/skills/cairn/SKILL.md").exists());
+            assert!(dir.join(".zcode/commands/cairn.md").exists());
+
+            // Uninstalling claude alone keeps shared .agents/ while zcode remains.
+            uninstall(&dir, Some(&["claude".to_string()]), "workspace").expect("uninstall claude");
+            assert!(!dir.join(".claude/skills/cairn").exists());
+            assert!(dir.join(".agents/skills/cairn/SKILL.md").exists());
+
+            // Uninstalling the last client removes shared .agents/ cairn assets.
+            uninstall(&dir, Some(&["zcode".to_string()]), "workspace").expect("uninstall zcode");
+            assert!(!dir.join(".agents/skills/cairn").exists());
+            let _ = std::fs::remove_dir_all(&dir);
+
+            // Global scope writes ~/.agents/ and links agy/droid there.
+            install(
+                home,
+                Some(&["agy".to_string(), "droid".to_string()]),
+                false,
+                false,
+                false,
+                "global",
+            )
+            .expect("install global");
+            assert!(home.join(".agents/skills/cairn/SKILL.md").exists());
+            assert!(
+                home.join(".gemini/config/skills/cairn/SKILL.md").exists(),
+                "agy skill link must resolve"
+            );
+            assert!(
+                home.join(".factory/skills/cairn/SKILL.md").exists(),
+                "droid global skill link must resolve"
+            );
+        });
+        let _ = std::fs::remove_dir_all(&_home);
+    }
+
+    #[test]
+    fn hook_binary_validation_and_global_repair() {
+        assert_eq!(
+            hook_command_binary("'/Users/me/.local/bin/cairn' hooks run session_end").as_deref(),
+            Some("/Users/me/.local/bin/cairn")
+        );
+        assert_eq!(
+            hook_command_binary("CAIRN_HOME='/tmp/x y' '/opt/cairn' hooks run post_edit")
+                .as_deref(),
+            Some("/opt/cairn")
+        );
+        assert!(!hook_command_binary_exists(
+            "'/nonexistent/cairn-missing-bin' hooks run session_end"
+        ));
+
+        let (home_dir, ()) = with_fresh_home("hook-repair", |home| {
+            let settings = home.join(".claude/settings.json");
+            write_config(
+                &settings,
+                &json!({
+                    "model": "opus",
+                    "hooks": {
+                        "Stop": [
+                            { "hooks": [{ "type": "command", "command": "'/nonexistent/cairn' hooks run session_end" }] }
+                        ]
+                    }
+                }),
+            );
+            assert_eq!(
+                broken_cairn_hooks(&settings),
+                vec!["/nonexistent/cairn".to_string()]
+            );
+            assert!(!hooks_have_cairn(&settings));
+
+            let ws = tmp_dir("hook-repair-ws");
+            let report = install(
+                &ws,
+                Some(&["claude".to_string()]),
+                false,
+                false,
+                false,
+                "workspace",
+            )
+            .expect("install ws");
+            assert!(
+                report.results[0]
+                    .notes
+                    .iter()
+                    .any(|n| n.contains("Repaired broken cairn hook binary")),
+                "{:?}",
+                report.results[0].notes
+            );
+            assert!(broken_cairn_hooks(&settings).is_empty());
+            let after = read_config(&settings);
+            assert_eq!(after["model"], json!("opus"));
+            let _ = std::fs::remove_dir_all(&ws);
+        });
+        let _ = std::fs::remove_dir_all(&home_dir);
     }
 }

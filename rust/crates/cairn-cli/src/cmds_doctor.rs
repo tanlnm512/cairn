@@ -1299,6 +1299,39 @@ fn scrub_safe_display(path: &Path, home: &Path) -> String {
         .unwrap_or_else(|_| path.to_string_lossy().into_owned())
 }
 
+/// Hook config files that may hold cairn hook commands:
+/// (client, path, display, workspace_owned).
+fn hook_config_paths() -> Vec<(&'static str, PathBuf, String, bool)> {
+    let home = home_dir();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    vec![
+        (
+            "claude",
+            cwd.join(".claude").join("settings.json"),
+            ".claude/settings.json".to_string(),
+            true,
+        ),
+        (
+            "claude",
+            home.join(".claude").join("settings.json"),
+            "~/.claude/settings.json".to_string(),
+            false,
+        ),
+        (
+            "cursor",
+            cwd.join(".cursor").join("hooks.json"),
+            ".cursor/hooks.json".to_string(),
+            true,
+        ),
+        (
+            "cursor",
+            home.join(".cursor").join("hooks.json"),
+            "~/.cursor/hooks.json".to_string(),
+            false,
+        ),
+    ]
+}
+
 fn registration_url_of(entry: &Value) -> Option<String> {
     for key in ["url", "serverUrl"] {
         if let Some(value) = entry.get(key).and_then(Value::as_str)
@@ -1382,12 +1415,26 @@ fn registration_findings() -> (Vec<(&'static str, String)>, Vec<String>) {
             }
         }
     }
+    for (client, path, disp, _workspace_owned) in hook_config_paths() {
+        let broken = agent_install::broken_cairn_hooks(&path);
+        if !broken.is_empty() {
+            findings.push((
+                FAIL,
+                format!(
+                    "{client}: hook command in {disp} points at missing binary {}",
+                    broken.join(", ")
+                ),
+            ));
+            hints.push(rewrite_hint.clone());
+        }
+    }
     (findings, hints)
 }
 
 // --- --fix ---------------------------------------------------------------------------------
 
 const REPOINTED: &str = "repointed-to-url";
+const REPAIRED_HOOKS: &str = "repaired-hooks";
 const REFUSED_RECENT: &str = "refused-recent-write";
 const SKIPPED_WORKSPACE: &str = "skipped-workspace-owned";
 const UNSUPPORTED_DESKTOP: &str = "remove-unsupported-desktop";
@@ -1501,6 +1548,42 @@ fn apply_doctor_fixes() -> Vec<Value> {
             }));
         }
     }
+    for (client, path, disp, workspace_owned) in hook_config_paths() {
+        let broken = agent_install::broken_cairn_hooks(&path);
+        if broken.is_empty() {
+            continue;
+        }
+        let missing = broken.join(", ");
+        let action = |name: &str| {
+            json!({
+                "client": client,
+                "config": disp,
+                "action": name,
+                "url": missing,
+            })
+        };
+        if workspace_owned {
+            actions.push(action(SKIPPED_WORKSPACE));
+            continue;
+        }
+        if changed_within_a_minute(&path) {
+            actions.push(action(REFUSED_RECENT));
+            continue;
+        }
+        let Some(data) = load_json_object(&path) else {
+            actions.push(action(MALFORMED_CONFIG));
+            continue;
+        };
+        let Some(repaired) = agent_install::repair_hooks_value(&data, client) else {
+            actions.push(action(UNREPLACEABLE));
+            continue;
+        };
+        actions.push(action(if backup_and_write(&path, &repaired) {
+            REPAIRED_HOOKS
+        } else {
+            WRITE_FAILED
+        }));
+    }
     actions
 }
 
@@ -1548,6 +1631,9 @@ fn fix_summary_lines(actions: &[Value]) -> Vec<String> {
         let name = action.get("action").and_then(Value::as_str).unwrap_or("");
         let line = match name {
             REPOINTED => format!("repointed {client} in {config} to the daemon URL ({url})"),
+            REPAIRED_HOOKS => {
+                format!("repaired broken {client} hook binary in {config} (missing: {url})")
+            }
             UNSUPPORTED_DESKTOP => format!(
                 "{client} in {config} is unsupported: remove the cairn entry \
                  (Claude Desktop cannot speak the HTTP transport)"
@@ -1958,5 +2044,55 @@ mod tests {
         );
         assert_eq!(lines[1], FIX_TRADEOFF);
         assert!(fix_summary_lines(&[]).is_empty());
+    }
+
+    #[test]
+    fn doctor_detects_and_repairs_broken_global_hooks() {
+        let env = crate::test_env::EnvScope::new("doctor-hooks");
+        let settings = env.dir().join(".claude").join("settings.json");
+        std::fs::create_dir_all(settings.parent().expect("parent")).expect("mkdir");
+        std::fs::write(
+            &settings,
+            serde_json::to_string_pretty(&json!({
+                "model": "opus",
+                "hooks": {
+                    "Stop": [{
+                        "hooks": [{
+                            "type": "command",
+                            "command": "'/nonexistent/old/cairn' hooks run session_end"
+                        }]
+                    }]
+                }
+            }))
+            .expect("json"),
+        )
+        .expect("write");
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&settings)
+            .expect("open")
+            .set_modified(old)
+            .expect("set_modified");
+
+        let (findings, _) = registration_findings();
+        assert!(
+            findings.iter().any(|(st, msg)| *st == FAIL
+                && msg.contains("hook command in ~/.claude/settings.json")
+                && msg.contains("/nonexistent/old/cairn")),
+            "{findings:?}"
+        );
+
+        let actions = apply_doctor_fixes();
+        assert!(
+            actions
+                .iter()
+                .any(|a| a["action"] == REPAIRED_HOOKS && a["client"] == "claude"),
+            "{actions:?}"
+        );
+        assert!(agent_install::broken_cairn_hooks(&settings).is_empty());
+        let saved: Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings).expect("read")).expect("json");
+        assert_eq!(saved["model"], json!("opus"));
     }
 }

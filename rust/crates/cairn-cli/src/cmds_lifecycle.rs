@@ -2,7 +2,7 @@
 //! version).
 
 use std::collections::BTreeMap;
-use std::io::Write as _;
+use std::io::{IsTerminal, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Instant;
@@ -1805,10 +1805,10 @@ pub fn run_uninstall(args: UninstallArgs) -> ExitCode {
         }),
     };
     let any_only = args.agents_only || args.hooks_only || args.graph_only || args.package_only;
-    let do_agents = args.full || args.agents_only || !any_only;
-    let do_hooks = args.full || args.hooks_only || !any_only;
-    let do_graph = args.full || args.graph_only || !any_only;
-    let do_package = args.full || args.package_only || !any_only;
+    let mut do_agents = args.full || args.agents_only || !any_only;
+    let mut do_hooks = args.full || args.hooks_only || !any_only;
+    let mut do_graph = args.full || args.graph_only || !any_only;
+    let mut do_package = args.full || args.package_only || !any_only;
 
     println!();
     println!("Cairn Uninstaller");
@@ -1824,8 +1824,56 @@ pub fn run_uninstall(args: UninstallArgs) -> ExitCode {
     } else {
         args.scope.as_str()
     };
+
+    let mut picked_via_tui = false;
+    if !args.yes && !args.full && !args.dry_run && !any_only && std::io::stdin().is_terminal() {
+        let items = [
+            crate::picker::PickerItem::new(
+                "agent integrations",
+                format!("strip cairn MCP, skills, commands, hooks (scope: {agents_scope})"),
+                false,
+            ),
+            crate::picker::PickerItem::new(
+                "git hooks",
+                "remove post-commit and post-checkout cairn hooks",
+                false,
+            ),
+            crate::picker::PickerItem::new(
+                "graph and knowledge data",
+                "delete the workspace .kg store and .knowledge bundle",
+                false,
+            ),
+            crate::picker::PickerItem::new(
+                "cairn binary",
+                "show removal command for the cairn executable",
+                false,
+            ),
+        ];
+        let hint =
+            "(↑/↓ move · space/click toggle · a all · 1-4 toggle · enter confirm · esc abort)";
+        match crate::picker::pick("Select components to uninstall:", &items, hint) {
+            Some(crate::picker::PickOutcome::Confirmed(indexes)) => {
+                if indexes.is_empty() {
+                    println!("Nothing selected.");
+                    return ExitCode::SUCCESS;
+                }
+                do_agents = indexes.contains(&0);
+                do_hooks = indexes.contains(&1);
+                do_graph = indexes.contains(&2);
+                do_package = indexes.contains(&3);
+                picked_via_tui = true;
+            }
+            Some(crate::picker::PickOutcome::Aborted) => {
+                println!("Aborted.");
+                return ExitCode::SUCCESS;
+            }
+            None => {}
+        }
+    }
+
     if do_agents
         && (args.dry_run
+            || picked_via_tui
             || confirm_step(
                 args.yes || args.full,
                 "agent integrations",
@@ -1840,7 +1888,9 @@ pub fn run_uninstall(args: UninstallArgs) -> ExitCode {
         return ExitCode::FAILURE;
     }
     if do_hooks
-        && (args.dry_run || confirm_step(args.yes || args.full, "git hooks", &mut prompt_aborted))
+        && (args.dry_run
+            || picked_via_tui
+            || confirm_step(args.yes || args.full, "git hooks", &mut prompt_aborted))
     {
         remove_hooks(&ws, args.dry_run);
         println!();
@@ -1851,6 +1901,7 @@ pub fn run_uninstall(args: UninstallArgs) -> ExitCode {
     }
     if do_graph
         && (args.dry_run
+            || picked_via_tui
             || confirm_step(
                 args.yes || args.full,
                 "graph and knowledge data",
@@ -1866,6 +1917,7 @@ pub fn run_uninstall(args: UninstallArgs) -> ExitCode {
     }
     if do_package
         && (args.dry_run
+            || picked_via_tui
             || confirm_step(args.yes || args.full, "cairn binary", &mut prompt_aborted))
     {
         remove_binary(args.dry_run);
