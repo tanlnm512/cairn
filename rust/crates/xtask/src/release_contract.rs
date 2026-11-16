@@ -229,3 +229,26 @@ fn maturin_builds_every_artifact_and_publish_gates_on_all_of_them() {
             .is_some_and(|u| u.starts_with("pypa/gh-action-pypi-publish@"))
     }));
 }
+
+#[test]
+fn dist_builds_run_only_on_version_tags() {
+    let ci = read(".github/workflows/ci.yml");
+    assert!(!ci.contains("maturin") && !ci.contains("build-wheel"));
+    for wf in [
+        ".github/workflows/release.yml",
+        ".github/workflows/release-rust.yml",
+    ] {
+        let doc = YamlLoader::load_from_str(&read(wf))
+            .unwrap_or_else(|e| panic!("{wf}: {e}"))
+            .remove(0);
+        let tags = doc["on"]["push"]["tags"]
+            .as_vec()
+            .unwrap_or_else(|| panic!("{wf} must trigger on push tags"));
+        let tag_strs: Vec<_> = tags.iter().filter_map(Yaml::as_str).collect();
+        assert_eq!(tag_strs, vec!["v*"], "{wf}");
+        assert!(
+            !doc["jobs"]["verify-tag"].is_badvalue(),
+            "{wf} must gate dist builds on verify-tag"
+        );
+    }
+}

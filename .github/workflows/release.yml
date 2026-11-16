@@ -27,10 +27,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-tag:
+    name: Verify tag matches version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check Cargo.toml and pyproject.toml match tag
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          ver="${TAG_NAME#v}"
+          cargo_ver=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml)
+          py_ver=$(sed -n '/^\[project\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' pyproject.toml)
+          test "$cargo_ver" = "$ver" || { echo "::error::Cargo.toml version ($cargo_ver) != tag ($TAG_NAME)"; exit 1; }
+          test "$py_ver" = "$ver" || { echo "::error::pyproject.toml version ($py_ver) != tag ($TAG_NAME)"; exit 1; }
+
   # Every wheel is the cairn-cli binary built by maturin (`[tool.maturin]
   # bindings = "bin"` in pyproject.toml): tagged py3-none-<platform>.
   wheels:
     name: Wheel (${{ matrix.target }})
+    needs: verify-tag
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -72,6 +89,7 @@ jobs:
 
   sdist:
     name: Source distribution
+    needs: verify-tag
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -111,6 +129,7 @@ jobs:
 
   github-release:
     name: GitHub Release
+    needs: verify-tag
     runs-on: ubuntu-latest
     steps:
       # CHANGELOG.md lives in the repo; the changelog-extraction step below

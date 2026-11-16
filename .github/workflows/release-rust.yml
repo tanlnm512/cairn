@@ -22,8 +22,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  verify-tag:
+    name: Verify tag matches version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check Cargo.toml matches tag
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          ver="${TAG_NAME#v}"
+          cargo_ver=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml)
+          test "$cargo_ver" = "$ver" || { echo "::error::Cargo.toml version ($cargo_ver) != tag ($TAG_NAME)"; exit 1; }
+
   build:
     name: build (${{ matrix.target }})
+    needs: verify-tag
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
