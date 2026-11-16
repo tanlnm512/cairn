@@ -42,7 +42,7 @@ pub enum SystemCommand {
         #[arg(long)]
         db: Option<String>,
     },
-    /// Report tool metrics by default; --builds/--quality/--contention/--tasks render telemetry sections (combinable).
+    /// Report tool metrics by default; --builds/--quality/--contention/--tasks/--tokens render telemetry sections (combinable).
     Metrics {
         /// SQLite DB path.
         #[arg(long)]
@@ -65,6 +65,9 @@ pub enum SystemCommand {
         /// LLM task-queue lifecycle: events by kind and task type.
         #[arg(long)]
         tasks: bool,
+        /// Estimated token usage (request/response/mean/truncations) per tool.
+        #[arg(long)]
+        tokens: bool,
     },
     /// Print a redacted diagnostic bundle (versions, doctor checks, recent errors, config); never uploads.
     Report {
@@ -209,6 +212,9 @@ pub enum SystemCommand {
         /// Run the HTTP daemon without session affinity.
         #[arg(long)]
         stateless: bool,
+        /// Omit outputSchema and structuredContent duplication to save wire tokens.
+        #[arg(long)]
+        compact: bool,
         #[command(subcommand)]
         command: Option<ServeGroup>,
     },
@@ -267,6 +273,9 @@ pub enum ServeGroup {
         /// Run the HTTP daemon without session affinity.
         #[arg(long)]
         stateless: bool,
+        /// Omit outputSchema and structuredContent duplication to save wire tokens.
+        #[arg(long)]
+        compact: bool,
     },
     /// Start the daemon in the background.
     Start {
@@ -327,6 +336,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
             quality,
             contention,
             tasks,
+            tokens,
         } => cmds_lifecycle::run_metrics(cmds_lifecycle::MetricsArgs {
             db,
             tool: tool_name,
@@ -335,6 +345,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
             quality,
             contention,
             tasks,
+            tokens,
         }),
         SystemCommand::Report { db, json, out } => {
             cmds_lifecycle::run_report(cmds_lifecycle::ReportArgs {
@@ -409,6 +420,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
             api_key,
             allow_writes,
             stateless,
+            compact,
             command,
         } => {
             let read_only_state = if read_only {
@@ -430,6 +442,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
                     api_key,
                     allow_writes,
                     stateless,
+                    compact,
                 }),
                 Some(ServeGroup::Run {
                     db,
@@ -441,6 +454,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
                     api_key,
                     allow_writes,
                     stateless,
+                    compact,
                 }) => {
                     if transport.is_some() {
                         return cmds_serve::refuse_removed_transport(port, Some(&host));
@@ -460,6 +474,7 @@ pub fn run(command: SystemCommand) -> ExitCode {
                         api_key,
                         allow_writes,
                         stateless: false,
+                        compact,
                     })
                 }
                 Some(ServeGroup::Start {

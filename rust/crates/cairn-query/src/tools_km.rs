@@ -6938,12 +6938,6 @@ pub fn ask_compass(
         "Intent: {} (routed to {}{})",
         outcome.intent, outcome.layer, queried
     )];
-    if !file_path.is_empty() {
-        out.push(format!(
-            "(file_path '{file_path}' is ignored in routing mode; pass it with an empty query \
-             to load file-aware context.)"
-        ));
-    }
     if outcome.degraded {
         out.push("(Showing fallback results — targeted layer had no coverage.)".to_string());
     }
@@ -6973,6 +6967,10 @@ pub fn ask_compass(
             }
             other => out.push(format!("  {}", scalar_repr(other))),
         }
+    }
+    if !file_path.is_empty() {
+        out.push(String::new());
+        out.push(ask_compass_file_context(conn, bundle, file_path)?);
     }
     Ok(out.join("\n"))
 }

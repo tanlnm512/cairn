@@ -253,7 +253,7 @@ impl McpClient {
             .expect("initialized notification");
     }
 
-    pub fn list_tools(&mut self) -> Vec<String> {
+    pub fn list_tools_raw(&mut self) -> Vec<Value> {
         self.next_id += 1;
         let id = self.next_id;
         let response = self
@@ -272,12 +272,17 @@ impl McpClient {
                 return message["result"]["tools"]
                     .as_array()
                     .expect("tools array")
-                    .iter()
-                    .map(|t| t["name"].as_str().expect("tool name").to_string())
-                    .collect();
+                    .clone();
             }
         }
         panic!("no JSON-RPC response for id {id} in: {}", response.body);
+    }
+
+    pub fn list_tools(&mut self) -> Vec<String> {
+        self.list_tools_raw()
+            .into_iter()
+            .map(|t| t["name"].as_str().expect("tool name").to_string())
+            .collect()
     }
 
     pub fn call_tool(&mut self, tool: &str, args: Value) -> Value {

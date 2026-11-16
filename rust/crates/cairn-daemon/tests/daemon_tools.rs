@@ -47,14 +47,22 @@ fn catalog_registers_the_ported_surface() {
     for tool in &catalog {
         let schema = &tool.input_schema;
         assert_eq!(schema.get("type").and_then(Value::as_str), Some("object"));
-        assert!(
-            schema
-                .get("properties")
-                .and_then(Value::as_object)
-                .is_some(),
-            "{}: properties object missing",
-            tool.name
-        );
+        let props = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .unwrap_or_else(|| panic!("{}: properties object missing", tool.name));
+        for (prop_name, prop_schema) in props {
+            assert!(
+                prop_schema.get("type").and_then(Value::as_str).is_some(),
+                "{}.{prop_name}: missing top-level type in {prop_schema}",
+                tool.name
+            );
+            assert!(
+                !prop_schema.get(prop_name).is_some_and(Value::is_object),
+                "{}.{prop_name}: double-nested property schema in {prop_schema}",
+                tool.name
+            );
+        }
         assert!(
             tool.output_schema
                 .as_ref()
@@ -166,6 +174,7 @@ async fn bearer_gate_admits_healthz_and_keyed_clients_only() {
     let db = temp.0.join("nav-store.kg");
     let config = DaemonConfig {
         allow_writes: true,
+        compact: false,
         db_path: db.clone(),
         workspace: repo_root(),
         knowledge_path: temp.0.join(".knowledge"),
@@ -272,4 +281,188 @@ async fn non_loopback_bind_requires_a_key() {
         err.to_string().contains("without an API key"),
         "guard error must name the remediation: {err}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn compact_daemon_omits_output_schema_and_structured_content() {
+    let temp = seeded_store("compact");
+    let mut config = DaemonConfig::for_store(temp.0.join("nav-store.kg"));
+    config.api_key = None;
+    config.compact = true;
+    let (addr, handle) = server::serve_config(config, "127.0.0.1:0".parse().unwrap())
+        .await
+        .expect("serve");
+
+    let mut client = McpClient::connect(addr).expect("connect");
+    client.initialize();
+    for tool in client.list_tools_raw() {
+        assert!(
+            tool.get("outputSchema").is_none_or(Value::is_null),
+            "compact mode must omit outputSchema on {}",
+            tool["name"]
+        );
+    }
+
+    let ok = client.call_tool("search_symbols", json!({"pattern": "search_symbols"}));
+    assert_eq!(ok["result"]["isError"], false);
+    assert!(
+        ok["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|t| !t.is_empty()),
+        "ok text content: {ok}"
+    );
+    assert!(
+        ok["result"]["structuredContent"].is_null(),
+        "compact ok call must omit structuredContent: {ok}"
+    );
+
+    let err = client.call_tool("not_a_tool", json!({}));
+    assert_eq!(err["result"]["isError"], true);
+    assert!(
+        err["result"]["structuredContent"].is_null(),
+        "compact error call must omit structuredContent: {err}"
+    );
+
+    handle.stop();
+}
+
+fn call_text(client: &mut McpClient, tool: &str, args: Value) -> (bool, String) {
+    let resp = client.call_tool(tool, args);
+    let is_err = resp["result"]["isError"].as_bool().unwrap_or(true);
+    let text = resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    (is_err, text)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explore_compass_batch_and_compact_reduce_turns_and_tokens() {
+    let temp = seeded_store("token-turn");
+    let mut config = DaemonConfig::for_store(temp.0.join("nav-store.kg"));
+    config.api_key = None;
+    let (addr, handle) = server::serve_config(config, "127.0.0.1:0".parse().unwrap())
+        .await
+        .expect("serve");
+
+    let mut client = McpClient::connect(addr).expect("connect");
+    client.initialize();
+
+    let (err, text) = call_text(
+        &mut client,
+        "explore",
+        json!({"query": "OKFBundle", "include_source": false}),
+    );
+    assert!(!err, "explore omit source failed: {text}");
+    assert!(
+        text.contains("=== Source (omitted: include_source=false) ==="),
+        "{text}"
+    );
+
+    let (err, text) = call_text(
+        &mut client,
+        "explore",
+        json!({"query": "OKFBundle", "budget": 120}),
+    );
+    assert!(!err, "explore budget failed: {text}");
+    assert!(text.contains("[token budget:"), "{text}");
+
+    let (err, text) = call_text(
+        &mut client,
+        "ask_compass",
+        json!({"file_path": "src/cairn/graph/embeddings.py", "prepare_edit": true}),
+    );
+    assert!(!err, "ask_compass prepare_edit failed: {text}");
+    assert!(text.contains("=== File API ==="), "{text}");
+    assert!(text.contains("src/cairn/graph/embeddings.py"), "{text}");
+
+    let (err, text) = call_text(
+        &mut client,
+        "ask_compass",
+        json!({"query": "build resolve", "file_path": "src/cairn/graph/embeddings.py"}),
+    );
+    assert!(!err, "ask_compass merged mode failed: {text}");
+    assert!(text.contains("Intent:"), "{text}");
+    assert!(!text.contains("ignored in routing mode"), "{text}");
+
+    let (err, _) = call_text(
+        &mut client,
+        "ask_compass",
+        json!({"query": "", "file_path": ""}),
+    );
+    assert!(err, "empty ask_compass query + file_path must fail");
+
+    let (err, csv_text) = call_text(
+        &mut client,
+        "find_definition",
+        json!({"name": "OKFBundle, get_db"}),
+    );
+    assert!(!err, "batch csv failed: {csv_text}");
+    assert!(
+        csv_text.contains("=== OKFBundle ===") && csv_text.contains("=== get_db ==="),
+        "{csv_text}"
+    );
+
+    let (err, arr_text) = call_text(
+        &mut client,
+        "find_definition",
+        json!({"names": ["OKFBundle", "chunk_for_symbol"]}),
+    );
+    assert!(!err, "batch array failed: {arr_text}");
+    assert!(
+        arr_text.contains("=== OKFBundle ===") && arr_text.contains("=== chunk_for_symbol ==="),
+        "{arr_text}"
+    );
+
+    let (_, search_full) = call_text(&mut client, "search_symbols", json!({"pattern": "*chunk*"}));
+    let (err, search_compact) = call_text(
+        &mut client,
+        "search_symbols",
+        json!({"pattern": "*chunk*", "compact": true}),
+    );
+    assert!(
+        !err && search_compact.contains("[cairn] "),
+        "{search_compact}"
+    );
+    assert!(search_compact.len() < search_full.len(), "{search_compact}");
+
+    let (_, callers_full) = call_text(
+        &mut client,
+        "get_callers",
+        json!({"name": "OKFBundle", "limit": 20}),
+    );
+    let (err, callers_compact) = call_text(
+        &mut client,
+        "get_callers",
+        json!({"name": "OKFBundle", "limit": 20, "compact": true}),
+    );
+    assert!(
+        !err && callers_compact.contains("[cairn] "),
+        "{callers_compact}"
+    );
+    assert!(
+        callers_compact.len() < callers_full.len(),
+        "{callers_compact}"
+    );
+
+    let (_, callees_full) = call_text(
+        &mut client,
+        "get_callees",
+        json!({"name": "test_dashboard_app", "limit": 20}),
+    );
+    let (err, callees_compact) = call_text(
+        &mut client,
+        "get_callees",
+        json!({"name": "test_dashboard_app", "limit": 20, "compact": true}),
+    );
+    assert!(
+        !err && callees_compact.contains("[cairn] "),
+        "{callees_compact}"
+    );
+    assert!(
+        callees_compact.len() < callees_full.len(),
+        "{callees_compact}"
+    );
+
+    handle.stop();
 }

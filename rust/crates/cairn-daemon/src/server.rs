@@ -37,6 +37,8 @@ pub struct DaemonConfig {
     pub api_key: Option<String>,
     /// Explicit opt-in for write tools on a keyless daemon (D3).
     pub allow_writes: bool,
+    /// Omit `outputSchema` and `structuredContent` duplication for token-saving wire mode.
+    pub compact: bool,
 }
 
 impl DaemonConfig {
@@ -54,6 +56,7 @@ impl DaemonConfig {
             read_only: false,
             api_key: auth::resolve_api_key(None),
             allow_writes: false,
+            compact: false,
         }
     }
 }
@@ -62,6 +65,7 @@ impl DaemonConfig {
 #[derive(Clone)]
 pub struct CairnServer {
     ctx: tools::ToolCtx,
+    compact: bool,
 }
 
 impl ServerHandler for CairnServer {
@@ -80,7 +84,7 @@ impl ServerHandler for CairnServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         let mut result = ListToolsResult::default();
-        result.tools = tools::catalog();
+        result.tools = tools::catalog_with_options(!self.compact);
         Ok(result)
     }
 
@@ -108,6 +112,7 @@ impl ServerHandler for CairnServer {
         let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
         let text = match outcome {
             Ok(text) => {
+                let empty_result = is_empty_tool_result(&tool_name, &text);
                 let (text, truncated) = truncate_result(&tool_name, text);
                 let resp_chars = text.chars().count();
                 let ctx = self.ctx.clone();
@@ -123,6 +128,7 @@ impl ServerHandler for CairnServer {
                         resp_chars,
                         args_summary: &summary,
                         truncated,
+                        empty_result,
                     })
                 })
                 .await;
@@ -143,16 +149,21 @@ impl ServerHandler for CairnServer {
                         resp_chars: 0,
                         args_summary: &summary,
                         truncated: None,
+                        empty_result: false,
                     })
                 })
                 .await;
                 let mut result = CallToolResult::error(vec![ContentBlock::text(failure.0.clone())]);
-                result.structured_content = Some(json!({ "result": failure.0 }));
+                if !self.compact {
+                    result.structured_content = Some(json!({ "result": failure.0 }));
+                }
                 return Ok(result.into());
             }
         };
         let mut result = CallToolResult::success(vec![ContentBlock::text(text.clone())]);
-        result.structured_content = Some(json!({ "result": text }));
+        if !self.compact {
+            result.structured_content = Some(json!({ "result": text }));
+        }
         Ok(result.into())
     }
 }
@@ -161,6 +172,26 @@ impl ServerHandler for CairnServer {
 /// fixed notice. Returns the (possibly truncated) text and `(from_chars, to_chars)` when cut.
 fn truncate_result(name: &str, result: String) -> (String, Option<(usize, usize)>) {
     truncate_result_at(name, result, result_char_cap())
+}
+
+fn is_empty_tool_result(_tool: &str, text: &str) -> bool {
+    const EMPTY_PREFIXES: &[&str] = &[
+        "No symbols matching ",
+        "No definition found ",
+        "No callers found ",
+        "No callees found ",
+        "No memories matching ",
+        "No matches for ",
+        "No knowledge documents matching ",
+        "No outgoing calls traced ",
+        "No matches across ",
+        "No indexed symbols in ",
+        "No compass file found ",
+        "No workflow found matching ",
+        "0 results matching ",
+        "0 symbols matching ",
+    ];
+    EMPTY_PREFIXES.iter().any(|prefix| text.starts_with(prefix))
 }
 
 /// CAIRN_MAX_RESULT_CHARS override of the 60k-per-result cap.
@@ -259,9 +290,17 @@ pub async fn serve_config(
         healthz::HealthzState::new(config.db_path.to_string_lossy(), config.read_only)
             .with_api_key(config.api_key.clone()),
     );
+    let compact = config.compact;
+    let session_seq = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let service: StreamableHttpService<CairnServer, LocalSessionManager> =
         StreamableHttpService::new(
-            move || Ok(CairnServer { ctx: ctx.clone() }),
+            move || {
+                let seq = session_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                Ok(CairnServer {
+                    ctx: ctx.with_session_seq(seq),
+                    compact,
+                })
+            },
             Arc::new(LocalSessionManager::default()),
             http_config,
         );

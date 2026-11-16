@@ -218,6 +218,46 @@ pub fn search_symbols_response(conn: &Connection, pattern: &str, kind: Option<&s
     }
 }
 
+/// Render `search_symbols` grouped by `(repo, file_path)` for compact token output.
+pub fn render_search_symbols_compact(pattern: &str, rows: &[SymbolRow]) -> String {
+    let total = rows.len();
+    if total == 0 {
+        return render_search_symbols(pattern, rows);
+    }
+    let mut grouped: std::collections::BTreeMap<(&str, &str), Vec<&SymbolRow>> =
+        std::collections::BTreeMap::new();
+    for s in rows.iter().take(SHOWN) {
+        grouped.entry((&s.repo, &s.file_path)).or_default().push(s);
+    }
+    let mut out = format!("{total} symbols matching '{pattern}':");
+    for ((repo, file_path), items) in grouped {
+        out.push_str(&format!("\n[{repo}] {file_path}:"));
+        for s in items {
+            let line = s
+                .line_start
+                .map(|l| l.to_string())
+                .unwrap_or_else(|| "None".to_string());
+            out.push_str(&format!("\n  {} {} :{line}", s.kind, s.name));
+        }
+    }
+    if total > SHOWN {
+        out.push_str(&format!("\n  ... and {} more", total - SHOWN));
+    }
+    out
+}
+
+/// Tool-boundary `search_symbols` rendered grouped by file for compact token output.
+pub fn search_symbols_response_compact(
+    conn: &Connection,
+    pattern: &str,
+    kind: Option<&str>,
+) -> String {
+    match search_symbols(conn, pattern, kind, SEARCH_LIMIT) {
+        Ok(rows) => render_search_symbols_compact(pattern, &rows),
+        Err(_) => render_search_symbols(pattern, &[]),
+    }
+}
+
 // --- embedding knobs --------------------------------------------------------
 
 /// Model stamp of the deterministic hash backend.

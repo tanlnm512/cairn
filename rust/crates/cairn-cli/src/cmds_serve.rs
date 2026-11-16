@@ -18,6 +18,7 @@ pub struct ServeForegroundArgs {
     pub api_key: Option<String>,
     pub allow_writes: bool,
     pub stateless: bool,
+    pub compact: bool,
 }
 
 pub struct ServeStartArgs {
@@ -117,6 +118,7 @@ pub fn run_foreground(args: ServeForegroundArgs) -> ExitCode {
         read_only: args.read_only.unwrap_or(false),
         api_key: cairn_daemon::auth::resolve_api_key(args.api_key.as_deref()),
         allow_writes: args.allow_writes,
+        compact: args.compact,
     };
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
