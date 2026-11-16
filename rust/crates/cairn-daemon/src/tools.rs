@@ -133,7 +133,7 @@ impl ToolCtx {
 }
 
 fn telemetry_off() -> bool {
-    std::env::var("CAIRN_TELEMETRY").is_ok_and(|v| v.trim().eq_ignore_ascii_case("off"))
+    cairn_query::tools_search::telemetry_off()
 }
 
 fn record_quality_events(

@@ -292,6 +292,11 @@ pub fn config_value(name: &str) -> Option<String> {
         .map(String::from)
 }
 
+/// True when `CAIRN_TELEMETRY` resolves (env > config.json) to `"off"`; defaults to `false` (on).
+pub fn telemetry_off() -> bool {
+    config_value("CAIRN_TELEMETRY").is_some_and(|v| v.trim().eq_ignore_ascii_case("off"))
+}
+
 /// Effective CAIRN_HOME: the env value when set, else `~/.cairn`.
 pub fn cairn_home() -> Option<PathBuf> {
     cairn_store::paths::cairn_home()

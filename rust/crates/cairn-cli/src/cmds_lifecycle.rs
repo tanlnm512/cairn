@@ -243,9 +243,7 @@ fn table_has_rows(conn: &Connection, table: &str) -> bool {
 }
 
 fn telemetry_off() -> bool {
-    std::env::var("CAIRN_TELEMETRY")
-        .map(|v| v.trim().eq_ignore_ascii_case("off"))
-        .unwrap_or(false)
+    cairn_query::tools_search::telemetry_off()
 }
 
 /// Record a build_runs row; `files`/`symbols` are column choices per kind
@@ -457,6 +455,24 @@ fn metrics_default(args: &MetricsArgs) -> ExitCode {
         &["tool", "calls", "avg ms", "errors", "err %"],
         &table_rows,
     );
+    let mut tokens_data = crate::dashboard::data::get_tool_tokens(&conn, None);
+    if let Some(filter) = args.tool.as_deref()
+        && let Some(entries) = tokens_data.get_mut("entries").and_then(Value::as_array_mut)
+    {
+        entries.retain(|row| row.get("tool_name").and_then(Value::as_str) == Some(filter));
+    }
+    if let Some(table) = format_tokens_table(&tokens_data) {
+        println!();
+        println!("{table}");
+    }
+    let quality = gather_quality(&conn);
+    let has_quality = ["semantic_total", "empty_results", "truncations"]
+        .iter()
+        .any(|k| quality.get(*k).and_then(Value::as_i64).unwrap_or(0) > 0);
+    if has_quality && args.tool.is_none() {
+        println!();
+        render_quality(&quality);
+    }
     ExitCode::SUCCESS
 }
 

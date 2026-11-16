@@ -7,9 +7,10 @@ use serde_json::{Value, json};
 
 use cairn_query::tools_search;
 
-/// The CAIRN_EMBED_* knobs the settings page reads and writes in config.json.
+/// The CAIRN_EMBED_* and telemetry knobs the settings page reads and writes in config.json.
 pub const SETTINGS_BACKENDS: [&str; 5] = ["local", "server", "omlx", "ollama", "hash"];
-pub const SETTINGS_KEYS: [&str; 7] = [
+pub const SETTINGS_TELEMETRY_MODES: [&str; 2] = ["on", "off"];
+pub const SETTINGS_KEYS: [&str; 8] = [
     "CAIRN_EMBED_BACKEND",
     "CAIRN_EMBED_SERVER_MODEL",
     "CAIRN_EMBED_API_KEY",
@@ -17,6 +18,7 @@ pub const SETTINGS_KEYS: [&str; 7] = [
     "CAIRN_EMBED_SERVER_BATCH",
     "CAIRN_EMBED_MODEL_STAMP",
     "CAIRN_EMBED_BASE_URL",
+    "CAIRN_TELEMETRY",
 ];
 
 /// Keys whose file values must parse as numbers (validated at save time).
@@ -90,10 +92,16 @@ pub fn settings_context_full(
         .as_str()
         .filter(|v| !v.is_empty())
         .unwrap_or("local");
+    let telemetry_value = cfg["CAIRN_TELEMETRY"]["prefill"]
+        .as_str()
+        .filter(|v| !v.is_empty())
+        .unwrap_or("on");
     json!({
         "cfg": cfg,
         "backends": SETTINGS_BACKENDS,
         "backend_value": backend_value,
+        "telemetry_modes": SETTINGS_TELEMETRY_MODES,
+        "telemetry_value": telemetry_value,
         "saved": saved,
         "error": error,
         "parity": parity,

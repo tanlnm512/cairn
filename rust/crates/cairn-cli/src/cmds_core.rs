@@ -230,8 +230,7 @@ fn record_cli_metric(
     status: &str,
     resp_chars: usize,
 ) {
-    let telemetry_off =
-        std::env::var("CAIRN_TELEMETRY").is_ok_and(|v| v.trim().eq_ignore_ascii_case("off"));
+    let telemetry_off = cairn_query::tools_search::telemetry_off();
     let read_only = std::env::var("CAIRN_READ_ONLY").is_ok_and(|v| {
         matches!(
             v.trim().to_ascii_lowercase().as_str(),
@@ -2804,10 +2803,7 @@ fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
         }
     }
 
-    if std::env::var("CAIRN_TELEMETRY")
-        .map(|v| !v.trim().eq_ignore_ascii_case("off"))
-        .unwrap_or(true)
-    {
+    if !cairn_query::tools_search::telemetry_off() {
         let started = std::time::SystemTime::now() - timer.elapsed();
         crate::cmds_lifecycle::record_build_run(
             &db,

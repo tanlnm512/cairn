@@ -1639,6 +1639,12 @@ fn save_values(submitted: &HashMap<String, String>) -> (Vec<(String, String)>, V
             } else {
                 dropped.push(key.clone());
             }
+        } else if key == "CAIRN_TELEMETRY" {
+            if settings::SETTINGS_TELEMETRY_MODES.contains(&value.as_str()) {
+                values.push((key.clone(), value.clone()));
+            } else {
+                dropped.push(key.clone());
+            }
         } else if !value.is_empty() {
             values.push((key.clone(), value.clone()));
         }

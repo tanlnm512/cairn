@@ -589,7 +589,10 @@ async fn settings_routes_parity_and_cross_site_guard() {
     let server = Serving::new("settings");
     let (status, body, _) = server.get("/settings").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("CAIRN_EMBED_BACKEND"), "{body}");
+    assert!(
+        body.contains("CAIRN_EMBED_BACKEND") && body.contains("CAIRN_TELEMETRY"),
+        "{body}"
+    );
     assert!(!body.contains("secret-value"), "the api key never prefills");
 
     let (status, body, _) = server.get("/embeddings").await;
@@ -604,11 +607,24 @@ async fn settings_routes_parity_and_cross_site_guard() {
                 ("host", "127.0.0.1:8765"),
                 ("sec-fetch-site", "same-origin"),
             ],
-            "CAIRN_EMBED_BACKEND=hash&CAIRN_EMBED_TIMEOUT=30",
+            "CAIRN_EMBED_BACKEND=hash&CAIRN_EMBED_TIMEOUT=30&CAIRN_TELEMETRY=off",
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("Settings saved"), "{body}");
+
+    let (status, body) = server
+        .post(
+            "/settings/save",
+            &[
+                ("host", "127.0.0.1:8765"),
+                ("sec-fetch-site", "same-origin"),
+            ],
+            "CAIRN_TELEMETRY=invalid",
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("no savable value"), "{body}");
 
     // Numeric validation refuses garbage.
     let (status, body) = server
