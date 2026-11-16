@@ -15,6 +15,24 @@ use crate::graph::{
 /// Default source-reading budget for one explore call.
 const EXPLORE_MAX_NODES: usize = 20;
 const EXPLORE_MAX_SOURCE_LINES: usize = 400;
+
+/// Options controlling `explore_text_with_options` output size and source inclusion.
+#[derive(Debug, Clone, Copy)]
+pub struct ExploreOptions {
+    pub max_lines: usize,
+    pub include_source: bool,
+    pub budget_tokens: Option<usize>,
+}
+
+impl Default for ExploreOptions {
+    fn default() -> Self {
+        Self {
+            max_lines: EXPLORE_MAX_SOURCE_LINES,
+            include_source: true,
+            budget_tokens: None,
+        }
+    }
+}
 const EXPLORE_EDGE_LIMIT: i64 = 20;
 const BLAST_TOP_CALLERS: usize = 5;
 const CALL_PATH_SHOWN: usize = 20;
@@ -179,13 +197,14 @@ struct Seed {
 
 /// `explore`: source, call paths, blast radius, dispatch, tribal memory,
 /// taint warning; `bundle`/`read_only`/`session_id` gate the tribal section.
-pub fn explore_text(
+pub fn explore_text_with_options(
     conn: &Connection,
     bundle: Option<&crate::tools_km::Bundle>,
     workspace: &Path,
     query: &str,
     read_only: bool,
     session_id: Option<&str>,
+    opts: ExploreOptions,
 ) -> Result<String, rusqlite::Error> {
     let seed_rows = lexical_search_symbols(conn, query, None, EXPLORE_MAX_NODES as i64);
     let mut seeds: Vec<Seed> = seed_rows
@@ -275,13 +294,23 @@ pub fn explore_text(
     }
 
     // --- source spans for seeds + neighbors ---------------------------------
+    let effective_max_lines = match opts.budget_tokens {
+        Some(budget) => {
+            (budget.saturating_mul(4) / 80).clamp(5.min(opts.max_lines), opts.max_lines)
+        }
+        None => opts.max_lines,
+    };
     let seed_ids: HashSet<String> = seeds.iter().filter_map(|s| s.id.clone()).collect();
-    let files = read_source_spans(
-        conn,
-        workspace,
-        &(seed_ids.union(&neighbor_ids).cloned().collect()),
-        EXPLORE_MAX_SOURCE_LINES,
-    )?;
+    let files = if opts.include_source {
+        read_source_spans(
+            conn,
+            workspace,
+            &(seed_ids.union(&neighbor_ids).cloned().collect()),
+            effective_max_lines,
+        )?
+    } else {
+        Vec::new()
+    };
 
     // --- blast radius per seed (shallow depth 2) -----------------------------
     let mut blast: Vec<(String, i64, Vec<String>, usize)> = Vec::new();
@@ -334,17 +363,22 @@ pub fn explore_text(
     out.push(format!("{} symbol(s) matched.", seeds.len()));
     out.push(String::new());
 
-    out.push(format!(
-        "=== Source ({} file(s), {} line(s)) ===",
-        files.len(),
-        files
-            .iter()
-            .map(|(_, es)| es
+    if !opts.include_source {
+        out.push("=== Source (omitted: include_source=false) ===".to_string());
+        out.push(String::new());
+    } else {
+        out.push(format!(
+            "=== Source ({} file(s), {} line(s)) ===",
+            files.len(),
+            files
                 .iter()
-                .map(|e| e.line_end - e.line_start + 1)
-                .sum::<i64>())
-            .sum::<i64>()
-    ));
+                .map(|(_, es)| es
+                    .iter()
+                    .map(|e| e.line_end - e.line_start + 1)
+                    .sum::<i64>())
+                .sum::<i64>()
+        ));
+    }
     if !files.is_empty() {
         for (file_path, entries) in &files {
             out.push(file_path.clone());
@@ -361,7 +395,7 @@ pub fn explore_text(
             }
             out.push(String::new());
         }
-    } else {
+    } else if opts.include_source {
         out.push("  (source unavailable — files moved since index)".to_string());
         out.push(String::new());
     }
@@ -497,7 +531,12 @@ pub fn explore_text(
         out.push(format_taint_warning(&taint_paths));
         out.push(String::new());
     }
-    Ok(out.join("\n"))
+    let mut rendered = out.join("\n");
+    if let Some(budget) = opts.budget_tokens {
+        let est = rendered.chars().count() / 4;
+        rendered.push_str(&format!("\n[token budget: ~{est} / {budget} tokens]"));
+    }
+    Ok(rendered)
 }
 
 /// First `How to apply:` line's remainder, trimmed (the memory body contract).

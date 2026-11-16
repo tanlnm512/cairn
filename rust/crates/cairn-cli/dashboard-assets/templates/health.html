@@ -33,6 +33,12 @@
       <p class="muted">age bound {{ health.tool_metrics_max_age_seconds }}s</p>
       {% endif %}
     {% endcall %}
+    {% call cards.card('Retrieval quality') %}
+    <p class="card-value">{{ health.quality.empty_results }} empty · {{ health.quality.truncations }} truncated</p>
+    <p class="muted">
+      semantic queries: {{ health.quality.semantic_total }}{% if health.quality_empty_rate_pct %} · empty rate {{ health.quality_empty_rate_pct }}{% endif %}
+    </p>
+    {% endcall %}
     {% call cards.card('Index freshness') %}
       {% if health.last_build_age %}
       <p class="card-value">{{ health.last_build_age }}</p>

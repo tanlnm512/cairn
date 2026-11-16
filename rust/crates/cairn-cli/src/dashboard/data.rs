@@ -483,6 +483,10 @@ pub fn get_health(conn: &Connection, db_path: &str) -> Value {
         }
     }
     let tool_metrics_rows = scalar_i64(conn, "SELECT COUNT(*) AS n FROM tool_metrics", &[]);
+    let quality = crate::cmds_lifecycle::gather_quality(conn);
+    let quality_empty_rate_pct = quality["empty_result_rate"]
+        .as_f64()
+        .map(|r| format!("{:.1}%", r * 100.0));
     json!({
         "db_size_bytes": db_size_bytes,
         "last_build_at": last_build_at.unwrap_or(Value::Null),
@@ -503,6 +507,8 @@ pub fn get_health(conn: &Connection, db_path: &str) -> Value {
         "tool_metrics_max_rows": retention_policy()["tool_metrics_max_rows"].clone(),
         "tool_metrics_max_age_seconds": retention_policy()["tool_metrics_max_age_seconds"].clone(),
         "tool_metrics_rows": tool_metrics_rows.map(Value::from).unwrap_or(Value::Null),
+        "quality": quality,
+        "quality_empty_rate_pct": quality_empty_rate_pct.map(Value::from).unwrap_or(Value::Null),
     })
 }
 
@@ -838,11 +844,24 @@ fn estimate_divisor(_conn: &Connection, _clauses: &[String], _params: &[P]) -> i
 
 /// Per-tool token aggregates with mode context and unknown-safe truncation counts.
 pub fn get_tool_tokens(conn: &Connection, since: Option<f64>) -> Value {
+    get_tool_tokens_filtered(conn, since, None)
+}
+
+/// Per-tool token aggregates filtered optionally by invocation `source` (`mcp` / `cli`).
+pub fn get_tool_tokens_filtered(
+    conn: &Connection,
+    since: Option<f64>,
+    source: Option<&str>,
+) -> Value {
     let mut clauses: Vec<String> = Vec::new();
     let mut params: Vec<P> = Vec::new();
     if let Some(since) = since {
         clauses.push("invoked_at >= ?".into());
         params.push(P::F(since));
+    }
+    if let Some(source) = source.filter(|s| !s.is_empty()) {
+        clauses.push("source = ?".into());
+        params.push(P::S(source.to_string()));
     }
     let where_clause = if clauses.is_empty() {
         String::new()

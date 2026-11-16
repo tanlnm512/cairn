@@ -367,7 +367,9 @@ effective value and where it came from):
 | `CAIRN_MAX_RESULT_CHARS` | cap for MCP tool text results (default 60000; read in `cairn-daemon/src/server.rs`) |
 | `CAIRN_WORKERS` | parse-pool size (default: CPU count) |
 | `CAIRN_READ_ONLY=1` | open the store read-only, skipping the pre-query freshness refresh (what `cairn serve --read-only` sets for the daemon) |
-| `CAIRN_TELEMETRY=off` | master kill switch for the local telemetry tables |
+| `CAIRN_TELEMETRY=off` | master kill switch for the local telemetry tables (daemon and CLI writers) |
+| `CAIRN_TOOL_METRICS_MAX_ROWS` | tool-metrics retention cap (default 50000; oldest rows pruned) |
+| `CAIRN_TOOL_METRICS_MAX_AGE_SECONDS` | tool-metrics retention window in seconds (off when unset) |
 | `CAIRN_BIN` | engine binary a daemon start execs (default: the running `cairn`, then `PATH`) |
 
 ## Supported Platforms & Agents

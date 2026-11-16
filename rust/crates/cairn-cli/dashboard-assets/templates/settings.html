@@ -71,6 +71,14 @@
       <input type="checkbox" name="confirm_base_url" value="1">
       Confirm base-URL change
     </label>
+    <label>Telemetry
+      <select name="CAIRN_TELEMETRY">
+        {% for m in telemetry_modes %}
+        <option value="{{ m }}"{% if m == telemetry_value %} selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {{ env_pin(cfg['CAIRN_TELEMETRY']) }}
     <button type="submit">Save settings</button>
   </form>
 

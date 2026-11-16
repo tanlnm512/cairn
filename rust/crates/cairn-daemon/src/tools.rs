@@ -70,6 +70,16 @@ impl ToolCtx {
         }
     }
 
+    /// Clone with a distinct per-session suffix (`mcp-<pid>-<date>-s<seq>`).
+    pub fn with_session_seq(&self, seq: u64) -> Self {
+        let mut cloned = self.clone();
+        cloned.session_id = self
+            .session_id
+            .as_ref()
+            .map(|base| format!("{base}-s{seq}"));
+        cloned
+    }
+
     fn conn(&self) -> Result<ConnLease, String> {
         self.conns.primary()
     }
@@ -84,7 +94,7 @@ impl ToolCtx {
 
     /// Best-effort telemetry row for one dispatched call; never fails the tool result.
     pub(crate) fn record_tool_metrics(&self, call: ToolCallMetrics<'_>) {
-        if self.read_only {
+        if self.read_only || telemetry_off() {
             return;
         }
         let Ok(conn) = self.conn() else {
@@ -96,7 +106,7 @@ impl ToolCtx {
             .unwrap_or(0.0);
         let session = self.session_id.as_deref().unwrap_or("unknown");
         let (from_chars, to_chars) = call.truncated.map(|(f, t)| (f as i64, t as i64)).unzip();
-        let _ = conn.execute(
+        let inserted = conn.execute(
             "INSERT INTO tool_metrics (tool_name, session_id, invoked_at, duration_ms, \
              status, error_message, req_chars, resp_chars, args_summary, source, \
              truncated_from_chars, truncated_to_chars) \
@@ -115,6 +125,69 @@ impl ToolCtx {
                 to_chars,
             ],
         );
+        if inserted.is_ok() {
+            record_quality_events(&conn, &call, invoked_at, session);
+            prune_tool_metrics(&conn, invoked_at);
+        }
+    }
+}
+
+fn telemetry_off() -> bool {
+    cairn_query::tools_search::telemetry_off()
+}
+
+fn record_quality_events(
+    conn: &rusqlite::Connection,
+    call: &ToolCallMetrics<'_>,
+    ts: f64,
+    session: &str,
+) {
+    if call.truncated.is_some() {
+        let attrs = serde_json::json!({ "tool": call.tool }).to_string();
+        let _ = conn.execute(
+            "INSERT INTO events (ts, name, session_id, attrs) \
+             VALUES (?1, 'truncate_result', ?2, ?3)",
+            rusqlite::params![ts, session, attrs],
+        );
+    }
+    if call.empty_result {
+        let attrs = serde_json::json!({ "query_kind": call.tool }).to_string();
+        let _ = conn.execute(
+            "INSERT INTO events (ts, name, session_id, attrs) \
+             VALUES (?1, 'empty_result', ?2, ?3)",
+            rusqlite::params![ts, session, attrs],
+        );
+    }
+    if call.tool == "semantic_search" {
+        let attrs = serde_json::json!({ "backend": search::backend_name() }).to_string();
+        let _ = conn.execute(
+            "INSERT INTO events (ts, name, session_id, attrs) \
+             VALUES (?1, 'semantic_backend', ?2, ?3)",
+            rusqlite::params![ts, session, attrs],
+        );
+    }
+}
+
+fn prune_tool_metrics(conn: &rusqlite::Connection, now: f64) {
+    let max_age = std::env::var("CAIRN_TOOL_METRICS_MAX_AGE_SECONDS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<f64>().ok().filter(|v| *v >= 0.0));
+    if let Some(age) = max_age {
+        let _ = conn.execute(
+            "DELETE FROM tool_metrics WHERE invoked_at < ?1",
+            rusqlite::params![now - age],
+        );
+    }
+    let max_rows = std::env::var("CAIRN_TOOL_METRICS_MAX_ROWS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<i64>().ok().filter(|v| *v >= 0))
+        .unwrap_or(50_000);
+    if max_rows > 0 && (max_rows <= 1000 || conn.last_insert_rowid() % 64 == 0) {
+        let _ = conn.execute(
+            "DELETE FROM tool_metrics WHERE id NOT IN \
+             (SELECT id FROM tool_metrics ORDER BY invoked_at DESC, id DESC LIMIT ?1)",
+            rusqlite::params![max_rows],
+        );
     }
 }
 
@@ -131,6 +204,7 @@ pub(crate) struct ToolCallMetrics<'a> {
     pub(crate) resp_chars: usize,
     pub(crate) args_summary: &'a str,
     pub(crate) truncated: Option<(usize, usize)>,
+    pub(crate) empty_result: bool,
 }
 
 impl From<String> for ToolFailure {
@@ -155,6 +229,60 @@ fn arg_i64_or(args: &Value, key: &str, default: i64) -> i64 {
 
 fn arg_bool_or(args: &Value, key: &str, default: bool) -> bool {
     args.get(key).and_then(Value::as_bool).unwrap_or(default)
+}
+
+/// Extract one or more symbol names from `"name"` (comma-separated) or `"names"` (array).
+fn extract_symbol_names(args: &Value, tool: &str) -> Result<Vec<String>, ToolFailure> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push_unique = |raw: &str| {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() && !out.iter().any(|existing| existing == trimmed) {
+            out.push(trimmed.to_string());
+        }
+    };
+    if let Some(arr) = args.get("names").and_then(Value::as_array) {
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                push_unique(s);
+            }
+        }
+    }
+    if let Some(single) = arg_str(args, "name") {
+        for part in single.split(',') {
+            push_unique(part);
+        }
+    }
+    if out.is_empty() {
+        return Err(ToolFailure(format!(
+            "{tool} requires a non-empty string name or names array"
+        )));
+    }
+    Ok(out)
+}
+
+/// Run a symbol lookup once or join labeled batch sections when multiple symbols are given.
+fn run_symbol_batch<F>(symbols: &[String], mut f: F) -> Result<String, ToolFailure>
+where
+    F: FnMut(&str) -> Result<String, ToolFailure>,
+{
+    if symbols.len() == 1 {
+        return f(&symbols[0]);
+    }
+    let mut sections = Vec::with_capacity(symbols.len());
+    for symbol in symbols {
+        let body = f(symbol)?;
+        sections.push(format!("=== {symbol} ===\n{body}"));
+    }
+    Ok(sections.join("\n\n"))
+}
+
+/// JSON Schema property describing an array of strings.
+fn prop_string_array(description: &str) -> Value {
+    serde_json::json!({
+        "type": "array",
+        "items": { "type": "string" },
+        "description": description,
+    })
 }
 
 // --- catalog -----------------------------------------------------------------
@@ -208,18 +336,33 @@ fn result_output_schema() -> serde_json::Map<String, Value> {
     schema
 }
 
-fn prop(name: &str, type_: &str, description: &str) -> Value {
-    serde_json::json!({ name: { "type": type_, "description": description } })
+fn prop(_name: &str, type_: &str, description: &str) -> Value {
+    serde_json::json!({ "type": type_, "description": description })
 }
 
 fn prop_default(name: &str, type_: &str, description: &str, default: Value) -> Value {
     let mut value = prop(name, type_, description);
-    value[name]["default"] = default;
+    value["default"] = default;
     value
 }
 
 /// The full registered tool surface (one entry per cairn-query tool).
 pub fn catalog() -> Vec<Tool> {
+    catalog_with_options(true)
+}
+
+/// Registered tool catalog, optionally omitting `outputSchema` for compact mode.
+pub fn catalog_with_options(include_output_schema: bool) -> Vec<Tool> {
+    let mut tools = catalog_entries();
+    if !include_output_schema {
+        for tool in &mut tools {
+            tool.output_schema = None;
+        }
+    }
+    tools
+}
+
+fn catalog_entries() -> Vec<Tool> {
     vec![
         text_tool(
             "search_symbols",
@@ -227,6 +370,7 @@ pub fn catalog() -> Vec<Tool> {
             serde_json::json!({
                 "pattern": { "type": "string", "description": "Symbol name pattern with optional trailing * wildcard." },
                 "kind": prop_default("kind", "string", "Filter by symbol kind (function, class, ...).", Value::String(String::new())),
+                "compact": prop_default("compact", "boolean", "Group matches under file headers to reduce tokens.", Value::Bool(false)),
             }),
             &["pattern"],
             true,
@@ -250,10 +394,11 @@ pub fn catalog() -> Vec<Tool> {
             "find_definition",
             "Find where a symbol is defined (file:line, kind, qualified name) with exact→qualified→substring fallback.",
             serde_json::json!({
-                "name": prop("name", "string", "Symbol name to locate."),
+                "name": prop("name", "string", "Symbol name (or comma-separated names) to locate."),
+                "names": prop_string_array("Optional list of symbol names for batch lookup."),
                 "limit": prop_default("limit", "integer", "Maximum rows (1-1000).", serde_json::json!(50)),
             }),
-            &["name"],
+            &[],
             true,
             false,
             true,
@@ -262,11 +407,13 @@ pub fn catalog() -> Vec<Tool> {
             "get_callers",
             "Who calls this symbol? Precise by default, auto-retrying fuzzy when precise is empty.",
             serde_json::json!({
-                "name": prop("name", "string", "Symbol name."),
+                "name": prop("name", "string", "Symbol name (or comma-separated names)."),
+                "names": prop_string_array("Optional list of symbol names for batch lookup."),
                 "fuzzy": prop_default("fuzzy", "boolean", "Include unresolved name-match candidates.", Value::Bool(false)),
                 "limit": prop_default("limit", "integer", "Maximum rows (1-1000).", serde_json::json!(200)),
+                "compact": prop_default("compact", "boolean", "Group callers under file headers to reduce tokens.", Value::Bool(false)),
             }),
-            &["name"],
+            &[],
             true,
             false,
             true,
@@ -275,11 +422,13 @@ pub fn catalog() -> Vec<Tool> {
             "get_callees",
             "What does this function/symbol call? Precise by default, fuzzy adds unresolved edges.",
             serde_json::json!({
-                "name": prop("name", "string", "Symbol name."),
+                "name": prop("name", "string", "Symbol name (or comma-separated names)."),
+                "names": prop_string_array("Optional list of symbol names for batch lookup."),
                 "fuzzy": prop_default("fuzzy", "boolean", "Include unresolved name-match candidates.", Value::Bool(false)),
                 "limit": prop_default("limit", "integer", "Maximum rows (1-1000).", serde_json::json!(200)),
+                "compact": prop_default("compact", "boolean", "Group callees under file headers to reduce tokens.", Value::Bool(false)),
             }),
-            &["name"],
+            &[],
             true,
             false,
             true,
@@ -288,12 +437,13 @@ pub fn catalog() -> Vec<Tool> {
             "impact_analysis",
             "Recursive caller impact up to depth (precise by default; fuzzy adds unresolved edges; cached reads precomputed dataflow).",
             serde_json::json!({
-                "name": prop("name", "string", "Symbol to analyze blast radius for."),
+                "name": prop("name", "string", "Symbol name (or comma-separated names) to analyze blast radius for."),
+                "names": prop_string_array("Optional list of symbol names for batch lookup."),
                 "depth": prop_default("depth", "integer", "Traversal depth (1-10; the default 3 rides the transitive-closure fast path).", serde_json::json!(3)),
                 "fuzzy": prop_default("fuzzy", "boolean", "Traverse unresolved name-match edges too.", Value::Bool(false)),
                 "limit": prop_default("limit", "integer", "Maximum impacted rows (1-1000).", serde_json::json!(500)),
             }),
-            &["name"],
+            &[],
             true,
             false,
             true,
@@ -318,6 +468,9 @@ pub fn catalog() -> Vec<Tool> {
             "Answer 'how does X work' in one call: matching source, call paths, blast radius, memory, rationale, and taint warnings.",
             serde_json::json!({
                 "query": prop("query", "string", "Symbol name or natural-language question."),
+                "budget": { "type": "integer", "description": "Optional approximate output token budget." },
+                "include_source": prop_default("include_source", "boolean", "Include source excerpts for matched symbols.", Value::Bool(true)),
+                "max_lines": prop_default("max_lines", "integer", "Maximum source lines across matched files.", serde_json::json!(400)),
             }),
             &["query"],
             true,
@@ -489,10 +642,11 @@ pub fn catalog() -> Vec<Tool> {
             "ask_compass",
             "Natural language across all layers. Routes to graph/wiki/compass/memory.",
             serde_json::json!({
-                "query": prop("query", "string", "Natural language question, e.g. 'where do we handle retries'."),
+                "query": prop_default("query", "string", "Natural language question, e.g. 'where do we handle retries'.", Value::String(String::new())),
                 "file_path": prop_default("file_path", "string", "Optional source file for file-path-aware mode.", Value::String(String::new())),
+                "prepare_edit": prop_default("prepare_edit", "boolean", "When file_path is set, append its compact public API summary.", Value::Bool(false)),
             }),
-            &["query"],
+            &[],
             true,
             false,
             true,
@@ -570,13 +724,15 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             let conn = ctx.read_conn()?;
             let kind = arg_str_or(args, "kind", "");
             let kind = if kind.is_empty() { None } else { Some(kind) };
-            Ok(search::search_symbols_response(
-                &conn,
-                arg_str(args, "pattern").ok_or_else(|| {
-                    ToolFailure("search_symbols requires a string pattern".into())
-                })?,
-                kind,
-            ))
+            let pattern = arg_str(args, "pattern")
+                .ok_or_else(|| ToolFailure("search_symbols requires a string pattern".into()))?;
+            if arg_bool_or(args, "compact", false) {
+                Ok(search::search_symbols_response_compact(
+                    &conn, pattern, kind,
+                ))
+            } else {
+                Ok(search::search_symbols_response(&conn, pattern, kind))
+            }
         }
         "semantic_search" => {
             let conn = ctx.read_conn()?;
@@ -592,46 +748,46 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
         }
         "find_definition" => {
             let conn = ctx.read_conn()?;
-            nav::find_definition_text(
-                &conn,
-                arg_str(args, "name")
-                    .ok_or_else(|| ToolFailure("find_definition requires a string name".into()))?,
-                arg_i64_or(args, "limit", 50),
-                "",
-            )
-            .map_err(|e| ToolFailure(e.to_string()))
+            let symbols = extract_symbol_names(args, "find_definition")?;
+            let limit = arg_i64_or(args, "limit", 50);
+            run_symbol_batch(&symbols, |symbol| {
+                nav::find_definition_text(&conn, symbol, limit, "")
+                    .map_err(|e| ToolFailure(e.to_string()))
+            })
         }
         "get_callers" | "get_callees" => {
             let conn = ctx.read_conn()?;
-            let symbol = arg_str(args, "name")
-                .ok_or_else(|| ToolFailure(format!("{name} requires a string name")))?;
+            let symbols = extract_symbol_names(args, name)?;
             let fuzzy = arg_bool_or(args, "fuzzy", false);
             let limit = arg_i64_or(args, "limit", 200);
-            let result = if name == "get_callers" {
-                nav::callers_text(&conn, symbol, fuzzy, limit, "")
-            } else {
-                nav::callees_text(&conn, symbol, fuzzy, limit, "")
-            };
-            result.map_err(|e| ToolFailure(e.to_string()))
+            let compact = arg_bool_or(args, "compact", false);
+            run_symbol_batch(&symbols, |symbol| {
+                let result = match (name, compact) {
+                    ("get_callers", false) => nav::callers_text(&conn, symbol, fuzzy, limit, ""),
+                    ("get_callers", true) => {
+                        nav::callers_text_compact(&conn, symbol, fuzzy, limit, "")
+                    }
+                    (_, false) => nav::callees_text(&conn, symbol, fuzzy, limit, ""),
+                    (_, true) => nav::callees_text_compact(&conn, symbol, fuzzy, limit, ""),
+                };
+                result.map_err(|e| ToolFailure(e.to_string()))
+            })
         }
         "impact_analysis" => {
             let conn = ctx.read_conn()?;
+            let symbols = extract_symbol_names(args, "impact_analysis")?;
+            let depth = arg_i64_or(args, "depth", 3);
+            let fuzzy = arg_bool_or(args, "fuzzy", false);
+            let limit = arg_i64_or(args, "limit", 500);
             let namespaces = cairn_query::graph::resolve_namespaces(&ctx.workspace, None);
             let ns_refs: Vec<(&str, &str)> = namespaces
                 .iter()
                 .map(|(k, v)| (k.as_str(), v.as_str()))
                 .collect();
-            nav::impact_analysis_text(
-                &conn,
-                arg_str(args, "name")
-                    .ok_or_else(|| ToolFailure("impact_analysis requires a string name".into()))?,
-                arg_i64_or(args, "depth", 3),
-                arg_bool_or(args, "fuzzy", false),
-                arg_i64_or(args, "limit", 500),
-                "",
-                &ns_refs,
-            )
-            .map_err(|e| ToolFailure(e.to_string()))
+            run_symbol_batch(&symbols, |symbol| {
+                nav::impact_analysis_text(&conn, symbol, depth, fuzzy, limit, "", &ns_refs)
+                    .map_err(|e| ToolFailure(e.to_string()))
+            })
         }
         "path" => {
             let conn = ctx.read_conn()?;
@@ -665,7 +821,16 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
             // A writable-capable conn: explore credits the tribal memories it
             // renders (analytics write, `_conn()` contract).
             let conn = ctx.conn()?;
-            flow::explore_text(
+            let opts = flow::ExploreOptions {
+                max_lines: arg_i64_or(args, "max_lines", 400).clamp(0, 5000) as usize,
+                include_source: arg_bool_or(args, "include_source", true),
+                budget_tokens: args
+                    .get("budget")
+                    .and_then(Value::as_i64)
+                    .filter(|&v| v > 0)
+                    .map(|v| v as usize),
+            };
+            flow::explore_text_with_options(
                 &conn,
                 Some(&ctx.bundle()),
                 &ctx.workspace,
@@ -673,6 +838,7 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
                     .ok_or_else(|| ToolFailure("explore requires a string query".into()))?,
                 ctx.read_only,
                 ctx.session_id.as_deref(),
+                opts,
             )
             .map_err(|e| ToolFailure(e.to_string()))
         }
@@ -839,14 +1005,22 @@ pub fn dispatch(ctx: &ToolCtx, name: &str, args: &Value) -> Result<String, ToolF
         .map_err(|e| ToolFailure(e.0)),
         "ask_compass" => {
             let conn = ctx.read_conn()?;
-            km::ask_compass(
-                &conn,
-                &ctx.bundle(),
-                arg_str(args, "query")
-                    .ok_or_else(|| ToolFailure("ask_compass requires a string query".into()))?,
-                arg_str_or(args, "file_path", ""),
-            )
-            .map_err(|e| ToolFailure(e.0))
+            let query = arg_str_or(args, "query", "");
+            let file_path = arg_str_or(args, "file_path", "");
+            if query.is_empty() && file_path.is_empty() {
+                return Err(ToolFailure(
+                    "ask_compass requires a string query or non-empty file_path".into(),
+                ));
+            }
+            let mut out = km::ask_compass(&conn, &ctx.bundle(), query, file_path)
+                .map_err(|e| ToolFailure(e.0))?;
+            if arg_bool_or(args, "prepare_edit", false) && !file_path.is_empty() {
+                let api = cairn_query::tools_repo::file_api_text(&conn, file_path, None)
+                    .map_err(|e| ToolFailure(e.0))?;
+                out.push_str("\n\n=== File API ===\n");
+                out.push_str(&api);
+            }
+            Ok(out)
         }
         "generate_flow" => {
             if let Some(msg) = ctx.refuse_writes() {

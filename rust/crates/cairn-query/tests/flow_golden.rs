@@ -44,13 +44,14 @@ fn truncate_result(name: &str, result: String) -> String {
 
 fn run_tool(conn: &rusqlite::Connection, tool: &str, args: &Value, ws: &Path) -> String {
     match tool {
-        "explore" => cairn_query::tools_flow::explore_text(
+        "explore" => cairn_query::tools_flow::explore_text_with_options(
             conn,
             None,
             ws,
             args["query"].as_str().expect("query"),
             true,
             None,
+            cairn_query::tools_flow::ExploreOptions::default(),
         ),
         "trace_flow" => cairn_query::tools_flow::trace_flow_text(
             conn,

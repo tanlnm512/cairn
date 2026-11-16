@@ -243,9 +243,7 @@ fn table_has_rows(conn: &Connection, table: &str) -> bool {
 }
 
 fn telemetry_off() -> bool {
-    std::env::var("CAIRN_TELEMETRY")
-        .map(|v| v.trim().eq_ignore_ascii_case("off"))
-        .unwrap_or(false)
+    cairn_query::tools_search::telemetry_off()
 }
 
 /// Record a build_runs row; `files`/`symbols` are column choices per kind
@@ -309,10 +307,11 @@ pub struct MetricsArgs {
     pub quality: bool,
     pub contention: bool,
     pub tasks: bool,
+    pub tokens: bool,
 }
 
 pub fn run_metrics(args: MetricsArgs) -> ExitCode {
-    if !(args.builds || args.quality || args.contention || args.tasks) {
+    if !(args.builds || args.quality || args.contention || args.tasks || args.tokens) {
         return metrics_default(&args);
     }
     let db = db_arg(&args.db);
@@ -348,6 +347,15 @@ pub fn run_metrics(args: MetricsArgs) -> ExitCode {
     if args.tasks {
         sections.push(("tasks", gather_tasks(&conn)));
     }
+    if args.tokens {
+        let mut data = crate::dashboard::data::get_tool_tokens(&conn, None);
+        if let Some(filter) = args.tool.as_deref()
+            && let Some(entries) = data.get_mut("entries").and_then(Value::as_array_mut)
+        {
+            entries.retain(|row| row.get("tool_name").and_then(Value::as_str) == Some(filter));
+        }
+        sections.push(("tokens", data));
+    }
     if args.as_json {
         if sections.len() == 1 {
             println!("{}", json_compat::dumps(&sections[0].1));
@@ -368,6 +376,7 @@ pub fn run_metrics(args: MetricsArgs) -> ExitCode {
             "builds" => render_builds(value.as_array().map(Vec::as_slice).unwrap_or(&[])),
             "quality" => render_quality(value),
             "tasks" => render_tasks(value),
+            "tokens" => render_tokens(value),
             _ => render_contention(value.as_array().map(Vec::as_slice).unwrap_or(&[])),
         }
     }
@@ -446,6 +455,24 @@ fn metrics_default(args: &MetricsArgs) -> ExitCode {
         &["tool", "calls", "avg ms", "errors", "err %"],
         &table_rows,
     );
+    let mut tokens_data = crate::dashboard::data::get_tool_tokens(&conn, None);
+    if let Some(filter) = args.tool.as_deref()
+        && let Some(entries) = tokens_data.get_mut("entries").and_then(Value::as_array_mut)
+    {
+        entries.retain(|row| row.get("tool_name").and_then(Value::as_str) == Some(filter));
+    }
+    if let Some(table) = format_tokens_table(&tokens_data) {
+        println!();
+        println!("{table}");
+    }
+    let quality = gather_quality(&conn);
+    let has_quality = ["semantic_total", "empty_results", "truncations"]
+        .iter()
+        .any(|k| quality.get(*k).and_then(Value::as_i64).unwrap_or(0) > 0);
+    if has_quality && args.tool.is_none() {
+        println!();
+        render_quality(&quality);
+    }
     ExitCode::SUCCESS
 }
 
@@ -537,7 +564,7 @@ fn attr_value(raw: &str, key: &str) -> Option<String> {
     }
 }
 
-fn gather_quality(conn: &Connection) -> Value {
+pub(crate) fn gather_quality(conn: &Connection) -> Value {
     let empty_by_kind = attr_counts(conn, "empty_result", "query_kind");
     let empty_semantic = empty_by_kind
         .get("semantic_search")
@@ -827,12 +854,78 @@ fn render_tasks(data: &Value) {
 }
 
 /// rich Table rendering for non-TTY output (the display.print_table contract).
+/// Render estimated token usage by tool as a formatted table.
+fn render_tokens(data: &Value) {
+    match format_tokens_table(data) {
+        Some(table) => println!("{table}"),
+        None => display::info("No token usage recorded yet."),
+    }
+}
+
+/// Format the token-usage payload as a printable table, or `None` when empty.
+fn format_tokens_table(data: &Value) -> Option<String> {
+    let entries = data.get("entries").and_then(Value::as_array)?;
+    if entries.is_empty() {
+        return None;
+    }
+    let mode = data
+        .get("token_mode")
+        .and_then(Value::as_str)
+        .unwrap_or("heuristic");
+    let title = format!("Token usage ({mode})");
+    let rows: Vec<Vec<String>> = entries
+        .iter()
+        .filter_map(Value::as_object)
+        .map(|row| {
+            let get = |k: &str| row.get(k).cloned().unwrap_or(Value::Null);
+            vec![
+                get("tool_name").as_str().unwrap_or("—").into(),
+                fmt_int_opt(&get("calls")),
+                fmt_int_opt(&get("est_req_tokens")),
+                fmt_int_opt(&get("est_resp_tokens")),
+                fmt_int_opt(&get("total_tokens")),
+                fmt_int_opt(&get("mean_tokens")),
+                fmt_int_opt(&get("truncated_calls")),
+            ]
+        })
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+    Some(render_table(
+        Some(&title),
+        &[
+            "tool",
+            "calls",
+            "req tok",
+            "resp tok",
+            "total tok",
+            "mean tok",
+            "trunc",
+        ],
+        &rows,
+    ))
+}
+
 fn print_table(title: Option<&str>, columns: &[&str], rows: &[Vec<String>]) {
     println!("{}", render_table(title, columns, rows));
 }
 
 fn render_table(title: Option<&str>, columns: &[&str], rows: &[Vec<String>]) -> String {
-    const RIGHT_ALIGNED: [&str; 7] = ["count", "n", "calls", "symbols", "edges", "files", "repos"];
+    const RIGHT_ALIGNED: [&str; 12] = [
+        "count",
+        "n",
+        "calls",
+        "symbols",
+        "edges",
+        "files",
+        "repos",
+        "req tok",
+        "resp tok",
+        "total tok",
+        "mean tok",
+        "trunc",
+    ];
     let widths: Vec<usize> = columns
         .iter()
         .enumerate()
@@ -2185,6 +2278,38 @@ mod tests {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(19_000), (2022, 1, 8));
         assert_eq!(epoch_to_display(1_761_704_899.844), "2025-10-29 02:28:19");
+    }
+
+    #[test]
+    fn format_tokens_table_handles_empty_and_entries() {
+        assert!(format_tokens_table(&json!({"entries": [], "token_mode": "chars/4"})).is_none());
+        let rendered = format_tokens_table(&json!({
+            "token_mode": "chars/4",
+            "entries": [{
+                "tool_name": "explore",
+                "calls": 3,
+                "est_req_tokens": 120,
+                "est_resp_tokens": 2400,
+                "total_tokens": 2520,
+                "mean_tokens": 840,
+                "truncated_calls": 1
+            }]
+        }))
+        .expect("rendered table");
+        assert!(rendered.contains("Token usage (chars/4)"));
+        for col in [
+            "tool",
+            "calls",
+            "req tok",
+            "resp tok",
+            "total tok",
+            "mean tok",
+            "trunc",
+            "explore",
+            "2,520",
+        ] {
+            assert!(rendered.contains(col), "missing {col} in:\n{rendered}");
+        }
     }
 
     #[test]

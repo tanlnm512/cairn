@@ -442,17 +442,7 @@ pub fn render_callers(data: &NeighborData<CallerRow>) -> String {
             }
         );
     }
-    let mut out = if data.used_fallback {
-        vec![format!(
-            "0 precise callers for '{}'; {} fuzzy candidates (name-match only \
-             -- verify each against actual code before treating it as a real \
-             caller):",
-            data.symbol,
-            data.rows.len()
-        )]
-    } else {
-        vec![format!("{} callers of '{}':", data.rows.len(), data.symbol)]
-    };
+    let mut out = vec![callers_header(data)];
     for c in &data.rows {
         out.push(format!(
             "  {} {}  {}:{}  ({})",
@@ -485,17 +475,7 @@ pub fn render_callees(data: &NeighborData<CalleeRow>) -> String {
             &data.stale_banner,
         );
     }
-    let mut out = if data.used_fallback {
-        vec![format!(
-            "0 precise callees for '{}'; {} fuzzy candidates (includes \
-             unresolved/external calls -- verify each before treating it as a \
-             real callee):",
-            data.symbol,
-            data.rows.len()
-        )]
-    } else {
-        vec![format!("{} callees of '{}':", data.rows.len(), data.symbol)]
-    };
+    let mut out = vec![callees_header(data)];
     for c in &data.rows {
         let tag = if c.resolved { "" } else { " (unresolved)" };
         out.push(format!(
@@ -538,6 +518,147 @@ pub fn callees_text(
     freshness_banner: &str,
 ) -> rusqlite::Result<String> {
     Ok(render_callees(&callees_data(
+        conn,
+        name,
+        fuzzy,
+        limit,
+        freshness_banner,
+    )?))
+}
+
+/// Format the non-empty header line for `render_callers` and its compact variant.
+fn callers_header(data: &NeighborData<CallerRow>) -> String {
+    if data.used_fallback {
+        format!(
+            "0 precise callers for '{}'; {} fuzzy candidates (name-match only \
+             -- verify each against actual code before treating it as a real \
+             caller):",
+            data.symbol,
+            data.rows.len()
+        )
+    } else {
+        format!("{} callers of '{}':", data.rows.len(), data.symbol)
+    }
+}
+
+/// Format the non-empty header line for `render_callees` and its compact variant.
+fn callees_header(data: &NeighborData<CalleeRow>) -> String {
+    if data.used_fallback {
+        format!(
+            "0 precise callees for '{}'; {} fuzzy candidates (includes \
+             unresolved/external calls -- verify each before treating it as a \
+             real callee):",
+            data.symbol,
+            data.rows.len()
+        )
+    } else {
+        format!("{} callees of '{}':", data.rows.len(), data.symbol)
+    }
+}
+
+/// Group neighbor rows under `[repo] file_path:` headers with optional limit notice and banner.
+fn render_grouped_neighbors<'a, T, F>(
+    header: String,
+    rows: &'a [T],
+    hit_limit: bool,
+    stale_banner: &str,
+    describe: F,
+) -> String
+where
+    F: Fn(&'a T) -> ((&'a str, &'a str), String),
+{
+    let mut grouped: std::collections::BTreeMap<(&str, &str), Vec<String>> =
+        std::collections::BTreeMap::new();
+    for row in rows {
+        let (key, line) = describe(row);
+        grouped.entry(key).or_default().push(line);
+    }
+    let mut out = vec![header];
+    for ((repo, file_path), items) in grouped {
+        out.push(format!("[{repo}] {file_path}:"));
+        out.extend(items);
+    }
+    if hit_limit {
+        out.push("  ... hit the limit cap; pass a higher limit for more.".to_string());
+    }
+    prepend_banner(&out.join("\n"), stale_banner)
+}
+
+/// Render `get_callers` rows grouped by `(repo, file_path)` for compact token output.
+pub fn render_callers_compact(data: &NeighborData<CallerRow>) -> String {
+    if data.rows.is_empty() {
+        return render_callers(data);
+    }
+    render_grouped_neighbors(
+        callers_header(data),
+        &data.rows,
+        data.hit_limit,
+        &data.stale_banner,
+        |c| {
+            (
+                (&c.repo, &c.file_path),
+                format!(
+                    "  {} {} :{}",
+                    c.caller_kind,
+                    c.caller_name,
+                    line_text(c.edge_line)
+                ),
+            )
+        },
+    )
+}
+
+/// Render `get_callees` rows grouped by `(repo, file_path)` for compact token output.
+pub fn render_callees_compact(data: &NeighborData<CalleeRow>) -> String {
+    if data.rows.is_empty() {
+        return render_callees(data);
+    }
+    render_grouped_neighbors(
+        callees_header(data),
+        &data.rows,
+        data.hit_limit,
+        &data.stale_banner,
+        |c| {
+            let tag = if c.resolved { "" } else { " (unresolved)" };
+            (
+                (&c.repo, &c.file_path),
+                format!(
+                    "  {}{} :{}",
+                    c.name.as_deref().unwrap_or("None"),
+                    tag,
+                    line_text(c.edge_line)
+                ),
+            )
+        },
+    )
+}
+
+/// Tool-level `get_callers` grouped by file for compact token output.
+pub fn callers_text_compact(
+    conn: &Connection,
+    name: &str,
+    fuzzy: bool,
+    limit: i64,
+    freshness_banner: &str,
+) -> rusqlite::Result<String> {
+    Ok(render_callers_compact(&callers_data(
+        conn,
+        name,
+        fuzzy,
+        limit,
+        freshness_banner,
+    )?))
+}
+
+/// Tool-level `get_callees` grouped by file for compact token output.
+pub fn callees_text_compact(
+    conn: &Connection,
+    name: &str,
+    fuzzy: bool,
+    limit: i64,
+    freshness_banner: &str,
+) -> rusqlite::Result<String> {
+    Ok(render_callees_compact(&callees_data(
         conn,
         name,
         fuzzy,

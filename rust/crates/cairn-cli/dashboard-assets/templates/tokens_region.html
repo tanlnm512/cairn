@@ -11,10 +11,11 @@
 {% import "_table.html" as tables with context %}
 {% import "_cards.html" as cards with context %}
 {%- set token_q = {} %}
+{%- if source %}{% set token_q = token_q | merge({'source': source}) %}{% endif %}
 {%- if window != "all" %}{% set token_q = token_q | merge({'window': window}) %}{% endif %}
 <div id="refresh-region"
      hx-get="{{ links.url('/tokens', token_q) }}" hx-trigger="every 5s"
-     hx-swap="morph" aria-live="polite">
+     hx-include="#tokens-filters" hx-swap="morph" aria-live="polite">
   {#- The label names the mode that produced these numbers;
       uncalibrated means the window had no usable stored-summary sample,
       so the chars/token heuristic divisor stood in. -#}
@@ -29,6 +30,7 @@
   {#- Exports ride the view's current filters (the selected store
       rides links.url). -#}
   {%- set export_q = {} %}
+  {%- if source %}{% set export_q = export_q | merge({'source': source}) %}{% endif %}
   {%- if window != "all" %}{% set export_q = export_q | merge({'window': window}) %}{% endif %}
   <p class="muted">
     Export:
