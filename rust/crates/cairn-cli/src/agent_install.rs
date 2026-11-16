@@ -714,6 +714,28 @@ fn create_file_symlink(link_target: &Path, dest: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Delete the symlink entry itself, never its target; Windows needs remove_dir
+/// for directory links (DeleteFileW cannot delete a directory reparse point).
+fn remove_symlink(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(path)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+        let dir_link = std::fs::symlink_metadata(path)
+            .map(|m| m.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0)
+            .unwrap_or(false);
+        if dir_link {
+            std::fs::remove_dir(path)
+        } else {
+            std::fs::remove_file(path)
+        }
+    }
+}
+
 fn prepare_symlink_slot(dest: &Path, force: bool, res: &mut InstallResult, dry_run: bool) -> bool {
     if let Ok(meta) = dest.symlink_metadata() {
         if dest.exists() && !force {
@@ -724,7 +746,9 @@ fn prepare_symlink_slot(dest: &Path, force: bool, res: &mut InstallResult, dry_r
             res.written.push(format!("would write {}", dest.display()));
             return false;
         }
-        if meta.file_type().is_symlink() || meta.is_file() {
+        if meta.file_type().is_symlink() {
+            let _ = remove_symlink(dest);
+        } else if meta.is_file() {
             let _ = std::fs::remove_file(dest);
         } else if meta.is_dir() {
             let mut scratch = InstallResult::new("");
@@ -1195,7 +1219,7 @@ fn rm_tree_if_cairn(path: &Path, res: &mut InstallResult) {
         return;
     }
     if meta.file_type().is_symlink() {
-        if std::fs::remove_file(path).is_ok() {
+        if remove_symlink(path).is_ok() {
             res.written.push(format!("removed {}/", path.display()));
         }
         return;
@@ -1284,7 +1308,7 @@ fn rm_if_ours_any(path: &Path, expected: &[&str], res: &mut InstallResult) {
         let matches = std::fs::read_to_string(path)
             .is_ok_and(|content| expected.iter().any(|exp| content == *exp));
         if points_to_agents || matches {
-            if std::fs::remove_file(path).is_ok() {
+            if remove_symlink(path).is_ok() {
                 res.written.push(format!("removed {}", path.display()));
             }
             return;
