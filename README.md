@@ -13,6 +13,8 @@ The precise call graph, without the guesswork · every answer re-derivable from 
 </div>
 
 [![License: MIT](https://img.shields.io/github/license/tanlnm512/cairn)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/cairn-intel)](https://pypi.org/project/cairn-intel/)
+[![GitHub Release](https://img.shields.io/github/v/release/tanlnm512/cairn)](https://github.com/tanlnm512/cairn/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/tanlnm512/cairn/ci.yml?branch=main&label=CI)](https://github.com/tanlnm512/cairn/actions/workflows/ci.yml)
 
 cairn parses your repos with tree-sitter into a **resolution-labeled structural
@@ -43,69 +45,90 @@ path.
 
 ## Get Started
 
-**1. Install the CLI**
+### 1. Install `cairn`
 
-Every channel ships the same engine binary. Both commands need a Rust
-toolchain ([rustup.rs](https://rustup.rs)); `cargo binstall` also needs
-[cargo-binstall](https://github.com/cargo-bins/cargo-binstall):
+Pick whichever channel fits your setup — every channel installs the exact same
+static `cairn` binary (no runtime dependencies).
+
+**Option A — Standalone installer (macOS / Linux / Git Bash, no Python or Rust needed):**
 
 ```bash
-# prebuilt installer for cargo-binstall
-curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-# or: cargo install cargo-binstall
+curl -LsSf https://raw.githubusercontent.com/tanlnm512/cairn/main/scripts/install.sh | sh
 ```
 
-Then install cairn:
+Installs into `~/.local/bin` (override with `--install-dir DIR`, or pin a tag
+with `-s -- --version 0.25.2`).
+
+**Option B — PyPI (`uv` / `pipx` / `pip`, macOS / Linux / Windows):**
+
+```bash
+uv tool install cairn-intel      # recommended
+# or: pipx install cairn-intel
+# or: pip install cairn-intel
+```
+
+**Option C — Cargo or manual download:**
+
+<details>
+<summary>Cargo (<code>cargo-binstall</code> / source) and manual tarball instructions</summary>
+
+Requires a [Rust toolchain](https://rustup.rs) (always pass `--git`; the
+`cairn-cli` crate on crates.io is an unrelated project):
 
 ```bash
 cargo binstall --git https://github.com/tanlnm512/cairn cairn-cli  # prebuilt binary
 cargo install --git https://github.com/tanlnm512/cairn cairn-cli   # build from source
+./scripts/install.sh                                               # build from local clone
 ```
 
-Always pass `--git`: the `cairn-cli` crate on crates.io is an unrelated
-project. Release tarballs (aarch64 / x86_64 on macOS and Linux, musl-static on
-Linux) are on the [releases page](https://github.com/tanlnm512/cairn/releases),
-and `cargo install --path rust/crates/cairn-cli` builds from a clone. Release
-tags populate the tarballs that `cargo binstall` downloads; `docx` and PDF
-conversion run natively in the engine. Upgrade by re-running the same command.
+Or download a tarball directly (`aarch64` / `x86_64` macOS, static musl Linux,
+`x86_64` Windows) from the
+[releases page](https://github.com/tanlnm512/cairn/releases) and place `cairn`
+on your `PATH`.
 
-**2. Wire up your agent(s)**
+</details>
+
+Verify your install:
+
+```bash
+cairn --version
+```
+
+Upgrade anytime with `uv tool upgrade cairn-intel`, `pipx upgrade cairn-intel`,
+or by re-running the standalone installer (`curl ... | sh`).
+
+### 2. Wire up your AI agent(s)
 
 ```bash
 cairn install-agents
 ```
 
-Detects which AI clients you have (Claude Code, Cursor, ZCode, Droid,
-opencode, agy, kilo, omp), shows what's already wired, and prompts for scope:
-`workspace` (per-project `./.claude/`, `./.cursor/` …) or `global`
-(`~/.claude/` — every project inherits it). Every registration is a URL+key
-entry dialing one shared daemon; Claude Desktop has no URL MCP surface and is
-reported unsupported. Non-interactive: `cairn install-agents --yes --scope
-global`. Manual wiring is one JSON block (`cairn connect` starts the daemon
-if it isn't running; install-agents writes this with your generated key in
-the header):
+Detects installed AI clients (Claude Code, Cursor, ZCode, Droid, opencode, agy,
+kilo, omp), shows what is already wired, and prompts for scope: `workspace`
+(per-project `./.claude/`, `./.cursor/` …) or `global` (`~/.claude/` — every
+project inherits it). Non-interactive: `cairn install-agents --yes --scope
+global`. Manual wiring is one JSON block (`cairn connect` starts the daemon if
+it isn't running; `install-agents` writes this with your generated key):
 
 ```json
 { "mcpServers": { "cairn": { "type": "http", "url": "http://127.0.0.1:9876/mcp", "headers": { "Authorization": "Bearer <key>" } } } }
 ```
 
-**3. Build the graph**
+Claude Desktop has no URL MCP surface and is reported unsupported.
+
+### 3. Index your repository
 
 ```bash
-cairn build          # parse the workspace, resolve edges (first run; ~4s on cairn itself)
+cd /path/to/your/project
+cairn init           # register workspace + build the graph (~4s on cairn itself)
 ```
 
-**4. No more syncing**
-
-```bash
-cairn update         # incremental reindex — only what changed since the last build
-```
-
-The hooks keep this automatic: `cairn install-agents` wires a `post_edit`
-agent hook that reindexes each edited file (`cairn hooks run post_edit`),
-and `cairn hooks install` (or `install-agents --git-hooks`) adds post-commit
-and post-checkout git hooks that run `cairn update --diff-ref` over the
-committed or checked-out range in the background.
+Already registered? Run `cairn build` for a full rebuild or `cairn update` for
+an incremental git-diff reindex. `cairn install-agents` wires a `post_edit`
+agent hook (`cairn hooks run post_edit`), and `cairn hooks install` (or
+`install-agents --git-hooks`) adds post-commit and post-checkout git hooks so
+the graph stays fresh automatically. `docx` and PDF ingestion run natively in
+the binary.
 
 **Uninstall** — `cairn uninstall` removes agent wiring, hooks, and the graph
 store; `--dry-run` previews the scope; `cairn uninstall-agents` only removes
@@ -375,8 +398,9 @@ effective value and where it came from):
 ## Supported Platforms & Agents
 
 - **Platforms** — macOS aarch64 / x86_64, Linux aarch64 / x86_64 (static
-  musl) and Windows x86_64, all shipped as release tarballs;
-  `make ci-local` replicates CI in a clean Linux container.
+  musl + manylinux wheels) and Windows x86_64, shipped via PyPI (`cairn-intel`)
+  and GitHub Release tarballs; `make ci-local` replicates CI in a clean Linux
+  container.
 - **Agents** — Claude Code, Cursor, ZCode, Droid, opencode, agy, kilo, omp —
   wired by `cairn install-agents`, or any MCP client via the
   manual JSON block above.
@@ -394,6 +418,9 @@ effective value and where it came from):
 
 ## Troubleshooting
 
+- `cairn: command not found` after installing → add `~/.local/bin` to your
+  `PATH` (`export PATH="$HOME/.local/bin:$PATH"`), or run
+  `uv tool update-shell` / `pipx ensurepath`.
 - `cairn doctor` — health checks with PASS/WARN/FAIL each; non-zero exit
   means an active degradation (agents can gate on it).
 - `cairn report` — redacted diagnostic bundle for bug reports; it never

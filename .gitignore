@@ -1,3 +1,12 @@
+# ---- Python / wheel builds ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+wheels/
+*.whl
+.venv/
+
 # ---- Local CI replication (scripts/ci-local.sh, apple container) ----
 .cache/
 bench-current.json
