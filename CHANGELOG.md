@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `cairn upgrade` cargo channel: the `cargo binstall` availability probe passed `--version` (a version-requirement flag that errors without a value), so an installed `cargo-binstall` was never detected and upgrades always fell back to a full source build; the probe now uses `-V`, and the binstall invocation passes `--no-confirm` so it cannot stall on a prompt.
+
 ## [0.25.3] - 2026-11-16
 
 ### Added
