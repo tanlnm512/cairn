@@ -195,8 +195,9 @@ fn cargo_has_cairn_cli(cargo_home: &Path) -> bool {
 
 /// Whether `cargo binstall` is installed (upgrades from release binaries instead of source).
 fn cargo_binstall_available() -> bool {
+    // binstall's --version takes a version requirement; -V reports its own.
     Command::new("cargo")
-        .args(["binstall", "--version"])
+        .args(["binstall", "-V"])
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
@@ -232,6 +233,7 @@ fn run_channel_upgrade(channel: &InstallChannel, latest: &str) -> bool {
                     UPGRADE_REPO_URL.into(),
                     "cairn-cli".into(),
                     "--force".into(),
+                    "--no-confirm".into(),
                     "--version".into(),
                     latest.into(),
                 ]
