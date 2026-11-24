@@ -2,7 +2,6 @@
 
 use std::process::ExitCode;
 
-mod audit_status;
 mod baseline;
 mod bump;
 mod check_doc_links;
@@ -38,7 +37,6 @@ const COMMANDS: &[&str] = &[
     "comment-style",
     "check-doc-links",
     "conformance-table",
-    "audit-status",
     "verify-protection",
     "skill-evals",
     "cli-smoke",
@@ -69,7 +67,6 @@ fn main() -> ExitCode {
         "comment-style" => comment_style::run(rest),
         "check-doc-links" => check_doc_links::run(rest),
         "conformance-table" => conformance_table::run(rest),
-        "audit-status" => audit_status::run(rest),
         "verify-protection" => verify_protection::run(rest),
         "skill-evals" => skill_evals::run(rest),
         "cli-smoke" => cli_smoke::run(rest),
