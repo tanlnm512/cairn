@@ -429,11 +429,12 @@ fn legacy_store_keeps_nested_repositories_under_their_own_ids() {
         "vendored/n.py",
         "def nested():\n    return 3\n\n\ndef inner():\n    return 4\n",
     );
+    let nested_edit = dir.join("vendored").join("n.py");
     let mut conn = cairn_store::schema::open_initialized(&db).expect("store");
     let changed = cairn_build::incremental::detect_changed(&conn, ws);
     assert_eq!(
         changed,
-        [dir.join("vendored/n.py").to_string_lossy().into_owned()],
+        [nested_edit.to_string_lossy().into_owned()],
         "only the nested edit"
     );
     let result = cairn_build::incremental::reindex_paths(&mut conn, ws, &changed);
@@ -443,7 +444,7 @@ fn legacy_store_keeps_nested_repositories_under_their_own_ids() {
     drop(conn);
     assert_eq!(
         cairn_build::scanner::resolve_file_path(ws, "/vendored", "n.py"),
-        dir.join("vendored").join("n.py"),
+        nested_edit,
         "a stored legacy id resolves into its own repository"
     );
     assert_eq!(
