@@ -57,7 +57,7 @@ curl -LsSf https://raw.githubusercontent.com/tanlnm512/cairn/main/scripts/instal
 ```
 
 Installs into `~/.local/bin` (override with `--install-dir DIR`, or pin a tag
-with `-s -- --version 0.25.2`).
+with `-s -- --version X.Y.Z`).
 
 **Option B — PyPI (`uv` / `pipx` / `pip`, macOS / Linux / Windows):**
 
@@ -373,8 +373,7 @@ Per-tool shapes and examples: [docs/mcp-tools.md](docs/mcp-tools.md).
 
 Workspace `cairn.json` may set `"include_nested_repos": true` to index
 initialized submodules and nested child repositories under prefixed repo ids;
-the default is `false`. `"exclude"` globs drop paths from indexing (this
-repository's own `cairn.json` excludes `rust/`).
+the default is `false`. `"exclude"` globs drop paths from indexing.
 
 The engine is dependency-light and network-free: every command runs from the
 binary alone on every install channel. `cairn knowledge ingest --file`
@@ -454,8 +453,8 @@ cargo xtask parity --store self   # oracle replay against the release binary
 make ci-local                     # clean-room CI replication in a Linux container
 ```
 
-Releases are cut by tagging `vX.Y.Z`: the tag-triggered workflows build the
-platform binaries and attach them to the GitHub Release (see
+Releases are cut by tagging `vX.Y.Z`: the tag-triggered workflows publish the
+PyPI wheels and attach the platform binaries to the GitHub Release (see
 [docs/release-checklist.md](docs/release-checklist.md)).
 Contributions follow [docs/review-checklist.md](docs/review-checklist.md).
 

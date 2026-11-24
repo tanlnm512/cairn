@@ -40,7 +40,7 @@ cargo test --manifest-path Cargo.toml --workspace   # the engine + dev-gate suit
 cargo xtask parity --store self && cargo xtask cli-golden   # frozen-oracle replays
 ```
 
-The oracle replays run against the release binary on `rust/**` PRs and
+The oracle replays run against the release binary on every PR and
 nightly; run them locally when touching the frozen oracles under
 `rust/golden/`. Run both loops before opening a PR.
 
@@ -83,7 +83,7 @@ See **AGENTS.md** for the full tool list, resolution-aware querying (precise vs
 - Add tests for new behavior; every contract has one owner test at its
   strongest boundary (see AGENTS.md's "Before Adding a Test").
 - Don't introduce new runtime dependencies without a recorded decision — the
-  default install is deliberately lightweight (no torch, no network).
+  default install is deliberately lightweight (no local inference, no network).
 
 ## Pull requests
 

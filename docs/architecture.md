@@ -95,7 +95,7 @@ The `.kg` SQLite database (`rust/crates/cairn-store/src/schema.rs`) holds:
   extension, same file.
 - **Derived**: `dataflow` (precomputed impact), `transitive_edges` (O(1)
   multi-hop calls), `rationale` (marker-comment records), `communities` /
-  `symbol_communities` (written by the Louvain sidecar).
+  `symbol_communities` (written by `cairn communities`).
 - **Knowledge relationships**: `knowledge_edges` (doc↔doc rows:
   `doc_id`, `related_id`, `relation`, `kind` = `extracted`/`inferred`/
   `derived`, `provenance`, `created_at` — supersede pairs store both
