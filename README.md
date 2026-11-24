@@ -373,7 +373,9 @@ Per-tool shapes and examples: [docs/mcp-tools.md](docs/mcp-tools.md).
 
 Workspace `cairn.json` may set `"include_nested_repos": true` to index
 initialized submodules and nested child repositories under prefixed repo ids;
-the default is `false`. `"exclude"` globs drop paths from indexing.
+the default is `false`. `"exclude"` globs drop paths from indexing. This
+repository's own `cairn.json` excludes the vendored dashboard chunks under
+`dashboard-assets/static/chunks/`, which are minified third-party code.
 
 The engine is dependency-light and network-free: every command runs from the
 binary alone on every install channel. `cairn knowledge ingest --file`
