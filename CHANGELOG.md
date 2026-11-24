@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `cairn build` and `cairn update` record `build_runs` rows (`build` and `incremental`; a build row carries its file, symbol, edge and resolution counts plus stage timings). `cairn doctor`'s freshness check reads that table, so builds and hook-driven updates now count toward graph freshness.
+- `cairn doctor`'s `embed_server` check sends the configured `CAIRN_EMBED_API_KEY` with its model-listing request, so a server that requires the key no longer reports "unreachable"; a rejected key is reported as such.
 
 ## [0.25.4] - 2026-11-17
 
