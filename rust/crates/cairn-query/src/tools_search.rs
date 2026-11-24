@@ -804,7 +804,7 @@ pub fn embed_query(env: &SemanticEnv, text: &str) -> Result<(Vec<u8>, usize), St
             server_embed(
                 &[text.to_string()],
                 base,
-                &env.model,
+                &server_model(),
                 env.server_api_key.as_deref(),
             )
             .map(|(mut blobs, dim)| (blobs.remove(0), dim))
@@ -992,6 +992,17 @@ thread_local! {
 /// "index empty" message turns into a model/dim hint when it is non-zero.
 pub fn last_dim_mismatch() -> usize {
     LAST_DIM_MISMATCH.with(|c| c.get())
+}
+
+thread_local! {
+    /// Why the most recent dense retrieval could not embed its query.
+    static LAST_DENSE_ERROR: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The query-embedding failure of the most recent dense retrieval; reading clears it.
+fn take_dense_error() -> Option<String> {
+    LAST_DENSE_ERROR.with(|cell| cell.borrow_mut().take())
 }
 
 /// Reciprocal Rank Fusion: score desc, doc-id ascending on ties.
@@ -1237,7 +1248,9 @@ fn dense_retrieve(
     threshold: f64,
     pool_size: usize,
 ) -> Vec<SemanticMatch> {
-    let Ok((q_blob, q_dim)) = embed_query(env, dense_query) else {
+    let embedded = embed_query(env, dense_query);
+    LAST_DENSE_ERROR.with(|cell| *cell.borrow_mut() = embedded.as_ref().err().cloned());
+    let Ok((q_blob, q_dim)) = embedded else {
         return Vec::new();
     };
     if env.ann_enabled
@@ -1466,7 +1479,8 @@ pub fn render_semantic_search(query: &str, rows: &[SemanticMatch], fusion_on: bo
              BM25 fallback found anything{threshold_note}. \
              The corpus may not be embedded yet (run `cairn embed` to index), or the \
              wording may not match any token. Try search_symbols(\"...\") for a \
-             lexical match, or rephrase with more specific terms."
+             lexical match, or rephrase with more specific terms.{}",
+            dense_error_note()
         );
     }
     let mut out = format!(
@@ -1498,7 +1512,15 @@ pub fn render_semantic_search(query: &str, rows: &[SemanticMatch], fusion_on: bo
         "Note: these are similarity-scored fuzzy matches, not structural edges. \
          Use get_callers/impact_analysis to verify precise relationships.",
     );
+    out.push_str(&dense_error_note());
     out
+}
+
+/// Trailing line naming why the vector scan was skipped, or empty when it ran.
+fn dense_error_note() -> String {
+    take_dense_error().map_or_else(String::new, |reason| {
+        format!("\n  Vector scan skipped: {reason}")
+    })
 }
 
 /// Tool-boundary `semantic_search`: gates, runs the pipeline, renders.
