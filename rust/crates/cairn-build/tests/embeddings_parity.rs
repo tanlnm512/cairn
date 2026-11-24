@@ -112,6 +112,7 @@ fn assert_rows_match_golden(golden_rows: &[Value], actual: &[Vec<String>], label
 
 #[test]
 fn embed_reproduces_the_embed_golden() {
+    let _backend = HashBackend::pin();
     let golden = load_golden();
     let model = golden["model"].as_str().expect("model").to_string();
     let (dir, db, corpus) = stage("full");
@@ -266,6 +267,7 @@ fn embed_reproduces_the_embed_golden() {
 
 #[test]
 fn embed_limit_bounds_base_and_mv_passes() {
+    let _backend = HashBackend::pin();
     let golden = load_golden();
     let total = golden["summary"]["total"].as_u64().unwrap() as usize;
     let (dir, db, corpus) = stage("limit");
@@ -295,6 +297,7 @@ fn embed_limit_bounds_base_and_mv_passes() {
 
 #[test]
 fn embed_symbols_resyncs_the_vec0_row_in_place() {
+    let _backend = HashBackend::pin();
     let golden = load_golden();
     let model = golden["model"].as_str().expect("model").to_string();
     let target = golden["embeddings"][0][0]
@@ -462,6 +465,7 @@ fn native_config_stamps_both_legs_identically() {
 
 #[test]
 fn update_reembeds_or_reports_the_embed_debt() {
+    let _backend = HashBackend::pin();
     let (dir, db, corpus) = stage("reembed");
     {
         let (conn, pin) = StorePin::open(&db).expect("open pinned store");
@@ -528,6 +532,7 @@ fn update_reembeds_or_reports_the_embed_debt() {
 
 #[test]
 fn full_build_carries_embeddings_across_the_swap() {
+    let _backend = HashBackend::pin();
     let (dir, db, corpus) = stage("carry");
     let ws = corpus.to_str().expect("ws").to_string();
     let dbp = db.to_str().expect("db").to_string();
@@ -570,6 +575,37 @@ fn full_build_carries_embeddings_across_the_swap() {
 }
 
 static FILE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Pins the hash backend for the test, whatever the shell or `~/.cairn/config.json` says.
+struct HashBackend {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl HashBackend {
+    fn pin() -> Self {
+        let lock = FILE_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let previous = std::env::var_os("CAIRN_EMBED_BACKEND");
+        // SAFETY: FILE_ENV_LOCK serializes every test here that touches the backend env.
+        unsafe { std::env::set_var("CAIRN_EMBED_BACKEND", "hash") };
+        Self {
+            _lock: lock,
+            previous,
+        }
+    }
+}
+
+impl Drop for HashBackend {
+    fn drop(&mut self) {
+        // SAFETY: the guard still holds FILE_ENV_LOCK.
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var("CAIRN_EMBED_BACKEND", value),
+                None => std::env::remove_var("CAIRN_EMBED_BACKEND"),
+            }
+        }
+    }
+}
 
 #[test]
 fn unknown_backend_names_error_instead_of_degrading() {
