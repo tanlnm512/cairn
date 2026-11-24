@@ -1,9 +1,7 @@
-# ---- Python / wheel builds ----
+# ---- Python bytecode (fixture corpora) + wheel-channel artifacts ----
 __pycache__/
 *.py[cod]
-*.egg-info/
 dist/
-wheels/
 *.whl
 .venv/
 

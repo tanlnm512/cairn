@@ -76,7 +76,7 @@ fn fts_pattern_routing_selects_the_conversion_path() {
 
 #[test]
 fn hash_vector_matches_the_reference() {
-    // Reference values from src/cairn/graph/embeddings.py `_hash_vec`.
+    // Golden values: hash vectors persist in stores, so the output must stay byte-stable.
     let vec = hash_vec("hello world");
     assert_eq!(vec.len(), 256);
     let nonzero: Vec<(usize, f64)> = vec

@@ -4,7 +4,7 @@
 # Usage:
 #   curl -LsSf https://raw.githubusercontent.com/tanlnm512/cairn/main/scripts/install.sh | sh
 #   ./scripts/install.sh --release               # download prebuilt GitHub Release binary
-#   ./scripts/install.sh --version 0.25.0        # install a specific release version
+#   ./scripts/install.sh --version X.Y.Z        # install a specific release version
 #   ./scripts/install.sh                         # build & install from local checkout
 #   CAIRN_INSTALL_DIR=DIR ./scripts/install.sh   # install binary into DIR
 #
@@ -48,7 +48,7 @@ Usage:
 Options:
   --release             Download the prebuilt GitHub Release tarball (default when piped)
   --source              Build from the local git checkout via `cargo install --locked`
-  --version <VER>       Install a specific release version (e.g. 0.25.0 or v0.25.0)
+  --version <VER>       Install a specific release version (e.g. X.Y.Z or vX.Y.Z)
   --install-dir <DIR>   Install the binary into DIR (default: ~/.local/bin)
   -h, --help            Show this help message
 EOF

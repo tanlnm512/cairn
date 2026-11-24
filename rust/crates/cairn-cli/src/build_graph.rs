@@ -1,4 +1,4 @@
-//! `cairn build-graph` subcommand: the Rust builder entry the G2 gate drives.
+//! `cairn build-graph` subcommand: the builder entry the G2 gate drives.
 
 use std::process::ExitCode;
 
