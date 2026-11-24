@@ -316,17 +316,35 @@ fn populate(
     // Continue past the rows about to be cleared: unkeyed symbol-id tables
     // (closure, communities) must never resolve to a rebuilt row.
     let mut ids = IdGen::continuing(&tx)?;
+    // Every id a filtered build empties: the filter's, and the legacy id of a
+    // store filed by a relative build.
+    let mut replaced: Vec<String> = Vec::new();
     if let Some(repo) = repo_filter {
+        let scanned = files.first().map(|f| f.repo.as_str()).unwrap_or(repo);
+        replaced.push(repo.to_string());
+        if let Some(legacy) = crate::incremental::legacy_repo_id(workspace, scanned)
+            && legacy != repo
+        {
+            replaced.push(legacy);
+        }
         // The marker flags an interrupted rebuild until the last write lands.
-        tx.execute(
-            "INSERT INTO repo_build_state (repo_id, state, started_at)
-             VALUES (?, 'building', ?)
-             ON CONFLICT(repo_id) DO UPDATE SET
-               state='building', started_at=excluded.started_at",
-            rusqlite::params![repo, now_iso()],
-        )
-        .map_err(rusqlite_err)?;
-        clear_repo(&tx, repo)?;
+        for id in &replaced {
+            tx.execute(
+                "INSERT INTO repo_build_state (repo_id, state, started_at)
+                 VALUES (?, 'building', ?)
+                 ON CONFLICT(repo_id) DO UPDATE SET
+                   state='building', started_at=excluded.started_at",
+                rusqlite::params![id, now_iso()],
+            )
+            .map_err(rusqlite_err)?;
+        }
+        for id in &replaced {
+            clear_repo(&tx, id)?;
+            if id != scanned {
+                tx.execute("DELETE FROM repos WHERE id = ?", [id])
+                    .map_err(rusqlite_err)?;
+            }
+        }
     }
 
     let skip_count = record_skips(&tx, skips)?;
@@ -472,8 +490,8 @@ fn populate(
         &mut |line| eprintln!("{line}"),
     );
 
-    if let Some(repo) = repo_filter {
-        conn.execute("DELETE FROM repo_build_state WHERE repo_id = ?", [repo])
+    for id in &replaced {
+        conn.execute("DELETE FROM repo_build_state WHERE repo_id = ?", [id])
             .map_err(rusqlite_err)?;
     }
     Ok(summary)

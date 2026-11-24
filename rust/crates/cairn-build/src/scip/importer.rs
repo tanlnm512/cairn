@@ -178,21 +178,27 @@ fn file_is_newer(conn: &Connection, file_id: &str, index_mtime_secs: f64) -> Res
     Ok(mtime.is_some_and(|t| t > index_mtime_secs))
 }
 
-/// Repo ids the scanner identity substrate discovers for this workspace.
-fn workspace_repo_ids(workspace: &str) -> Result<HashSet<String>, String> {
-    Ok(scanner::discover_repo_records(workspace)?
+/// The ids the store files each discovered repository under, scanned id first.
+fn workspace_repo_ids(conn: &Connection, workspace: &str) -> Result<Vec<Vec<String>>, String> {
+    scanner::discover_repo_records(workspace)?
         .into_iter()
-        .map(|record| record.repo_id)
-        .collect())
+        .map(|record| {
+            Ok(crate::incremental::stored_repo_ids(
+                conn,
+                workspace,
+                &record.repo_id,
+            ))
+        })
+        .collect()
 }
 
 /// (files.id, repo_id) attributing a document's repo-relative path to
 /// exactly one workspace repo; None when unmatched or ambiguous -- never a
-/// guessed repo.
+/// guessed repo. Of a repository filed under several ids, the first listed wins.
 fn match_document_path(
     conn: &Connection,
     rel_path: &str,
-    repo_ids: &HashSet<String>,
+    repo_ids: &[Vec<String>],
 ) -> Result<Option<(String, String)>, String> {
     let mut stmt = conn
         .prepare("SELECT id, repo_id FROM files WHERE path = ?")
@@ -203,12 +209,21 @@ fn match_document_path(
         })
         .map_err(|e| e.to_string())?
         .filter_map(Result::ok)
-        .filter(|(_, repo_id)| repo_ids.contains(repo_id))
         .collect();
-    Ok(if matches.len() == 1 {
-        matches.into_iter().next()
-    } else {
-        None
+    let repos: Vec<usize> = repo_ids
+        .iter()
+        .enumerate()
+        .filter(|(_, ids)| matches.iter().any(|(_, repo_id)| ids.contains(repo_id)))
+        .map(|(index, _)| index)
+        .collect();
+    Ok(match repos.as_slice() {
+        [only] => repo_ids[*only].iter().find_map(|id| {
+            matches
+                .iter()
+                .find(|(_, repo_id)| repo_id == id)
+                .map(|(file_id, repo_id)| (file_id.clone(), repo_id.clone()))
+        }),
+        _ => None,
     })
 }
 
@@ -547,7 +562,7 @@ pub fn import_scip_file_opts(
     }
 
     // Match every document before planning: an abort must leave no partial overlay.
-    let repo_ids = workspace_repo_ids(workspace)?;
+    let repo_ids = workspace_repo_ids(conn, workspace)?;
     let mut spans_by_rel: HashMap<String, Option<Vec<SpanRow>>> = HashMap::new();
     let mut covered_file_ids: HashMap<String, String> = HashMap::new();
     let mut covered_repo_ids: HashMap<String, String> = HashMap::new();
