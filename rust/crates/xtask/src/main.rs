@@ -14,7 +14,6 @@ mod corner_store;
 mod flow_coverage;
 mod golden_record;
 mod kg_diff;
-mod kg_dump;
 mod kg_normalize;
 mod parity;
 #[cfg(test)]
@@ -27,7 +26,6 @@ const COMMANDS: &[&str] = &[
     "parity",
     "golden-record",
     "cli-golden",
-    "kg-dump",
     "kg-normalize",
     "kg-diff",
     "corner-store",
@@ -57,7 +55,6 @@ fn main() -> ExitCode {
         "parity" => parity::run(rest),
         "golden-record" => golden_record::run(rest),
         "cli-golden" => cli_golden::run(rest),
-        "kg-dump" => kg_dump::run(rest),
         "kg-normalize" => kg_normalize::run(rest),
         "kg-diff" => kg_diff::run(rest),
         "corner-store" => corner_store::run(rest),
