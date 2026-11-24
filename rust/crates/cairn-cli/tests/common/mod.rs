@@ -3,10 +3,13 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Run the cairn binary with HOME/CAIRN_HOME at `home`; returns (exit ok, stdout+stderr).
+/// Run the cairn binary with HOME/CAIRN_HOME at `home` and telemetry on; returns (exit ok, stdout+stderr).
 pub fn cairn(home: &Path, workspace: Option<&Path>, args: &[&str]) -> (bool, String) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_cairn"));
-    cmd.args(args).env("HOME", home).env("CAIRN_HOME", home);
+    cmd.args(args)
+        .env("HOME", home)
+        .env("CAIRN_HOME", home)
+        .env("CAIRN_TELEMETRY", "on");
     match workspace {
         Some(ws) => {
             cmd.env("CAIRN_WORKSPACE", ws);
@@ -84,6 +87,18 @@ impl Fixture {
                 &self.db,
             ],
         )
+    }
+
+    /// `(kind, files)` per build_runs row, newest first.
+    pub fn build_runs(&self) -> Vec<(String, Option<i64>)> {
+        let conn = rusqlite::Connection::open(&self.db).expect("open store");
+        let mut stmt = conn
+            .prepare("SELECT kind, files FROM build_runs ORDER BY started_at DESC")
+            .expect("prepare");
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect()
     }
 }
 

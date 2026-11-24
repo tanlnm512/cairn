@@ -1,10 +1,32 @@
 // F1
-//! `cairn update --file` contracts: zero-change warning and build-lock refusal.
+//! `cairn update --file` contracts: zero-change warning, build-lock refusal, build_runs rows.
 
 mod common;
 
 use common::Fixture;
 use std::path::Path;
+
+#[test]
+fn build_and_update_record_build_runs() {
+    let fx = Fixture::new("build-runs");
+    fx.build();
+    assert_eq!(fx.build_runs(), [("build".to_string(), Some(1))]);
+
+    std::fs::write(
+        fx.repo.join("mod.py"),
+        "def one():\n    return 1\n\n\ndef two():\n    return 2\n",
+    )
+    .expect("edit source");
+    let (ok, out) = fx.update_file(&fx.repo.join("mod.py"));
+    assert!(ok, "{out}");
+    assert_eq!(
+        fx.build_runs(),
+        [
+            ("incremental".to_string(), Some(1)),
+            ("build".to_string(), Some(1)),
+        ]
+    );
+}
 
 #[test]
 fn update_file_zero_change_warns_without_a_success_line() {
