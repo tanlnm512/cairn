@@ -241,8 +241,8 @@ pub fn copy_telemetry_tables(dest: &Connection, old_db: &Path) {
 }
 
 /// Carry embeddings `db` -> `staged` by stable identity (repo, path, file
-/// hash, qualified name, line, model), remapping symbol ids;
-/// `memory_embeddings` carries wholesale; vec0 mirrors rebuild on embed.
+/// hash, qualified name, line, model), remapping symbol ids; symbols sharing
+/// an identity each take the vectors. Memory embeddings carry; vec0 mirrors rebuild on embed.
 pub fn carry_embeddings(dest: &Connection, old_db: &Path) {
     if !old_db.exists() {
         return;
@@ -256,33 +256,52 @@ pub fn carry_embeddings(dest: &Connection, old_db: &Path) {
     {
         return;
     }
+    let count = |sql: &str| -> i64 { dest.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+    let available = count("SELECT COUNT(*) FROM srcdb.embeddings");
+    // A relative build's ids (empty root, `/`-prefixed nested) re-key onto the scanned root id.
+    const SAME_FILE: &str = "JOIN main.files nf ON nf.path = of2.path AND nf.hash = of2.hash \
+         AND (nf.repo_id = of2.repo_id \
+              OR (of2.repo_id = '' OR of2.repo_id GLOB '/*') \
+                 AND nf.repo_id = (SELECT id FROM main.repos WHERE path = '.' AND id <> '' LIMIT 1) \
+                     || of2.repo_id)";
+    const SAME_SYMBOL: &str = "JOIN main.symbols ns ON ns.file_id = nf.id \
+         AND ns.qualified_name IS os.qualified_name AND ns.name = os.name \
+         AND ns.kind = os.kind AND ns.line_start = os.line_start";
     for sql in [
         // Base vectors: match per unchanged file (hash equal), pairing
         // same-named symbols by qualified name (NULL-safe) and line.
-        "INSERT INTO main.embeddings (symbol_id, model, dim, vec, chunk, embedded_at, content_hash) \
-         SELECT ns.id, o.model, o.dim, o.vec, o.chunk, o.embedded_at, o.content_hash \
-         FROM srcdb.embeddings o \
-         JOIN srcdb.symbols os ON os.id = o.symbol_id \
-         JOIN srcdb.files of2 ON of2.id = os.file_id \
-         JOIN main.files nf ON nf.repo_id = of2.repo_id AND nf.path = of2.path AND nf.hash = of2.hash \
-         JOIN main.symbols ns ON ns.file_id = nf.id \
-          AND ns.qualified_name IS os.qualified_name AND ns.name = os.name \
-          AND ns.kind = os.kind AND ns.line_start = os.line_start",
-        "INSERT INTO main.embeddings_mv (symbol_id, model, vector_kind, dim, vec, chunk, content_hash, embedded_at) \
-         SELECT ns.id, o.model, o.vector_kind, o.dim, o.vec, o.chunk, o.content_hash, o.embedded_at \
-         FROM srcdb.embeddings_mv o \
-         JOIN srcdb.symbols os ON os.id = o.symbol_id \
-         JOIN srcdb.files of2 ON of2.id = os.file_id \
-         JOIN main.files nf ON nf.repo_id = of2.repo_id AND nf.path = of2.path AND nf.hash = of2.hash \
-         JOIN main.symbols ns ON ns.file_id = nf.id \
-          AND ns.qualified_name IS os.qualified_name AND ns.name = os.name \
-          AND ns.kind = os.kind AND ns.line_start = os.line_start",
+        format!(
+            "INSERT OR IGNORE INTO main.embeddings \
+             (symbol_id, model, dim, vec, chunk, embedded_at, content_hash) \
+             SELECT DISTINCT ns.id, o.model, o.dim, o.vec, o.chunk, o.embedded_at, o.content_hash \
+             FROM srcdb.embeddings o \
+             JOIN srcdb.symbols os ON os.id = o.symbol_id \
+             JOIN srcdb.files of2 ON of2.id = os.file_id {SAME_FILE} {SAME_SYMBOL}"
+        ),
+        format!(
+            "INSERT OR IGNORE INTO main.embeddings_mv \
+             (symbol_id, model, vector_kind, dim, vec, chunk, content_hash, embedded_at) \
+             SELECT DISTINCT ns.id, o.model, o.vector_kind, o.dim, o.vec, o.chunk, \
+             o.content_hash, o.embedded_at \
+             FROM srcdb.embeddings_mv o \
+             JOIN srcdb.symbols os ON os.id = o.symbol_id \
+             JOIN srcdb.files of2 ON of2.id = os.file_id {SAME_FILE} {SAME_SYMBOL}"
+        ),
         "INSERT INTO main.memory_embeddings (doc_id, chunk_index, model, dim, vec, chunk, embedded_at) \
-         SELECT doc_id, chunk_index, model, dim, vec, chunk, embedded_at FROM srcdb.memory_embeddings",
+         SELECT doc_id, chunk_index, model, dim, vec, chunk, embedded_at FROM srcdb.memory_embeddings"
+            .to_string(),
     ] {
-        let _ = dest.execute(sql, []);
+        if let Err(e) = dest.execute(&sql, []) {
+            eprintln!("cairn: embedding carry-over failed: {e}");
+        }
     }
+    let carried = count("SELECT COUNT(*) FROM main.embeddings");
     let _ = dest.execute("DETACH DATABASE srcdb", []);
+    if available > 0 && carried == 0 {
+        eprintln!(
+            "cairn: none of the {available} stored embeddings fit the rebuilt store; run `cairn embed`"
+        );
+    }
 }
 
 /// Carry telemetry from `db` into `staged`, then swap `staged` over `db`; caller holds the lock.
@@ -310,5 +329,92 @@ mod tests {
         drop(held);
         build_lock(&db).expect("lock after release");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// One file whose two symbols share an identity, filed under the last of
+    /// `repos` `(id, path)` rows; `embedded` gives each a base vector and two
+    /// multi-vectors.
+    fn store_with_shared_identity(path: &Path, repos: &[(&str, &str)], embedded: bool) {
+        let conn = crate::schema::open_initialized(path).expect("store");
+        for (id, repo_path) in repos {
+            conn.execute(
+                "INSERT INTO repos (id, name, path) VALUES (?1, ?1, ?2)",
+                [*id, *repo_path],
+            )
+            .expect("repo");
+        }
+        conn.execute(
+            "INSERT INTO files (id, repo_id, path, language, hash) \
+             VALUES ('f', ?1, 'a.js', 'javascript', 'h')",
+            [repos[repos.len() - 1].0],
+        )
+        .expect("file");
+        for id in ["s1", "s2"] {
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, line_start) \
+                 VALUES (?1, 'f', 'n', 'function', 1)",
+                [id],
+            )
+            .expect("symbol");
+            if !embedded {
+                continue;
+            }
+            conn.execute(
+                "INSERT INTO embeddings (symbol_id, model, dim, vec, chunk) \
+                 VALUES (?1, 'm', 2, x'0000803f0000003f', 'n')",
+                [id],
+            )
+            .expect("embedding");
+            for part in ["a", "b"] {
+                conn.execute(
+                    "INSERT INTO embeddings_mv (symbol_id, model, vector_kind, dim, vec, chunk) \
+                     VALUES (?1, 'm', ?2, 2, x'0000803f0000003f', ?2)",
+                    rusqlite::params![id, part],
+                )
+                .expect("multi-vector");
+            }
+        }
+    }
+
+    /// `(symbols with a base vector, multi-vectors)` the new store holds after
+    /// a carry-over from a store filed under `old_repo`.
+    fn carried(old_repo: &str, new_repos: &[(&str, &str)]) -> (i64, i64) {
+        let dir = std::env::temp_dir().join(format!("cairn-swap-carry-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let (old, new) = (dir.join("old.kg"), dir.join("new.kg"));
+        let _ = std::fs::remove_file(&old);
+        let _ = std::fs::remove_file(&new);
+        store_with_shared_identity(&old, &[(old_repo, ".")], true);
+        store_with_shared_identity(&new, new_repos, false);
+
+        carry_embeddings(&Connection::open(&new).expect("open"), &old);
+
+        let new = Connection::open(&new).expect("reopen");
+        let count = |sql: &str| -> i64 { new.query_row(sql, [], |r| r.get(0)).expect("count") };
+        let counts = (
+            count("SELECT COUNT(DISTINCT symbol_id) FROM embeddings"),
+            count("SELECT COUNT(*) FROM embeddings_mv"),
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        counts
+    }
+
+    #[test]
+    fn carry_embeddings_survives_shared_identities_and_rekeys_relative_build_ids() {
+        let root = [("repo", ".")];
+        let nested = [("repo", "."), ("repo/vendored", "vendored")];
+        // One repo id on both sides, then the ids a relative build gave the
+        // root repository and one nested under it.
+        for (old_repo, new_repos) in [
+            ("repo", &root[..]),
+            ("", &root[..]),
+            ("/vendored", &nested[..]),
+        ] {
+            assert_eq!(
+                carried(old_repo, new_repos),
+                (2, 4),
+                "old repo id {old_repo:?}"
+            );
+        }
     }
 }
