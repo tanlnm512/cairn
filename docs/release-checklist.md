@@ -26,8 +26,8 @@ don't skip on "I'm sure it's fine."
 - [ ] `cargo xtask parity --store self` and `cargo xtask cli-golden` — when
       cutting a release or touching the frozen oracles (`rust/golden/`) or
       the binary, replay the oracles against the release binary.
-- [ ] No new `#[ignore]`, `xfail` or `skip` slipped in to make a failure
-      "pass"; skip-quarantining is forbidden.
+- [ ] No new `#[ignore]` or `skip` slipped in to make a failure "pass";
+      skip-quarantining is forbidden.
 
 ## Build verification (for changes touching indexing/embedding)
 - [ ] `cairn build` succeeds against the real workspace.

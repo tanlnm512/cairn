@@ -1135,7 +1135,7 @@ fn run_side(
     })
 }
 
-/// Seed, then run one case with its env/stdin/cwd overrides.
+/// Seed, then run one case from the repo root with its env/stdin overrides.
 fn run_case(cmd: &[String], exe: &Path, env: &Env, scratch: &Path) -> Result<Outcome, Halt> {
     let words: Vec<&str> = cmd.iter().map(String::as_str).collect();
     if let Some(reseed) = Reseed::for_command(&words) {
@@ -1145,14 +1145,7 @@ fn run_case(cmd: &[String], exe: &Path, env: &Env, scratch: &Path) -> Result<Out
     for (key, value) in env_overrides(&words) {
         env.insert(key.into(), value.into());
     }
-    let root = repo_root();
-    // `report` runs from scratch so the repo-dev quality gates render their no-source-root arm.
-    let cwd = if words.first() == Some(&"report") {
-        scratch
-    } else {
-        &root
-    };
-    run_side(exe, cmd, &env, cwd, stdin_override(&words))
+    run_side(exe, cmd, &env, &repo_root(), stdin_override(&words))
 }
 
 // --- normalization and diff ------------------------------------------------------

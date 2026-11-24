@@ -3,15 +3,14 @@
 # reference dump (the goldens are the spec of record).
 #
 # base: builds the pinned parity corpus (rust/golden/stores/self/corpus) with
-# the Rust `cairn build-graph`, runs `cairn canonical-dump`, normalizes volatile content
-# at dump time (plan.md 2c: "id determinism handled at dump time"), and
-# requires `xtask kg-diff` against rust/golden/dump/self-corpus.norm.txt to be
-# empty. Prints the build timings.
+# `cairn build-graph`, runs `cairn canonical-dump`, normalizes volatile content
+# at dump time, and requires `xtask kg-diff` against
+# rust/golden/dump/self-corpus.norm.txt to be empty. Prints the build timings.
 #
 # Normalization is symmetric and content-derived, applied to BOTH sides
 # (`xtask kg-normalize`):
 #   - dropped sections: build_runs / events / tool_metrics (run telemetry) and
-#     dataflow (CLI post-build derived index, outside the Phase 2 build path);
+#     dataflow (CLI post-build derived index, outside the build path);
 #   - uuid/counter row ids rewritten to content keys (files/symbols/edges/
 #     imports/rationale/parse_errors/skipped_files);
 #   - volatile stamps blanked: indexed_at / recorded_at / timestamp -> <TS>,
@@ -66,7 +65,7 @@ if [ ! -x "$RS_CAIRN" ]; then
 fi
 [ -x "$RS_CAIRN" ] || fail "rust binary missing at $RS_CAIRN"
 
-# --- dump-time normalization (plan.md 2c: id determinism at dump time) -------
+# --- dump-time normalization ------------------------------------------------
 normalize() {
   xtask kg-normalize "$1" "$2"
 }

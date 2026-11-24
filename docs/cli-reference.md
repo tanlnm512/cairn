@@ -267,4 +267,16 @@ contested).
   `install-agents` writes into Claude/Cursor hook configs; it is a clean no-op
   (exits 0) when run in a workspace without an initialized store.
 
+### Gate and bench subcommands
+
+Hidden from `--help`. The repo gates (`scripts/g2_check.sh`,
+`cargo xtask corner-store`) and `cargo xtask closure-bench` drive them in the
+release binary; flags take `--flag value` or `--flag=value`.
+
+| Command | Contract |
+|---|---|
+| `cairn build-graph --workspace <dir> --db <store>` | build the graph into `<store>` and print the summary JSON plus stage timings; `--repo <id>` restricts the build to one repo, `--workers <n>` sizes the parse pool |
+| `cairn canonical-dump <store> [-o <file>]` | write the canonical store dump (stdout without `-o`); repeatable `--map-path <from>=<to>` rewrites path prefixes, `--tables <a,b>` selects tables, `--list-tables` prints the table classes instead of a dump; exit 2 on usage errors |
+| `cairn closure --db <store> [--depth <n>]` | rebuild the transitive closure and print the outcome JSON plus timing |
+
 Global: `-v/--verbose` for debug logging.

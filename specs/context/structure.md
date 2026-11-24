@@ -6,8 +6,10 @@ read from the tree; re-verify with `rg --files rust/crates` before citing.
 ## Distribution
 - One engine binary, `cairn`, built from `rust/crates/cairn-cli` and versioned
   by `Cargo.toml` `[workspace.package]`.
-- Channels: GitHub release tarballs (`.github/workflows/release-rust.yml`),
-  installed directly or via `cargo binstall --git`, and `cargo install --git`.
+- Channels: PyPI bin wheels (`.github/workflows/release.yml`, installed with
+  `uv` / `pipx` / `pip`), GitHub release tarballs
+  (`.github/workflows/release-rust.yml`) installed directly, through
+  `scripts/install.sh` or via `cargo binstall --git`, and `cargo install --git`.
 
 ## Cargo workspace (`rust/`)
 | Crate | Role |
@@ -23,8 +25,9 @@ Vendored: `rust/vendor/tree-sitter-dart` (workspace member) and
 `rust/vendor/sqlite-vec` (patched crate).
 
 ## Entry points
-- `rust/crates/cairn-cli/src/main.rs`: migration-harness shims
-  (`canonical-dump`, `build-graph`, `closure`), then `cli::run`.
+- `rust/crates/cairn-cli/src/main.rs`: hidden gate and bench subcommands
+  (`canonical-dump`, `build-graph`, `closure`; see `docs/cli-reference.md`),
+  then `cli::run`.
 - MCP: `cairn serve` (foreground) and `cairn connect` (ensures the shared
   daemon on loopback).
 - Dashboard: `cairn dashboard`.
@@ -32,8 +35,10 @@ Vendored: `rust/vendor/tree-sitter-dart` (workspace member) and
 ## Development tooling
 - `rust/crates/xtask/`: repo gates, replay oracles, canonical-dump tooling
   and the measured gates (`cargo xtask` lists them).
-- `scripts/`: installers and `g2_check.sh`.
-- `tests/fixtures/`: SCIP-indexing fixture repos.
+- `scripts/`: installers (`install.sh`, `uninstall.sh`), `g2_check.sh`,
+  `ci-local.sh`, `wheel-smoke.sh`.
+- `tests/fixtures/`: the per-language parser golden corpus (`golden/`) and
+  the SCIP-indexing fixture repos (`scip-indexing/`).
 
 ## Tests and oracles
 - Rust: unit tests in each crate, integration suites under

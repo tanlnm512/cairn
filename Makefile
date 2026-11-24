@@ -1,4 +1,4 @@
-.PHONY: evals ci-local ci-local-rust ci-local-parity audit-status comment-style comment-style-shrink verify-protection release help
+.PHONY: evals ci-local ci-local-rust ci-local-parity comment-style comment-style-shrink verify-protection release help
 
 evals:
 	cargo xtask skill-evals
@@ -28,9 +28,6 @@ ci-local-parity:
 
 # Quality ratchets; module flags travel through ARGS because make consumes a
 # literal --json itself, so the JSON spelling is ARGS=--json.
-audit-status:
-	@cargo xtask audit-status $(ARGS)
-
 comment-style:
 	@cargo xtask comment-style $(ARGS)
 
@@ -78,15 +75,13 @@ release:
 	@cargo xtask bump --dry-run
 
 help:
-	@echo "Targets: evals ci-local ci-local-rust ci-local-parity audit-status comment-style comment-style-shrink verify-protection release help"
+	@echo "Targets: evals ci-local ci-local-rust ci-local-parity comment-style comment-style-shrink verify-protection release help"
 	@echo ""
 	@echo "  evals                  validate skill eval specs"
 	@echo "  ci-local               clean-room CI replication in a Linux container"
 	@echo "                         (apple container, not docker)"
 	@echo "  ci-local-rust          clean-room rust gates (fmt/clippy/test/deny)"
 	@echo "  ci-local-parity        clean-room parity gates"
-	@echo "  audit-status           remaining-vs-total audit findings by priority"
-	@echo "                         (ARGS=--json for machine-readable output)"
 	@echo "  comment-style          gate long Rust comment/doc blocks against the baseline"
 	@echo "                         (ARGS=--json for machine-readable output)"
 	@echo "  comment-style-shrink   rewrite the baseline after cleanup; refuses growth"

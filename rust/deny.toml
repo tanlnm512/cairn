@@ -9,6 +9,8 @@ ignore = [
     { id = "RUSTSEC-2026-0192", reason = "transitive of pdf-extract 0.12.1; text extraction does not parse untrusted fonts" },
     # paste via fastembed->ort (local-embed feature graph) is unmaintained; no fixed release exists.
     { id = "RUSTSEC-2024-0436", reason = "transitive macro utility of ort 2.0.0-rc.15 behind the opt-in local-embed feature; unmaintained upstream, no vulnerability" },
+    # chrono via rmcp->schemars is unmaintained; no fixed release exists.
+    { id = "RUSTSEC-2026-0543", reason = "transitive of rmcp 3.9.0 and schemars 1.2.3; unmaintained upstream, no vulnerability" },
 ]
 
 [licenses]

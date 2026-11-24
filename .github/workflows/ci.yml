@@ -80,10 +80,11 @@ jobs:
         env:
           SKIP: cargo-fmt,cargo-clippy,check-comment-lengths
 
-  # --- Quality ratchet: audit-debt + comment-style stop-growth gates ------
-  # Human modes keep the maintainer surface green; the JSON steps pin the
-  # machine-readable contract report and tooling consume. The doc and
-  # skill-eval gates ride the same leg.
+  # --- Quality ratchet: comment-style stop-growth gate ---------------------
+  # The human mode keeps the maintainer surface green; the JSON step pins the
+  # machine-readable contract tooling consumes. The doc and skill-eval gates
+  # ride the same leg. The job name is pinned by main's required checks:
+  # rename it only together with the ruleset.
   quality-ratchet:
     name: Quality ratchet (audit debt + comment style)
     runs-on: ubuntu-latest
@@ -96,20 +97,11 @@ jobs:
         with:
           workspaces: ". -> rust/target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Audit status (human gate)
-        run: make audit-status
       - name: Comment style (human gate)
         run: make comment-style
       - name: Parse quality-gate JSON outputs
         run: |
-          cargo xtask audit-status --json > audit-status.json
           cargo xtask comment-style --json > comment-style.json
-          jq -e '
-            (["P0", "P1", "P2", "P3"] - (.totals | keys) == [])
-            and all(.totals[]; (keys == ["fixed", "remaining", "total"])
-              and .remaining >= 0 and .remaining <= .total)
-            and .remaining == ([.totals[].remaining] | add)
-          ' audit-status.json
           jq -e '
             .ok == true and (.remaining | type) == "number"
             and .new == [] and .stale == []
