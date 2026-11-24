@@ -11,7 +11,8 @@ use super::{
     EffectiveBackend, HASH_MODEL, NATIVE_MODEL, SemanticEnv, SemanticMatch, ann_backend_enabled,
     cosine_scan, embed_query, exact_name_hit, floats_to_blob, fused_margin, hash_vec, install_hint,
     is_fts_prefix_pattern, netloc_of, pattern_to_fts, render_search_symbols,
-    render_semantic_search, resolve_backend, round4, rrf_fuse, vec_table_name,
+    render_semantic_search, resolve_backend, round4, rrf_fuse, semantic_search, server_model,
+    take_dense_error, vec_table_name,
 };
 
 fn env_hash() -> SemanticEnv {
@@ -580,6 +581,103 @@ fn server_embed_surfaces_rejections_without_retrying_4xx() {
         .expect_err("rejected");
     assert!(err.contains("HTTP 404"), "{err}");
     assert!(err.contains("model not found"), "{err}");
+}
+
+#[test]
+fn embed_query_sends_the_transport_model_id_not_the_stamp() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let log = std::sync::Arc::clone(&seen);
+    thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 2048];
+        loop {
+            let Ok(n) = stream.read(&mut buf) else {
+                return;
+            };
+            raw.extend_from_slice(&buf[..n]);
+            let complete = raw
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .is_some_and(|end| {
+                    let head = String::from_utf8_lossy(&raw[..end]).to_string();
+                    let length = head
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())?
+                        })
+                        .unwrap_or(0);
+                    raw.len() >= end + 4 + length
+                });
+            if complete {
+                break;
+            }
+        }
+        *log.lock().expect("log") = String::from_utf8_lossy(&raw).to_string();
+        let _ = stream.write_all(
+            canned_reply("{\"data\":[{\"index\":0,\"embedding\":[1.0,0.0]}]}").as_bytes(),
+        );
+    });
+    let env = SemanticEnv {
+        backend: EffectiveBackend::Server,
+        model: "server/127.0.0.1:8000/row-stamp".to_string(),
+        server_base_url: Some(format!("http://{addr}")),
+        server_api_key: None,
+        ..env_hash()
+    };
+
+    let (blob, dim) = embed_query(&env, "find the closure builder").expect("server embed");
+
+    assert_eq!((dim, blob.len()), (2, 8));
+    let expected = server_model();
+    assert_ne!(expected, env.model);
+    let request = seen.lock().expect("log").clone();
+    assert!(
+        request.contains(&format!("\"model\":\"{expected}\"")),
+        "{request}"
+    );
+}
+
+#[test]
+fn failed_dense_query_is_reported_in_the_rendered_search() {
+    let body = "{\"error\":{\"message\":\"model not found\"}}";
+    let base = serve_once(format!(
+        "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    ));
+    let env = SemanticEnv {
+        backend: EffectiveBackend::Server,
+        model: "server/127.0.0.1:8000/row-stamp".to_string(),
+        server_base_url: Some(base),
+        server_api_key: None,
+        fusion_enabled: false,
+        ..env_hash()
+    };
+    let dir = std::env::temp_dir().join(format!(
+        "cairn-dense-error-{}-{}",
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let conn = cairn_store::schema::open_initialized(&dir.join("store.kg")).expect("store");
+
+    let rows = semantic_search(&conn, "anything", 5, 0.3, &env);
+
+    drop(conn);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(rows.is_empty());
+    let text = render_semantic_search("anything", &rows, false);
+    assert!(text.contains("Vector scan skipped: "), "{text}");
+    assert!(text.contains("model not found"), "{text}");
+    assert_eq!(take_dense_error(), None);
+    let clean = render_semantic_search("anything", &[], false);
+    assert!(!clean.contains("Vector scan skipped"), "{clean}");
 }
 
 #[test]

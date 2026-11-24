@@ -442,18 +442,21 @@ fn check_embed_server(conn: &Connection) -> Vec<CheckResult> {
     };
     let model = tools_search::server_model();
 
-    let Some((ids, has_model)) = fetch_model_listing(&base) else {
-        results.push(result(
-            "embed_server",
-            FAIL,
-            format!("embedding server unreachable (GET {base}/models failed)"),
-            Some(format!(
-                "start the embedding server and verify GET {base}/models lists \
-                 the model (presets: omlx http://127.0.0.1:8000/v1, ollama \
-                 http://127.0.0.1:11434/v1)"
-            )),
-        ));
-        return results;
+    let (ids, has_model) = match fetch_model_listing(&base) {
+        Ok(listing) => listing,
+        Err(reason) => {
+            results.push(result(
+                "embed_server",
+                FAIL,
+                reason,
+                Some(format!(
+                    "start the embedding server and verify GET {base}/models lists \
+                     the model with the configured CAIRN_EMBED_API_KEY (presets: \
+                     omlx http://127.0.0.1:8000/v1, ollama http://127.0.0.1:11434/v1)"
+                )),
+            ));
+            return results;
+        }
     };
     if !has_model {
         let available = if ids.is_empty() {
@@ -548,29 +551,48 @@ fn split_base_url(base: &str) -> Option<(String, u16, String)> {
     Some((host, port, format!("/{path}")))
 }
 
-/// GET {base}/models -> (ids, configured model listed).
-fn fetch_model_listing(base: &str) -> Option<(Vec<String>, bool)> {
-    let (host, port, prefix) = split_base_url(base)?;
+/// `Authorization: Bearer <key>` when an embedding API key is configured.
+fn bearer_header() -> Option<String> {
+    cairn_query::tools_search::config_value("CAIRN_EMBED_API_KEY")
+        .map(|key| format!("Authorization: Bearer {key}"))
+}
+
+/// GET {base}/models -> (ids, configured model listed); the error says why not.
+fn fetch_model_listing(base: &str) -> Result<(Vec<String>, bool), String> {
+    let (host, port, prefix) = split_base_url(base)
+        .ok_or_else(|| format!("{base} is not an http URL; the doctor probe is http-only"))?;
+    let auth = bearer_header();
+    let headers: Vec<&str> = auth.iter().map(String::as_str).collect();
     let reply = cairn_query::http::request(
         &host,
         port,
         "GET",
         &format!("{prefix}/models"),
         None,
-        &[],
+        &headers,
         Duration::from_secs(10),
     )
-    .ok()?;
-    let parsed: Value = serde_json::from_slice(&reply.body).ok()?;
-    let ids: Vec<String> = parsed
-        .get("data")?
-        .as_array()?
-        .iter()
-        .filter_map(|e| e.get("id").and_then(Value::as_str).map(String::from))
-        .collect();
+    .map_err(|_| format!("embedding server unreachable (GET {base}/models failed)"))?;
+    if reply.status != 200 {
+        return Err(format!(
+            "embedding server rejected the model listing (HTTP {}; check CAIRN_EMBED_API_KEY)",
+            reply.status
+        ));
+    }
+    let ids: Vec<String> = serde_json::from_slice::<Value>(&reply.body)
+        .ok()
+        .and_then(|parsed| {
+            parsed.get("data").and_then(Value::as_array).map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|e| e.get("id").and_then(Value::as_str).map(String::from))
+                    .collect()
+            })
+        })
+        .ok_or_else(|| "embedding server returned a malformed model listing".to_string())?;
     let model = cairn_query::tools_search::server_model();
     let has_model = ids.iter().any(|id| id == &model);
-    Some((ids, has_model))
+    Ok((ids, has_model))
 }
 
 /// POST {base}/embeddings with `texts`; returns one float vector per text.
@@ -578,8 +600,7 @@ fn embed_vectors(base: &str, model: &str, texts: &[String]) -> Result<Vec<Vec<f3
     let (host, port, prefix) = split_base_url(base)
         .ok_or_else(|| format!("{base} is not an http URL; the doctor probe is http-only"))?;
     let payload = json!({ "model": model, "input": texts }).to_string();
-    let auth = cairn_query::tools_search::config_value("CAIRN_EMBED_API_KEY")
-        .map(|key| format!("Authorization: Bearer {key}"));
+    let auth = bearer_header();
     let headers: Vec<&str> = auth.iter().map(String::as_str).collect();
     let reply = cairn_query::http::request(
         &host,
@@ -2094,5 +2115,127 @@ mod tests {
         let saved: Value =
             serde_json::from_str(&std::fs::read_to_string(&settings).expect("read")).expect("json");
         assert_eq!(saved["model"], json!("opus"));
+    }
+
+    /// Read one request in full (headers plus the content-length body) and
+    /// return the header text; a peer that closes early yields `None`.
+    fn read_request(stream: &mut std::net::TcpStream) -> Option<String> {
+        use std::io::Read;
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            if let Some(end) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&raw[..end]).to_string();
+                let length = head
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if raw.len() >= end + 4 + length {
+                    return Some(head);
+                }
+            }
+            let n = stream.read(&mut buf).ok()?;
+            if n == 0 {
+                return None;
+            }
+            raw.extend_from_slice(&buf[..n]);
+        }
+    }
+
+    /// Answer up to 12 requests, recording each Authorization header; 200 only
+    /// for `Bearer secret-key`.
+    fn keyed_server() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let base = format!("http://{}/v1", listener.local_addr().expect("addr"));
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = std::sync::Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for _ in 0..12 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let Some(head) = read_request(&mut stream) else {
+                    return;
+                };
+                let auth = head
+                    .lines()
+                    .find_map(|line| {
+                        let lower = line.to_ascii_lowercase();
+                        lower
+                            .strip_prefix("authorization:")
+                            .map(|v| v.trim().to_string())
+                    })
+                    .map(|value| value.trim().to_string())
+                    .unwrap_or_default();
+                log.lock().expect("log").push(auth.clone());
+                let is_listing = head.starts_with("GET ");
+                let (status, body) = if auth.eq_ignore_ascii_case("Bearer secret-key") {
+                    let body = if is_listing {
+                        "{\"data\":[{\"id\":\"bge-m3\"}]}"
+                    } else {
+                        "{\"data\":[{\"index\":0,\"embedding\":[0.0,1.0]}]}"
+                    };
+                    ("200 OK", body)
+                } else {
+                    ("401 Unauthorized", "{\"error\":\"API key required\"}")
+                };
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        (base, seen)
+    }
+
+    #[test]
+    fn embed_server_check_sends_the_configured_api_key() {
+        let _env = crate::test_env::EnvScope::new("embed-server-auth");
+        let (base, seen) = keyed_server();
+        let keys = [
+            "CAIRN_EMBED_BACKEND",
+            "CAIRN_EMBED_BASE_URL",
+            "CAIRN_EMBED_API_KEY",
+        ];
+        let saved: Vec<_> = keys.iter().map(std::env::var_os).collect();
+        // SAFETY: EnvScope holds the env lock for the rest of this test.
+        unsafe {
+            std::env::set_var("CAIRN_EMBED_BACKEND", "server");
+            std::env::set_var("CAIRN_EMBED_BASE_URL", &base);
+            std::env::set_var("CAIRN_EMBED_API_KEY", "secret-key");
+        }
+        let dir = std::env::temp_dir().join(format!("cairn-doctor-auth-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let conn = cairn_store::schema::open_initialized(&dir.join("store.kg")).expect("store");
+
+        let checks = check_embed_server(&conn);
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+        // SAFETY: still under the EnvScope lock.
+        unsafe {
+            for (key, value) in keys.iter().zip(saved) {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+        assert!(checks.iter().all(|c| c.status == PASS), "{checks:?}");
+        let auths = seen.lock().expect("log").clone();
+        assert!(!auths.is_empty());
+        assert!(
+            auths
+                .iter()
+                .all(|a| a.eq_ignore_ascii_case("Bearer secret-key")),
+            "{auths:?}"
+        );
     }
 }

@@ -1169,6 +1169,27 @@ fn build(args: crate::cmds_core::BuildArgs) -> ExitCode {
                     .collect::<Vec<_>>(),
                 Some(&subtitle),
             );
+            let elapsed = started.elapsed();
+            crate::cmds_lifecycle::record_build_run(
+                &db,
+                "build",
+                std::time::SystemTime::now() - elapsed,
+                elapsed.as_secs_f64(),
+                crate::cmds_lifecycle::BuildRun {
+                    phase_timings: serde_json::to_value(timings).ok(),
+                    repos: Some(summary.repos as i64),
+                    files: Some(summary.files as i64),
+                    symbols: Some(summary.symbols as i64),
+                    edges: Some(summary.edges as i64),
+                    resolution: Some((
+                        resolution.exact as i64,
+                        resolution.ambiguous as i64,
+                        resolution.unresolved as i64,
+                    )),
+                    parse_errors: Some(summary.parse_errors as i64),
+                    skipped: summary.skipped,
+                },
+            );
             ExitCode::SUCCESS
         }
     }
@@ -1410,6 +1431,7 @@ pub(crate) fn human_bytes(mut n: f64) -> String {
 
 /// update handler: incremental reindex from git diff or a single file.
 fn update(args: crate::cmds_core::UpdateArgs) -> ExitCode {
+    let started = Instant::now();
     let db = db_arg(&args.db);
     let workspace = args.workspace.clone().unwrap_or_else(|| ".".to_string());
     let knowledge = args.knowledge.clone().unwrap_or_else(|| {
@@ -1477,13 +1499,31 @@ fn update(args: crate::cmds_core::UpdateArgs) -> ExitCode {
                 "{awaiting} symbol(s) awaiting embed — run `cairn embed`"
             ));
         }
-        if !result.errors.is_empty() {
+        let code = if result.errors.is_empty() {
+            ExitCode::SUCCESS
+        } else {
             for err in &result.errors {
                 display::error(err);
             }
-            return ExitCode::FAILURE;
+            ExitCode::FAILURE
+        };
+        drop(conn);
+        drop(_lock);
+        if code == ExitCode::SUCCESS {
+            let elapsed = started.elapsed();
+            crate::cmds_lifecycle::record_build_run(
+                &db,
+                "incremental",
+                std::time::SystemTime::now() - elapsed,
+                elapsed.as_secs_f64(),
+                crate::cmds_lifecycle::BuildRun {
+                    files: Some(result.reindexed as i64),
+                    skipped: result.deleted,
+                    ..Default::default()
+                },
+            );
         }
-        return ExitCode::SUCCESS;
+        return code;
     }
 
     if let Some(diff_ref) = &args.diff_ref {
@@ -1570,6 +1610,18 @@ fn update(args: crate::cmds_core::UpdateArgs) -> ExitCode {
             summary.symbols_awaiting_embed
         ));
     }
+    let elapsed = started.elapsed();
+    crate::cmds_lifecycle::record_build_run(
+        &db,
+        "incremental",
+        std::time::SystemTime::now() - elapsed,
+        elapsed.as_secs_f64(),
+        crate::cmds_lifecycle::BuildRun {
+            files: Some(summary.files_reindexed as i64),
+            skipped: deleted,
+            ..Default::default()
+        },
+    );
 
     // Memory decay: archive stale raw/tribal memories after the reindex.
     if args.no_decay {
@@ -2810,9 +2862,11 @@ fn embed(args: crate::cmds_core::EmbedArgs) -> ExitCode {
             "embed",
             started,
             elapsed,
-            None,
-            Some(summary.embedded as i64),
-            summary.skipped,
+            crate::cmds_lifecycle::BuildRun {
+                symbols: Some(summary.embedded as i64),
+                skipped: summary.skipped,
+                ..Default::default()
+            },
         );
     }
     ExitCode::SUCCESS
@@ -4633,6 +4687,10 @@ mod tests {
 
     #[test]
     fn staging_build_swaps_the_temp_db_over_the_store() {
+        let _env = crate::test_env::EnvScope::new("staging-build");
+        let saved_telemetry = std::env::var_os("CAIRN_TELEMETRY");
+        // SAFETY: EnvScope holds the env lock for the rest of this test.
+        unsafe { std::env::remove_var("CAIRN_TELEMETRY") };
         let dir = std::env::temp_dir().join(format!(
             "cairn-staging-{}-{}",
             std::process::id(),
@@ -4669,9 +4727,29 @@ mod tests {
         let conn = Connection::open(&db).expect("open store");
         let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).expect("count") };
         assert_eq!(count("SELECT COUNT(*) FROM files"), 1);
-        assert_eq!(count("SELECT COUNT(*) FROM build_runs"), 1);
+        // The seeded row survives the swap; the build appends its own.
+        assert_eq!(count("SELECT COUNT(*) FROM build_runs"), 2);
+        let row: (String, i64, i64, String) = conn
+            .query_row(
+                "SELECT kind, files, symbols, phase_timings FROM build_runs \
+                 ORDER BY started_at DESC LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .expect("build row");
+        assert_eq!(row.0, "build");
+        assert_eq!(row.1, 1);
+        assert!(row.2 > 0, "{}", row.2);
+        assert!(row.3.contains("total_ms"), "{}", row.3);
         drop(conn);
         let _ = std::fs::remove_dir_all(&dir);
+        // SAFETY: EnvScope still holds the env lock.
+        unsafe {
+            match saved_telemetry {
+                Some(value) => std::env::set_var("CAIRN_TELEMETRY", value),
+                None => std::env::remove_var("CAIRN_TELEMETRY"),
+            }
+        }
     }
 
     #[test]

@@ -69,7 +69,7 @@ pub struct ResolutionCounts {
 }
 
 /// Per-stage wall times in milliseconds.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct StageTimings {
     pub scan_ms: f64,
     pub parse_ms: f64,

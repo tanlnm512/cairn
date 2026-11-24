@@ -548,9 +548,11 @@ pub fn run_sync(args: SyncArgs) -> ExitCode {
         "sync",
         started,
         timer.elapsed().as_secs_f64(),
-        Some(result.reindexed as i64),
-        None,
-        result.deleted,
+        BuildRun {
+            files: Some(result.reindexed as i64),
+            skipped: result.deleted,
+            ..Default::default()
+        },
     );
     ExitCode::SUCCESS
 }
@@ -591,16 +593,27 @@ fn telemetry_off() -> bool {
     cairn_query::tools_search::telemetry_off()
 }
 
-/// Record a build_runs row; `files`/`symbols` are column choices per kind
-/// (build/sync carry files, embed carries symbols).
+/// Columns one build_runs row carries; `None` is stored as NULL.
+#[derive(Default)]
+pub struct BuildRun {
+    pub phase_timings: Option<Value>,
+    pub repos: Option<i64>,
+    pub files: Option<i64>,
+    pub symbols: Option<i64>,
+    pub edges: Option<i64>,
+    /// `(exact, ambiguous, unresolved)` edge counts.
+    pub resolution: Option<(i64, i64, i64)>,
+    pub parse_errors: Option<i64>,
+    pub skipped: usize,
+}
+
+/// Record one build_runs row; each command fills the columns its kind carries.
 pub fn record_build_run(
     db: &str,
     kind: &str,
     started: std::time::SystemTime,
     duration_s: f64,
-    files: Option<i64>,
-    symbols: Option<i64>,
-    skipped: usize,
+    run: BuildRun,
 ) {
     if telemetry_off() {
         return;
@@ -617,6 +630,9 @@ pub fn record_build_run(
         .ok()
         .and_then(|raw| raw.parse::<i64>().ok())
         .map(|n| n.clamp(1, 256));
+    let (exact, ambiguous, unresolved) = run
+        .resolution
+        .map_or((None, None, None), |r| (Some(r.0), Some(r.1), Some(r.2)));
     let _ = conn.execute(
         "INSERT INTO build_runs (kind, started_at, duration_s, phase_timings, repos, files, \
          symbols, edges, resolution_exact, resolution_ambiguous, resolution_unresolved, \
@@ -626,16 +642,16 @@ pub fn record_build_run(
             kind,
             started_at,
             duration_s,
-            Option::<String>::None,
-            Option::<i64>::None,
-            files,
-            symbols,
-            Option::<i64>::None,
-            Option::<i64>::None,
-            Option::<i64>::None,
-            Option::<i64>::None,
-            Option::<i64>::None,
-            skipped as i64,
+            run.phase_timings.map(|v| v.to_string()),
+            run.repos,
+            run.files,
+            run.symbols,
+            run.edges,
+            exact,
+            ambiguous,
+            unresolved,
+            run.parse_errors,
+            run.skipped as i64,
             workers,
             "unknown",
         ],
