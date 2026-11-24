@@ -180,17 +180,28 @@ fn top_level_records(root: &Path) -> Vec<RepositoryRecord> {
         return records;
     }
     if root.join(".git").exists() {
-        let repo_id = root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
         return vec![RepositoryRecord {
-            repo_id,
+            repo_id: dir_repo_id(root),
             path: root.to_path_buf(),
         }];
     }
     Vec::new()
+}
+
+/// A directory's repository id: the basename of its absolute form, so relative
+/// and absolute spellings of one workspace name the repository identically.
+pub(crate) fn dir_repo_id(dir: &Path) -> String {
+    let named = match dir.is_absolute() {
+        true => dir.to_path_buf(),
+        false => std::env::current_dir()
+            .map(|cwd| cwd.join(dir))
+            .unwrap_or_else(|_| dir.to_path_buf()),
+    };
+    named
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// Preorder descendant directories under `root`, pruning skip dirs and symlinks.
@@ -637,13 +648,7 @@ pub fn scan_workspace(
                 .into_iter()
                 .find(|r| r.path == repo_path)
                 .map(|r| r.repo_id)
-                .unwrap_or_else(|| {
-                    repo_path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or_default()
-                        .to_string()
-                });
+                .unwrap_or_else(|| dir_repo_id(&repo_path));
             let (files, skips) = iter_files_and_skips(&repo_id, &repo_path)?;
             all_files.extend(files);
             all_skips.extend(skips);
@@ -667,7 +672,11 @@ pub fn resolve_repo_path(workspace: &str, repo_name: &str) -> Result<PathBuf, St
     }
     let ws = Path::new(workspace);
     if is_single_repo_workspace(workspace) {
-        return Ok(ws.to_path_buf());
+        // A relative build filed a nested repository under `/<path>`.
+        return Ok(match repo_name.strip_prefix('/') {
+            Some(relative) if ws.join(relative).join(".git").exists() => ws.join(relative),
+            _ => ws.to_path_buf(),
+        });
     }
     Ok(ws.join(repo_name))
 }
@@ -691,13 +700,7 @@ pub fn repository_id_for_path(workspace: &str, repo_path: &Path) -> String {
         .into_iter()
         .find(|r| r.path == repo_path)
         .map(|r| r.repo_id)
-        .unwrap_or_else(|| {
-            repo_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default()
-                .to_string()
-        })
+        .unwrap_or_else(|| dir_repo_id(repo_path))
 }
 
 /// Symlink-resolving path normalization that tolerates nonexistent leaves
@@ -831,4 +834,19 @@ pub fn infer_repo_language(files: &[FileInfo]) -> Option<String> {
         }
     }
     best.map(|(lang, _)| lang)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dir_repo_id;
+    use std::path::Path;
+
+    #[test]
+    fn relative_and_absolute_spellings_name_a_repository_identically() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let name = cwd.file_name().and_then(|n| n.to_str()).expect("cwd name");
+        assert_eq!(dir_repo_id(Path::new(".")), name);
+        assert_eq!(dir_repo_id(&cwd), name);
+        assert_eq!(dir_repo_id(&cwd.join(".")), name);
+    }
 }

@@ -228,15 +228,19 @@ pub fn chunk_for_symbol(
     } else {
         parts.join("\n")
     };
-    let max_chars = max_tokens * 4;
-    if res.chars().count() > max_chars {
-        res.chars().take(max_chars).collect()
+    cap_chars(res, max_tokens * 4)
+}
+
+/// `text` cut to its first `max_chars` characters.
+fn cap_chars(text: String, max_chars: usize) -> String {
+    if text.chars().count() > max_chars {
+        text.chars().take(max_chars).collect()
     } else {
-        res
+        text
     }
 }
 
-/// The name-only multi-vector text for a symbol.
+/// The name-only multi-vector text for a symbol, capped like the base text.
 pub fn name_text_for_symbol(row: &EmbedRow, signature: Option<&str>) -> String {
     let kind = row.kind.trim();
     let qname = match truthy(&row.qualified_name) {
@@ -253,7 +257,7 @@ pub fn name_text_for_symbol(row: &EmbedRow, signature: Option<&str>) -> String {
     if !first_line.is_empty() && first_line != header {
         parts.push(first_line.to_string());
     }
-    parts.join("\n")
+    cap_chars(parts.join("\n"), DEFAULT_MAX_TOKENS * 4)
 }
 
 /// The symbol's stripped docstring, or an empty string.
@@ -1364,6 +1368,14 @@ mod tests {
             mv_text_for_kind(&row(), "body", None),
             Err(msg) if msg.contains("unknown vector_kind")
         ));
+    }
+
+    #[test]
+    fn name_text_caps_a_minified_declaration_line_like_the_base_text() {
+        let line = "x".repeat(10_000);
+        let text = name_text_for_symbol(&row(), Some(&line));
+        assert!(text.starts_with("method Greeter.greet\n"), "{text}");
+        assert_eq!(text.chars().count(), DEFAULT_MAX_TOKENS * 4);
     }
 
     #[test]

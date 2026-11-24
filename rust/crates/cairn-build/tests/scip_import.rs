@@ -502,6 +502,54 @@ fn ambiguous_path_match_skips_every_document() {
     let _ = fs::remove_dir_all(&ws);
 }
 
+/// A graph filed under the empty repo id (a relative build), alone or beside
+/// a copy under the scanned id, matches every document a scanned one does.
+#[test]
+fn documents_match_a_graph_filed_under_the_legacy_root_id() {
+    for (tag, beside_scanned_copy) in [("legacy-root", false), ("legacy-and-scanned", true)] {
+        let ws = temp_ws(tag);
+        let repo_id = discovered_repo_id(&ws);
+        let conn = open_store(&ws);
+        seed_graph(&conn, "");
+        if beside_scanned_copy {
+            conn.execute_batch(&format!(
+                "INSERT INTO repos (id, name, path) VALUES ('{repo_id}', '{repo_id}', '.');
+                 INSERT INTO files (id, repo_id, path, language)
+                     SELECT 'c' || id, '{repo_id}', path, language FROM files;
+                 INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, \
+                     column_start, column_end)
+                     SELECT 'c' || id, 'c' || file_id, name, kind, line_start, line_end, \
+                     column_start, column_end FROM symbols;"
+            ))
+            .expect("scanned copy");
+        }
+
+        let record = import_scip_file(
+            &conn,
+            fixture_path("sample.scip").to_str().unwrap(),
+            ws.to_str().unwrap(),
+        )
+        .expect("import");
+
+        assert_eq!(record.matched_documents, 2, "beside a scanned copy");
+        assert_eq!(record.skipped_documents, 1, "beside a scanned copy");
+        assert_eq!(record.edges, 7, "beside a scanned copy");
+        // Two filings of one repository are one repository: the scanned copy
+        // takes the overlay when the store holds both.
+        let on_scanned_copy: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM edges e JOIN symbols s ON e.source_id = s.id \
+                 JOIN files f ON s.file_id = f.id \
+                 WHERE e.source = 'scip' AND f.repo_id = ?1",
+                [&repo_id],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(on_scanned_copy, if beside_scanned_copy { 7 } else { 0 });
+        let _ = fs::remove_dir_all(&ws);
+    }
+}
+
 #[test]
 fn external_symbol_references_classified_as_external() {
     let ws = temp_ws("external");

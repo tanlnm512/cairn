@@ -61,237 +61,243 @@ pub fn reindex_paths(conn: &mut Connection, workspace: &str, paths: &[String]) -
         let Some((repo, rel_to_repo)) = repo_relative_path(workspace, abs_path) else {
             continue;
         };
-        let tracked = find_tracked_file_row(conn, abs_path, &repo, &rel_to_repo);
-        let (stored_repo, stored_path, file_id) = match &tracked {
-            Some(row) => (row.1.clone(), row.2.clone(), Some(row.0.clone())),
-            None => (repo.clone(), rel_to_repo.clone(), None),
-        };
+        let counted = (result.reindexed, result.deleted);
+        for repo in stored_repo_ids(conn, workspace, &repo) {
+            let tracked = find_tracked_file_row(conn, abs_path, &repo, &rel_to_repo);
+            let (stored_repo, stored_path, file_id) = match &tracked {
+                Some(row) => (row.1.clone(), row.2.clone(), Some(row.0.clone())),
+                None => (repo, rel_to_repo.clone(), None),
+            };
 
-        let mut deleted_names: HashSet<String> = HashSet::new();
-        if let Some(fid) = &file_id
-            && let Ok(mut stmt) =
-                conn.prepare("SELECT name FROM symbols WHERE file_id = ? AND name IS NOT NULL")
-        {
-            let rows = stmt.query_map([fid], |r| r.get::<_, String>(0));
-            if let Ok(rows) = rows {
-                for name in rows.flatten() {
-                    deleted_names.insert(name);
+            let mut deleted_names: HashSet<String> = HashSet::new();
+            if let Some(fid) = &file_id
+                && let Ok(mut stmt) =
+                    conn.prepare("SELECT name FROM symbols WHERE file_id = ? AND name IS NOT NULL")
+            {
+                let rows = stmt.query_map([fid], |r| r.get::<_, String>(0));
+                if let Ok(rows) = rows {
+                    for name in rows.flatten() {
+                        deleted_names.insert(name);
+                    }
                 }
             }
-        }
 
-        let tx = match conn.transaction() {
-            Ok(tx) => tx,
-            Err(e) => {
-                result.errors.push(format!("{abs_path}: {e}"));
-                continue;
-            }
-        };
+            let tx = match conn.transaction() {
+                Ok(tx) => tx,
+                Err(e) => {
+                    result.errors.push(format!("{abs_path}: {e}"));
+                    continue;
+                }
+            };
 
-        // Keep each file replacement atomic: the whole delete leg plus the
-        // re-parse insert commit together or roll back together.
-        if let Some(fid) = &file_id {
-            // Must run before the backfill nulls target_id: it decides which
-            // consumer repos join the imports refresh below.
-            if let Ok(mut stmt) = tx.prepare(
-                "SELECT DISTINCT f.repo_id FROM edges e \
+            // Keep each file replacement atomic: the whole delete leg plus the
+            // re-parse insert commit together or roll back together.
+            if let Some(fid) = &file_id {
+                // Must run before the backfill nulls target_id: it decides which
+                // consumer repos join the imports refresh below.
+                if let Ok(mut stmt) = tx.prepare(
+                    "SELECT DISTINCT f.repo_id FROM edges e \
                  JOIN symbols s ON s.id = e.source_id \
                  JOIN files f ON f.id = s.file_id \
                  WHERE e.kind = 'imports' \
                    AND e.target_id IN (SELECT id FROM symbols WHERE file_id = ?)",
-            ) && let Ok(rows) = stmt.query_map([fid], |r| r.get::<_, String>(0))
-            {
-                for repo in rows.flatten() {
-                    if !imports_refresh_repos.contains(&repo) {
-                        imports_refresh_repos.push(repo);
+                ) && let Ok(rows) = stmt.query_map([fid], |r| r.get::<_, String>(0))
+                {
+                    for repo in rows.flatten() {
+                        if !imports_refresh_repos.contains(&repo) {
+                            imports_refresh_repos.push(repo);
+                        }
                     }
                 }
-            }
-            let legs: [(&str, &str); 4] = [
-                (
-                    "DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file_id = ?)",
-                    fid,
-                ),
-                (
-                    "UPDATE imports SET resolved_symbol_id = NULL WHERE resolved_symbol_id IN (SELECT id FROM symbols WHERE file_id = ?)",
-                    fid,
-                ),
-                ("DELETE FROM imports WHERE file_id = ?", fid),
-                ("DELETE FROM rationale WHERE file_id = ?", fid),
-            ];
-            let mut failed: Option<String> = None;
-            let mut doomed: Vec<(String, i64)> = Vec::new();
-            for (sql, param) in legs {
-                if let Err(e) = tx.execute(sql, [param]) {
-                    failed = Some(e.to_string());
-                    break;
-                }
-            }
-            // Backfill names before nulling targets so repair can find them.
-            if failed.is_none() {
-                let backfill = "UPDATE edges SET \
-                  target_name = COALESCE(target_name, \
-                    (SELECT name FROM symbols WHERE id = edges.target_id)), \
-                  target_id = NULL, resolution = 'unresolved' \
-                  WHERE target_id IN (SELECT id FROM symbols WHERE file_id = ?)";
-                if let Err(e) = tx.execute(backfill, [fid]) {
-                    failed = Some(e.to_string());
-                }
-            }
-            // Embedding rows FK-reference symbols(id); clear them BEFORE the
-            // symbol delete or the FK blocks it. Their rowids are collected
-            // first so the vec0 mirrors can follow them out.
-            if failed.is_none() {
-                match embedding_rowids(&tx, fid) {
-                    Ok(rowids) => doomed = rowids,
-                    Err(e) => failed = Some(e),
-                }
-            }
-            if failed.is_none() {
-                for table in ["embeddings", "embeddings_mv"] {
-                    let sql = format!(
-                        "DELETE FROM {table} WHERE symbol_id IN \
-                         (SELECT id FROM symbols WHERE file_id = ?)"
-                    );
-                    if let Err(e) = tx.execute(&sql, [fid]) {
+                let legs: [(&str, &str); 4] = [
+                    (
+                        "DELETE FROM edges WHERE source_id IN (SELECT id FROM symbols WHERE file_id = ?)",
+                        fid,
+                    ),
+                    (
+                        "UPDATE imports SET resolved_symbol_id = NULL WHERE resolved_symbol_id IN (SELECT id FROM symbols WHERE file_id = ?)",
+                        fid,
+                    ),
+                    ("DELETE FROM imports WHERE file_id = ?", fid),
+                    ("DELETE FROM rationale WHERE file_id = ?", fid),
+                ];
+                let mut failed: Option<String> = None;
+                let mut doomed: Vec<(String, i64)> = Vec::new();
+                for (sql, param) in legs {
+                    if let Err(e) = tx.execute(sql, [param]) {
                         failed = Some(e.to_string());
                         break;
                     }
                 }
-            }
-            for (sql, param) in [
-                ("DELETE FROM symbols WHERE file_id = ?", fid),
-                ("DELETE FROM parse_errors WHERE file_path = ?", &stored_path),
-                ("DELETE FROM files WHERE id = ?", fid),
-            ] {
-                if failed.is_none()
-                    && let Err(e) = tx.execute(sql, [param])
-                {
-                    failed = Some(e.to_string());
+                // Backfill names before nulling targets so repair can find them.
+                if failed.is_none() {
+                    let backfill = "UPDATE edges SET \
+                  target_name = COALESCE(target_name, \
+                    (SELECT name FROM symbols WHERE id = edges.target_id)), \
+                  target_id = NULL, resolution = 'unresolved' \
+                  WHERE target_id IN (SELECT id FROM symbols WHERE file_id = ?)";
+                    if let Err(e) = tx.execute(backfill, [fid]) {
+                        failed = Some(e.to_string());
+                    }
                 }
+                // Embedding rows FK-reference symbols(id); clear them BEFORE the
+                // symbol delete or the FK blocks it. Their rowids are collected
+                // first so the vec0 mirrors can follow them out.
+                if failed.is_none() {
+                    match embedding_rowids(&tx, fid) {
+                        Ok(rowids) => doomed = rowids,
+                        Err(e) => failed = Some(e),
+                    }
+                }
+                if failed.is_none() {
+                    for table in ["embeddings", "embeddings_mv"] {
+                        let sql = format!(
+                            "DELETE FROM {table} WHERE symbol_id IN \
+                         (SELECT id FROM symbols WHERE file_id = ?)"
+                        );
+                        if let Err(e) = tx.execute(&sql, [fid]) {
+                            failed = Some(e.to_string());
+                            break;
+                        }
+                    }
+                }
+                for (sql, param) in [
+                    ("DELETE FROM symbols WHERE file_id = ?", fid),
+                    ("DELETE FROM parse_errors WHERE file_path = ?", &stored_path),
+                    ("DELETE FROM files WHERE id = ?", fid),
+                ] {
+                    if failed.is_none()
+                        && let Err(e) = tx.execute(sql, [param])
+                    {
+                        failed = Some(e.to_string());
+                    }
+                }
+                if let Some(e) = failed {
+                    drop(tx);
+                    record_failure(
+                        conn,
+                        &mut ids,
+                        &stored_repo,
+                        &rel_to_repo,
+                        abs_path,
+                        &e,
+                        &mut result,
+                    );
+                    continue;
+                }
+                doomed_vec_rows.append(&mut doomed);
             }
-            if let Some(e) = failed {
-                drop(tx);
-                record_failure(
-                    conn,
-                    &mut ids,
-                    &stored_repo,
-                    &rel_to_repo,
-                    abs_path,
-                    &e,
-                    &mut result,
+
+            // Check if file still exists on disk.
+            if !Path::new(abs_path).exists() {
+                // Only a tracked file counts as deleted; a ghost path never in the
+                // DB is a no-op.
+                if file_id.is_some() {
+                    result.deleted += 1;
+                    changed_target_names.extend(deleted_names);
+                }
+                let _ = tx.execute(
+                    "DELETE FROM pending_sync WHERE path IN (?, ?)",
+                    params![abs_path, stored_path],
                 );
+                if let Err(e) = tx.commit() {
+                    result.errors.push(format!("{abs_path}: {e}"));
+                }
                 continue;
             }
-            doomed_vec_rows.append(&mut doomed);
-        }
 
-        // Check if file still exists on disk.
-        if !Path::new(abs_path).exists() {
-            // Only a tracked file counts as deleted; a ghost path never in the
-            // DB is a no-op.
-            if file_id.is_some() {
-                result.deleted += 1;
-                changed_target_names.extend(deleted_names);
+            let Some(suffix) = Path::new(abs_path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+            else {
+                let _ = tx.commit();
+                continue;
+            };
+            if scanner::extension_language(&suffix).is_none() {
+                let _ = tx.commit();
+                continue;
             }
-            let _ = tx.execute(
-                "DELETE FROM pending_sync WHERE path IN (?, ?)",
-                params![abs_path, stored_path],
-            );
-            if let Err(e) = tx.commit() {
-                result.errors.push(format!("{abs_path}: {e}"));
-            }
-            continue;
-        }
-
-        let Some(suffix) = Path::new(abs_path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| format!(".{e}"))
-        else {
-            let _ = tx.commit();
-            continue;
-        };
-        if scanner::extension_language(&suffix).is_none() {
-            let _ = tx.commit();
-            continue;
-        }
-        let language = scanner::resolve_file_language(&suffix, Path::new(abs_path));
-        if !parse_dispatch::is_language_available(&language) {
-            // Fresh builds skip unavailable parsers; strict refresh converges.
-            let _ = tx.execute(
-                "DELETE FROM pending_sync WHERE path IN (?, ?)",
-                params![rel_to_repo, abs_path],
-            );
-            let committed = tx.commit();
-            result.deleted += 1;
-            if file_id.is_some() {
-                changed_target_names.extend(deleted_names);
-            }
-            if let Err(e) = committed {
-                result.errors.push(format!("{abs_path}: {e}"));
-            }
-            continue;
-        }
-
-        let outcome = run_graft_leg(
-            &tx,
-            &mut ids,
-            &stored_repo,
-            &rel_to_repo,
-            abs_path,
-            &language,
-            &mut repo_edges,
-        );
-        match outcome {
-            Ok(new_file_id) => {
-                result.reindexed += 1;
+            let language = scanner::resolve_file_language(&suffix, Path::new(abs_path));
+            if !parse_dispatch::is_language_available(&language) {
+                // Fresh builds skip unavailable parsers; strict refresh converges.
                 let _ = tx.execute(
                     "DELETE FROM pending_sync WHERE path IN (?, ?)",
                     params![rel_to_repo, abs_path],
                 );
-                let mut changed_names = deleted_names;
-                if let Some(new_fid) = &new_file_id
-                    && let Ok(mut stmt) =
-                        tx.prepare("SELECT DISTINCT name FROM symbols WHERE file_id = ?")
-                {
-                    let rows = stmt.query_map([new_fid], |r| r.get::<_, String>(0));
-                    if let Ok(rows) = rows {
-                        for name in rows.flatten() {
-                            changed_names.insert(name);
-                        }
-                    }
-                }
                 let committed = tx.commit();
-                changed_target_names.extend(changed_names);
-                match committed {
-                    Ok(()) => {
-                        if let Some(new_fid) = &new_file_id
-                            && let Ok(mut stmt) =
-                                conn.prepare("SELECT id FROM symbols WHERE file_id = ?")
-                        {
-                            let rows = stmt.query_map([new_fid], |r| r.get::<_, String>(0));
-                            if let Ok(rows) = rows {
-                                result.reindexed_symbol_ids.extend(rows.flatten());
+                result.deleted += 1;
+                if file_id.is_some() {
+                    changed_target_names.extend(deleted_names);
+                }
+                if let Err(e) = committed {
+                    result.errors.push(format!("{abs_path}: {e}"));
+                }
+                continue;
+            }
+
+            let outcome = run_graft_leg(
+                &tx,
+                &mut ids,
+                &stored_repo,
+                &rel_to_repo,
+                abs_path,
+                &language,
+                &mut repo_edges,
+            );
+            match outcome {
+                Ok(new_file_id) => {
+                    result.reindexed += 1;
+                    let _ = tx.execute(
+                        "DELETE FROM pending_sync WHERE path IN (?, ?)",
+                        params![rel_to_repo, abs_path],
+                    );
+                    let mut changed_names = deleted_names;
+                    if let Some(new_fid) = &new_file_id
+                        && let Ok(mut stmt) =
+                            tx.prepare("SELECT DISTINCT name FROM symbols WHERE file_id = ?")
+                    {
+                        let rows = stmt.query_map([new_fid], |r| r.get::<_, String>(0));
+                        if let Ok(rows) = rows {
+                            for name in rows.flatten() {
+                                changed_names.insert(name);
                             }
                         }
                     }
-                    Err(e) => result.errors.push(format!("{abs_path}: {e}")),
+                    let committed = tx.commit();
+                    changed_target_names.extend(changed_names);
+                    match committed {
+                        Ok(()) => {
+                            if let Some(new_fid) = &new_file_id
+                                && let Ok(mut stmt) =
+                                    conn.prepare("SELECT id FROM symbols WHERE file_id = ?")
+                            {
+                                let rows = stmt.query_map([new_fid], |r| r.get::<_, String>(0));
+                                if let Ok(rows) = rows {
+                                    result.reindexed_symbol_ids.extend(rows.flatten());
+                                }
+                            }
+                        }
+                        Err(e) => result.errors.push(format!("{abs_path}: {e}")),
+                    }
+                }
+                Err(e) => {
+                    drop(tx);
+                    record_failure(
+                        conn,
+                        &mut ids,
+                        &stored_repo,
+                        &rel_to_repo,
+                        abs_path,
+                        &e,
+                        &mut result,
+                    );
                 }
             }
-            Err(e) => {
-                drop(tx);
-                record_failure(
-                    conn,
-                    &mut ids,
-                    &stored_repo,
-                    &rel_to_repo,
-                    abs_path,
-                    &e,
-                    &mut result,
-                );
-            }
         }
+        // One path counts once however many ids the store files it under.
+        result.reindexed = counted.0 + usize::from(result.reindexed > counted.0);
+        result.deleted = counted.1 + usize::from(result.deleted > counted.1);
     }
 
     // Batched resolver re-run for every re-parsed file.
@@ -665,6 +671,46 @@ struct FileStatRow {
     hash: Option<String>,
 }
 
+/// The id a build from a relative workspace files `repo` under in a single-repo
+/// workspace: empty for the root repository, `/`-prefixed for one nested under it.
+pub(crate) fn legacy_repo_id(workspace: &str, repo: &str) -> Option<String> {
+    if !scanner::is_single_repo_workspace(workspace) {
+        return None;
+    }
+    let root = scanner::dir_repo_id(Path::new(workspace));
+    if root.is_empty() {
+        return None;
+    }
+    match repo.strip_prefix(&root)? {
+        "" => Some(String::new()),
+        nested if nested.starts_with('/') => Some(nested.to_string()),
+        _ => None,
+    }
+}
+
+/// The ids the store files `repo` under, its scanned id first; a repository
+/// the store does not hold yet is filed under its scanned id alone.
+pub(crate) fn stored_repo_ids(conn: &Connection, workspace: &str, repo: &str) -> Vec<String> {
+    let mut ids: Vec<String> = std::iter::once(repo.to_string())
+        .chain(legacy_repo_id(workspace, repo))
+        .filter(|id| filed_under(conn, id))
+        .collect();
+    if ids.is_empty() {
+        ids.push(repo.to_string());
+    }
+    ids
+}
+
+/// Whether the files table holds a row under `repo`.
+fn filed_under(conn: &Connection, repo: &str) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM files WHERE repo_id = ? LIMIT 1",
+        [repo],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
 fn file_stat_rows(conn: &Connection, repo_id: &str) -> Option<Vec<FileStatRow>> {
     let mut stmt = conn
         .prepare("SELECT id, path, size, mtime, hash FROM files WHERE repo_id = ?")
@@ -685,39 +731,42 @@ fn file_stat_rows(conn: &Connection, repo_id: &str) -> Option<Vec<FileStatRow>> 
 
 /// Size/mtime comparison against the files table (the `cairn sync` signal).
 fn changed_via_stat(workspace: &str, repo_path: &Path, conn: &Connection) -> Vec<String> {
-    let repo_name = scanner::repository_id_for_path(workspace, repo_path);
-    let file_rows = match file_stat_rows(conn, &repo_name) {
-        Some(rows) => rows,
-        None => return Vec::new(),
-    };
-
+    let scanned = scanner::repository_id_for_path(workspace, repo_path);
     let mut changed: Vec<String> = Vec::new();
-    let mut existing_rel: HashSet<String> = HashSet::new();
-    for row in file_rows {
-        existing_rel.insert(row.path.clone());
-        let p = if Path::new(&row.path).is_absolute() {
-            PathBuf::from(&row.path)
-        } else {
-            repo_path.join(&row.path)
-        };
-        let Ok(st) = std::fs::metadata(&p) else {
-            changed.push(row.path); // deleted since last index
+    for repo_name in stored_repo_ids(conn, workspace, &scanned) {
+        let Some(file_rows) = file_stat_rows(conn, &repo_name) else {
             continue;
         };
-        let size_changed = st.len() as i64 != row.size.unwrap_or(0);
-        let mtime_drifted = (mtime_f64(&st).unwrap_or(0.0) - row.mtime.unwrap_or(0.0)).abs() > 0.5;
-        if size_changed
-            || (mtime_drifted && !unchanged_by_hash(conn, &row.id, &p, row.hash.as_deref(), &st))
-        {
-            changed.push(row.path);
-        }
-    }
 
-    // New source files not yet in the table.
-    if let Ok((files, _)) = scanner::iter_files_walk(&repo_name, repo_path) {
-        for f in files {
-            if !existing_rel.contains(&f.rel_path) {
-                changed.push(f.rel_path);
+        let mut existing_rel: HashSet<String> = HashSet::new();
+        for row in file_rows {
+            existing_rel.insert(row.path.clone());
+            let p = if Path::new(&row.path).is_absolute() {
+                PathBuf::from(&row.path)
+            } else {
+                repo_path.join(&row.path)
+            };
+            let Ok(st) = std::fs::metadata(&p) else {
+                changed.push(row.path); // deleted since last index
+                continue;
+            };
+            let size_changed = st.len() as i64 != row.size.unwrap_or(0);
+            let mtime_drifted =
+                (mtime_f64(&st).unwrap_or(0.0) - row.mtime.unwrap_or(0.0)).abs() > 0.5;
+            if size_changed
+                || (mtime_drifted
+                    && !unchanged_by_hash(conn, &row.id, &p, row.hash.as_deref(), &st))
+            {
+                changed.push(row.path);
+            }
+        }
+
+        // New source files not yet in the table.
+        if let Ok((files, _)) = scanner::iter_files_walk(&repo_name, repo_path) {
+            for f in files {
+                if !existing_rel.contains(&f.rel_path) {
+                    changed.push(f.rel_path);
+                }
             }
         }
     }
@@ -759,47 +808,59 @@ fn probe_stamp_path(db: &Path) -> PathBuf {
     PathBuf::from(raw)
 }
 
-/// Files-table-vs-disk drift across every repo (the freshness probe).
+/// Files-table-vs-disk drift across every repo (the freshness probe); a path
+/// is reported once however many ids the store files it under.
 pub fn detect_changed(conn: &Connection, workspace: &str) -> Vec<String> {
     let mut changed: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     let Ok(records) = scanner::discover_repo_records(workspace) else {
         return changed;
     };
     for record in records {
-        let repo_name = record.repo_id.as_str();
-        // An unknown repo scope never falls back to every repo's rows.
-        let Some(file_rows) = file_stat_rows(conn, repo_name) else {
-            continue;
-        };
-
-        for row in &file_rows {
-            let p = scanner::resolve_file_path(workspace, repo_name, &row.path);
-            let Ok(st) = std::fs::metadata(&p) else {
-                changed.push(p.to_string_lossy().into_owned()); // deleted/moved
+        for repo_name in stored_repo_ids(conn, workspace, &record.repo_id) {
+            // An unknown repo scope never falls back to every repo's rows.
+            let Some(file_rows) = file_stat_rows(conn, &repo_name) else {
                 continue;
             };
-            let size_changed = st.len() as i64 != row.size.unwrap_or(0);
-            let mtime_drifted =
-                (mtime_f64(&st).unwrap_or(0.0) - row.mtime.unwrap_or(0.0)).abs() > 0.5;
-            if size_changed
-                || (mtime_drifted
-                    && !unchanged_by_hash(conn, &row.id, &p, row.hash.as_deref(), &st))
-            {
-                changed.push(p.to_string_lossy().into_owned());
-            }
-        }
 
-        // New source files not yet in the DB; compare on both stored forms.
-        let existing: HashSet<&str> = file_rows.iter().map(|r| r.path.as_str()).collect();
-        if let Ok((files, _)) = scanner::iter_files_walk(repo_name, &record.path) {
-            for f in files {
-                if !existing.contains(f.rel_path.as_str()) && !existing.contains(f.path.as_str()) {
-                    changed.push(f.path);
+            for row in &file_rows {
+                let p = scanner::resolve_file_path(workspace, &record.repo_id, &row.path);
+                let Ok(st) = std::fs::metadata(&p) else {
+                    report_once(&mut changed, &mut seen, p.to_string_lossy().into_owned()); // deleted/moved
+                    continue;
+                };
+                let size_changed = st.len() as i64 != row.size.unwrap_or(0);
+                let mtime_drifted =
+                    (mtime_f64(&st).unwrap_or(0.0) - row.mtime.unwrap_or(0.0)).abs() > 0.5;
+                if size_changed
+                    || (mtime_drifted
+                        && !unchanged_by_hash(conn, &row.id, &p, row.hash.as_deref(), &st))
+                {
+                    report_once(&mut changed, &mut seen, p.to_string_lossy().into_owned());
+                }
+            }
+
+            // New source files not yet in the DB; compare on both stored forms.
+            let existing: HashSet<&str> = file_rows.iter().map(|r| r.path.as_str()).collect();
+            if let Ok((files, _)) = scanner::iter_files_walk(&repo_name, &record.path) {
+                for f in files {
+                    if !existing.contains(f.rel_path.as_str())
+                        && !existing.contains(f.path.as_str())
+                    {
+                        report_once(&mut changed, &mut seen, f.path);
+                    }
                 }
             }
         }
     }
     changed
+}
+
+/// Add `path` to `changed` unless it is already listed.
+fn report_once(changed: &mut Vec<String>, seen: &mut HashSet<String>, path: String) {
+    if seen.insert(path.clone()) {
+        changed.push(path);
+    }
 }
 
 /// Detect and re-index disk changes; called once at daemon boot.
