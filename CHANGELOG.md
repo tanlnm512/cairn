@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A full build carries embeddings into the rebuilt store when two symbols in one file share name, kind and line (minified JavaScript does this): the carry-over aborted on the first such pair and left the store with no vectors. A carry-over that fits nothing now says so.
 - `cairn build` run from a repository's root names that repository by its directory instead of filing the graph under an empty repository id. `cairn sync` and the CLI's drift detection look under the directory name, so they missed those rows and inserted every file a second time. Stores already filed under the empty id keep working with incremental updates, `cairn build --repo` and `cairn import-scip`, nested repositories included; the next full build re-keys them and carries their vectors across.
 - `cairn embed`: the name vector of a symbol whose declaration line is longer than the base text's limit (a minified bundle, where that line is the whole file) is cut to that limit instead of being sent whole; each such batch held the embedding server for over a minute and delayed every other request. A store re-keyed by the fix above re-embeds its symbols once, because their texts now include the declaration line.
+- The embedding carry-over of a full build looks symbols up per file instead of walking every symbol of the same kind for each vector; that join held the build lock for about a minute on a store of 21,000 symbols.
 
 ## [0.25.4] - 2026-11-17
 

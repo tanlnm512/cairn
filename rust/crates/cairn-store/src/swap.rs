@@ -240,34 +240,21 @@ pub fn copy_telemetry_tables(dest: &Connection, old_db: &Path) {
     let _ = dest.execute("DETACH DATABASE srcdb", []);
 }
 
-/// Carry embeddings `db` -> `staged` by stable identity (repo, path, file
-/// hash, qualified name, line, model), remapping symbol ids; symbols sharing
-/// an identity each take the vectors. Memory embeddings carry; vec0 mirrors rebuild on embed.
-pub fn carry_embeddings(dest: &Connection, old_db: &Path) {
-    if !old_db.exists() {
-        return;
-    }
-    if dest
-        .execute(
-            "ATTACH DATABASE ? AS srcdb",
-            [old_db.to_string_lossy().as_ref()],
-        )
-        .is_err()
-    {
-        return;
-    }
-    let count = |sql: &str| -> i64 { dest.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
-    let available = count("SELECT COUNT(*) FROM srcdb.embeddings");
-    // A relative build's ids (empty root, `/`-prefixed nested) re-key onto the scanned root id.
-    const SAME_FILE: &str = "JOIN main.files nf ON nf.path = of2.path AND nf.hash = of2.hash \
-         AND (nf.repo_id = of2.repo_id \
-              OR (of2.repo_id = '' OR of2.repo_id GLOB '/*') \
-                 AND nf.repo_id = (SELECT id FROM main.repos WHERE path = '.' AND id <> '' LIMIT 1) \
-                     || of2.repo_id)";
-    const SAME_SYMBOL: &str = "JOIN main.symbols ns ON ns.file_id = nf.id \
-         AND ns.qualified_name IS os.qualified_name AND ns.name = os.name \
-         AND ns.kind = os.kind AND ns.line_start = os.line_start";
-    for sql in [
+/// A relative build's ids (empty root, `/`-prefixed nested) re-key onto the scanned root id.
+const SAME_FILE: &str = "JOIN main.files nf ON nf.path = of2.path AND nf.hash = of2.hash \
+     AND (nf.repo_id = of2.repo_id \
+          OR (of2.repo_id = '' OR of2.repo_id GLOB '/*') \
+             AND nf.repo_id = (SELECT id FROM main.repos WHERE path = '.' AND id <> '' LIMIT 1) \
+                 || of2.repo_id)";
+
+// Per-file lookup: left to itself the planner walks every symbol of the same kind for each vector.
+const SAME_SYMBOL: &str = "JOIN main.symbols ns INDEXED BY idx_symbols_file ON ns.file_id = nf.id \
+     AND ns.qualified_name IS os.qualified_name AND ns.name = os.name \
+     AND ns.kind = os.kind AND ns.line_start = os.line_start";
+
+/// The base and multi-vector carry statements.
+fn carry_vector_statements() -> [String; 2] {
+    [
         // Base vectors: match per unchanged file (hash equal), pairing
         // same-named symbols by qualified name (NULL-safe) and line.
         format!(
@@ -287,6 +274,31 @@ pub fn carry_embeddings(dest: &Connection, old_db: &Path) {
              JOIN srcdb.symbols os ON os.id = o.symbol_id \
              JOIN srcdb.files of2 ON of2.id = os.file_id {SAME_FILE} {SAME_SYMBOL}"
         ),
+    ]
+}
+
+/// Carry embeddings `db` -> `staged` by stable identity (repo, path, file
+/// hash, qualified name, line, model), remapping symbol ids; symbols sharing
+/// an identity each take the vectors. Memory embeddings carry; vec0 mirrors rebuild on embed.
+pub fn carry_embeddings(dest: &Connection, old_db: &Path) {
+    if !old_db.exists() {
+        return;
+    }
+    if dest
+        .execute(
+            "ATTACH DATABASE ? AS srcdb",
+            [old_db.to_string_lossy().as_ref()],
+        )
+        .is_err()
+    {
+        return;
+    }
+    let count = |sql: &str| -> i64 { dest.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
+    let available = count("SELECT COUNT(*) FROM srcdb.embeddings");
+    let [base, multi] = carry_vector_statements();
+    for sql in [
+        base,
+        multi,
         "INSERT INTO main.memory_embeddings (doc_id, chunk_index, model, dim, vec, chunk, embedded_at) \
          SELECT doc_id, chunk_index, model, dim, vec, chunk, embedded_at FROM srcdb.memory_embeddings"
             .to_string(),
@@ -416,5 +428,46 @@ mod tests {
                 "old repo id {old_repo:?}"
             );
         }
+    }
+
+    #[test]
+    fn carry_vector_statements_look_symbols_up_per_file() {
+        let dir = std::env::temp_dir().join(format!("cairn-swap-plan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let (old, new) = (dir.join("old.kg"), dir.join("new.kg"));
+        store_with_shared_identity(&old, &[("repo", ".")], true);
+        store_with_shared_identity(&new, &[("repo", ".")], false);
+        let conn = Connection::open(&new).expect("open");
+        conn.execute(
+            "ATTACH DATABASE ? AS srcdb",
+            [old.to_string_lossy().as_ref()],
+        )
+        .expect("attach");
+
+        for sql in carry_vector_statements() {
+            let mut stmt = conn
+                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                .expect("explain");
+            let steps: Vec<String> = stmt
+                .query_map([], |r| r.get::<_, String>(3))
+                .expect("plan")
+                .map(|step| step.expect("step"))
+                .collect();
+            let lookup = steps
+                .iter()
+                .find(|step| step.contains(" ns "))
+                .cloned()
+                .unwrap_or_default();
+            assert!(
+                lookup.contains("idx_symbols_file"),
+                "{lookup:?} in {steps:?}"
+            );
+            assert!(
+                !lookup.contains("idx_symbols_kind"),
+                "{lookup:?} in {steps:?}"
+            );
+        }
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
