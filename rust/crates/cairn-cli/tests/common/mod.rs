@@ -133,6 +133,18 @@ impl Fixture {
             .map(|row| row.expect("row"))
             .collect()
     }
+
+    /// `(tool, status)` per tool_metrics row, oldest first.
+    pub fn tool_metrics(&self) -> Vec<(String, String)> {
+        let conn = rusqlite::Connection::open(&self.db).expect("open store");
+        let mut stmt = conn
+            .prepare("SELECT tool_name, status FROM tool_metrics ORDER BY rowid")
+            .expect("prepare");
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect()
+    }
 }
 
 impl Drop for Fixture {

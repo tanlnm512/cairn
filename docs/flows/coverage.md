@@ -10,7 +10,7 @@ plus explicit `// F#` tags. Inline `#[cfg(test)]` modules are not counted.
 | F1 Graph indexing / build pipeline | 15 | tests/builder_parity.rs, tests/builder_scip_overlay.rs, tests/closure_semantics.rs, tests/embeddings_parity.rs, tests/incremental_detect.rs, tests/incremental_graft.rs, tests/resolver_semantics.rs, tests/scip_import.rs, tests/build_workspace.rs, tests/dashboard_parity.rs, tests/import_scip_output.rs, tests/init_hooks.rs, tests/update_file.rs, tests/parser_golden.rs, tests/km_golden.rs |
 | F2 Graph query & navigation | 10 | tests/builder_parity.rs, tests/incremental_graft.rs, tests/dashboard_parity.rs, tests/impact_guard.rs, tests/daemon_tools.rs, tests/tool_metrics.rs, tests/flow_golden.rs, tests/golden_search.rs, tests/km_golden.rs, tests/nav_golden.rs |
 | F3 Semantic search & embedding index | 7 | tests/embeddings_parity.rs, tests/incremental_graft.rs, tests/dashboard_parity.rs, tests/daemon_tools.rs, tests/tool_metrics.rs, tests/golden_search.rs, tests/native_embed.rs |
-| F8 MCP daemon serving | 5 | tests/incremental_graft.rs, tests/dashboard_parity.rs, tests/auth_lifecycle.rs, tests/daemon_tools.rs, tests/tool_metrics.rs |
+| F8 MCP daemon serving | 6 | tests/incremental_graft.rs, tests/cli_tool_metrics.rs, tests/dashboard_parity.rs, tests/auth_lifecycle.rs, tests/daemon_tools.rs, tests/tool_metrics.rs |
 | F4 Knowledge base, compass, routing | 3 | tests/daemon_tools.rs, tests/km_golden.rs, tests/wiki_plan.rs |
 | F6 Memory lifecycle | 3 | tests/dashboard_parity.rs, tests/daemon_tools.rs, tests/km_golden.rs |
 | F7 Federation & cross-repo | 3 | tests/daemon_tools.rs, tests/federation_walk.rs, tests/flow_golden.rs |
