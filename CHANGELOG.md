@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cairn build` names the root repository after the directory its workspace resolves to. A workspace spelled with a trailing `..` filed the graph under an empty repository id, and one that reached the repository through a symlink named it after the symlink, which `cairn sync` and the drift probe do not use.
 - The embedding carry-over of a full build pairs symbols that share name, kind and line by their span, so each keeps its own vector; they all received the first one's. A shared identity that is unique on both sides still carries when the spans differ.
 - The embedding carry-over writes both vector tables in one transaction. A failing statement used to leave one table carried and the other empty.
+- `cairn doctor` no longer warns "no build_runs recorded" on a store whose builds ran under `CAIRN_TELEMETRY=off`. That switch writes no build runs, so the freshness check reports the last build as unknown; a store with nothing indexed is still reported as fresh.
 
 ## [0.25.5] - 2026-11-25
 
