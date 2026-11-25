@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `cairn build` names the root repository after the directory its workspace resolves to. A workspace spelled with a trailing `..` filed the graph under an empty repository id, and one that reached the repository through a symlink named it after the symlink, which `cairn sync` and the drift probe do not use.
+
 ## [0.25.5] - 2026-11-25
 
 ### Removed
