@@ -2186,21 +2186,33 @@ mod tests {
         }
     }
 
-    /// Answer up to 12 requests, recording each Authorization header; 200 only
-    /// for `Bearer secret-key`.
-    fn keyed_server() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    /// Answer requests until the process exits, recording each Authorization
+    /// header; 200 only for `Bearer secret-key`.
+    fn keyed_server() -> (
+        String,
+        std::net::SocketAddr,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
         use std::io::Write;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let base = format!("http://{}/v1", listener.local_addr().expect("addr"));
+        let addr = listener.local_addr().expect("addr");
+        let base = format!("http://{addr}/v1");
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let log = std::sync::Arc::clone(&seen);
         std::thread::spawn(move || {
-            for _ in 0..12 {
-                let Ok((mut stream, _)) = listener.accept() else {
-                    return;
+            loop {
+                // A failed accept or a peer that closes early must not end the server.
+                let (mut stream, _) = match listener.accept() {
+                    Ok(accepted) => accepted,
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        continue;
+                    }
                 };
+                // A silent peer must not hold it either.
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
                 let Some(head) = read_request(&mut stream) else {
-                    return;
+                    continue;
                 };
                 let auth = head
                     .lines()
@@ -2232,13 +2244,13 @@ mod tests {
                 let _ = stream.write_all(reply.as_bytes());
             }
         });
-        (base, seen)
+        (base, addr, seen)
     }
 
     #[test]
     fn embed_server_check_sends_the_configured_api_key() {
         let _env = crate::test_env::EnvScope::new("embed-server-auth");
-        let (base, seen) = keyed_server();
+        let (base, addr, seen) = keyed_server();
         let keys = [
             "CAIRN_EMBED_BACKEND",
             "CAIRN_EMBED_BASE_URL",
@@ -2254,6 +2266,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cairn-doctor-auth-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
         let conn = cairn_store::schema::open_initialized(&dir.join("store.kg")).expect("store");
+
+        // A peer that disconnects before sending a request must not end the server.
+        drop(std::net::TcpStream::connect(addr).expect("stray connect"));
 
         let checks = check_embed_server(&conn);
 
