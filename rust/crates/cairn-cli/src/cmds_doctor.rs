@@ -153,7 +153,10 @@ pub(crate) fn run_doctor(db: &str) -> Vec<CheckResult> {
         check_ann(&conn),
     ];
     results.extend(check_embed_server(&conn));
-    results.push(check_freshness(&conn));
+    results.push(check_freshness(
+        &conn,
+        cairn_query::tools_search::telemetry_off(),
+    ));
     results.push(check_parse_errors(&conn));
     results.push(check_edge_signals(&conn));
     results.push(check_concurrency(&conn));
@@ -723,7 +726,7 @@ fn check_parity(
 
 // --- 5. freshness ---------------------------------------------------------------------
 
-fn check_freshness(conn: &Connection) -> CheckResult {
+fn check_freshness(conn: &Connection, telemetry_off: bool) -> CheckResult {
     let now = now_epoch();
     let mut parts: Vec<String> = Vec::new();
     let mut status = PASS;
@@ -772,33 +775,36 @@ fn check_freshness(conn: &Connection) -> CheckResult {
             |row| row.get::<_, String>(0),
         )
         .ok();
-    match last_build {
-        Some(last_build) => {
-            let last_epoch = parse_ts(&last_build);
-            let stale = last_epoch.is_some_and(|ts| now - ts > (STALE_BUILD_DAYS * 86400) as f64);
-            let tag = if stale {
-                format!(" (>{STALE_BUILD_DAYS}d)")
-            } else {
-                String::new()
-            };
-            parts.push(format!(
-                "last build {}{tag}",
-                age_str(now, Some(&last_build))
-            ));
-            if stale {
-                status = WARN;
+    let sym_n = query_i64(conn, "SELECT COUNT(*) FROM symbols", &[], 0);
+    if telemetry_off && (last_build.is_some() || sym_n > 0) {
+        // The switch writes no build runs, so a row can only predate it.
+        parts.push("last build unknown (CAIRN_TELEMETRY=off records no build runs)".to_string());
+    } else {
+        match last_build {
+            Some(last_build) => {
+                let last_epoch = parse_ts(&last_build);
+                let stale =
+                    last_epoch.is_some_and(|ts| now - ts > (STALE_BUILD_DAYS * 86400) as f64);
+                let tag = if stale {
+                    format!(" (>{STALE_BUILD_DAYS}d)")
+                } else {
+                    String::new()
+                };
+                parts.push(format!(
+                    "last build {}{tag}",
+                    age_str(now, Some(&last_build))
+                ));
+                if stale {
+                    status = WARN;
+                }
             }
-        }
-        None => {
-            let sym_n = query_i64(conn, "SELECT COUNT(*) FROM symbols", &[], 0);
-            if sym_n > 0 {
+            None if sym_n > 0 => {
                 status = WARN;
                 parts.push(format!(
                     "no build_runs recorded (but {sym_n} symbols indexed)"
                 ));
-            } else {
-                parts.push("no builds yet (fresh install)".to_string());
             }
+            None => parts.push("no builds yet (fresh install)".to_string()),
         }
     }
 
@@ -1921,6 +1927,40 @@ mod tests {
             failures.iter().all(|r| r.name != "schema"),
             "fresh store must not fail the schema check: {failures:?}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn freshness_reports_an_unknown_last_build_under_telemetry_off() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("cairn-doctor-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let conn = cairn_store::conn::open_writable(&dir.join("store.kg")).expect("create store");
+        cairn_store::schema::apply_schema(&conn).expect("schema");
+        // An indexed store whose builds left no build_runs row.
+        conn.execute_batch(
+            "INSERT INTO repos (id, name, path) VALUES ('r', 'r', '.'); \
+             INSERT INTO files (id, repo_id, path, language, hash) \
+             VALUES ('f', 'r', 'a.py', 'python', 'h'); \
+             INSERT INTO symbols (id, file_id, name, kind) VALUES ('s', 'f', 'one', 'function');",
+        )
+        .expect("indexed store");
+
+        let on = check_freshness(&conn, false);
+        assert_eq!(on.status, WARN);
+        assert!(
+            on.detail.contains("no build_runs recorded"),
+            "{}",
+            on.detail
+        );
+
+        let off = check_freshness(&conn, true);
+        assert_eq!(off.status, PASS);
+        assert!(off.detail.contains("last build unknown"), "{}", off.detail);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

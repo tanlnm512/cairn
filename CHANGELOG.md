@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `cairn doctor` no longer warns "no build_runs recorded" on a store whose builds ran under `CAIRN_TELEMETRY=off`. That switch writes no build runs, so the freshness check reports the last build as unknown; a store with nothing indexed is still reported as fresh.
+
 ## [0.25.5] - 2026-11-25
 
 ### Removed
