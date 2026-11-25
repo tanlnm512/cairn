@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A CLI lookup that finds nothing (`cairn def`, `callers`, `callees`, `search`, `impact`, `deps`, `federated-search`, `tree`, `taint`, `semantic`) and a `cairn review --gate` that blocks are recorded as `ok` in `tool_metrics`, not `error`: the command ran, and its non-zero exit status is its answer. `cairn doctor`'s `tool_health` check counted them as tool errors, so a few empty lookups made it report a failing tool on a healthy store. The exit codes are unchanged; rows written before this change stay until they leave the seven-day window.
+
 ## [0.25.6] - 2026-11-25
 
 ### Fixed

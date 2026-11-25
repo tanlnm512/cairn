@@ -103,10 +103,19 @@ pub enum DataflowCommand {
 }
 
 static CLI_RESP_CHARS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static CLI_NEGATIVE_ANSWER: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Accumulate stdout characters emitted by the active CLI command.
 pub(crate) fn add_cli_resp_chars(n: usize) {
     CLI_RESP_CHARS.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Exit code 1 as the command's answer (nothing matched, a gate blocks), not a
+/// failure: its CLI metric is recorded as `ok`.
+fn negative_answer() -> ExitCode {
+    CLI_NEGATIVE_ANSWER.store(true, std::sync::atomic::Ordering::Relaxed);
+    ExitCode::FAILURE
 }
 
 macro_rules! println {
@@ -125,12 +134,14 @@ macro_rules! println {
 pub fn run(command: CoreCommand) -> ExitCode {
     let metric = cli_metric_meta(&command);
     CLI_RESP_CHARS.store(0, std::sync::atomic::Ordering::Relaxed);
+    CLI_NEGATIVE_ANSWER.store(false, std::sync::atomic::Ordering::Relaxed);
     let started = Instant::now();
     let code = dispatch_core(command);
     let resp_chars = CLI_RESP_CHARS.swap(0, std::sync::atomic::Ordering::Relaxed);
     if let Some((db, tool_name, args_summary)) = metric {
         let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
-        let status = if code == ExitCode::SUCCESS {
+        let answered_no = CLI_NEGATIVE_ANSWER.load(std::sync::atomic::Ordering::Relaxed);
+        let status = if code == ExitCode::SUCCESS || answered_no {
             "ok"
         } else {
             "error"
@@ -1664,7 +1675,7 @@ fn find_def(args: crate::cmds_core::DefArgs) -> ExitCode {
     };
     if rows.is_empty() {
         eprintln!("No definition found for '{}'.", args.symbol);
-        return ExitCode::FAILURE;
+        return negative_answer();
     }
     if args.as_json {
         let mapped: Vec<Value> = rows.iter().map(def_row_json).collect();
@@ -1776,7 +1787,7 @@ fn callers(args: crate::cmds_core::CallersArgs) -> ExitCode {
     };
     if data.rows.is_empty() {
         eprintln!("No callers found for '{}'.", args.symbol);
-        return ExitCode::FAILURE;
+        return negative_answer();
     }
     neighbor_notes(&data);
     if args.as_json {
@@ -1836,7 +1847,7 @@ fn search(args: crate::cmds_core::SearchArgs) -> ExitCode {
     let rows = cli_rows::search_symbol_rows(&conn, &args.pattern, args.kind.as_deref(), 100);
     if rows.is_empty() {
         eprintln!("No symbols matching '{}'.", args.pattern);
-        return ExitCode::FAILURE;
+        return negative_answer();
     }
     if args.as_json {
         println!(
@@ -1872,7 +1883,7 @@ fn callees(args: crate::cmds_core::CalleesArgs) -> ExitCode {
     };
     if data.rows.is_empty() {
         eprintln!("No callees found for '{}'.", args.symbol);
-        return ExitCode::FAILURE;
+        return negative_answer();
     }
     if !data.stale_banner.is_empty() {
         eprintln!("{}", data.stale_banner);
@@ -2013,7 +2024,7 @@ fn impact(args: crate::cmds_core::ImpactArgs) -> ExitCode {
         }
         println!("{}", json_compat::dumps(&Value::Object(object)));
         if empty {
-            return ExitCode::FAILURE;
+            return negative_answer();
         }
         return ExitCode::SUCCESS;
     }
@@ -2046,7 +2057,7 @@ fn impact(args: crate::cmds_core::ImpactArgs) -> ExitCode {
     }
     if empty {
         eprintln!("No impacted symbols for '{}'.", args.symbol);
-        return ExitCode::FAILURE;
+        return negative_answer();
     }
     println!("Total impacted: {}", fmt_int(total as i64));
     if !dependents.is_empty() {
@@ -2161,7 +2172,7 @@ fn deps(args: crate::cmds_core::DepsArgs) -> ExitCode {
         object.insert("dependents".into(), Value::Array(dependents_json));
         println!("{}", json_compat::dumps(&Value::Object(object)));
         if result.dependencies.is_empty() && result.dependents.is_empty() {
-            return ExitCode::FAILURE;
+            return negative_answer();
         }
         return ExitCode::SUCCESS;
     }
@@ -2185,7 +2196,7 @@ fn deps(args: crate::cmds_core::DepsArgs) -> ExitCode {
         }
     }
     if result.dependencies.is_empty() && result.dependents.is_empty() {
-        return ExitCode::FAILURE;
+        return negative_answer();
     }
     ExitCode::SUCCESS
 }
@@ -2256,8 +2267,11 @@ fn federated_search(args: crate::cmds_core::FederatedSearchArgs) -> ExitCode {
         }
         object.insert("states".into(), Value::Object(states_map));
         println!("{}", json_compat::dumps(&Value::Object(object)));
-        if result.hits.is_empty() {
+        if result.states.is_empty() {
             return ExitCode::FAILURE;
+        }
+        if result.hits.is_empty() {
+            return negative_answer();
         }
         return ExitCode::SUCCESS;
     }
@@ -2292,7 +2306,7 @@ fn federated_search(args: crate::cmds_core::FederatedSearchArgs) -> ExitCode {
     }
     if result.hits.is_empty() {
         eprintln!("No hits for '{}'.", args.query);
-        return ExitCode::FAILURE;
+        return negative_answer();
     }
     ExitCode::SUCCESS
 }
@@ -2325,7 +2339,7 @@ fn tree(args: crate::cmds_core::TreeArgs) -> ExitCode {
     };
     if buckets.is_empty() {
         eprintln!("No data for repo '{}'.", args.repo);
-        return ExitCode::FAILURE;
+        return negative_answer();
     }
     for (key, count) in buckets.iter().take(30) {
         println!("  {:>6}  {key}", count);
@@ -2480,7 +2494,7 @@ fn taint(args: crate::cmds_core::TaintArgs) -> ExitCode {
             "No taint paths from '{}' to '{}'.",
             args.from_pattern, args.to_pattern
         );
-        return ExitCode::FAILURE;
+        return negative_answer();
     }
     for (index, taint_path) in paths.iter().take(args.limit as usize).enumerate() {
         println!(
@@ -2626,7 +2640,7 @@ fn semantic(args: crate::cmds_core::SemanticArgs) -> ExitCode {
             "No semantic matches for '{}' (threshold {})",
             args.query, args.threshold
         ));
-        return ExitCode::FAILURE;
+        return negative_answer();
     }
     let mut out = vec![format!(
         "{} semantic match(es) for '{}':",
@@ -3713,7 +3727,7 @@ fn review(args: crate::cmds_core::ReviewArgs) -> ExitCode {
                 return command_error(&format!("pre-submit gate could not read memories: {error}"));
             }
             if cairn_query::review::has_blocking_matches(&result) {
-                return ExitCode::FAILURE;
+                return negative_answer();
             }
         }
         return ExitCode::SUCCESS;
