@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.6] - 2026-11-25
+
 ### Fixed
 - `cairn build` names the root repository after the directory its workspace resolves to. A workspace spelled with a trailing `..` filed the graph under an empty repository id, and one that reached the repository through a symlink named it after the symlink, which `cairn sync` and the drift probe do not use.
 - The embedding carry-over of a full build pairs symbols that share name, kind and line by their span, so each keeps its own vector; they all received the first one's. A shared identity that is unique on both sides still carries when the spans differ.
