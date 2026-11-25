@@ -1,1 +1,1 @@
-{"exclude": ["**/dashboard-assets/static/chunks/"]}
+{"exclude": ["**/dashboard-assets/static/chunks/", "rust/golden/"]}
