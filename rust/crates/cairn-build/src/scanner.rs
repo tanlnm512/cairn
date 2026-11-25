@@ -188,16 +188,10 @@ fn top_level_records(root: &Path) -> Vec<RepositoryRecord> {
     Vec::new()
 }
 
-/// A directory's repository id: the basename of its absolute form, so relative
-/// and absolute spellings of one workspace name the repository identically.
+/// A directory's repository id: the basename of its resolved form, so every
+/// spelling of one workspace (relative, `..`, through a symlink) names it alike.
 pub(crate) fn dir_repo_id(dir: &Path) -> String {
-    let named = match dir.is_absolute() {
-        true => dir.to_path_buf(),
-        false => std::env::current_dir()
-            .map(|cwd| cwd.join(dir))
-            .unwrap_or_else(|_| dir.to_path_buf()),
-    };
-    named
+    cairn_store::paths::resolve_path(dir)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default()
@@ -839,14 +833,34 @@ pub fn infer_repo_language(files: &[FileInfo]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::dir_repo_id;
-    use std::path::Path;
+    use std::path::PathBuf;
 
     #[test]
     fn relative_and_absolute_spellings_name_a_repository_identically() {
         let cwd = std::env::current_dir().expect("cwd");
         let name = cwd.file_name().and_then(|n| n.to_str()).expect("cwd name");
-        assert_eq!(dir_repo_id(Path::new(".")), name);
-        assert_eq!(dir_repo_id(&cwd), name);
-        assert_eq!(dir_repo_id(&cwd.join(".")), name);
+        for spelling in [
+            PathBuf::from("."),
+            cwd.clone(),
+            cwd.join("."),
+            cwd.join("src").join(".."),
+            cwd.join("missing").join(".."),
+        ] {
+            assert_eq!(dir_repo_id(&spelling), name, "{}", spelling.display());
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_workspace_reached_through_a_symlink_is_named_after_its_target() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let name = cwd.file_name().and_then(|n| n.to_str()).expect("cwd name");
+        let link = std::env::temp_dir().join(format!("cairn-scanner-link-{}", std::process::id()));
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&cwd, &link).expect("symlink");
+
+        assert_eq!(dir_repo_id(&link), name);
+
+        let _ = std::fs::remove_file(&link);
     }
 }
