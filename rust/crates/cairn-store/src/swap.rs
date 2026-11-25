@@ -247,13 +247,41 @@ const SAME_FILE: &str = "JOIN main.files nf ON nf.path = of2.path AND nf.hash = 
              AND nf.repo_id = (SELECT id FROM main.repos WHERE path = '.' AND id <> '' LIMIT 1) \
                  || of2.repo_id)";
 
-// Per-file lookup: left to itself the planner walks every symbol of the same kind for each vector.
-const SAME_SYMBOL: &str = "JOIN main.symbols ns INDEXED BY idx_symbols_file ON ns.file_id = nf.id \
-     AND ns.qualified_name IS os.qualified_name AND ns.name = os.name \
-     AND ns.kind = os.kind AND ns.line_start = os.line_start";
+/// The identity a stored vector is matched by, between symbols `new` and `old`.
+fn same_identity(new: &str, old: &str) -> String {
+    format!(
+        "{new}.qualified_name IS {old}.qualified_name AND {new}.name = {old}.name \
+         AND {new}.kind = {old}.kind AND {new}.line_start = {old}.line_start"
+    )
+}
+
+/// Per-file lookup: left to itself the planner walks every symbol of the same
+/// kind for each vector. Symbols sharing an identity pair by span, or carry
+/// when that identity is unique on both sides.
+fn same_symbol() -> String {
+    let span = "ns.line_end IS os.line_end AND ns.column_start IS os.column_start \
+                AND ns.column_end IS os.column_end";
+    let unique = format!(
+        "(SELECT COUNT(*) FROM srcdb.symbols y WHERE y.file_id = os.file_id AND {}) = 1 \
+         AND (SELECT COUNT(*) FROM main.symbols x WHERE x.file_id = ns.file_id AND {}) = 1",
+        same_identity("y", "os"),
+        same_identity("x", "os")
+    );
+    format!(
+        "JOIN main.symbols ns INDEXED BY idx_symbols_file ON ns.file_id = nf.id \
+         AND {} AND ({span} OR {unique})",
+        same_identity("ns", "os")
+    )
+}
+
+/// The memory-embedding carry statement.
+const MEMORY_EMBEDDINGS_CARRY: &str = "INSERT INTO main.memory_embeddings \
+     (doc_id, chunk_index, model, dim, vec, chunk, embedded_at) \
+     SELECT doc_id, chunk_index, model, dim, vec, chunk, embedded_at FROM srcdb.memory_embeddings";
 
 /// The base and multi-vector carry statements.
 fn carry_vector_statements() -> [String; 2] {
+    let same_symbol = same_symbol();
     [
         // Base vectors: match per unchanged file (hash equal), pairing
         // same-named symbols by qualified name (NULL-safe) and line.
@@ -263,7 +291,7 @@ fn carry_vector_statements() -> [String; 2] {
              SELECT DISTINCT ns.id, o.model, o.dim, o.vec, o.chunk, o.embedded_at, o.content_hash \
              FROM srcdb.embeddings o \
              JOIN srcdb.symbols os ON os.id = o.symbol_id \
-             JOIN srcdb.files of2 ON of2.id = os.file_id {SAME_FILE} {SAME_SYMBOL}"
+             JOIN srcdb.files of2 ON of2.id = os.file_id {SAME_FILE} {same_symbol}"
         ),
         format!(
             "INSERT OR IGNORE INTO main.embeddings_mv \
@@ -272,14 +300,23 @@ fn carry_vector_statements() -> [String; 2] {
              o.content_hash, o.embedded_at \
              FROM srcdb.embeddings_mv o \
              JOIN srcdb.symbols os ON os.id = o.symbol_id \
-             JOIN srcdb.files of2 ON of2.id = os.file_id {SAME_FILE} {SAME_SYMBOL}"
+             JOIN srcdb.files of2 ON of2.id = os.file_id {SAME_FILE} {same_symbol}"
         ),
     ]
 }
 
+/// Run the vector carries as one transaction: both tables are carried or neither.
+fn carry_vectors(dest: &Connection, statements: [String; 2]) -> rusqlite::Result<()> {
+    let tx = dest.unchecked_transaction()?;
+    for sql in statements {
+        tx.execute(&sql, [])?;
+    }
+    tx.commit()
+}
+
 /// Carry embeddings `db` -> `staged` by stable identity (repo, path, file
 /// hash, qualified name, line, model), remapping symbol ids; symbols sharing
-/// an identity each take the vectors. Memory embeddings carry; vec0 mirrors rebuild on embed.
+/// an identity pair by span. Memory embeddings carry; vec0 mirrors rebuild on embed.
 pub fn carry_embeddings(dest: &Connection, old_db: &Path) {
     if !old_db.exists() {
         return;
@@ -295,21 +332,16 @@ pub fn carry_embeddings(dest: &Connection, old_db: &Path) {
     }
     let count = |sql: &str| -> i64 { dest.query_row(sql, [], |r| r.get(0)).unwrap_or(0) };
     let available = count("SELECT COUNT(*) FROM srcdb.embeddings");
-    let [base, multi] = carry_vector_statements();
-    for sql in [
-        base,
-        multi,
-        "INSERT INTO main.memory_embeddings (doc_id, chunk_index, model, dim, vec, chunk, embedded_at) \
-         SELECT doc_id, chunk_index, model, dim, vec, chunk, embedded_at FROM srcdb.memory_embeddings"
-            .to_string(),
-    ] {
-        if let Err(e) = dest.execute(&sql, []) {
-            eprintln!("cairn: embedding carry-over failed: {e}");
-        }
+    let vectors = carry_vectors(dest, carry_vector_statements());
+    if let Err(e) = &vectors {
+        eprintln!("cairn: embedding carry-over failed: {e}; run `cairn embed`");
+    }
+    if let Err(e) = dest.execute(MEMORY_EMBEDDINGS_CARRY, []) {
+        eprintln!("cairn: memory embedding carry-over failed: {e}");
     }
     let carried = count("SELECT COUNT(*) FROM main.embeddings");
     let _ = dest.execute("DETACH DATABASE srcdb", []);
-    if available > 0 && carried == 0 {
+    if vectors.is_ok() && available > 0 && carried == 0 {
         eprintln!(
             "cairn: none of the {available} stored embeddings fit the rebuilt store; run `cairn embed`"
         );
@@ -388,27 +420,49 @@ mod tests {
         }
     }
 
-    /// `(symbols with a base vector, multi-vectors)` the new store holds after
-    /// a carry-over from a store filed under `old_repo`.
-    fn carried(old_repo: &str, new_repos: &[(&str, &str)]) -> (i64, i64) {
-        let dir = std::env::temp_dir().join(format!("cairn-swap-carry-{}", std::process::id()));
+    /// `(symbols with a base vector, multi-vectors)` the store holds.
+    fn vector_counts(conn: &Connection) -> (i64, i64) {
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).expect("count") };
+        (
+            count("SELECT COUNT(DISTINCT symbol_id) FROM embeddings"),
+            count("SELECT COUNT(*) FROM embeddings_mv"),
+        )
+    }
+
+    /// `read` over a fresh store under `new_repos` after a carry-over from an
+    /// embedded store filed under `old_repo`; `tune` sees `(old, new)` before the carry.
+    fn after_carry<T>(
+        old_repo: &str,
+        new_repos: &[(&str, &str)],
+        tune: impl FnOnce(&Connection, &Connection),
+        read: impl FnOnce(&Connection) -> T,
+    ) -> T {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("cairn-swap-carry-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
         let (old, new) = (dir.join("old.kg"), dir.join("new.kg"));
         let _ = std::fs::remove_file(&old);
         let _ = std::fs::remove_file(&new);
         store_with_shared_identity(&old, &[(old_repo, ".")], true);
         store_with_shared_identity(&new, new_repos, false);
+        let new_conn = Connection::open(&new).expect("open");
+        tune(&Connection::open(&old).expect("open"), &new_conn);
 
-        carry_embeddings(&Connection::open(&new).expect("open"), &old);
+        carry_embeddings(&new_conn, &old);
 
-        let new = Connection::open(&new).expect("reopen");
-        let count = |sql: &str| -> i64 { new.query_row(sql, [], |r| r.get(0)).expect("count") };
-        let counts = (
-            count("SELECT COUNT(DISTINCT symbol_id) FROM embeddings"),
-            count("SELECT COUNT(*) FROM embeddings_mv"),
-        );
+        let value = read(&new_conn);
         let _ = std::fs::remove_dir_all(&dir);
-        counts
+        value
+    }
+
+    /// `(symbols with a base vector, multi-vectors)` the new store holds after
+    /// a carry-over from a store filed under `old_repo`.
+    fn carried(old_repo: &str, new_repos: &[(&str, &str)]) -> (i64, i64) {
+        after_carry(old_repo, new_repos, |_, _| {}, vector_counts)
     }
 
     #[test]
@@ -428,6 +482,75 @@ mod tests {
                 "old repo id {old_repo:?}"
             );
         }
+    }
+
+    #[test]
+    fn carry_embeddings_pairs_symbols_that_share_an_identity_by_span() {
+        // Two functions on one line, embedded from different texts: each keeps
+        // the vector of the symbol at its own column.
+        let columns_to_vectors = after_carry(
+            "repo",
+            &[("repo", ".")],
+            |old, new| {
+                for conn in [old, new] {
+                    conn.execute_batch(
+                        "UPDATE symbols SET column_start = 1 WHERE id = 's1'; \
+                         UPDATE symbols SET column_start = 50 WHERE id = 's2';",
+                    )
+                    .expect("spans");
+                }
+                old.execute(
+                    "UPDATE embeddings SET vec = x'0000004000000040' WHERE symbol_id = 's2'",
+                    [],
+                )
+                .expect("vector");
+            },
+            |new| {
+                let mut stmt = new
+                    .prepare(
+                        "SELECT s.column_start, e.vec FROM symbols s \
+                         JOIN embeddings e ON e.symbol_id = s.id ORDER BY s.column_start",
+                    )
+                    .expect("prepare");
+                stmt.query_map([], |r| {
+                    Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Vec<u8>>(1)?))
+                })
+                .expect("rows")
+                .map(|row| row.expect("row"))
+                .collect::<Vec<_>>()
+            },
+        );
+        assert_eq!(
+            columns_to_vectors,
+            [
+                (
+                    Some(1),
+                    vec![0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x00, 0x3f]
+                ),
+                (
+                    Some(50),
+                    vec![0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x40]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn carry_embeddings_carries_both_vector_tables_or_neither() {
+        // The multi-vector insert is refused after the base vectors were carried.
+        let counts = after_carry(
+            "repo",
+            &[("repo", ".")],
+            |_, new| {
+                new.execute_batch(
+                    "CREATE TRIGGER refuse_multi_vector BEFORE INSERT ON embeddings_mv \
+                     BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+                )
+                .expect("trigger");
+            },
+            vector_counts,
+        );
+        assert_eq!(counts, (0, 0));
     }
 
     #[test]

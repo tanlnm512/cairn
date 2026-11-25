@@ -1,15 +1,24 @@
 //! Shared harness for cairn-cli integration tests: CLI runner and store fixture.
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Run the cairn binary with HOME/CAIRN_HOME at `home` and telemetry on; returns (exit ok, stdout+stderr).
-pub fn cairn(home: &Path, workspace: Option<&Path>, args: &[&str]) -> (bool, String) {
+pub fn cairn(
+    home: &Path,
+    workspace: Option<&Path>,
+    cwd: Option<&Path>,
+    args: &[&str],
+) -> (bool, String) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_cairn"));
     cmd.args(args)
         .env("HOME", home)
         .env("CAIRN_HOME", home)
         .env("CAIRN_TELEMETRY", "on");
+    if let Some(cwd) = cwd {
+        cmd.current_dir(cwd);
+    }
     match workspace {
         Some(ws) => {
             cmd.env("CAIRN_WORKSPACE", ws);
@@ -61,6 +70,7 @@ impl Fixture {
         let (ok, out) = cairn(
             &self.home,
             None,
+            None,
             &[
                 "build",
                 "--workspace",
@@ -72,11 +82,34 @@ impl Fixture {
         assert!(ok, "build failed: {out}");
     }
 
+    /// Run `cairn build` from inside the repository with no workspace given; returns (exit ok, output).
+    pub fn build_from_repo(&self) -> (bool, String) {
+        cairn(
+            &self.home,
+            None,
+            Some(&self.repo),
+            &["build", "--db", &self.db],
+        )
+    }
+
+    /// The repository ids the files table is filed under.
+    pub fn file_repo_ids(&self) -> Vec<String> {
+        let conn = rusqlite::Connection::open(&self.db).expect("open store");
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT repo_id FROM files ORDER BY repo_id")
+            .expect("prepare");
+        stmt.query_map([], |r| r.get(0))
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect()
+    }
+
     /// Run `cairn update --file <path>` against the fixture store.
     pub fn update_file(&self, file: &Path) -> (bool, String) {
         cairn(
             &self.home,
             Some(&self.ws),
+            None,
             &[
                 "update",
                 "--file",
