@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.5] - 2026-11-25
+
 ### Removed
 - `cairn report`: the "Quality gates" section and its `quality_gates` JSON key. It counted findings in audit documents that no longer exist, and printed `unavailable` everywhere except inside the cairn checkout.
 - `cargo xtask audit-status`, `cargo xtask kg-dump`, and `make audit-status`: the audit-status command fed a gate that could only report zero findings, and kg-dump had no caller. The CI quality ratchet keeps gating comment style under its existing job name.
